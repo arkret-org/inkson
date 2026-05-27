@@ -1061,7 +1061,203 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("consent.revoke.cascade_button", "Revoke all observed dots");
 
+    // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
+    // contrix-spec error code expansion (CXP-0010 media binding,
+    // agent FSM, handle homograph wire-level enforce, recovery
+    // policy). The HTTP error reply carries a stable
+    // `code` / `reason` field that the toast layer maps via these
+    // keys. zh translations follow in `chinese_translations()`.
+    add_r3_error_keys(&mut dict);
+
     dict
+}
+
+/// R3 spec sync (b47ff6ec) — English toast / inline-error strings for
+/// the new error codes. Sub-grouped into agent FSM, media binding,
+/// handle wire-level enforce, and recovery proof.
+fn add_r3_error_keys(dict: &mut TranslationDict) {
+    // Agent FSM + pairing.
+    dict.set(
+        "error.agent.pairing_request_expired",
+        "Pairing request expired — start a fresh pairing flow and re-scan.",
+    );
+    dict.set(
+        "error.agent.proof_invalid",
+        "Proof signature did not verify — re-sign the request and retry.",
+    );
+    dict.set(
+        "error.agent.paused",
+        "Agent is paused. Resume the agent before retrying.",
+    );
+    dict.set(
+        "error.agent.deactivated",
+        "Agent is permanently deactivated. Provision a new agent to continue.",
+    );
+    dict.set(
+        "error.agent.accountability_grant_missing",
+        "Controller accountability grant is missing or stale; reattach a grant before retrying.",
+    );
+    dict.set(
+        "error.agent.approval_already_consumed",
+        "This approval nonce was already consumed. Request a fresh approval.",
+    );
+
+    // Media binding (CXP-0010).
+    dict.set(
+        "error.call.focus_unavailable_for_client",
+        "The selected media focus is unavailable for this client. Retry or leave the call.",
+    );
+    dict.set(
+        "error.call.focus_mismatch",
+        "Media focus disagreement with the call state. Rejoin the call to reconcile.",
+    );
+    dict.set(
+        "error.call.unknown_focus_type",
+        "Unknown media focus type. Update the app to a compatible version.",
+    );
+    dict.set(
+        "error.call.token_issuer_unauthorised",
+        "Media token issuer is not the realm's current media service. Refusing connection.",
+    );
+    dict.set(
+        "error.call.participant_binding_invalid",
+        "Participant binding failed validation (signature, TTL, or tuple mismatch).",
+    );
+    dict.set(
+        "error.call.participant_identity_unrecognised",
+        "Backend reported a participant identity not present in the call state. Failing closed.",
+    );
+    dict.set(
+        "error.call.session_focus_already_committed",
+        "The call's session focus is already committed; rejoin to use it.",
+    );
+    dict.set(
+        "error.call.e2ee_key_source_unauthorised",
+        "Refusing media key from an unauthorised source — MLS exporter is the only allowed origin.",
+    );
+    dict.set(
+        "error.call.recording_artifact_pipeline_bypassed",
+        "Recording destination is not a Contrix authenticated blob — refusing to record.",
+    );
+
+    // Handle wire-level enforce.
+    dict.set(
+        "error.handle.homograph_forbidden",
+        "This handle uses script-mixed or confusable characters and cannot be registered.",
+    );
+    dict.set(
+        "error.handle.script_mixed_warning",
+        "Warning: the handle mixes scripts (e.g. Latin + Cyrillic). Registration will be rejected.",
+    );
+    dict.set(
+        "error.handle.nfc_normalization_warning",
+        "Handle was Unicode-normalised (NFC). The normalised form will be the canonical handle.",
+    );
+
+    // Recovery.
+    dict.set(
+        "error.recovery.witness_revoke_lagging",
+        "Recovery witness revoke is lagging — wait for witness chain to catch up.",
+    );
+    dict.set(
+        "error.recovery.policy_mismatch",
+        "Recovery policy mismatch: the on-server policy version differs from the request.",
+    );
+    dict.set(
+        "error.recovery.challenge_proof_invalid",
+        "Recovery challenge proof did not verify. Re-collect the proof and retry.",
+    );
+}
+
+/// R3 spec sync — Chinese error toast strings.
+fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
+    dict.set(
+        "error.agent.pairing_request_expired",
+        "配对请求已过期 — 请重新发起配对并重新扫描。",
+    );
+    dict.set(
+        "error.agent.proof_invalid",
+        "证明签名验证失败 — 请重新签名后再试。",
+    );
+    dict.set(
+        "error.agent.paused",
+        "Agent 已暂停。请先恢复 Agent 再重试。",
+    );
+    dict.set(
+        "error.agent.deactivated",
+        "Agent 已永久停用。请重新配置一个新的 Agent。",
+    );
+    dict.set(
+        "error.agent.accountability_grant_missing",
+        "控制方问责授权缺失或已失效；请重新挂载授权后再试。",
+    );
+    dict.set(
+        "error.agent.approval_already_consumed",
+        "该 approval nonce 已被消费,请申请新的 approval。",
+    );
+
+    dict.set(
+        "error.call.focus_unavailable_for_client",
+        "所选媒体 focus 对此客户端不可用。请重试或离开通话。",
+    );
+    dict.set(
+        "error.call.focus_mismatch",
+        "媒体 focus 与通话状态不一致。请重新加入通话。",
+    );
+    dict.set(
+        "error.call.unknown_focus_type",
+        "未知的媒体 focus 类型,请将应用升级到兼容版本。",
+    );
+    dict.set(
+        "error.call.token_issuer_unauthorised",
+        "媒体 token 签发者不是 realm 当前的媒体服务。拒绝连接。",
+    );
+    dict.set(
+        "error.call.participant_binding_invalid",
+        "Participant binding 校验失败(签名/TTL/字段不一致)。",
+    );
+    dict.set(
+        "error.call.participant_identity_unrecognised",
+        "后端报告的 participant identity 不在通话状态列表中。Fail closed。",
+    );
+    dict.set(
+        "error.call.session_focus_already_committed",
+        "本通话的 session focus 已提交,请重新加入。",
+    );
+    dict.set(
+        "error.call.e2ee_key_source_unauthorised",
+        "拒绝接受来自非授权来源的媒体密钥 — 仅 MLS Exporter 派生密钥被接受。",
+    );
+    dict.set(
+        "error.call.recording_artifact_pipeline_bypassed",
+        "录制目标不是 Contrix 认证 blob — 拒绝录制。",
+    );
+
+    dict.set(
+        "error.handle.homograph_forbidden",
+        "该 handle 含有跨脚本或易混淆字符,无法注册。",
+    );
+    dict.set(
+        "error.handle.script_mixed_warning",
+        "警告:handle 混合了多种文字系统(例如 Latin + Cyrillic),将被拒绝。",
+    );
+    dict.set(
+        "error.handle.nfc_normalization_warning",
+        "Handle 已进行 Unicode 规范化(NFC),规范化结果将作为唯一形式。",
+    );
+
+    dict.set(
+        "error.recovery.witness_revoke_lagging",
+        "Recovery witness 撤销链落后 — 请等待 witness 链跟上。",
+    );
+    dict.set(
+        "error.recovery.policy_mismatch",
+        "Recovery policy 不匹配:服务器上的 policy 版本与请求不一致。",
+    );
+    dict.set(
+        "error.recovery.challenge_proof_invalid",
+        "Recovery 挑战证明验证失败。请重新采集证明后再试。",
+    );
 }
 
 /// Build Chinese translation dictionary.
@@ -1604,6 +1800,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("developer.profile.advertised", "服务器声明");
     dict.set("developer.event.kind", "事件类型");
     dict.set("developer.schema.id", "Schema id");
+
+    // R3 spec sync (b47ff6ec) — Chinese error toast translations.
+    add_r3_error_keys_zh(&mut dict);
 
     dict
 }

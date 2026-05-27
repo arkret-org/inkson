@@ -29,6 +29,7 @@ use dioxus_router::Link;
 
 use crate::{
     api::ContrixApi,
+    identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised},
     local_state::LocalStateStore,
     routes::Route,
     views::helpers::{handle_from_did, short_protocol_id, with_authed_api},
@@ -327,42 +328,88 @@ pub fn OnboardingPanel(
             }
 
             // Step 2: Handle binding
+            //
+            // R3 spec sync (b47ff6ec) — wire-level handle homograph
+            // guard. Surface an inline warning when the localpart
+            // mixes scripts (Latin + Cyrillic/Greek/Armenian) or
+            // contains non-NFC characters. The server will reject
+            // confusable handles with
+            // `failed_precondition reason="handle_homograph_forbidden"`;
+            // surfacing the warning here gives users a chance to
+            // correct the input before submission.
             if step() == OnboardingStep::Handle {
-                div { class: "event", "data-testid": "onboarding-step-handle",
-                    div { class: "event-head",
-                        span { "Step 2 · Handle binding" }
-                        span { "identity-handles.md" }
-                    }
-                    div { class: "muted",
-                        "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
-                    }
-                    div { class: "workflow-form",
-                        label { r#for: "handle-local-input", "Local part" }
-                        input {
-                            id: "handle-local-input",
-                            "data-testid": "handle-local-input",
-                            "aria-label": "Handle local part",
-                            value: "{handle_local}",
-                            oninput: move |evt| handle_local.set(evt.value()),
+                {
+                    let localpart_value = handle_local();
+                    let homograph_risk = detect_handle_homograph_risk(&localpart_value);
+                    let nfc_warning = handle_will_be_nfc_normalised(&localpart_value);
+                    let homograph_label = homograph_risk
+                        .as_ref()
+                        .map(|r| r.script_label())
+                        .unwrap_or_default();
+                    let homograph_present = homograph_risk.is_some();
+                    rsx! {
+                        div { class: "event", "data-testid": "onboarding-step-handle",
+                            div { class: "event-head",
+                                span { "Step 2 · Handle binding" }
+                                span { "identity-handles.md §17" }
+                            }
+                            div { class: "muted",
+                                "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
+                            }
+                            div { class: "workflow-form",
+                                label { r#for: "handle-local-input", "Local part" }
+                                input {
+                                    id: "handle-local-input",
+                                    "data-testid": "handle-local-input",
+                                    "aria-label": "Handle local part",
+                                    value: "{handle_local}",
+                                    oninput: move |evt| handle_local.set(evt.value()),
+                                }
+                                label { r#for: "handle-domain-input", "Domain" }
+                                input {
+                                    id: "handle-domain-input",
+                                    "data-testid": "handle-domain-input",
+                                    "aria-label": "Handle domain",
+                                    value: "{handle_domain}",
+                                    oninput: move |evt| handle_domain.set(evt.value()),
+                                }
+                            }
+                            // R3 — inline homograph + NFC warnings.
+                            if homograph_present {
+                                div {
+                                    class: "muted",
+                                    "data-testid": "handle-script-mixed-warning",
+                                    role: "alert",
+                                    span { class: "badge red", "handle_homograph_forbidden" }
+                                    " Mixed scripts detected: {homograph_label}. The server will reject this handle. Pick a single-script localpart."
+                                }
+                            }
+                            if nfc_warning {
+                                div {
+                                    class: "muted",
+                                    "data-testid": "handle-nfc-warning",
+                                    role: "alert",
+                                    span { class: "badge amber", "NFC" }
+                                    " The handle contains combining marks. It will be Unicode-normalised (NFC) on the wire; the normalised form will be the canonical handle."
+                                }
+                            }
+                            div { class: "muted",
+                                "= {handle_local}:{handle_domain} → {did_method}:{handle_domain}:users:{handle_local}"
+                            }
+                            div { class: "muted",
+                                "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
+                            }
+                            div { class: "actions",
+                                button { class: "secondary", onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
+                                button {
+                                    class: "secondary",
+                                    "data-testid": "next-device",
+                                    disabled: homograph_present,
+                                    onclick: move |_| step.set(OnboardingStep::Device),
+                                    "Next →"
+                                }
+                            }
                         }
-                        label { r#for: "handle-domain-input", "Domain" }
-                        input {
-                            id: "handle-domain-input",
-                            "data-testid": "handle-domain-input",
-                            "aria-label": "Handle domain",
-                            value: "{handle_domain}",
-                            oninput: move |evt| handle_domain.set(evt.value()),
-                        }
-                    }
-                    div { class: "muted",
-                        "= {handle_local}:{handle_domain} → {did_method}:{handle_domain}:users:{handle_local}"
-                    }
-                    div { class: "muted",
-                        "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
-                    }
-                    div { class: "actions",
-                        button { class: "secondary", onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
-                        button { class: "secondary", "data-testid": "next-device", onclick: move |_| step.set(OnboardingStep::Device), "Next →" }
                     }
                 }
             }

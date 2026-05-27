@@ -792,6 +792,7 @@ name = "chime"
 version = "1.0.0"
 dependencies = [
  "base64",
+ "chrono",
  "contrix",
  "gloo-timers",
  "httpdate",

@@ -86,6 +86,41 @@ pub fn agents_enabled() -> bool {
     cfg!(feature = "experimental-agents")
 }
 
+/// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
+///
+/// `cx.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
+/// `deactivated`). The badge text below mirrors the wire vocabulary
+/// surfaced by the soland `AgentResBody.state` field; unknown values
+/// fall through to the raw wire string so future state additions are
+/// still legible.
+pub fn agent_state_label(state: &str) -> &str {
+    match state {
+        "active" => "Active",
+        "paused" => "Paused",
+        "deactivated" => "Deactivated",
+        other => other,
+    }
+}
+
+/// R3 — badge CSS class for an agent FSM state. Mirrors the chip
+/// palette already used for actor_kind: active = green, paused = amber,
+/// deactivated = red.
+pub fn agent_state_badge_class(state: &str) -> &'static str {
+    match state {
+        "active" => "badge green",
+        "paused" => "badge amber",
+        "deactivated" => "badge red",
+        _ => "badge",
+    }
+}
+
+/// R3 — whether the agent admin list should hide this row by default.
+/// `deactivated` is terminal; the default list filters it out, but a
+/// "Show deactivated" toggle re-includes it for audit purposes.
+pub fn agent_state_is_terminal(state: &str) -> bool {
+    state == "deactivated"
+}
+
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
 /// machine is purely client-side (the durable counterpart is the
@@ -1204,7 +1239,14 @@ pub fn PersonalAgentAdminPanel(
                                     // surface the badge so the operator can see at
                                     // a glance which row is a native personal agent.
                                     ActorKindBadge { actor_kind: Some("agent".to_owned()) }
-                                    span { class: "badge", "{agent.state}" }
+                                    // R3 — FSM-state badge with semantic colouring:
+                                    // active=green, paused=amber, deactivated=red.
+                                    span {
+                                        class: "{agent_state_badge_class(&agent.state)}",
+                                        "data-testid": "agent-state-badge",
+                                        "data-state": "{agent.state}",
+                                        "{agent_state_label(&agent.state)}"
+                                    }
                                 }
                                 div { class: "muted", "did: {agent_did_label}" }
                                 div { class: "muted", "display_name: {agent.display_name}" }

@@ -153,6 +153,156 @@ fn valid_domain_label(label: &str) -> bool {
         && !label.ends_with('-')
 }
 
+/// R3 spec sync (b47ff6ec) — wire-level handle homograph guard.
+///
+/// `zh/identity/identity-handles.md §17` requires that the canonical
+/// compare on handles performs Unicode NFC + UTS#39 confusable skeleton
+/// folding, and that script-mixed handles (Latin + Cyrillic / Greek /
+/// Armenian) are rejected at the wire level with
+/// `failed_precondition reason="handle_homograph_forbidden"`.
+///
+/// This client-side helper performs the same script-mix detection so
+/// the registration form can surface an inline warning before the
+/// server returns the error. The check is intentionally conservative:
+/// it groups characters into a small set of script families and flags
+/// any handle that crosses the visually-confusable boundary
+/// (Latin↔Cyrillic / Latin↔Greek / Latin↔Armenian / Cyrillic↔Greek).
+///
+/// Returns `Some(reason)` when the handle should be rejected;
+/// `None` otherwise.
+///
+/// TODO(R3.1): replace the ad-hoc script classifier below with a real
+/// UTS#39 skeleton-fold implementation once the SDK ships
+/// `contrix_sdk::identity::handle_canonical_form`. Until then this
+/// client-side check is best-effort — the server is the source of
+/// truth and will return `handle_homograph_forbidden` if the form is
+/// rejected.
+pub fn detect_handle_homograph_risk(localpart: &str) -> Option<HandleHomographRisk> {
+    let mut scripts = std::collections::BTreeSet::new();
+    for ch in localpart.chars() {
+        if let Some(script) = classify_script(ch) {
+            scripts.insert(script);
+        }
+    }
+    // ASCII / digits / punctuation are not script-bearing.
+    scripts.remove(&HandleScript::Neutral);
+    // Single script (or none) is fine.
+    if scripts.len() <= 1 {
+        return None;
+    }
+    // Any script mix surfaces a warning. The most common confusable
+    // pairs (Latin + Cyrillic / Greek / Armenian) match the spec's
+    // explicit reject set; we surface a generic warning for all mixes.
+    let scripts_vec: Vec<HandleScript> = scripts.into_iter().collect();
+    Some(HandleHomographRisk { scripts: scripts_vec })
+}
+
+/// Script-family classification used by [`detect_handle_homograph_risk`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HandleScript {
+    /// ASCII + digits + handle-safe punctuation; not script-bearing.
+    Neutral,
+    Latin,
+    Cyrillic,
+    Greek,
+    Armenian,
+    Cjk,
+    Other,
+}
+
+impl HandleScript {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::Latin => "Latin",
+            Self::Cyrillic => "Cyrillic",
+            Self::Greek => "Greek",
+            Self::Armenian => "Armenian",
+            Self::Cjk => "CJK",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Carries the list of script families detected in a script-mixed handle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandleHomographRisk {
+    pub scripts: Vec<HandleScript>,
+}
+
+impl HandleHomographRisk {
+    /// Human-readable script list for an inline warning, e.g.
+    /// `"Latin + Cyrillic"`.
+    pub fn script_label(&self) -> String {
+        self.scripts
+            .iter()
+            .map(|s| s.as_label())
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+}
+
+fn classify_script(ch: char) -> Option<HandleScript> {
+    // ASCII letters carry an inherent Latin script identity, so an
+    // ASCII-letter handle mixed with Cyrillic / Greek look-alikes is
+    // detected as Latin + (other). ASCII digits and handle-safe
+    // punctuation are script-neutral and don't flip the mix detector.
+    if ch.is_ascii_alphabetic() {
+        return Some(HandleScript::Latin);
+    }
+    if ch.is_ascii_digit() || matches!(ch, '.' | '_' | '+' | '~' | '-') {
+        return Some(HandleScript::Neutral);
+    }
+    let code = ch as u32;
+    // U+0400-U+04FF Cyrillic; U+0500-U+052F Cyrillic Supplement
+    if (0x0400..=0x052F).contains(&code) {
+        return Some(HandleScript::Cyrillic);
+    }
+    // U+0370-U+03FF Greek
+    if (0x0370..=0x03FF).contains(&code) {
+        return Some(HandleScript::Greek);
+    }
+    // U+0530-U+058F Armenian
+    if (0x0530..=0x058F).contains(&code) {
+        return Some(HandleScript::Armenian);
+    }
+    // CJK Unified Ideographs / Hiragana / Katakana / Hangul (rough range).
+    if (0x3040..=0x30FF).contains(&code)
+        || (0x3400..=0x9FFF).contains(&code)
+        || (0xAC00..=0xD7AF).contains(&code)
+    {
+        return Some(HandleScript::Cjk);
+    }
+    if ch.is_alphabetic() {
+        // Non-ASCII Latin (e.g. accented letters) — treat as Latin so
+        // accented + ASCII is not falsely flagged as a mix.
+        let upper = ch.to_uppercase().next().unwrap_or(ch);
+        if (upper as u32) < 0x0250 {
+            return Some(HandleScript::Latin);
+        }
+        return Some(HandleScript::Other);
+    }
+    None
+}
+
+/// R3 — returns `true` when the input contains any non-NFC characters
+/// that would be normalised on the wire. The detection is conservative:
+/// it currently flags any combining mark in the input (the most common
+/// NFC-NFD divergence). A `true` result means the handle will be
+/// canonicalised by the server; the client should surface an inline
+/// warning explaining that the displayed form may change.
+///
+/// TODO(R3.1): swap this for the SDK's real `nfc_normalise` once that
+/// lands so the warning fires on the full NFC class, not just combining
+/// marks.
+pub fn handle_will_be_nfc_normalised(localpart: &str) -> bool {
+    localpart.chars().any(|ch| {
+        let code = ch as u32;
+        // U+0300..U+036F: Combining Diacritical Marks
+        (0x0300..=0x036F).contains(&code)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +338,42 @@ mod tests {
         assert!(parse_user_handle("did:web:alice.example").is_none());
         assert!(parse_user_handle("@alice").is_none());
         assert!(parse_user_handle("alice.example.com").is_none());
+    }
+
+    #[test]
+    fn pure_ascii_handle_has_no_homograph_risk() {
+        assert!(detect_handle_homograph_risk("alice").is_none());
+        assert!(detect_handle_homograph_risk("a.b_c+d~e-f").is_none());
+        assert!(detect_handle_homograph_risk("123abc").is_none());
+    }
+
+    #[test]
+    fn latin_plus_cyrillic_is_flagged() {
+        // 'е' is U+0435 Cyrillic small letter ie (visually identical to
+        // Latin 'e'); mixed with ASCII 'alic' = Latin.
+        let risk = detect_handle_homograph_risk("alicе").expect("flagged");
+        assert!(risk.scripts.contains(&HandleScript::Latin));
+        assert!(risk.scripts.contains(&HandleScript::Cyrillic));
+    }
+
+    #[test]
+    fn latin_plus_greek_is_flagged() {
+        // 'α' is U+03B1 Greek small letter alpha.
+        let risk = detect_handle_homograph_risk("aliceα").expect("flagged");
+        assert!(risk.scripts.contains(&HandleScript::Greek));
+    }
+
+    #[test]
+    fn pure_cyrillic_is_not_flagged() {
+        assert!(detect_handle_homograph_risk("алиса").is_none());
+    }
+
+    #[test]
+    fn nfc_check_flags_combining_marks() {
+        // 'e' + combining acute accent (U+0301) is NFD; NFC would be
+        // 'é' (U+00E9). The decomposed form is what the helper detects.
+        assert!(handle_will_be_nfc_normalised("e\u{0301}"));
+        assert!(!handle_will_be_nfc_normalised("alice"));
     }
 
     #[test]

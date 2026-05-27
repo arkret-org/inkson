@@ -135,6 +135,75 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
     }
 }
 
+/// R3 spec sync (b47ff6ec) — Circle selector grant page stub.
+///
+/// `resource-selector.schema.json` now accepts the `circle` selector
+/// kind with `circle_id` pattern `^cx:circle:[0-9a-f]{8}-...$`. This
+/// view lists the grants attached to a Circle and (in R3.1) will let
+/// admins attach / detach capability grants scoped by `cx:circle:<uuid>`.
+///
+/// TODO(R3.1): wire to soland's `/api/v1/circles/{id}/grants` once that
+/// endpoint lands. For now this is a documented stub that surfaces the
+/// selector kind + circle_id for the QA harness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CircleGrantRow {
+    /// Stable grant identifier.
+    pub grant_id: String,
+    /// Capability action wire form (e.g. `cx.message.send`,
+    /// `cx.call.join`, `cx.call.record`).
+    pub action: String,
+    /// Capability scope expressed as a resource selector. For Circle
+    /// grants this is `{"kind":"circle","circle_id":"cx:circle:<uuid>"}`.
+    pub scope_summary: String,
+    /// `granted_at` timestamp for the audit trail.
+    pub granted_at: String,
+}
+
+#[component]
+pub fn CircleGrantsPanel(summary: CircleSummary, grants: Vec<CircleGrantRow>) -> Element {
+    let circle_id = summary.id.clone();
+    let title = summary.title.clone();
+    rsx! {
+        section {
+            class: "panel circle-grants",
+            "data-testid": "circle-grants-panel",
+            "data-circle-id": "{circle_id}",
+            "data-selector-kind": "circle",
+            header { class: "panel-head",
+                h1 { "Grants — {title}" }
+                p { class: "muted",
+                    "Grants scoped to this Circle use the new `circle` resource selector "
+                    "(spec b47ff6ec / `resource-selector.schema.json`). Selector form: "
+                    "`cx:circle:<uuid>`."
+                }
+            }
+            if grants.is_empty() {
+                p {
+                    class: "muted",
+                    "data-testid": "circle-grants-empty",
+                    "TODO(R3.1): No grants attached. The attach / detach controls land once "
+                    "`/api/v1/circles/{circle_id}/grants` is wired."
+                }
+            } else {
+                ul { class: "grant-list",
+                    for grant in grants.iter() {
+                        li {
+                            key: "{grant.grant_id}",
+                            class: "grant-row",
+                            "data-testid": "circle-grant-row",
+                            "data-grant-id": "{grant.grant_id}",
+                            "data-action": "{grant.action}",
+                            span { class: "grant-action mono", "{grant.action}" }
+                            span { class: "grant-scope muted", "{grant.scope_summary}" }
+                            span { class: "grant-when muted", "{grant.granted_at}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Compact Circle-list item used in the Space sidebar (P3B.2.1).
 /// Renders a single row that the parent sidebar wraps in a clickable
 /// link to `/circles/:circle_id`.

@@ -346,6 +346,77 @@ pub fn RecoveryPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
+            // R3 spec sync (b47ff6ec) — Recovery Policy / Receipt stub.
+            //
+            // Spec landed two new normative JSON schemas:
+            //   - `recovery-policy.schema.json` — policy_id, principal_id,
+            //     policy_version, proof_kinds[] (device_quorum |
+            //     recovery_unlock | trusted_recovery_service |
+            //     principal_signing).
+            //   - `recovery-receipt.schema.json` — receipt_id, principal_id,
+            //     recovery_session_id, proof_summary[], completion_timestamp.
+            //
+            // Soland exposes list / inspect endpoints (`/api/v1/recovery/policies`
+            // and `/api/v1/recovery/receipts`). Wiring lands in R3.1; this
+            // stub keeps the panel + testids stable so the QA harness can
+            // assert presence today and verify content once the live fetch
+            // is wired.
+            //
+            // TODO(R3.1): replace placeholder rows with a real
+            // `ContrixApi::recovery_policy_get` / `recovery_receipt_list`
+            // fetch and decode against the schemas above.
+            div { class: "event", "data-testid": "recovery-policy-panel",
+                div { class: "event-head",
+                    span { "Recovery policy" }
+                    span { class: "badge", "spec b47ff6ec" }
+                    HelpTip { text: "The recovery policy declares which proof kinds (device_quorum, recovery_unlock, trusted_recovery_service, principal_signing) and what threshold must be met before a recovery_session can complete. Receipts carry the proof_summary for audit." }
+                }
+                div { class: "muted",
+                    "TODO(R3.1): wire to /api/v1/recovery/policies + /api/v1/recovery/receipts. "
+                    "The panel surface and testids below stay stable so QA can assert on them today."
+                }
+                div { class: "metric-grid", "data-testid": "recovery-policy-overview",
+                    div { class: "metric",
+                        strong { "policy_id" }
+                        span { "data-testid": "recovery-policy-id", "—" }
+                        div { class: "muted", "Stable id; rotates on policy_version bump" }
+                    }
+                    div { class: "metric",
+                        strong { "policy_version" }
+                        span { "data-testid": "recovery-policy-version", "—" }
+                        div { class: "muted", "Monotonic; server rejects mismatch with recovery_policy_mismatch" }
+                    }
+                    div { class: "metric",
+                        strong { "proof_kinds" }
+                        span { "data-testid": "recovery-policy-proof-kinds", "device_quorum · recovery_unlock · trusted_recovery_service · principal_signing" }
+                        div { class: "muted", "Subset chosen by the policy author" }
+                    }
+                    div { class: "metric",
+                        strong { "threshold" }
+                        span { "data-testid": "recovery-policy-threshold", "—" }
+                        div { class: "muted", "Minimum proof count required to issue a receipt" }
+                    }
+                }
+                div { class: "event-head",
+                    span { "Receipt history" }
+                    span { class: "muted", "data-testid": "recovery-receipt-count", "0 receipts" }
+                }
+                div {
+                    class: "muted",
+                    "data-testid": "recovery-receipt-empty",
+                    "No recovery receipts on record. When a recovery_session completes, soland writes a receipt with proof_summary[]; this panel will surface the summary + completion_timestamp."
+                }
+                div {
+                    class: "muted",
+                    "data-testid": "recovery-error-hints",
+                    "Server-side errors surfaced here: "
+                    span { class: "badge red", "recovery_witness_revoke_lagging" }
+                    " "
+                    span { class: "badge red", "recovery_policy_mismatch" }
+                    " "
+                    span { class: "badge red", "challenge_proof_invalid" }
+                }
+            }
             div { class: "event",
                 div { class: "event-head",
                     span { "Recovery options" }
