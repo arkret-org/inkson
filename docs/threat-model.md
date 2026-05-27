@@ -112,3 +112,87 @@ Controls:
   transparency-log upload are disabled.
 - Release checklist explicitly forbids tags, registry pushes, and crates.io
   publication for this local phase.
+
+## MLS-Exporter SFrame key derivation flow
+
+yougen's E2EE call layer derives SFrame keying material from an MLS group
+via the MLS Exporter interface. This section is the canonical reference
+for the derivation chain and the threat-model decisions behind it.
+
+### Derivation chain
+
+```text
+[MLS group state]
+    │  (epoch_authenticator, group_context)
+    ▼
+[MLS Exporter API]
+    │  - label = "cx-rtc-frame-key/v1"
+    │  - context = (empty bytes; the call_id is mixed in via group_context)
+    │  - length = 19
+    │  - KDF.Nh = 32 (SHA-256-based KDF)
+    ▼
+[exporter_secret: 19 bytes]
+    │
+    ▼
+[SFrame keying material]
+    │  per SFrame draft-ietf-sframe-enc:
+    │  - SFrame_KEK = HKDF-Expand-Label(exporter_secret, "SFrame KEK", "", 32)
+    │  - SFrame_SALT = HKDF-Expand-Label(exporter_secret, "SFrame Salt", "", 12)
+    │  - per-frame: nonce = SFrame_SALT XOR counter_padded
+    ▼
+[encrypted media frame]
+    AEAD(SFrame_KEK, nonce, plaintext_frame, aad)
+```
+
+The 19-byte exporter length is the spec-mandated value for SFrame v1 over
+MLS. The label `"cx-rtc-frame-key/v1"` namespaces this derivation away
+from any other MLS exporter use within the same group (e.g. file-transfer
+key derivation, which uses a different label).
+
+### Threat model rationale
+
+The derivation chain is deliberately structured so that:
+
+1. **No backend party can derive the SFrame key.** soland, floria, and
+   the media SFU never see the MLS group state. The exporter API runs
+   exclusively inside yougen on each participant's device.
+
+2. **Per-epoch key rotation is automatic.** Every MLS epoch advance
+   (member add/remove, re-keying) produces a new `exporter_secret`. The
+   SFrame key follows; in-flight frames in the old epoch are flushed at
+   the SFrame layer and decoders reject mixed-epoch frames.
+
+3. **The label is versioned (`/v1`).** A future SFrame spec or label
+   rotation can be introduced without re-deriving existing keys; the
+   new label produces a disjoint exporter output.
+
+4. **Backend cloud key escrow is explicitly rejected.** A common
+   "convenience" anti-pattern is to have the SFU or the call control
+   plane hold a copy of the SFrame key for server-side recording or
+   transcoding. yougen refuses this on threat-model grounds:
+   - If the SFU holds the key, it can decrypt every frame — the E2EE
+     promise reduces to ESEE (encryption *to* the SFU).
+   - If a "trusted recording service" holds the key, the recording
+     service becomes a high-value target that, if compromised, leaks
+     all past calls.
+   - Recording IS supported (via the participant-facilitated SFrame key
+     hand-off to a recording bot that joins as a participant), but the
+     hand-off is an explicit, audited, in-band consent step — not a
+     cloud-side escrow.
+
+5. **The error `e2ee_key_source_unauthorised`** (soland-side; surfaced
+   to clients) fires when the backend observes any attempt to source
+   the SFrame key from outside the MLS-Exporter derivation. This is a
+   hard reject on the call-control wire — backend providers that fail
+   this check are blocked from the call.
+
+### Out-of-scope (deferred)
+
+- Cross-epoch frame replay protection is delegated to the SFrame
+  counter; MLS epoch transitions do not re-key SFrame counter space and
+  rely on the AEAD nonce structure for replay defense.
+- Key compromise impersonation (KCI) of a single participant is handled
+  at the MLS layer; SFrame inherits MLS's KCI posture and adds no
+  further mitigation.
+- Post-quantum migration: when MLS gains a PQ KEM, yougen will follow.
+  The exporter API and SFrame layer are unchanged by that migration.

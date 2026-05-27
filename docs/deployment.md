@@ -182,3 +182,147 @@ For pre-prod cohorts:
 The web build naturally rolls forward on next page load; cache-bust by
 versioning the asset path (Dioxus does this by default).
 
+## macOS notarization gate (no version bump)
+
+yougen's R3 sync is a no-version-bump release: the binary identity stays
+the same, but the contents change. Apple's notarization service does NOT
+require a version bump, but it DOES require that every distributed
+binary has been notarized and stapled. The "no version bump" constraint
+means you must re-notarize the rebuilt artifact without changing
+`CFBundleShortVersionString`.
+
+Steps for a no-bump notarization:
+
+1. **Hardened-runtime build.** Use `scripts/build-macos.sh --hardened`
+   so the binary embeds the hardened-runtime flag. Notarization rejects
+   non-hardened binaries.
+2. **Codesign** with the Developer ID Application certificate:
+   ```sh
+   codesign --force --sign "Developer ID Application: Acroidea LLC (TEAMID)" \
+       --options runtime \
+       --entitlements deploy/macos/entitlements.plist \
+       --timestamp \
+       target/release/yougen.app
+   ```
+3. **Submit to notary**:
+   ```sh
+   xcrun notarytool submit yougen.zip \
+       --apple-id "release@acroidea.com" \
+       --team-id TEAMID \
+       --password "$NOTARY_APP_SPECIFIC_PASSWORD" \
+       --wait
+   ```
+   Typical turnaround: 5–30 minutes.
+4. **Staple**:
+   ```sh
+   xcrun stapler staple target/release/yougen.app
+   xcrun stapler validate target/release/yougen.app
+   ```
+5. **Re-zip and publish** the stapled `.app` to the distribution
+   channel.
+
+Failure modes:
+
+- **"Invalid hardened runtime"** — the `--options runtime` flag was
+  missing at codesign. Re-sign and resubmit.
+- **"App contains a non-codesigned framework"** — a vendored framework
+  (commonly the WebRTC or media-decode framework) was added without
+  signing. Sign the framework separately before signing the app bundle.
+- **"Submission queued for hours"** — Apple Notary occasional capacity
+  issue; no escalation path. Plan your release window accordingly.
+
+Notarization gate as part of CI: the GH Actions workflow runs notarization
+on tagged builds only. For no-bump releases, run the workflow manually
+with `workflow_dispatch` and pin the artifact SHA in the release evidence
+note.
+
+## Windows code-signing
+
+Windows code-signing uses an EV (Extended Validation) certificate to
+establish SmartScreen reputation. Without EV, SmartScreen prompts users
+on first launch even after the cert is "valid"; with EV, prompts are
+suppressed after the first ~100 installs build reputation.
+
+Setup:
+
+1. EV cert lives on a hardware token (the issuer ships a USB-attached
+   token; the private key MUST NOT leave the token).
+2. Build artifact: `scripts/build-windows.ps1 -Release`.
+3. Sign with `signtool`:
+   ```powershell
+   signtool sign /n "Acroidea LLC" `
+       /fd SHA256 `
+       /tr http://timestamp.digicert.com `
+       /td SHA256 `
+       target/release/yougen.exe
+   ```
+4. Verify:
+   ```powershell
+   signtool verify /pa /v target/release/yougen.exe
+   ```
+
+No-version-bump constraints:
+
+- Windows treats two binaries with the same `FileVersion` and `ProductVersion`
+  but different SHA-256 as distinct executables; SmartScreen reputation
+  attaches to the **SHA-256**, not the version string. A no-bump rebuild
+  resets SmartScreen reputation for the new SHA.
+- Mitigation: ship the no-bump rebuild only to existing installs via the
+  in-app updater (which checks the publisher cert directly and bypasses
+  SmartScreen). New downloads SHOULD use a versioned build.
+
+EV token operational concerns:
+
+- The token is single-actor. Only one signer at a time; serialize signing
+  through the release human.
+- Token PIN entry is required per-signing-session; do NOT script the PIN.
+- Backup token is kept in a separate safe at the office. Rotate the
+  signing operator (not the cert) quarterly.
+
+## iOS / Android publish gate notes
+
+### iOS
+
+- **TestFlight** for pre-prod cohorts; production via App Store Connect.
+- Both gates require:
+  - Notarization-equivalent signing (provisioning profile + distribution
+    cert).
+  - App Store review (1–7 days first submission; faster for updates).
+  - Privacy manifest declaring data collection — for yougen, declare:
+    "Contact info: collected for account creation; not linked to user
+    across apps; not used for tracking".
+- No-bump constraint: App Store Connect REQUIRES a version-string bump
+  for every new build accepted into review. To honor the no-bump policy,
+  do NOT submit no-bump R3 rebuilds to App Store Connect; ship them
+  through enterprise distribution / TestFlight internal-only.
+- Export compliance: yougen uses E2EE (MLS + SFrame); declare under the
+  export-compliance section. Exemption category: "App uses standard,
+  publicly-available encryption (TLS, MLS RFC 9420, SFrame draft)".
+
+### Android
+
+- **Internal testing track** via Play Console for pre-prod cohorts;
+  production via the production track.
+- Both require:
+  - Play App Signing enrollment (Google holds the production signing
+    key; you upload signed APK/AAB with an upload key).
+  - Data safety form declaring data collection (mirror the iOS privacy
+    manifest declarations).
+- No-bump constraint: Play Console requires a `versionCode` bump for
+  every uploaded build. Same workaround as iOS: do NOT publish no-bump
+  rebuilds through Play; ship via enterprise / sideload-only channels.
+- Target API level: yougen pins target SDK at the Play-required minimum
+  (currently 34, may rise per Play schedule).
+- Sideload distribution: produce APK + signed APKM manifest with
+  SHA-256; users add yougen's update channel URL to the in-app updater
+  to receive sideload-distributed updates.
+
+### Publish-gate quick reference
+
+| Platform | Store-required version bump? | No-bump distribution path |
+|---|---|---|
+| macOS | No (notarization is content-addressed) | Notarize + staple + push via in-app updater |
+| Windows | No (SmartScreen is content-addressed) | Sign + push via in-app updater |
+| iOS | **Yes** (App Store Connect) | Skip Store; TestFlight internal / enterprise distribution |
+| Android | **Yes** (Play Console versionCode) | Skip Play; sideload via in-app updater |
+| Web | N/A | Cache-bust asset path |
