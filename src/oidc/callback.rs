@@ -89,6 +89,7 @@ pub struct AudienceGrantExchange<'a> {
 /// Outcome of [`process_callback`]. UI callers route on the variant —
 /// `Completed` is the happy path, the rest map to typed UI errors.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // `Completed` carries the OIDC token bundle (~296 B). The happy path dominates.
 pub enum CallbackOutcome {
     /// Full happy path: token bundle persisted; audience grant exchanged
     /// (if requested).

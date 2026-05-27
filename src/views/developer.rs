@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn raw_event_preview_limit_is_reasonable() {
-        assert!(RAW_EVENT_PREVIEW_LIMIT >= 10);
-        assert!(RAW_EVENT_PREVIEW_LIMIT <= 500);
+        const { assert!(RAW_EVENT_PREVIEW_LIMIT >= 10) };
+        const { assert!(RAW_EVENT_PREVIEW_LIMIT <= 500) };
     }
 }

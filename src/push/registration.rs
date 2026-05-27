@@ -514,10 +514,7 @@ mod tests {
         let mut c = ctx("dev_yougen");
         c.active_circle_id = Some("cx:circle:opsroom".to_owned());
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
-        let key = request
-            .idempotency_key
-            .as_deref()
-            .expect("idempotency_key");
+        let key = request.idempotency_key.as_deref().expect("idempotency_key");
         assert!(key.contains("cx:circle:opsroom"), "idempotency_key={key}");
     }
 

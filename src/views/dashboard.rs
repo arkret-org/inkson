@@ -21,6 +21,7 @@ struct DashboardNotificationSummary {
 }
 
 #[component]
+#[allow(clippy::redundant_closure)] // `|| signal()` is not equivalent to `&signal` here.
 pub fn DashboardPanel(
     base_url: String,
     token: Signal<String>,

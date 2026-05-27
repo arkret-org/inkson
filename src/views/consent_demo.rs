@@ -46,9 +46,9 @@ pub fn ConsentGrantDemoCard(
 ) -> Element {
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
     let mut tag = use_signal(|| "scope:contacts".to_owned());
-    let mut space_id = use_signal(|| String::new());
-    let mut status = use_signal(|| String::new());
-    let mut last_move_id = use_signal(|| String::new());
+    let mut space_id = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let mut last_move_id = use_signal(String::new);
 
     rsx! {
         div { class: "event", "data-testid": "consent-grant-demo",

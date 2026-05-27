@@ -133,10 +133,10 @@ pub fn PolicyDenyBanner() -> Element {
     // Each render, opportunistically drain the queue. Dioxus reruns
     // the component when other signals tick, so a long-lived deny will
     // still be picked up within milliseconds of the producing call.
-    if current.read().is_none() {
-        if let Some(event) = take_policy_deny() {
-            current.set(Some(event));
-        }
+    if current.read().is_none()
+        && let Some(event) = take_policy_deny()
+    {
+        current.set(Some(event));
     }
 
     // Auto-dismiss: spawn a one-shot task that clears the signal after

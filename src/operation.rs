@@ -602,10 +602,10 @@ pub mod cx_ops {
         });
         // Schema-level allOf in flow_watch_set_payload forbids
         // level_public when level is null; only emit it on non-null level.
-        if level.is_some() {
-            if let Some(public) = level_public {
-                payload["level_public"] = json!(public);
-            }
+        if level.is_some()
+            && let Some(public) = level_public
+        {
+            payload["level_public"] = json!(public);
         }
         OperationBuilder::new(space_id, sender_actor, "cx.flow.watch.set")
             .target_ref(flow_id)

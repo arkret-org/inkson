@@ -108,6 +108,7 @@ impl OnboardingStep {
 }
 
 #[component]
+#[allow(clippy::redundant_closure)] // `use_signal(|| signal())` reads the inner value at init.
 pub fn OnboardingPanel(
     base_url: String,
     token: Signal<String>,

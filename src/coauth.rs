@@ -1210,6 +1210,7 @@ fn open_authorize_url_impl(authorize_url: &str) -> anyhow::Result<()> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::needless_return)] // `return` required: target-cfg blocks below are not always present.
 fn open_authorize_url_impl(authorize_url: &str) -> anyhow::Result<()> {
     // Validate the URL up front so we never feed an unparsed string to
     // the system shell (defence in depth — the caller should already

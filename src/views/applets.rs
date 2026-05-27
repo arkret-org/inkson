@@ -7,8 +7,8 @@
 //!     the local raw-operation projection and renders them as registry rows
 //!     so users see which applets the Space already accepts.
 //!   * Surfaces a registration form bound to
-//!     [`crate::operation::cx_ops::applet_registration`] — fills `service_did`
-//!     + `namespace` + `capabilities` and submits via
+//!     [`crate::operation::cx_ops::applet_registration`] — fills `service_did`,
+//!     `namespace` and `capabilities` and submits via
 //!     `with_authed_api(api.submit_event_envelope)`.
 //!   * Per-session monitor lists active `protocol_session.start/status` rows
 //!     so an operator can see in-flight applet calls + their bridge errors.

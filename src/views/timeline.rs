@@ -403,12 +403,12 @@ pub fn TimelinePanel(
     let mut reply_to_index = use_signal(|| Option::<usize>::None);
     let mut thread_open = use_signal(|| Option::<usize>::None);
     let mut encrypt_toggle = use_signal(|| false);
-    let _typing_indicator = use_signal(|| String::new());
+    let _typing_indicator = use_signal(String::new);
     let mut read_receipts = use_signal(Vec::<String>::new);
     let mut receipt_status = use_signal(|| "Read receipt: none".to_owned());
-    let mut blob_status = use_signal(|| String::new());
+    let mut blob_status = use_signal(String::new);
     let mut attached_blob = use_signal(|| Option::<BlobAttachment>::None);
-    let mut write_status = use_signal(|| String::new());
+    let mut write_status = use_signal(String::new);
     let mut search_query = use_signal(String::new);
     let mut private_plaintext = use_signal(|| false);
     let mut plaintext_ack = use_signal(|| false);
@@ -421,7 +421,7 @@ pub fn TimelinePanel(
     // over the composer; `compose_upload_status` shows an inline
     // progress / error string for the most recent drop.
     let mut compose_dragover = use_signal(|| false);
-    let mut compose_upload_status = use_signal(|| String::new());
+    let mut compose_upload_status = use_signal(String::new);
     // A5 — personal blocklist. Renderers hide bodies from blocked
     // senders behind a "Show anyway" placeholder; `blocked_show_anyway`
     // tracks per-event opt-ins so once the user clicks reveal, the row
@@ -1145,10 +1145,10 @@ pub fn TimelinePanel(
                                                                 }
                                                                 Err(error) => {
                                                                     // Rollback optimistic redaction
-                                                                    if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid) {
-                                                                        if let Some(original) = original {
-                                                                            *found = original;
-                                                                        }
+                                                                    if let Some(found) = timeline.write().iter_mut().find(|candidate| candidate.id == eid)
+                                                                        && let Some(original) = original
+                                                                    {
+                                                                        *found = original;
                                                                     }
                                                                     write_status.set(format!("redact failed: {error}"));
                                                                 }
@@ -1394,7 +1394,7 @@ pub fn TimelinePanel(
                 },
                 ondragleave: move |_| compose_dragover.set(false),
                 ondrop: {
-                    let base = base_url_sig.clone();
+                    let base = base_url_sig;
                     move |evt| {
                         evt.prevent_default();
                         compose_dragover.set(false);

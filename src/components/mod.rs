@@ -4,15 +4,6 @@ use dioxus::prelude::*;
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires `on_switch` / `on_add_account` handlers.
 pub mod account_switcher;
-/// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
-/// next to the connection status indicator.
-pub mod offline_pending_badge;
-/// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
-/// `RealmClassBadge` (Principal / Collaboration, switcher).
-pub mod verify_badges;
-/// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
-/// toggle. Crash reports are off by default.
-pub mod report_problem;
 /// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
 /// Consumes [`crate::circle::CircleErrorKind`] and renders the
 /// localized user-facing string.
@@ -30,26 +21,30 @@ pub mod empty_state;
 /// retry callback so users can copy the soland trace ID into bug
 /// reports without leaving the failing surface.
 pub mod error_boundary;
+/// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
+/// next to the connection status indicator.
+pub mod offline_pending_badge;
 pub mod permission_pill;
-/// P5 — skeleton loaders for feed / agent list / key-backup history.
-pub mod skeleton;
-/// P5 — three-mode theme switcher (light / dark / follow system) with
-/// persistence routed through the caller's local-state path.
-pub mod theme_switcher;
 /// G3.Y3 — global policy-deny toast / banner. Mounted once near the
 /// app shell so any view inherits the 403 surface without needing to
 /// thread its own error UI.
 pub mod policy_deny_banner;
+/// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
+/// toggle. Crash reports are off by default.
+pub mod report_problem;
 pub mod shortcut_help;
+/// P5 — skeleton loaders for feed / agent list / key-backup history.
+pub mod skeleton;
 pub mod sync_badge;
+/// P5 — three-mode theme switcher (light / dark / follow system) with
+/// persistence routed through the caller's local-state path.
+pub mod theme_switcher;
+/// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
+/// `RealmClassBadge` (Principal / Collaboration, switcher).
+pub mod verify_badges;
 pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
-pub use offline_pending_badge::OfflinePendingBadge;
-pub use verify_badges::{NeedsVerificationBadge, RealmClass, RealmClassBadge};
-pub use report_problem::{
-    CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
-};
 pub use circle_error_toast::{
     CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
     take_circle_error,
@@ -60,19 +55,24 @@ pub use circle_scope_picker::{
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use error_boundary::{ErrorBoundary, RetryableError};
+pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,
 };
-pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
-pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use policy_deny_banner::{
     POLICY_DENY_AUTODISMISS_MS, PolicyDenyBanner, PolicyDenyEvent, is_policy_deny_code,
     push_policy_deny, take_policy_deny,
 };
+pub use report_problem::{
+    CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
+};
 pub use shortcut_help::{
     ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,
 };
+pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
 pub use sync_badge::{SyncBadge, SyncBadgeState};
+pub use theme_switcher::{ThemeMode, ThemeSwitcher};
+pub use verify_badges::{NeedsVerificationBadge, RealmClass, RealmClassBadge};
 pub use write_state::{WriteState, WriteStateExplainer, WriteStatePill};
 
 // LazyLinkBadge is declared below.

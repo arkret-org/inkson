@@ -255,8 +255,7 @@ mod tests {
             1,
             serde_json::json!({}),
         )
-        .err()
-        .expect("non-canonical signal_type must be rejected");
+        .expect_err("non-canonical signal_type must be rejected");
         assert!(err.to_string().contains("signal_type"));
     }
 

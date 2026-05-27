@@ -308,22 +308,17 @@ pub struct ResolveRealmResponse {
 /// `cx.schema.{realm,space}.v1` `schema` field on the projection
 /// body, or a yougen-local `__kind` tag used by the optimistic
 /// post-create save.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// Default tag is `Realm` because legacy projections (no schema marker) were
+// always Realms — yougen had no UI to create real Spaces before
+// M-SPACE-CREATE-1. Default tag keeps them visible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpacePreviewKind {
     /// `cx:realm:*` — security / sync / E2EE boundary.
+    #[default]
     Realm,
     /// `cx:space:*` — navigation container inside a Realm.
     Space,
-}
-
-impl Default for SpacePreviewKind {
-    fn default() -> Self {
-        // Legacy projections (no schema marker) were always Realms —
-        // yougen had no UI to create real Spaces before
-        // M-SPACE-CREATE-1. Default tag keeps them visible.
-        Self::Realm
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -146,6 +146,7 @@ pub fn grant_matches_principal_server(
 /// the await crashes any concurrent signal mutation with
 /// `AlreadyBorrowedMut` — typical victims are UI handlers that persist
 /// user preferences (e.g. the sidebar scope toggle).
+#[allow(clippy::large_enum_variant)] // session grant + proof bundle dominates the union; happy path.
 pub enum RefreshPrepared {
     /// Refresh is already resolved — caller turns this directly into
     /// the outcome and skips the network call.
@@ -511,8 +512,8 @@ mod tests {
 
     #[test]
     fn poll_constants_are_sane() {
-        assert!(POLL_INTERVAL_SECS > 0);
-        assert!(POLL_INTERVAL_SECS <= 60);
-        assert!(REFRESH_SKEW_SECS > POLL_INTERVAL_SECS as i64);
+        const { assert!(POLL_INTERVAL_SECS > 0) };
+        const { assert!(POLL_INTERVAL_SECS <= 60) };
+        const { assert!(REFRESH_SKEW_SECS > POLL_INTERVAL_SECS as i64) };
     }
 }

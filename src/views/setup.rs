@@ -359,7 +359,7 @@ fn parse_seed_members(seed_members: &str) -> Vec<String> {
         }
     };
 
-    for candidate in seed_members.split(|ch: char| matches!(ch, ',' | '\n' | '\r' | '\t' | ';')) {
+    for candidate in seed_members.split([',', '\n', '\r', '\t', ';']) {
         push_unique(candidate, &mut members);
     }
 
@@ -479,36 +479,35 @@ pub fn SetupPanel(
     if active_section == SetupSection::NewSpace && new_space_realm_id().is_empty() {
         let selected = selected_space();
         let selected = selected.trim();
-        if !selected.is_empty() {
-            if let Some(body) = state_store
+        if !selected.is_empty()
+            && let Some(body) = state_store
                 .read()
                 .load()
                 .space_projections
                 .get(selected)
                 .cloned()
+        {
+            let kind = match body
+                .get("__kind")
+                .and_then(|kind| kind.as_str())
+                .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
             {
-                let kind = match body
-                    .get("__kind")
-                    .and_then(|kind| kind.as_str())
-                    .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
-                {
-                    Some("space") | Some("cx.schema.space.v1") => "space",
-                    _ => "realm",
-                };
-                if kind == "realm" {
-                    new_space_realm_id.set(selected.to_owned());
-                } else {
-                    // For a Space row, the new sibling/child lives in
-                    // the same home Realm; the clicked Space becomes
-                    // the parent.
-                    let realm = body
-                        .get("realm_id")
-                        .and_then(|realm| realm.as_str())
-                        .unwrap_or(selected)
-                        .to_owned();
-                    new_space_realm_id.set(realm);
-                    new_space_parent_id.set(selected.to_owned());
-                }
+                Some("space") | Some("cx.schema.space.v1") => "space",
+                _ => "realm",
+            };
+            if kind == "realm" {
+                new_space_realm_id.set(selected.to_owned());
+            } else {
+                // For a Space row, the new sibling/child lives in
+                // the same home Realm; the clicked Space becomes
+                // the parent.
+                let realm = body
+                    .get("realm_id")
+                    .and_then(|realm| realm.as_str())
+                    .unwrap_or(selected)
+                    .to_owned();
+                new_space_realm_id.set(realm);
+                new_space_parent_id.set(selected.to_owned());
             }
         }
     }

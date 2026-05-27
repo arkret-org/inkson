@@ -50,11 +50,7 @@ impl CrashTelemetryPrefs {
 /// - `recent_tracing` — last N lines from the `telemetry` buffer.
 /// - `app_version` — the `CARGO_PKG_VERSION` constant.
 /// - `os` — `std::env::consts::OS` on native, `"web"` on wasm.
-pub fn build_report_body(
-    recent_tracing: &[String],
-    app_version: &str,
-    os: &str,
-) -> String {
+pub fn build_report_body(recent_tracing: &[String], app_version: &str, os: &str) -> String {
     let mut body = String::new();
     body.push_str("# yougen — problem report\n\n");
     body.push_str("Please describe what you were trying to do above this line.\n\n");
@@ -180,10 +176,7 @@ mod tests {
                 std::env::set_var("YOUGEN_CRASH_TELEMETRY_OPT_IN", value);
             }
             let prefs = CrashTelemetryPrefs::load_from_env();
-            assert!(
-                prefs.is_opt_in(),
-                "expected opt-in for value {value}"
-            );
+            assert!(prefs.is_opt_in(), "expected opt-in for value {value}");
         }
         // SAFETY: env mutation is serialised by ENV_LOCK above.
         unsafe {

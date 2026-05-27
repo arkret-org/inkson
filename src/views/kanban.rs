@@ -740,7 +740,9 @@ fn columns_from_lifecycle_projection(
 
     let mut cols = containers
         .iter()
-        .filter(|view| view.kind == "list" && view.parent_space_id.as_deref() == Some(board_id.as_str()))
+        .filter(|view| {
+            view.kind == "list" && view.parent_space_id.as_deref() == Some(board_id.as_str())
+        })
         .map(|view| KanbanColumn {
             id: view.container_space_id.clone(),
             title: if view.title.trim().is_empty() {
@@ -999,8 +1001,7 @@ fn overlay_local_card_creates(
     board_space_id: &str,
 ) -> Vec<KanbanColumn> {
     let state = state_store.load();
-    let columns =
-        overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
+    let columns = overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
     overlay_local_card_update_records(columns, &state.raw_operations)
 }
 
@@ -1022,7 +1023,11 @@ fn overlay_local_card_update_records(
         .filter_map(local_card_update_from_raw_operation)
     {
         for column in columns.iter_mut() {
-            if let Some(card) = column.cards.iter_mut().find(|card| card.id == update.flow_id) {
+            if let Some(card) = column
+                .cards
+                .iter_mut()
+                .find(|card| card.id == update.flow_id)
+            {
                 apply_card_update_overlay(card, &update);
             }
         }
@@ -1076,15 +1081,13 @@ fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<L
     let summary = patch.get("summary").and_then(extract_set_unset);
     let body_op = patch.get("body").and_then(extract_set_unset);
     let synthesis = patch.get("synthesis").and_then(extract_set_unset);
-    let fields = patch
-        .get("fields")
-        .and_then(|fields_op| {
-            if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
-                fields_op.get("value").cloned()
-            } else {
-                None
-            }
-        });
+    let fields = patch.get("fields").and_then(|fields_op| {
+        if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
+            fields_op.get("value").cloned()
+        } else {
+            None
+        }
+    });
 
     Some(LocalCardUpdate {
         flow_id,
@@ -2528,7 +2531,6 @@ pub fn KanbanPanel(
                                 onclick: {
                                     let c = card.clone();
                                     let route_space_id = card_detail_route_space_id(&selected_space);
-                                    let navigator = navigator.clone();
                                     move |_| {
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
@@ -2961,9 +2963,9 @@ pub fn KanbanPanel(
                         "card-detail-action-menu"
                     };
                     let summary_text = card_summary_text(&card.description);
-                    let overlay_navigator = navigator.clone();
+                    let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();
-                    let close_navigator = navigator.clone();
+                    let close_navigator = navigator;
                     let close_board_route = board_route_after_close.clone();
                     rsx! {
                         div {
@@ -3145,7 +3147,7 @@ pub fn KanbanPanel(
                                                                 format!("{label} gated: {}", gate.reason)
                                                             };
                                                             let testid_state = if gate.enabled { "open" } else { "denied" };
-                                                            let action_navigator = navigator.clone();
+                                                            let action_navigator = navigator;
                                                             let action_board_route = board_route_after_close.clone();
                                                             rsx! {
                                                                 button {
@@ -3733,18 +3735,6 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
         .cloned()
 }
 
-/// Collect a deduped, sorted list of actor DIDs from a cached space
-/// projection's roster-like fields. Handles both top-level entries
-/// (`projection.members`) and the wrapped `summary.members` shape
-/// soland emits for some space kinds. Each member entry is either a
-/// bare DID string or a map carrying a `did` / `actor_id` / `actor_did`.
-fn realm_member_dids(projection: Option<&Value>) -> Vec<String> {
-    realm_member_roster(projection)
-        .into_iter()
-        .map(|row| row.actor_id)
-        .collect()
-}
-
 /// Per-member entry harvested from a cached space projection.
 ///
 /// R3.1 (contrix-spec @ 7157ee8) — roster entries MUST NOT carry raw
@@ -3841,12 +3831,13 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
         Value::String(s) => {
             let trimmed = s.trim();
             if !trimmed.is_empty() {
-                out.entry(trimmed.to_owned()).or_insert_with(|| RealmMemberRow {
-                    actor_id: trimmed.to_owned(),
-                    membership: None,
-                    identity_event_ids: Vec::new(),
-                    identity_state_digest: None,
-                });
+                out.entry(trimmed.to_owned())
+                    .or_insert_with(|| RealmMemberRow {
+                        actor_id: trimmed.to_owned(),
+                        membership: None,
+                        identity_event_ids: Vec::new(),
+                        identity_state_digest: None,
+                    });
             }
         }
         Value::Array(items) => {
@@ -3997,36 +3988,6 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
     let mut out: Vec<String> = dids.into_iter().collect();
     out.sort();
     out
-}
-
-fn collect_dids_from_value(value: Option<&Value>, out: &mut BTreeSet<String>) {
-    let Some(value) = value else { return };
-    match value {
-        Value::String(s) => {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                out.insert(trimmed.to_owned());
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_dids_from_value(Some(item), out);
-            }
-        }
-        Value::Object(map) => {
-            for key in ["did", "actor_id", "actor_did", "principal_did", "id"] {
-                if let Some(child) = map.get(key) {
-                    if let Some(s) = child.as_str() {
-                        let trimmed = s.trim();
-                        if !trimmed.is_empty() {
-                            out.insert(trimmed.to_owned());
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 fn card_detail_route_space_id(space_id: &str) -> String {
@@ -5048,7 +5009,7 @@ fn relocate_card(
     let target_idx = columns
         .iter()
         .position(|c| c.id == target_column_id)
-        .or_else(|| Some(source_idx))?;
+        .or(Some(source_idx))?;
     let insert_idx = columns[target_idx]
         .cards
         .iter()
@@ -5624,12 +5585,9 @@ mod tests {
 
         let identity = MemberIdentity {
             schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-            realm_id: contrix_sdk::RealmId::new(
-                "cx:realm:01904100-0000-7000-8000-000000000001",
-            )
-            .unwrap(),
-            actor_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned())
+            realm_id: contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
+            actor_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
             subject_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned())
                 .unwrap(),
             primary_handle: Some(Handle::parse("alice:acme.example").unwrap()),
@@ -5657,7 +5615,10 @@ mod tests {
             identity_event_ids: vec![],
             identity_state_digest: None,
         };
-        assert_eq!(member_display_label(&row, Some(&identity)), "alice:acme.example");
+        assert_eq!(
+            member_display_label(&row, Some(&identity)),
+            "alice:acme.example"
+        );
 
         // Decryption-pending / no MemberIdentity → fall back to compact DID.
         let bare = RealmMemberRow {
@@ -6301,31 +6262,6 @@ mod tests {
         assert_eq!(card.body, "new body");
         assert_eq!(card.synthesis, "new synthesis");
         assert_eq!(card.state, CardState::Queued);
-    }
-
-    #[test]
-    fn realm_member_dids_dedupes_across_summary_and_top_level_roster_fields() {
-        let projection = json!({
-            "members": [
-                "did:web:alice.example",
-                { "did": "did:web:bob.example", "display_name": "Bob" },
-            ],
-            "owners": ["did:web:alice.example"],
-            "summary": {
-                "admins": [{ "actor_did": "did:web:carol.example" }],
-                "participants": ["did:web:bob.example"],
-            },
-        });
-        let dids = realm_member_dids(Some(&projection));
-        assert_eq!(
-            dids,
-            vec![
-                "did:web:alice.example".to_owned(),
-                "did:web:bob.example".to_owned(),
-                "did:web:carol.example".to_owned(),
-            ]
-        );
-        assert!(realm_member_dids(None).is_empty());
     }
 
     #[test]

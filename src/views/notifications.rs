@@ -62,7 +62,7 @@ pub fn NotificationsPanel(
     let mut group_by = use_signal(|| NotificationGroup::ByTime);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
-    let mut status_msg = use_signal(|| String::new());
+    let mut status_msg = use_signal(String::new);
     let server_unread = use_signal(|| 0usize);
 
     if !did_bootstrap() {

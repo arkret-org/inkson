@@ -131,7 +131,7 @@ pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, Auth
     #[cfg(not(test))]
     {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        return ensure_device_key_with_secure_store(store, secure_store.as_ref());
+        ensure_device_key_with_secure_store(store, secure_store.as_ref())
     }
 
     #[cfg(test)]
@@ -199,7 +199,7 @@ pub fn load_device_key(store: &LocalStateStore) -> Result<Option<DpopHandle>, Au
     #[cfg(not(test))]
     {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        return load_device_key_with_secure_store(store, secure_store.as_ref());
+        load_device_key_with_secure_store(store, secure_store.as_ref())
     }
 
     #[cfg(test)]

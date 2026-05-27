@@ -5657,62 +5657,44 @@ pub fn RouterView() -> Element {
         .unwrap_or_else(|| "system".to_owned());
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_signal(LocalStateStore::default);
-    let base_url = use_signal({
-        let initial_config = initial_config.clone();
-        move || initial_config.server_url
-    });
-    let mut account_did = use_signal({
-        let initial_config = initial_config.clone();
-        move || initial_config.account_did
-    });
-    let device_id = use_signal({
-        let initial_config = initial_config.clone();
-        move || initial_config.device_id
-    });
+    // Move-into-signal initialisers. Each `use_signal(...)` runs once on
+    // first render, so we pre-extract the fields and hand each closure a
+    // ready-to-move `String` instead of repeatedly cloning the whole
+    // `initial_config` struct.
+    let initial_server_url = initial_config.server_url.clone();
+    let initial_account_did = initial_config.account_did.clone();
+    let initial_device_id = initial_config.device_id.clone();
+    let base_url = use_signal(move || initial_server_url);
+    let mut account_did = use_signal(move || initial_account_did);
+    let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_token);
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
     let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let mut sync_cursor = use_signal({
-        let initial_local_state = initial_local_state.clone();
-        move || {
-            initial_local_state
-                .sync_cursor
-                .clone()
-                .unwrap_or_else(|| "-".to_owned())
-        }
-    });
-    let mut selected_space = use_signal({
-        let initial_spaces = initial_spaces.clone();
-        move || {
-            initial_spaces
-                .first()
-                .map(|space| space.space_id.clone())
-                .unwrap_or_default()
-        }
-    });
-    let mut spaces = use_signal({
-        let initial_spaces = initial_spaces.clone();
-        move || initial_spaces.clone()
-    });
+    let initial_sync_cursor = initial_local_state
+        .sync_cursor
+        .clone()
+        .unwrap_or_else(|| "-".to_owned());
+    let initial_selected_space = initial_spaces
+        .first()
+        .map(|space| space.space_id.clone())
+        .unwrap_or_default();
+    let initial_draft = initial_spaces
+        .first()
+        .and_then(|space| initial_local_state.drafts.get(&space.space_id))
+        .cloned()
+        .unwrap_or_default();
+    let initial_push_state =
+        crate::push::push_status_label(initial_local_state.push_registration.as_ref());
+    let initial_spaces_for_signal = initial_spaces.clone();
+    let mut sync_cursor = use_signal(move || initial_sync_cursor);
+    let mut selected_space = use_signal(move || initial_selected_space);
+    let mut spaces = use_signal(move || initial_spaces_for_signal);
     let mut timeline = use_signal(Vec::<TimelineEvent>::new);
-    let draft = use_signal({
-        let initial_local_state = initial_local_state.clone();
-        let initial_spaces = initial_spaces.clone();
-        move || {
-            initial_spaces
-                .first()
-                .and_then(|space| initial_local_state.drafts.get(&space.space_id))
-                .cloned()
-                .unwrap_or_default()
-        }
-    });
+    let draft = use_signal(move || initial_draft);
     let mut device_queue = use_signal(|| 0usize);
-    let push_state = use_signal({
-        let initial_local_state = initial_local_state.clone();
-        move || crate::push::push_status_label(initial_local_state.push_registration.as_ref())
-    });
+    let push_state = use_signal(move || initial_push_state);
     let frontier_state = use_signal(|| "Not loaded".to_owned());
     let crypto_state = use_signal(|| "No authenticated session".to_owned());
     let network_state = use_signal(|| "offline".to_owned());
@@ -5796,10 +5778,10 @@ pub fn RouterView() -> Element {
     {
         let mut system_theme_is_night = system_theme_is_night;
         use_effect(move || {
-            if theme() == "system" {
-                if let Some(is_night) = browser_shell_color_scheme_is_dark() {
-                    system_theme_is_night.set(is_night);
-                }
+            if theme() == "system"
+                && let Some(is_night) = browser_shell_color_scheme_is_dark()
+            {
+                system_theme_is_night.set(is_night);
             }
         });
     }
@@ -5839,10 +5821,7 @@ pub fn RouterView() -> Element {
         let mut state_store = state_store;
         let mut status = status;
         let mut last_error = last_error;
-        let config_store = config_store;
-        let base_url = base_url;
         let account_did = account_did;
-        let device_id = device_id;
         move || async move {
             loop {
                 // Drive prepare/exchange/commit by hand so the
@@ -5861,44 +5840,43 @@ pub fn RouterView() -> Element {
                     store.load_oidc_tokens_with_secure_store(&active_actor, secure_store.as_ref())
                 };
                 if let Some(bundle) = oidc_bundle {
-                    if crate::oidc::lifecycle::due_for_refresh(&bundle) {
-                        if crate::oidc::lifecycle::has_refresh_token(&bundle) {
-                            let result = refresh_oidc_bearer_for_server(
-                                &active_base,
-                                &active_actor,
-                                &active_device,
-                                &bundle,
-                            )
-                            .await;
-                            if !same_server_url(&active_base, &base_url()) {
-                                continue;
+                    if crate::oidc::lifecycle::due_for_refresh(&bundle)
+                        && crate::oidc::lifecycle::has_refresh_token(&bundle)
+                    {
+                        let result = refresh_oidc_bearer_for_server(
+                            &active_base,
+                            &active_actor,
+                            &active_device,
+                            &bundle,
+                        )
+                        .await;
+                        if !same_server_url(&active_base, &base_url()) {
+                            continue;
+                        }
+                        match result {
+                            Ok(next) => {
+                                let access_token = next.access_token.clone();
+                                state_store.write().set_oidc_tokens_with_secure_store(
+                                    Some(next),
+                                    &active_actor,
+                                    secure_store.as_ref(),
+                                );
+                                token.set(access_token.clone());
+                                persist_config(
+                                    config_store,
+                                    active_base.clone(),
+                                    active_actor.clone(),
+                                    active_device.clone(),
+                                    access_token,
+                                );
+                                status.set("Online".to_owned());
+                                last_error.set(None);
                             }
-                            match result {
-                                Ok(next) => {
-                                    let access_token = next.access_token.clone();
-                                    state_store.write().set_oidc_tokens_with_secure_store(
-                                        Some(next),
-                                        &active_actor,
-                                        secure_store.as_ref(),
-                                    );
-                                    token.set(access_token.clone());
-                                    persist_config(
-                                        config_store,
-                                        active_base.clone(),
-                                        active_actor.clone(),
-                                        active_device.clone(),
-                                        access_token,
-                                    );
-                                    status.set("Online".to_owned());
-                                    last_error.set(None);
-                                }
-                                Err(error) => {
-                                    // Keep the current bearer in place. A
-                                    // failed background refresh must not
-                                    // interrupt an otherwise usable page.
-                                    last_error
-                                        .set(Some(format!("OIDC refresh transient: {error}")));
-                                }
+                            Err(error) => {
+                                // Keep the current bearer in place. A
+                                // failed background refresh must not
+                                // interrupt an otherwise usable page.
+                                last_error.set(Some(format!("OIDC refresh transient: {error}")));
                             }
                         }
                     }
@@ -6099,10 +6077,10 @@ pub fn RouterView() -> Element {
         }
     });
     let active_space_id = effective_space_id.clone().unwrap_or_default();
-    if let Some(route_space_id) = routed_space_id.as_deref() {
-        if remembered_space_id != route_space_id {
-            selected_space.set(route_space_id.to_owned());
-        }
+    if let Some(route_space_id) = routed_space_id.as_deref()
+        && remembered_space_id != route_space_id
+    {
+        selected_space.set(route_space_id.to_owned());
     }
 
     let active_server_description = server_description();
@@ -6153,21 +6131,21 @@ pub fn RouterView() -> Element {
         &account_did(),
         context_space_id.as_deref(),
     );
-    if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface) {
-        if matches!(
+    if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface)
+        && matches!(
             &route,
             Route::TimelineSpace { .. } | Route::KanbanSpace { .. } | Route::DocumentSpace { .. }
-        ) {
-            let stored_surface =
-                load_space_surface_preference(&state_store(), &account_did(), space_id);
-            if stored_surface != surface {
-                persist_space_surface_preference(
-                    &mut state_store.write(),
-                    &account_did(),
-                    space_id,
-                    surface,
-                );
-            }
+        )
+    {
+        let stored_surface =
+            load_space_surface_preference(&state_store(), &account_did(), space_id);
+        if stored_surface != surface {
+            persist_space_surface_preference(
+                &mut state_store.write(),
+                &account_did(),
+                space_id,
+                surface,
+            );
         }
     }
 
@@ -6279,8 +6257,8 @@ pub fn RouterView() -> Element {
                 ""
             }
         );
-        let login_navigator = navigator.clone();
-        let callback_navigator = navigator.clone();
+        let login_navigator = navigator;
+        let callback_navigator = navigator;
 
         return rsx! {
             style { "{STYLE}" }
@@ -7058,13 +7036,13 @@ pub fn RouterView() -> Element {
                                                 global_query.set(String::new());
                                                 event.prevent_default();
                                                 event.stop_propagation();
-                                            } else if key == "Enter" {
-                                                if !global_query().trim().is_empty() {
-                                                    view.set(Route::to_view(&Route::Directory));
-                                                    let _ = navigator.push(Route::Directory);
-                                                    palette_open.set(false);
-                                                    topbar_search_expanded.set(false);
-                                                }
+                                            } else if key == "Enter"
+                                                && !global_query().trim().is_empty()
+                                            {
+                                                view.set(Route::to_view(&Route::Directory));
+                                                let _ = navigator.push(Route::Directory);
+                                                palette_open.set(false);
+                                                topbar_search_expanded.set(false);
                                             }
                                         },
                                     }
@@ -7533,10 +7511,10 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
+                        if let Some(sid) = route.space_id()
+                            && selected_space() != sid
+                        {
+                            selected_space.set(sid.to_owned());
                         }
                         if minimal_ready {
                             rsx! {
@@ -7561,10 +7539,10 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Chat { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
+                        if let Some(sid) = route.space_id()
+                            && selected_space() != sid
+                        {
+                            selected_space.set(sid.to_owned());
                         }
                         if minimal_ready {
                             rsx! {
@@ -7695,10 +7673,10 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
+                        if let Some(sid) = route.space_id()
+                            && selected_space() != sid
+                        {
+                            selected_space.set(sid.to_owned());
                         }
                         if full_ready {
                             rsx! {
@@ -7724,10 +7702,10 @@ pub fn RouterView() -> Element {
                         crate::views::developer::DeveloperToolsPanel { state_store }
                     },
                     Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
+                        if let Some(sid) = route.space_id()
+                            && selected_space() != sid
+                        {
+                            selected_space.set(sid.to_owned());
                         }
                         if kanban_ready {
                             rsx! {
@@ -7757,10 +7735,10 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
-                        if let Some(sid) = route.space_id() {
-                            if selected_space() != sid {
-                                selected_space.set(sid.to_owned());
-                            }
+                        if let Some(sid) = route.space_id()
+                            && selected_space() != sid
+                        {
+                            selected_space.set(sid.to_owned());
                         }
                         let document_ref = match &route {
                             Route::DocumentSpace { space_id } if space_id.starts_with("cx:morph:") => {
@@ -8486,7 +8464,7 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
 }
 
 fn clamp_sidebar_width(width: f64) -> f64 {
-    width.max(MIN_SIDEBAR_WIDTH).min(MAX_SIDEBAR_WIDTH)
+    width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
 }
 
 fn load_sidebar_width_preference(state_store: &LocalStateStore) -> f64 {

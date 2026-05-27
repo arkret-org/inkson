@@ -123,12 +123,17 @@ impl Default for OfflineQueue {
     }
 }
 
+/// Callback invoked when the `NetworkState` transitions. Boxed so the
+/// coordinator can hold any closure; `Send + Sync` so it can move
+/// across the spawn boundaries the reconnection loop uses.
+type NetworkStateCallback = Box<dyn Fn(NetworkState) + Send + Sync>;
+
 /// Coordinates reconnection and replay of queued operations.
 #[derive(Clone)]
 pub struct ReconnectionCoordinator {
     queue: OfflineQueue,
     network_state: Arc<RwLock<NetworkState>>,
-    on_state_change: Arc<RwLock<Option<Box<dyn Fn(NetworkState) + Send + Sync>>>>,
+    on_state_change: Arc<RwLock<Option<NetworkStateCallback>>>,
 }
 
 impl ReconnectionCoordinator {
@@ -427,9 +432,7 @@ pub async fn enqueue_settings_write(
 /// P3B.5 — enqueue a chime push-preference write. Lower max retry
 /// budget than messages because the user can re-toggle the preference
 /// trivially.
-pub async fn enqueue_push_pref_write(
-    body: serde_json::Value,
-) -> Result<(), OfflineError> {
+pub async fn enqueue_push_pref_write(body: serde_json::Value) -> Result<(), OfflineError> {
     let op = QueuedOperationBuilder::new("/api/v1/push/preferences", "PUT")
         .with_body(body)
         .with_op_type("push.prefs")
@@ -482,6 +485,7 @@ pub fn spawn_offline_drain(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)] // tests intentionally serialize on a sync Mutex.
 mod tests {
     use super::*;
 

@@ -2158,7 +2158,7 @@ impl LocalStateStore {
             .into_values()
             .filter(|record| record.space_id == space_id)
             .collect();
-        out.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+        out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
     }
 
@@ -2167,7 +2167,7 @@ impl LocalStateStore {
     pub fn all_move_submissions(&self) -> Vec<MoveSubmissionRecord> {
         let mut out: Vec<MoveSubmissionRecord> =
             self.load().move_submissions.into_values().collect();
-        out.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+        out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
     }
 
@@ -2261,7 +2261,7 @@ impl LocalStateStore {
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-            return self.ensure_local_identity_with_secure_store(secure_store.as_ref());
+            self.ensure_local_identity_with_secure_store(secure_store.as_ref())
         }
         #[cfg(test)]
         {
@@ -2378,14 +2378,14 @@ impl LocalStateStore {
         let key = format!("coauth.refresh_token.{actor_did}");
         let stripped = match bundle {
             Some(mut bundle) => {
-                if let Some(refresh) = bundle.refresh_token.take() {
-                    if let Err(error) = secure_store.store_secret(&key, &refresh) {
-                        tracing::warn!(
-                            ?error,
-                            actor = actor_did,
-                            "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
-                        );
-                    }
+                if let Some(refresh) = bundle.refresh_token.take()
+                    && let Err(error) = secure_store.store_secret(&key, &refresh)
+                {
+                    tracing::warn!(
+                        ?error,
+                        actor = actor_did,
+                        "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
+                    );
                 }
                 Some(bundle)
             }
@@ -2712,10 +2712,10 @@ impl LocalStateStore {
     }
 
     fn ensure_cached_loaded(&mut self) {
-        if self.cached == ClientLocalState::default() {
-            if let Some(state) = self.read_persisted_state() {
-                self.cached = state;
-            }
+        if self.cached == ClientLocalState::default()
+            && let Some(state) = self.read_persisted_state()
+        {
+            self.cached = state;
         }
     }
 }
@@ -2813,7 +2813,7 @@ fn xor_decrypt(key: &str, hex_data: &str) -> Option<String> {
 }
 
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     (0..hex.len())

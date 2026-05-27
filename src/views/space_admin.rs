@@ -142,10 +142,7 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
         _ => {
             let has_parent = projection_string(
                 body,
-                &[
-                    &["parent_space_id"],
-                    &["summary", "parent_space_id"],
-                ],
+                &[&["parent_space_id"], &["summary", "parent_space_id"]],
             )
             .is_some();
             if subject_id.starts_with("cx:space:") && has_parent {
@@ -242,13 +239,13 @@ pub fn SpaceAdminPanel(
     state_store: Signal<LocalStateStore>,
     active_section: Option<String>,
 ) -> Element {
-    let mut space_name = use_signal(|| String::new());
-    let mut space_description = use_signal(|| String::new());
+    let mut space_name = use_signal(String::new);
+    let mut space_description = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut invite_target = use_signal(String::new);
-    let mut status_msg = use_signal(|| String::new());
+    let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<String>::new);
     // A5 — personal blocklist confirm state. `Some(did)` while a
     // block-this-user confirmation modal is open for that DID; resets
@@ -1231,7 +1228,7 @@ pub fn SpaceAdminPanel(
                                         status_msg.set("invite target is required".to_owned());
                                         return;
                                     }
-                                    let wait_for = active_sync_token(&sync_cursor());
+                                    let wait_for = active_sync_token(sync_cursor());
                                     // Client-generated invite_id — spec-canonical (no
                                     // two-phase server lookup needed; cx.invite.create
                                     // event is the source of truth).
@@ -1704,7 +1701,7 @@ pub fn SpaceAdminPanel(
                                         let space = space.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
-                                        let wait_for = active_sync_token(&sync_cursor());
+                                        let wait_for = active_sync_token(sync_cursor());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => {
@@ -1764,7 +1761,7 @@ pub fn SpaceAdminPanel(
                                         let space = space.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
-                                        let wait_for = active_sync_token(&sync_cursor());
+                                        let wait_for = active_sync_token(sync_cursor());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => {

@@ -901,10 +901,10 @@ pub fn DocumentPanel(
                                         let mut store = state_store;
                                         move |_| {
                                             let text = edit_text().trim().to_owned();
-                                            if !text.is_empty() {
-                                                if let Some(b) = blocks.write().iter_mut().find(|b| b.id == editing_block().unwrap_or_default()) {
-                                                    b.content = text;
-                                                }
+                                            if !text.is_empty()
+                                                && let Some(b) = blocks.write().iter_mut().find(|b| b.id == editing_block().unwrap_or_default())
+                                            {
+                                                b.content = text;
                                             }
                                             editing_block.set(None);
                                             edit_text.set(String::new());

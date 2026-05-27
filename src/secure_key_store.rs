@@ -216,11 +216,9 @@ impl SecureKeyStore for MemorySecureKeyStore {
         // returned `String` in `zeroize::Zeroizing` so their copy is
         // also wiped on drop.
         match guard.get(key) {
-            Some(bytes) => Ok(Some(
-                String::from_utf8(bytes.to_vec()).map_err(|err| {
-                    SecureKeyStoreError::Backend(format!("stored secret not utf8: {err}"))
-                })?,
-            )),
+            Some(bytes) => Ok(Some(String::from_utf8(bytes.to_vec()).map_err(|err| {
+                SecureKeyStoreError::Backend(format!("stored secret not utf8: {err}"))
+            })?)),
             None => Ok(None),
         }
     }
@@ -1190,11 +1188,10 @@ mod indexed_db_hardening_tests {
 
     #[test]
     fn migration_plan_for_same_version_is_none() {
-        assert!(IndexedDbSchemaMigration::plan(
-            IndexedDbSchemaVersion::V1,
-            IndexedDbSchemaVersion::V1
-        )
-        .is_none());
+        assert!(
+            IndexedDbSchemaMigration::plan(IndexedDbSchemaVersion::V1, IndexedDbSchemaVersion::V1)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1206,10 +1203,8 @@ mod indexed_db_hardening_tests {
 
     #[test]
     fn migration_plan_empty_until_v2_lands() {
-        let plan = IndexedDbSchemaMigration::plan(
-            IndexedDbSchemaVersion::V1,
-            IndexedDbSchemaVersion(2),
-        );
+        let plan =
+            IndexedDbSchemaMigration::plan(IndexedDbSchemaVersion::V1, IndexedDbSchemaVersion(2));
         // The plan slot is populated (Some) but contains no steps yet
         // because the registered list is empty until V2 lands.
         let plan = plan.expect("plan should be Some for forward jump");
@@ -2628,7 +2623,8 @@ mod tests {
         let bridge = Arc::new(TestHostSecretBridge::new("no-bio"));
         bridge.set_biometric_required(false);
         bridge.set_biometric_accept(false);
-        let store = HostBridgeSecureKeyStore::new("svc.no-bio", bridge as Arc<dyn HostSecretBridge>);
+        let store =
+            HostBridgeSecureKeyStore::new("svc.no-bio", bridge as Arc<dyn HostSecretBridge>);
         store.store_secret("rt", "secret").expect("not gated");
         assert_eq!(
             store.get_secret("rt").expect("not gated").as_deref(),

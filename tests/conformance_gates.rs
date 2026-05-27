@@ -74,7 +74,7 @@ fn rust_files(root: &Path) -> Vec<PathBuf> {
             continue;
         }
         let path = entry.into_path();
-        if path.extension().map_or(false, |e| e == "rs") {
+        if path.extension().is_some_and(|e| e == "rs") {
             files.push(path);
         }
     }
@@ -133,7 +133,7 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
             panic!("read schemas dir {} failed: {err}", schemas_dir.display());
         }) {
             let path = entry.expect("schema dir entry").path();
-            if path.extension().map_or(true, |ext| ext != "json") {
+            if path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
             let raw = fs::read_to_string(&path)
@@ -489,17 +489,17 @@ fn collect_operation_ids(value: &Value, out: &mut BTreeSet<String>) {
                     if let Some(id) = child.as_str() {
                         out.insert(id.to_owned());
                     }
-                } else if key == "operations" {
-                    if let Some(array) = child.as_array() {
-                        for entry in array {
-                            if let Some(id) = entry.as_str() {
-                                out.insert(id.to_owned());
-                            } else {
-                                collect_operation_ids(entry, out);
-                            }
+                } else if key == "operations"
+                    && let Some(array) = child.as_array()
+                {
+                    for entry in array {
+                        if let Some(id) = entry.as_str() {
+                            out.insert(id.to_owned());
+                        } else {
+                            collect_operation_ids(entry, out);
                         }
-                        continue;
                     }
+                    continue;
                 }
                 collect_operation_ids(child, out);
             }

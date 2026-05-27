@@ -1330,13 +1330,11 @@ pub fn SettingsPanel(
                                                         spawn(async move {
                                                             if let Ok(api) =
                                                                 crate::views::helpers::authed_api(&base, api_token)
-                                                            {
-                                                                if let Err(err) = api
+                                                                && let Err(err) = api
                                                                     .update_profile(None, None, Some(""))
                                                                     .await
-                                                                {
-                                                                    tracing::warn!("avatar profile clear failed: {err}");
-                                                                }
+                                                            {
+                                                                tracing::warn!("avatar profile clear failed: {err}");
                                                             }
                                                         });
                                                     }
@@ -2833,7 +2831,7 @@ pub fn SettingsPanel(
                                     "data-testid": "blocklist-add",
                                     disabled: !did_valid,
                                     onclick: {
-                                        let base = base_url.clone();
+                                        let base = base_url;
                                         move |_| {
                                             let did = blocklist_did_input().trim().to_owned();
                                             if did.is_empty() {
@@ -2941,7 +2939,7 @@ pub fn SettingsPanel(
                                                 "data-testid": "blocklist-unblock",
                                                 onclick: {
                                                     let did = entry.did.clone();
-                                                    let base = base_url.clone();
+                                                    let base = base_url;
                                                     move |_| {
                                                         let changed = state_store
                                                             .write()

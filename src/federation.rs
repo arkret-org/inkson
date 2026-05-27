@@ -53,10 +53,10 @@ pub struct TrustBundle {
 /// F-FED-1: a federation transaction held back from local state
 /// because its origin wasn't pinned at receive time.
 ///
-/// Carries the raw transaction id + origin / destination domains
-/// + the verdict that originally landed the row in quarantine, so
-/// the UI can render a precise reason ("origin not pinned" /
-/// "signature mismatch" / "destination not us"). When the operator
+/// Carries the raw transaction id, origin and destination domains,
+/// and the verdict that originally landed the row in quarantine, so
+/// the UI can render a precise reason ("origin not pinned",
+/// "signature mismatch", "destination not us"). When the operator
 /// later pins the missing domain we can re-evaluate via
 /// [`TrustBundle::reverify_quarantined_against`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,7 +577,8 @@ mod tests {
 
         // Operator pins bob.example → reverify should promote the row.
         bundle.add_anchor(anchor("bob.example", "shared-key"));
-        let promoted = bundle.reverify_quarantined_against("alice.example", &[tx.clone()]);
+        let promoted =
+            bundle.reverify_quarantined_against("alice.example", std::slice::from_ref(&tx));
         assert_eq!(promoted, vec![tx.transaction_id.clone()]);
         assert!(bundle.quarantined().is_empty());
     }

@@ -42,11 +42,11 @@ pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
         push_circle_error(kind);
         return true;
     }
-    if let Some(reason) = reason {
-        if let Some(kind) = CircleErrorKind::from_reason_code(reason) {
-            push_circle_error(kind);
-            return true;
-        }
+    if let Some(reason) = reason
+        && let Some(kind) = CircleErrorKind::from_reason_code(reason)
+    {
+        push_circle_error(kind);
+        return true;
     }
     false
 }
@@ -63,10 +63,10 @@ pub struct CircleErrorToastProps {
 pub fn CircleErrorToast(props: CircleErrorToastProps) -> Element {
     let mut current = use_signal(|| Option::<CircleErrorKind>::None);
 
-    if current.read().is_none() {
-        if let Some(kind) = take_circle_error() {
-            current.set(Some(kind));
-        }
+    if current.read().is_none()
+        && let Some(kind) = take_circle_error()
+    {
+        current.set(Some(kind));
     }
 
     let Some(kind) = *current.read() else {
@@ -122,14 +122,20 @@ mod tests {
     fn dispatch_classifies_reason_code() {
         // Drain any prior queue entry so this test is hermetic.
         let _ = take_circle_error();
-        assert!(maybe_dispatch_circle_error("failed_precondition", Some("circle_not_active")));
+        assert!(maybe_dispatch_circle_error(
+            "failed_precondition",
+            Some("circle_not_active")
+        ));
         assert_eq!(take_circle_error(), Some(CircleErrorKind::NotActive));
     }
 
     #[test]
     fn dispatch_ignores_unrelated_codes() {
         let _ = take_circle_error();
-        assert!(!maybe_dispatch_circle_error("invalid_param", Some("missing_field")));
+        assert!(!maybe_dispatch_circle_error(
+            "invalid_param",
+            Some("missing_field")
+        ));
         assert_eq!(take_circle_error(), None);
     }
 }

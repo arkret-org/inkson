@@ -121,7 +121,7 @@ const MAC_OUTER_PAD: u8 = 0x5c;
 const MAC_INNER_PAD: u8 = 0x36;
 
 /// Phase A.6 #2: AEAD envelope version. `0` = legacy SHA-256 keystream
-/// + manual HMAC (pre-A.6, accepted for backward compatibility via
+/// with manual HMAC (pre-A.6, accepted for backward compatibility via
 /// [`decrypt_envelope_legacy_sha256_keystream`]); `1` = ChaCha20-Poly1305
 /// AEAD with `(salt, epoch, recorded_at, magic)` bound into the AAD.
 pub const AEAD_VERSION_LEGACY_KEYSTREAM: u8 = 0;
@@ -667,7 +667,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     (0..hex.len())

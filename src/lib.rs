@@ -1,3 +1,10 @@
+// Many helpers and Dioxus components take more parameters than clippy's
+// default `too_many_arguments` threshold of 7 — this is a UI crate where
+// builders, API wrappers, and component prop bundles routinely cross
+// that line. Allow at the crate level rather than peppering individual
+// items with `#[allow(...)]`.
+#![allow(clippy::too_many_arguments)]
+
 pub mod account_data;
 pub mod anchor_witness;
 pub mod api;

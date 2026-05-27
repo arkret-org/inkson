@@ -307,9 +307,7 @@ mod tests {
     #[test]
     fn delivery_binding_handed_over_uses_error_code() {
         assert_eq!(
-            CircleErrorKind::from_error_code(
-                ERROR_CODE_DELIVERY_BINDING_HANDED_OVER
-            ),
+            CircleErrorKind::from_error_code(ERROR_CODE_DELIVERY_BINDING_HANDED_OVER),
             Some(CircleErrorKind::DeliveryBindingHandedOver)
         );
         assert_eq!(CircleErrorKind::from_error_code("invalid_param"), None);

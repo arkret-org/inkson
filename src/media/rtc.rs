@@ -4,7 +4,7 @@
 //! binding profile that landed in contrix-spec round R3:
 //!
 //! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token
-//!   + `participant_binding` from soland's `POST /rtc/token` endpoint
+//!   and `participant_binding` from soland's `POST /rtc/token` endpoint
 //!   via the SDK helper [`contrix_sdk::media::call_media_token_exchange`].
 //! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure
 //!   with retry / leave options. No silent fallback to a different focus.
@@ -104,7 +104,9 @@ impl RtcClientError {
             Self::ParticipantBindingInvalid => "error.call.participant_binding_invalid",
             Self::ParticipantIdentityUnrecognised => "error.call.participant_identity_unrecognised",
             Self::E2eeKeySourceUnauthorised => "error.call.e2ee_key_source_unauthorised",
-            Self::RecordingArtifactPipelineBypassed => "error.call.recording_artifact_pipeline_bypassed",
+            Self::RecordingArtifactPipelineBypassed => {
+                "error.call.recording_artifact_pipeline_bypassed"
+            }
         }
     }
 

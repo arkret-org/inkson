@@ -916,7 +916,7 @@ pub fn sign_unsigned_move(
 }
 
 /// Encode an Ed25519 public key as the multibase form did:key DID URLs
-/// + DID Document `verificationMethod` entries use:
+/// and DID Document `verificationMethod` entries use:
 /// `z<base58btc(0xed 0x01 || pubkey32)>`. Mirrors the SDK's internal
 /// helper so yougen can build did:key DIDs locally.
 pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String {

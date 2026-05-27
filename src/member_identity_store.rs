@@ -146,7 +146,11 @@ impl MemberIdentityStore {
                 {
                     continue;
                 }
-                owned.push((event_id, &stored_event.payload, stored_event.decryption_pending));
+                owned.push((
+                    event_id,
+                    &stored_event.payload,
+                    stored_event.decryption_pending,
+                ));
             }
         }
         if owned.is_empty() {
@@ -160,8 +164,10 @@ impl MemberIdentityStore {
 
         // Map effective events back to their original index so we can
         // look up the `decryption_pending` flag.
-        let effective_ids: Vec<String> =
-            effective.iter().map(|(id, _)| id.as_str().to_owned()).collect();
+        let effective_ids: Vec<String> = effective
+            .iter()
+            .map(|(id, _)| id.as_str().to_owned())
+            .collect();
         // Pick the latest `asserted_at` plaintext identity among the
         // effective set. If all are pending, return None.
         let mut best: Option<MemberIdentity> = None;

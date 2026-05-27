@@ -264,7 +264,7 @@ fn is_bare_url(token: &str) -> bool {
 }
 
 fn strip_trailing_punct(s: &str) -> &str {
-    s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ';' | ':'))
+    s.trim_end_matches(['.', ',', ')', ']', '!', '?', ';', ':'])
 }
 
 fn blob_ref_media_type_hint(blob_ref: &str) -> Option<String> {

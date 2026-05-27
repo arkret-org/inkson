@@ -32,7 +32,7 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_persisted_str(value: &str) -> Self {
         match value {
             "light" => Self::Light,
             "night" | "dark" => Self::Dark,
@@ -87,7 +87,7 @@ pub struct ThemeSwitcherProps {
 #[component]
 pub fn ThemeSwitcher(props: ThemeSwitcherProps) -> Element {
     let mut theme = props.theme;
-    let active = ThemeMode::from_str(&theme.read().clone());
+    let active = ThemeMode::from_persisted_str(&theme.read().clone());
 
     rsx! {
         div {
@@ -99,7 +99,7 @@ pub fn ThemeSwitcher(props: ThemeSwitcherProps) -> Element {
             for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
                 {
                     let is_active = active == mode;
-                    let on_persist = props.on_persist.clone();
+                    let on_persist = props.on_persist;
                     let mode_value = mode;
                     rsx! {
                         button {
@@ -136,20 +136,20 @@ mod tests {
     fn round_trip_persisted_string() {
         for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
             let s = mode.as_persisted_str();
-            assert_eq!(ThemeMode::from_str(s), mode);
+            assert_eq!(ThemeMode::from_persisted_str(s), mode);
         }
     }
 
     #[test]
     fn dark_alias_normalises_to_dark_mode() {
-        assert_eq!(ThemeMode::from_str("dark"), ThemeMode::Dark);
-        assert_eq!(ThemeMode::from_str("night"), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from_persisted_str("dark"), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from_persisted_str("night"), ThemeMode::Dark);
     }
 
     #[test]
     fn unknown_value_falls_back_to_system() {
-        assert_eq!(ThemeMode::from_str(""), ThemeMode::System);
-        assert_eq!(ThemeMode::from_str("garbage"), ThemeMode::System);
+        assert_eq!(ThemeMode::from_persisted_str(""), ThemeMode::System);
+        assert_eq!(ThemeMode::from_persisted_str("garbage"), ThemeMode::System);
     }
 
     #[test]

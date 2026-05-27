@@ -15,9 +15,7 @@ use chime::{
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::secure_key_store::{
-    SecureKeyStore, SecureKeyStoreError, unwrap_secret, wrap_secret,
-};
+use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError, unwrap_secret, wrap_secret};
 
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
@@ -140,14 +138,13 @@ fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Resu
                 validate_blind_wakeup_payload_at(value, &format!("{path}[{idx}]"))?;
             }
         }
-        Value::String(value) => {
+        Value::String(value)
             if value.starts_with("did:")
                 || value.starts_with("cx:space:")
                 || value.starts_with("cx:flow:")
-                || value.starts_with("cx:event:")
-            {
-                anyhow::bail!("blind push payload leaks stable id at {path}");
-            }
+                || value.starts_with("cx:event:") =>
+        {
+            anyhow::bail!("blind push payload leaks stable id at {path}");
         }
         _ => {}
     }
@@ -968,9 +965,9 @@ fn load_or_create_push_token_wrap_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<[u8; 32], SecureKeyStoreError> {
     if let Some(existing) = store.get_secret(PUSH_TOKEN_WRAP_SEED_KEY)? {
-        let bytes = STANDARD_NO_PAD.decode(existing.as_bytes()).map_err(|err| {
-            SecureKeyStoreError::Backend(format!("push wrap seed decode: {err}"))
-        })?;
+        let bytes = STANDARD_NO_PAD
+            .decode(existing.as_bytes())
+            .map_err(|err| SecureKeyStoreError::Backend(format!("push wrap seed decode: {err}")))?;
         if bytes.len() != 32 {
             return Err(SecureKeyStoreError::Backend(format!(
                 "push wrap seed length {}, expected 32",
@@ -1164,6 +1161,7 @@ fn sha256_hex(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)] // inner gateway field needs a separate type literal.
 mod tests {
     use super::*;
 
@@ -1537,8 +1535,7 @@ mod tests {
     #[test]
     fn build_register_request_with_secure_store_persists_token() {
         let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
-        let request =
-            build_register_request_with_secure_store("dev_yougen", None, &store).unwrap();
+        let request = build_register_request_with_secure_store("dev_yougen", None, &store).unwrap();
         assert_eq!(request.device_id, "dev_yougen");
         assert!(!request.push_key.is_empty());
 

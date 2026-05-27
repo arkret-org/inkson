@@ -857,10 +857,10 @@ fn agent_dids_from_raw_operations(
         // `cx.agent.endpoint` builder always stamps `space_id` on the
         // payload, but tolerate older rows by also accepting records
         // with `space_id = None`.
-        if let Some(record_space) = record.space_id.as_deref() {
-            if record_space != space_id {
-                continue;
-            }
+        if let Some(record_space) = record.space_id.as_deref()
+            && record_space != space_id
+        {
+            continue;
         }
         let did = record
             .payload
@@ -868,10 +868,10 @@ fn agent_dids_from_raw_operations(
             .and_then(|b| b.get("agent_did"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        if let Some(did) = did {
-            if !out.iter().any(|existing| existing == &did) {
-                out.push(did);
-            }
+        if let Some(did) = did
+            && !out.iter().any(|existing| existing == &did)
+        {
+            out.push(did);
         }
     }
     out
@@ -1292,11 +1292,11 @@ fn chat_message_create_operation(
         "mentions": mention_values,
         "mention_relations": mention_relations,
     });
-    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("reply_to".to_owned(), json!(reply_to));
-            obj.insert("thread_id".to_owned(), json!(reply_to));
-        }
+    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty())
+        && let Some(obj) = payload.as_object_mut()
+    {
+        obj.insert("reply_to".to_owned(), json!(reply_to));
+        obj.insert("thread_id".to_owned(), json!(reply_to));
     }
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
@@ -2340,7 +2340,7 @@ pub fn ChatPanel(
     // textarea; `compose_upload_status` shows an inline progress / error
     // string for the most recent drop or hidden-input upload.
     let mut compose_dragover = use_signal(|| false);
-    let mut compose_upload_status = use_signal(|| String::new());
+    let mut compose_upload_status = use_signal(String::new);
     // A6.3 message pinning. Local-only scaffolding: the spec does not
     // yet define a `cx.message.pin` event_kind, so we keep pin state in
     // a per-space Signal and surface it at the top of the discussion.
@@ -2492,26 +2492,25 @@ pub fn ChatPanel(
         .rev()
         .find(|msg| !msg.id.is_empty() && !msg.pending)
         .map(|msg| msg.id.clone());
-    if let Some(top_event) = highest_visible_event_id.as_ref() {
-        if latest_read_cursor().as_str() != top_event {
-            latest_read_cursor.set(top_event.clone());
-            // Post the visible read receipt through the canonical
-            // ephemeral channel; local marker state keeps the rendered
-            // testid surface stable while server projection catches up.
-            let base = base_url.clone();
-            let space = selected_space.clone();
-            let event_id = top_event.clone();
-            let actor = account_did.clone();
-            let api_token = token();
-            spawn(async move {
-                let _ =
-                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_receipt(&space, &actor, &event_id, "cx.receipt.read")
-                            .await
-                    })
-                    .await;
-            });
-        }
+    if let Some(top_event) = highest_visible_event_id.as_ref()
+        && latest_read_cursor().as_str() != top_event
+    {
+        latest_read_cursor.set(top_event.clone());
+        // Post the visible read receipt through the canonical
+        // ephemeral channel; local marker state keeps the rendered
+        // testid surface stable while server projection catches up.
+        let base = base_url.clone();
+        let space = selected_space.clone();
+        let event_id = top_event.clone();
+        let actor = account_did.clone();
+        let api_token = token();
+        spawn(async move {
+            let _ = crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+                api.send_receipt(&space, &actor, &event_id, "cx.receipt.read")
+                    .await
+            })
+            .await;
+        });
     }
     let messages_for_reply_lookup = all_messages_snapshot.clone();
     let messages_for_composer_lookup = all_messages_snapshot.clone();
@@ -2629,7 +2628,7 @@ pub fn ChatPanel(
         initial_sync_requested.set(true);
         let base = base_url.clone();
         let api_token = token();
-        let wait_for = active_sync_token(&sync_cursor());
+        let wait_for = active_sync_token(sync_cursor());
         let selected_space_for_load = selected_space.clone();
         let selected_scope_for_load = selected_space_scope.clone();
         let account_did_for_load = account_did.clone();
@@ -2694,10 +2693,10 @@ pub fn ChatPanel(
                 &mut channels.write(),
                 channels_from_local_state(&state_store.read().load()),
             );
-            if selected_channel().trim().is_empty() {
-                if let Some(first_channel) = channels.read().first() {
-                    selected_channel.set(first_channel.flow_id.clone());
-                }
+            if selected_channel().trim().is_empty()
+                && let Some(first_channel) = channels.read().first()
+            {
+                selected_channel.set(first_channel.flow_id.clone());
             }
             if !loaded_messages.is_empty() {
                 merge_chat_messages(&mut messages.write(), loaded_messages);
@@ -3049,10 +3048,10 @@ pub fn ChatPanel(
                                                     op.payload["summary"] = json!(summary.clone());
                                                     op.payload["object"]["summary"] = json!(summary.clone());
                                                 }
-                                                if !create_card {
-                                                    if let Some(tracks) = op.payload["object"]["tracks"].as_object_mut() {
-                                                        tracks.remove("synthesis");
-                                                    }
+                                                if !create_card
+                                                    && let Some(tracks) = op.payload["object"]["tracks"].as_object_mut()
+                                                {
+                                                    tracks.remove("synthesis");
                                                 }
                                                 if let Err(error) = op.refresh_proof_hashes() {
                                                     status_msg.set(format!(
@@ -3070,7 +3069,7 @@ pub fn ChatPanel(
                                             }
                                         };
                                         let api_token = token();
-                                        let wait_for = active_sync_token(&sync_cursor());
+                                        let wait_for = active_sync_token(sync_cursor());
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let space = space.clone();
@@ -3205,7 +3204,7 @@ pub fn ChatPanel(
                                                                         watch_level_menu_open.set(false);
                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
                                                                         let api_token = token();
-                                                                        let wait_for = active_sync_token(&sync_cursor());
+                                                                        let wait_for = active_sync_token(sync_cursor());
                                                                         let watch_op = cx_ops::flow_watch_set(
                                                                             &space_for_click,
                                                                             &actor_for_click,
@@ -3705,7 +3704,7 @@ pub fn ChatPanel(
                                                     let space = space.clone();
                                                     let actor = actor.clone();
                                                     let api_token = token();
-                                                    let wait_for = active_sync_token(&sync_cursor());
+                                                    let wait_for = active_sync_token(sync_cursor());
                                                     let message_id = retry_message_id.clone();
                                                     let message_id_for_lookup = retry_message_id.clone();
                                                     let message_id_for_store = message_id.clone();
@@ -4142,7 +4141,7 @@ pub fn ChatPanel(
                                                         let msg_id = msg_id.clone();
                                                         let emoji = emoji.clone();
                                                         let api_token = token();
-                                                        let wait_for = active_sync_token(&sync_cursor());
+                                                        let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
                                                             let _ = with_authed_api_with_sync(
                                                                 &base,
@@ -4199,7 +4198,7 @@ pub fn ChatPanel(
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
                                                         let api_token = token();
-                                                        let wait_for = active_sync_token(&sync_cursor());
+                                                        let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
@@ -4253,7 +4252,7 @@ pub fn ChatPanel(
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
                                                         let api_token = token();
-                                                        let wait_for = active_sync_token(&sync_cursor());
+                                                        let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
@@ -5431,7 +5430,7 @@ pub fn ChatPanel(
                                     .cloned();
                                 let plaintext_services =
                                     plaintext_services_for_policy(projection.as_ref(), &service_did);
-                                let wait_for = active_sync_token(&sync_cursor());
+                                let wait_for = active_sync_token(sync_cursor());
                                 let actor_for_retry = actor.clone();
                                 spawn(async move {
                                     match authed_api_with_sync(&base, api_token, wait_for) {
@@ -5588,7 +5587,7 @@ pub fn ChatPanel(
                                     selected_flow.clone()
                                 };
                                 let api_token = token();
-                                let wait_for = active_sync_token(&sync_cursor());
+                                let wait_for = active_sync_token(sync_cursor());
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
@@ -5818,9 +5817,7 @@ pub fn ChatPanel(
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
-                                            status_msg.set(format!(
-                                                "Encrypted message sent"
-                                            ));
+                                            status_msg.set("Encrypted message sent".to_owned());
 
                                             // Disclosed-audit hardening profile
                                             // (`cx.profile.disclosed_audit.e2ee.v1`):

@@ -168,15 +168,15 @@ impl Constraint {
                 not_after,
             } => {
                 let now = &ctx.current_time;
-                if let Some(before) = not_before {
-                    if now < before {
-                        return ConstraintResult::Deny("before validity window".to_owned());
-                    }
+                if let Some(before) = not_before
+                    && now < before
+                {
+                    return ConstraintResult::Deny("before validity window".to_owned());
                 }
-                if let Some(after) = not_after {
-                    if now > after {
-                        return ConstraintResult::Deny("after validity window".to_owned());
-                    }
+                if let Some(after) = not_after
+                    && now > after
+                {
+                    return ConstraintResult::Deny("after validity window".to_owned());
                 }
                 ConstraintResult::Allow
             }
@@ -202,12 +202,12 @@ impl Constraint {
                 object_type_allow,
                 facet_allow,
             } => {
-                if let Some(ref object_type) = ctx.object_type {
-                    if !object_type_allow.contains(object_type) {
-                        return ConstraintResult::Deny(format!(
-                            "object type {object_type} not allowed"
-                        ));
-                    }
+                if let Some(ref object_type) = ctx.object_type
+                    && !object_type_allow.contains(object_type)
+                {
+                    return ConstraintResult::Deny(format!(
+                        "object type {object_type} not allowed"
+                    ));
                 }
                 if !facet_allow.is_empty() {
                     for facet in facet_allow {
@@ -224,17 +224,19 @@ impl Constraint {
                 space_ids,
                 space_container_ids,
             } => {
-                if let Some(ref space) = ctx.space_id {
-                    if !space_ids.is_empty() && !space_ids.contains(space) {
-                        return ConstraintResult::Deny(format!("space {space} not in scope"));
-                    }
+                if let Some(ref space) = ctx.space_id
+                    && !space_ids.is_empty()
+                    && !space_ids.contains(space)
+                {
+                    return ConstraintResult::Deny(format!("space {space} not in scope"));
                 }
-                if let Some(ref container) = ctx.space_container_id {
-                    if !space_container_ids.is_empty() && !space_container_ids.contains(container) {
-                        return ConstraintResult::Deny(format!(
-                            "space container {container} not in scope"
-                        ));
-                    }
+                if let Some(ref container) = ctx.space_container_id
+                    && !space_container_ids.is_empty()
+                    && !space_container_ids.contains(container)
+                {
+                    return ConstraintResult::Deny(format!(
+                        "space container {container} not in scope"
+                    ));
                 }
                 ConstraintResult::Allow
             }
@@ -245,10 +247,11 @@ impl Constraint {
                 if ctx.delegation_depth > *max_depth {
                     return ConstraintResult::Deny("delegation depth exceeded".to_owned());
                 }
-                if let Some(ref action) = ctx.action {
-                    if !allowed_actions.is_empty() && !allowed_actions.contains(action) {
-                        return ConstraintResult::Deny(format!("action {action} not delegatable"));
-                    }
+                if let Some(ref action) = ctx.action
+                    && !allowed_actions.is_empty()
+                    && !allowed_actions.contains(action)
+                {
+                    return ConstraintResult::Deny(format!("action {action} not delegatable"));
                 }
                 ConstraintResult::Allow
             }
@@ -312,12 +315,13 @@ impl Constraint {
                 if *require_e2ee && !ctx.is_encrypted {
                     return ConstraintResult::Deny("E2EE required".to_owned());
                 }
-                if let Some(ref scheme) = ctx.encryption_scheme {
-                    if !allowed_schemes.is_empty() && !allowed_schemes.contains(scheme) {
-                        return ConstraintResult::Deny(format!(
-                            "encryption scheme {scheme} not allowed"
-                        ));
-                    }
+                if let Some(ref scheme) = ctx.encryption_scheme
+                    && !allowed_schemes.is_empty()
+                    && !allowed_schemes.contains(scheme)
+                {
+                    return ConstraintResult::Deny(format!(
+                        "encryption scheme {scheme} not allowed"
+                    ));
                 }
                 ConstraintResult::Allow
             }

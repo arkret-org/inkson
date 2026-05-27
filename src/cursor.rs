@@ -27,10 +27,7 @@ pub use contrix_sdk::cursor::{
 /// for now (the SDK's `SpacePosition` struct has no field for it yet —
 /// when the SDK promotes the field, callers should switch to reading
 /// it directly off the struct and pass the value in here).
-pub fn flow_position_label(
-    position: &SpacePosition,
-    last_read_at: Option<&str>,
-) -> String {
+pub fn flow_position_label(position: &SpacePosition, last_read_at: Option<&str>) -> String {
     // HLC format is `<rfc3339>-<seq>`. We strip the trailing `-<seq>`
     // chunk so the label fits in a chip; if there's no hyphen at all
     // (legacy / future format) we fall back to the full value.
@@ -40,7 +37,10 @@ pub fn flow_position_label(
         .map(|(left, _)| left)
         .unwrap_or(position.order.as_str());
     let core = format!("@{} ⇢ {} tip(s)", short, position.p.len());
-    match last_read_at.map(str::trim).filter(|value| !value.is_empty()) {
+    match last_read_at
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(ts) => format!("{core} · last read {ts}"),
         None => core,
     }

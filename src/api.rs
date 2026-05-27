@@ -1091,7 +1091,7 @@ impl ContrixApi {
             "actor_id": actor_id,
             "title": title,
             "display": serde_json::to_value(&display)?,
-            "directory_visibility": serde_json::to_value(&visibility)?,
+            "directory_visibility": serde_json::to_value(visibility)?,
             "initial_members": initial_members,
         });
         self.post_json("/api/v1/circles", body).await
@@ -1228,15 +1228,15 @@ impl ContrixApi {
         match result {
             Ok(_) => Ok(()),
             Err(error) => {
-                if let Some(api_error) = error.downcast_ref::<ContrixApiError>() {
-                    if matches!(
+                if let Some(api_error) = error.downcast_ref::<ContrixApiError>()
+                    && matches!(
                         api_error.status,
                         StatusCode::NOT_FOUND
                             | StatusCode::NOT_IMPLEMENTED
                             | StatusCode::METHOD_NOT_ALLOWED
-                    ) {
-                        return Ok(());
-                    }
+                    )
+                {
+                    return Ok(());
                 }
                 Err(error)
             }
@@ -1775,15 +1775,15 @@ impl ContrixApi {
         backup_class: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         let mut query: Vec<(String, String)> = Vec::new();
-        if let Some(series_id) = series_id {
-            if !series_id.trim().is_empty() {
-                query.push(("series_id".to_owned(), series_id.to_owned()));
-            }
+        if let Some(series_id) = series_id
+            && !series_id.trim().is_empty()
+        {
+            query.push(("series_id".to_owned(), series_id.to_owned()));
         }
-        if let Some(class) = backup_class {
-            if !class.trim().is_empty() {
-                query.push(("backup_class".to_owned(), class.to_owned()));
-            }
+        if let Some(class) = backup_class
+            && !class.trim().is_empty()
+        {
+            query.push(("backup_class".to_owned(), class.to_owned()));
         }
         if query.is_empty() {
             return self.get_json("api/v1/keys/backups").await;
@@ -3045,12 +3045,11 @@ impl ContrixApi {
                     if response.status() == StatusCode::UNAUTHORIZED
                         && !did_refresh
                         && self.refresh_token.is_some()
+                        && let Ok(result) = self.try_refresh_token().await
                     {
-                        if let Ok(result) = self.try_refresh_token().await {
-                            refreshed_access_token = Some(result.new_access_token);
-                            did_refresh = true;
-                            continue;
-                        }
+                        refreshed_access_token = Some(result.new_access_token);
+                        did_refresh = true;
+                        continue;
                     }
 
                     // G3.Y0 — DPoP-bound 401 retry. Distinct from the
@@ -3063,20 +3062,19 @@ impl ContrixApi {
                     if response.status() == StatusCode::UNAUTHORIZED
                         && !did_refresh
                         && self.refresh_token.is_none()
+                        && let Some(hook) = self.dpop_refresh_hook.as_ref()
                     {
-                        if let Some(hook) = self.dpop_refresh_hook.as_ref() {
-                            let hook = hook.clone();
-                            match hook().await {
-                                Ok(Some(new_token)) => {
-                                    refreshed_access_token = Some(new_token);
-                                    did_refresh = true;
-                                    continue;
-                                }
-                                Ok(None) | Err(_) => {
-                                    // Fall through to the un-refreshed
-                                    // response; caller's AuthExpired
-                                    // handling kicks in (soft logout).
-                                }
+                        let hook = hook.clone();
+                        match hook().await {
+                            Ok(Some(new_token)) => {
+                                refreshed_access_token = Some(new_token);
+                                did_refresh = true;
+                                continue;
+                            }
+                            Ok(None) | Err(_) => {
+                                // Fall through to the un-refreshed
+                                // response; caller's AuthExpired
+                                // handling kicks in (soft logout).
                             }
                         }
                     }
@@ -3986,12 +3984,13 @@ pub fn build_plaintext_visible_services_event(
             predicate_id: None,
         },
     }];
+    let body_value = json!({ "services": services });
     let effects = vec![Effect {
         cell,
         op: LatticeOp {
             kind: "set".to_owned(),
             tag: None,
-            value: Some(json!({ "services": services.clone() })),
+            value: Some(body_value.clone()),
             from: None,
             to: None,
             reason: None,
@@ -4000,9 +3999,11 @@ pub fn build_plaintext_visible_services_event(
             predecessor: None,
         },
     }];
+    // Builder takes `Value` by move; reuse the value we already built for
+    // the effect rather than cloning `services` a second time.
     let mut envelope =
         OperationBuilder::new(space_id, actor_id, "cx.realm.plaintext_visible_services")
-            .body(json!({ "services": services }))
+            .body(body_value)
             .preconditions(preconditions)
             .effects(effects)
             .build("yougen");
@@ -4384,7 +4385,9 @@ pub fn decode_contrix_error_with_header(
     let mut envelope = decode_contrix_error(status, bytes);
     if let Some(id) = response_request_id {
         let trimmed = id.trim();
-        if !trimmed.is_empty() && (envelope.request_id == "unknown" || envelope.request_id.is_empty()) {
+        if !trimmed.is_empty()
+            && (envelope.request_id == "unknown" || envelope.request_id.is_empty())
+        {
             envelope.request_id = trimmed.to_owned();
         }
     }
@@ -5013,10 +5016,7 @@ mod tests {
             .expect("member state invite");
 
         assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
-        assert_eq!(
-            member.payload["handle"],
-            "bob:example.com"
-        );
+        assert_eq!(member.payload["handle"], "bob:example.com");
         assert_eq!(
             member.payload["delivery_binding"]["recipient_service_did"],
             "did:web:example.com"
@@ -5132,13 +5132,12 @@ mod tests {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
+            && let Err(error) = catalog.validate_payload(&event.kind, &event.payload)
         {
-            if let Err(error) = catalog.validate_payload(&event.kind, &event.payload) {
-                panic!(
-                    "cx.space.create payload violates spec: {error}\npayload: {}",
-                    serde_json::to_string_pretty(&event.payload).unwrap_or_default()
-                );
-            }
+            panic!(
+                "cx.space.create payload violates spec: {error}\npayload: {}",
+                serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+            );
         }
     }
 
@@ -5173,15 +5172,14 @@ mod tests {
             if catalog
                 .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
                 .is_empty()
+                && let Err(error) = catalog.validate_payload(&event.kind, &event.payload)
             {
-                if let Err(error) = catalog.validate_payload(&event.kind, &event.payload) {
-                    panic!(
-                        "event kind `{}` payload violates spec schema: {error}\n\
-                         payload was: {}",
-                        event.kind,
-                        serde_json::to_string_pretty(&event.payload).unwrap_or_default()
-                    );
-                }
+                panic!(
+                    "event kind `{}` payload violates spec schema: {error}\n\
+                     payload was: {}",
+                    event.kind,
+                    serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+                );
             }
         }
     }

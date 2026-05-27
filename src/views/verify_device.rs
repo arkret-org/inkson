@@ -165,7 +165,7 @@ pub fn VerifyDevicePanel(
     let _ = (&selected_space,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
-    let mut verify_status = use_signal(|| String::new());
+    let mut verify_status = use_signal(String::new);
     let mut trust_devices = use_signal(Vec::<DeviceTrustEntry>::new);
     // Hydrate the latest persisted cross-signing publish (B2e) so the
     // panel reflects the device's cross-signed state across reloads.
@@ -186,8 +186,8 @@ pub fn VerifyDevicePanel(
     let mut cross_signing_state = use_signal(move || persisted_publish_label);
     let mut cross_signing_plan = use_signal(|| Option::<CrossSigningSetupPlan>::None);
     let mut cross_signing_publish_id = use_signal(String::new);
-    let mut sas_code = use_signal(|| String::new());
-    let mut qr_data = use_signal(|| String::new());
+    let mut sas_code = use_signal(String::new);
+    let mut qr_data = use_signal(String::new);
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
     // SAS key-exchange state. The ephemeral keypair is generated
     // lazily on "Generate my key" click + held in an Arc so a

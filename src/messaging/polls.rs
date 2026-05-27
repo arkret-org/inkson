@@ -170,7 +170,11 @@ impl PollCard {
         let limit = self.max_selections.max(1) as usize;
         let mut changed = false;
         for option_id in option_ids.iter().take(limit) {
-            if let Some(index) = self.options.iter().position(|option| &option.id == option_id) {
+            if let Some(index) = self
+                .options
+                .iter()
+                .position(|option| &option.id == option_id)
+            {
                 let voters = &mut self.votes[index];
                 if !voters.iter().any(|did| did == actor) {
                     voters.push(actor.to_owned());
@@ -239,7 +243,10 @@ impl PollCard {
                 let Some(option_id) = row.get("id").and_then(Value::as_str) else {
                     continue;
                 };
-                let Some(index) = card.options.iter().position(|option| option.id == option_id)
+                let Some(index) = card
+                    .options
+                    .iter()
+                    .position(|option| option.id == option_id)
                 else {
                     continue;
                 };

@@ -67,9 +67,7 @@ pub fn sentry_init(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(dsn) = dsn else {
-        tracing::debug!(
-            "sentry_init: skipped — SENTRY_DSN env var was empty at build time"
-        );
+        tracing::debug!("sentry_init: skipped — SENTRY_DSN env var was empty at build time");
         return None;
     };
     let dsn = match dsn.parse::<sentry::types::Dsn>() {
@@ -94,9 +92,7 @@ pub fn sentry_init(
 /// debug breadcrumb and returns `None` so call sites can treat the
 /// init uniformly across targets.
 #[cfg(target_arch = "wasm32")]
-pub fn sentry_init(
-    _prefs: crate::components::CrashTelemetryPrefs,
-) -> Option<()> {
+pub fn sentry_init(_prefs: crate::components::CrashTelemetryPrefs) -> Option<()> {
     tracing::debug!("sentry_init: skipped — wasm builds do not link Sentry");
     None
 }

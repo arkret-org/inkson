@@ -337,7 +337,7 @@ impl FractionalIndexer {
             let b_val = if i < b_bytes.len() { b_bytes[i] } else { b'`' };
 
             let mid = if carry {
-                (a_val + b_val + 1) / 2
+                (a_val + b_val).div_ceil(2)
             } else {
                 (a_val + b_val) / 2
             };

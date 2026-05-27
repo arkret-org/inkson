@@ -82,7 +82,7 @@ pub fn BlocklistSettingsCard(
                                             "data-actor-did": "{entry.did}",
                                             onclick: {
                                                 let actor_did = entry.did.clone();
-                                                let base = base_url.clone();
+                                                let base = base_url;
                                                 move |_| {
                                                     let changed = state_store.write().unblock_user(&actor_did);
                                                     let next = state_store.read().client_blocklist();
@@ -124,7 +124,7 @@ pub fn BlocklistSettingsCard(
                         "data-testid": "block-user-button",
                         disabled: add_input.read().trim().is_empty(),
                         onclick: {
-                            let base = base_url.clone();
+                            let base = base_url;
                             move |_| {
                                 let target = add_input().trim().to_owned();
                                 if target.is_empty() {

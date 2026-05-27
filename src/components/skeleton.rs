@@ -86,7 +86,7 @@ pub struct SkeletonListProps {
 
 #[component]
 pub fn SkeletonList(props: SkeletonListProps) -> Element {
-    let count = props.count.min(12).max(1);
+    let count = props.count.clamp(1, 12);
     let label = props.label.unwrap_or_else(|| "Loading…".to_owned());
     let tid = props.test_id.unwrap_or_else(|| "skeleton-list".to_owned());
     rsx! {
@@ -107,18 +107,13 @@ pub fn SkeletonList(props: SkeletonListProps) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn count_is_clamped() {
         // SkeletonList's count clamping is a property of the render path.
         // We assert the clamp invariants here so a future refactor that
         // moves the clamp out of the body still has a regression net.
-        let one = 1usize.min(12).max(1);
-        let many = 99usize.min(12).max(1);
-        let zero = 0usize.min(12).max(1);
-        assert_eq!(one, 1);
-        assert_eq!(many, 12);
-        assert_eq!(zero, 1);
+        assert_eq!(1usize.clamp(1, 12), 1);
+        assert_eq!(99usize.clamp(1, 12), 12);
+        assert_eq!(0usize.clamp(1, 12), 1);
     }
 }

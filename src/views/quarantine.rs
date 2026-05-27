@@ -97,7 +97,7 @@ pub fn parse_quarantine_list(value: &Value) -> Vec<QuarantineEntry> {
 #[component]
 pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
     let mut entries = use_signal(Vec::<QuarantineEntry>::new);
-    let mut status = use_signal(|| String::new());
+    let mut status = use_signal(String::new);
     let mut reject_reason = use_signal(String::new);
     let mut reject_confirm = use_signal(|| Option::<String>::None);
 

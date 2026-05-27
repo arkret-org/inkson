@@ -93,23 +93,21 @@ fn decode_capability_row(value: &Value) -> Option<CapabilityRow> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|step| {
-                    Some(DelegationStep {
-                        issuer_did: step
-                            .get("issuer")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_owned(),
-                        subject_did: step
-                            .get("subject")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_owned(),
-                        constraints: step
-                            .get("constraints")
-                            .map(|v| v.to_string())
-                            .unwrap_or_default(),
-                    })
+                .map(|step| DelegationStep {
+                    issuer_did: step
+                        .get("issuer")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_owned(),
+                    subject_did: step
+                        .get("subject")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_owned(),
+                    constraints: step
+                        .get("constraints")
+                        .map(|v| v.to_string())
+                        .unwrap_or_default(),
                 })
                 .collect()
         })

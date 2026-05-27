@@ -88,10 +88,11 @@ pub fn short_protocol_id(value: impl AsRef<str>) -> String {
         return value.to_owned();
     }
 
-    if let Some((prefix, tail)) = value.rsplit_once(':') {
-        if tail.len() >= 20 && prefix.len() <= 20 {
-            return format!("{prefix}:{}", shorten_ascii_middle(tail, 8, 6));
-        }
+    if let Some((prefix, tail)) = value.rsplit_once(':')
+        && tail.len() >= 20
+        && prefix.len() <= 20
+    {
+        return format!("{prefix}:{}", shorten_ascii_middle(tail, 8, 6));
     }
 
     shorten_ascii_middle(value, 16, 8)
@@ -248,17 +249,17 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
             )
         });
         if let Some(handle) = normalized.strip_prefix('@') {
-            if !handle.is_empty() {
-                if let Some(parsed) = crate::identity_handle::parse_user_handle(handle) {
-                    mentions.push(StructuredMention {
-                        kind: "actor".to_owned(),
-                        target: parsed.subject_did,
-                        token: normalized.to_owned(),
-                        display_snapshot: parsed.display,
-                        handle: parsed.handle,
-                        resolved_at: String::new(),
-                    });
-                }
+            if !handle.is_empty()
+                && let Some(parsed) = crate::identity_handle::parse_user_handle(handle)
+            {
+                mentions.push(StructuredMention {
+                    kind: "actor".to_owned(),
+                    target: parsed.subject_did,
+                    token: normalized.to_owned(),
+                    display_snapshot: parsed.display,
+                    handle: parsed.handle,
+                    resolved_at: String::new(),
+                });
             }
             continue;
         }
@@ -273,17 +274,17 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
             });
             continue;
         }
-        if let Some(entity) = normalized.strip_prefix('#') {
-            if !entity.is_empty() {
-                mentions.push(StructuredMention {
-                    kind: "entity".to_owned(),
-                    target: entity.to_owned(),
-                    token: normalized.to_owned(),
-                    display_snapshot: String::new(),
-                    handle: String::new(),
-                    resolved_at: String::new(),
-                });
-            }
+        if let Some(entity) = normalized.strip_prefix('#')
+            && !entity.is_empty()
+        {
+            mentions.push(StructuredMention {
+                kind: "entity".to_owned(),
+                target: entity.to_owned(),
+                token: normalized.to_owned(),
+                display_snapshot: String::new(),
+                handle: String::new(),
+                resolved_at: String::new(),
+            });
         }
     }
 

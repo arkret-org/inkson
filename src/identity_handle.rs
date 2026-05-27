@@ -189,7 +189,9 @@ pub fn detect_handle_homograph_risk(localpart: &str) -> Option<HandleHomographRi
     // pairs (Latin + Cyrillic / Greek / Armenian) match the spec's
     // explicit reject set; we surface a generic warning for all mixes.
     let scripts_vec: Vec<HandleScript> = scripts.into_iter().collect();
-    Some(HandleHomographRisk { scripts: scripts_vec })
+    Some(HandleHomographRisk {
+        scripts: scripts_vec,
+    })
 }
 
 /// Script-family classification used by [`detect_handle_homograph_risk`].

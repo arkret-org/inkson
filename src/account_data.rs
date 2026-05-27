@@ -197,10 +197,10 @@ pub fn build_client_ui_body(
     avatar_blob_ref: Option<&str>,
 ) -> Value {
     let mut map = serde_json::Map::new();
-    if let Some(value) = theme {
-        if !value.is_empty() {
-            map.insert("theme".to_owned(), Value::String(value.to_owned()));
-        }
+    if let Some(value) = theme
+        && !value.is_empty()
+    {
+        map.insert("theme".to_owned(), Value::String(value.to_owned()));
     }
     if let Some(value) = sidebar_collapsed {
         map.insert("sidebar_collapsed".to_owned(), Value::Bool(value));

@@ -533,10 +533,7 @@ mod tests {
     /// returns the same entries with the same ids and attempt counts.
     #[test]
     fn persists_across_reopen() {
-        let dir = std::env::temp_dir().join(format!(
-            "yougen-offline-queue-test-{}",
-            now_unix_ms()
-        ));
+        let dir = std::env::temp_dir().join(format!("yougen-offline-queue-test-{}", now_unix_ms()));
         std::fs::create_dir_all(&dir).unwrap();
         let id;
         {

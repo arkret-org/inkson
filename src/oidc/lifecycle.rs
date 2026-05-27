@@ -580,8 +580,8 @@ mod tests {
 
     #[test]
     fn poll_constants_are_sane() {
-        assert!(POLL_INTERVAL_SECS > 0);
-        assert!(POLL_INTERVAL_SECS <= 60);
-        assert!(REFRESH_SKEW_SECS > POLL_INTERVAL_SECS as i64);
+        const { assert!(POLL_INTERVAL_SECS > 0) };
+        const { assert!(POLL_INTERVAL_SECS <= 60) };
+        const { assert!(REFRESH_SKEW_SECS > POLL_INTERVAL_SECS as i64) };
     }
 }

@@ -463,7 +463,7 @@ pub fn WebRtcCallPanel(
                                         } else {
                                             peer_did()
                                         };
-                                        participants.set(build_roster(&actor, &[target.clone()]));
+                                        participants.set(build_roster(&actor, std::slice::from_ref(&target)));
                                         stage.set(CallStage::Active);
                                         last_action.set("call active".to_owned());
                                         emit_signal_from_ui(
@@ -789,7 +789,7 @@ pub fn WebRtcCallPanel(
 fn participant_list_from_input(input: &str) -> Vec<String> {
     let mut seen = BTreeSet::new();
     input
-        .split(|ch: char| ch == '\n' || ch == ',' || ch == ';')
+        .split(['\n', ',', ';'])
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .filter(|value| seen.insert((*value).to_owned()))

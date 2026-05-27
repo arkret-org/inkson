@@ -172,10 +172,10 @@ impl MultiProfileConfig {
     /// and mark it active. Returns the active profile id.
     pub fn upsert_and_activate(&mut self, profile: AccountProfile) -> String {
         let key = (profile.account_did.clone(), profile.server_url.clone());
-        if let Some(existing) =
-            self.profiles
-                .iter_mut()
-                .find(|p| (p.account_did.clone(), p.server_url.clone()) == key)
+        if let Some(existing) = self
+            .profiles
+            .iter_mut()
+            .find(|p| (p.account_did.clone(), p.server_url.clone()) == key)
         {
             existing.device_id = profile.device_id;
             existing.session_token = profile.session_token;
@@ -260,7 +260,10 @@ impl MultiProfileConfig {
         // Stable id derived from the DID so re-running migration is
         // idempotent (the v2 blob, if it already exists, wins anyway —
         // this branch only runs when v2 is empty).
-        profile.profile_id = format!("cx:profile:legacy-{}", profile.account_did.replace(':', "-"));
+        profile.profile_id = format!(
+            "cx:profile:legacy-{}",
+            profile.account_did.replace(':', "-")
+        );
         let id = profile.profile_id.clone();
         Self {
             active_profile_id: Some(id),
@@ -431,10 +434,10 @@ impl LocalConfigStore {
     /// legacy single-profile blob (via `MultiProfileConfig::from_legacy`)
     /// when the v2 file is missing or empty.
     pub fn load_profiles(&self) -> MultiProfileConfig {
-        if let Some(v2) = self.read_persisted_profiles() {
-            if !v2.profiles.is_empty() {
-                return v2;
-            }
+        if let Some(v2) = self.read_persisted_profiles()
+            && !v2.profiles.is_empty()
+        {
+            return v2;
         }
         MultiProfileConfig::from_legacy(self.load())
     }
@@ -797,10 +800,7 @@ mod tests {
         let reader = LocalConfigStore::with_path(path);
         let loaded = reader.load_profiles();
         assert_eq!(loaded.profiles.len(), 1);
-        assert_eq!(
-            loaded.profiles[0].account_did,
-            "did:web:alice.example"
-        );
+        assert_eq!(loaded.profiles[0].account_did, "did:web:alice.example");
     }
 
     fn temp_config_path(name: &str) -> PathBuf {

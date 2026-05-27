@@ -40,7 +40,7 @@ impl Locale {
         // the Arabic dictionary, which is the entry-point of the
         // ar-SA → ar → en fallback chain defined in [`translate`].
         let base = code
-            .split(|c| c == '-' || c == '_')
+            .split(['-', '_'])
             .next()
             .unwrap_or(code)
             .to_ascii_lowercase();
@@ -145,10 +145,10 @@ pub fn translate_chain(
         chain.push("en".to_owned());
     }
     for tag in &chain {
-        if let Some(dict) = dicts.get(tag.as_str()) {
-            if let Some(val) = dict.get(key) {
-                return val.to_owned();
-            }
+        if let Some(dict) = dicts.get(tag.as_str())
+            && let Some(val) = dict.get(key)
+        {
+            return val.to_owned();
         }
     }
     // Phase D.2 #8: surface the miss so QA can grow the dictionaries.
@@ -2077,14 +2077,20 @@ mod tests {
         dicts.insert("ar".to_owned(), ar);
         dicts.insert("en".to_owned(), en);
         // Region-specific value wins.
-        assert_eq!(translate_chain("ar-SA", &dicts, "region.specific"), "ar-SA value");
+        assert_eq!(
+            translate_chain("ar-SA", &dicts, "region.specific"),
+            "ar-SA value"
+        );
         // Base value picked up via `ar-SA → ar`.
         assert_eq!(translate_chain("ar-SA", &dicts, "base.value"), "ar value");
         // English fallback via `ar-SA → ar → en`.
         assert_eq!(translate_chain("ar-SA", &dicts, "english.only"), "en value");
         // Missing everywhere → returns the key itself + records the miss.
         let _ = missing_translation_snapshot(); // ensure helper compiles
-        assert_eq!(translate_chain("ar-SA", &dicts, "nothing.here"), "nothing.here");
+        assert_eq!(
+            translate_chain("ar-SA", &dicts, "nothing.here"),
+            "nothing.here"
+        );
     }
 
     #[test]

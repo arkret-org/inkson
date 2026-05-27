@@ -165,10 +165,10 @@ impl DeviceRevokePlan {
     pub fn event_kinds(&self) -> Vec<&'static str> {
         let mut seen: Vec<&'static str> = Vec::new();
         for step in &self.steps {
-            if let Some(k) = step.canonical_event_kind() {
-                if !seen.contains(&k) {
-                    seen.push(k);
-                }
+            if let Some(k) = step.canonical_event_kind()
+                && !seen.contains(&k)
+            {
+                seen.push(k);
             }
         }
         seen
@@ -185,10 +185,10 @@ impl DeviceRevokePlan {
                 | DeviceRevokeStep::MlsWelcome { group_id, .. } => Some(group_id.as_str()),
                 _ => None,
             };
-            if let Some(g) = gid {
-                if !groups.contains(&g) {
-                    groups.push(g);
-                }
+            if let Some(g) = gid
+                && !groups.contains(&g)
+            {
+                groups.push(g);
             }
         }
         groups.len()
