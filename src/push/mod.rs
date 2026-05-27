@@ -1365,6 +1365,8 @@ mod tests {
             std::env::set_var("VAPID_PUBLIC_KEY", "BFakeVapidPublicKey-base64url-string");
         }
         let key = vapid_public_key_from_describe(&describe);
+        // SAFETY: same serial-guard rationale as the set_var above; this restores
+        // the env so neighbouring tests start from a clean slate.
         #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             std::env::remove_var("VAPID_PUBLIC_KEY");

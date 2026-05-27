@@ -185,6 +185,7 @@ mod tests {
                 "expected opt-in for value {value}"
             );
         }
+        // SAFETY: env mutation is serialised by ENV_LOCK above.
         unsafe {
             std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
         }
