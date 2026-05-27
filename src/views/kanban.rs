@@ -167,6 +167,19 @@ enum CardDetailContentTab {
     Discussion,
 }
 
+/// Which slice of card fields the inline edit form is currently editing.
+/// The Summary scope edits title + the short summary blurb; the
+/// Description scope edits only the long-form body shown in the
+/// Description tab. Each entry point seeds the matching scope so the
+/// form only renders the relevant editor (avoids the "edit description"
+/// CTA opening an unrelated Title + Summary editor as well).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CardEditScope {
+    #[default]
+    Summary,
+    Description,
+}
+
 const TOAST_EDITOR_SCRIPT_URL: &str =
     "https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js";
 const TOAST_EDITOR_CSS_URL: &str = "https://uicdn.toast.com/editor/latest/toastui-editor.min.css";
@@ -177,9 +190,15 @@ fn CardMarkdownEditor(
     base_url: String,
     token: String,
     on_change: EventHandler<String>,
+    /// Optional id suffix so multiple editor instances on the same card
+    /// detail (e.g. Summary + Description) don't share a DOM id and
+    /// confuse the toast bootstrap script. Defaults to the legacy
+    /// `"description"` slot for back-compat with existing data-testids.
+    slot: Option<String>,
 ) -> Element {
-    let host_id = "card-detail-description-toast-editor".to_owned();
-    let fallback_id = "card-detail-description-input".to_owned();
+    let slot = slot.unwrap_or_else(|| "description".to_owned());
+    let host_id = format!("card-detail-{slot}-toast-editor");
+    let fallback_id = format!("card-detail-{slot}-input");
 
     use_effect({
         let host_id = host_id.clone();
@@ -1134,6 +1153,7 @@ pub fn KanbanPanel(
     let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
     let mut board_popover = use_signal(BoardToolbarPopover::default);
     let mut editing_card_detail = use_signal(|| false);
+    let mut card_edit_scope = use_signal(CardEditScope::default);
     let mut card_detail_sidebar_visible = use_signal(|| true);
     let mut card_detail_actions_open = use_signal(|| false);
     let mut card_detail_description_expanded = use_signal(|| false);
@@ -3020,32 +3040,38 @@ pub fn KanbanPanel(
 
                                 if editing_card_detail() {
                                     div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
-                                        div { class: "field",
-                                            label { "Title" }
-                                            input {
-                                                class: "input",
-                                                "data-testid": "card-detail-title-input",
-                                                value: "{card_edit_title}",
-                                                maxlength: "512",
-                                                oninput: move |evt| card_edit_title.set(evt.value()),
+                                        if card_edit_scope() == CardEditScope::Summary {
+                                            div { class: "field",
+                                                label { "Title" }
+                                                input {
+                                                    class: "input",
+                                                    "data-testid": "card-detail-title-input",
+                                                    value: "{card_edit_title}",
+                                                    maxlength: "512",
+                                                    oninput: move |evt| card_edit_title.set(evt.value()),
+                                                }
+                                            }
+                                            div { class: "field",
+                                                label { "Summary" }
+                                                CardMarkdownEditor {
+                                                    value: card_edit_description(),
+                                                    base_url: base_url.clone(),
+                                                    token: token(),
+                                                    on_change: move |value| card_edit_description.set(value),
+                                                    slot: "summary".to_owned(),
+                                                }
                                             }
                                         }
-                                        div { class: "field",
-                                            label { "Summary" }
-                                            CardMarkdownEditor {
-                                                value: card_edit_description(),
-                                                base_url: base_url.clone(),
-                                                token: token(),
-                                                on_change: move |value| card_edit_description.set(value),
-                                            }
-                                        }
-                                        div { class: "field",
-                                            label { "Description" }
-                                            CardMarkdownEditor {
-                                                value: card_edit_body(),
-                                                base_url: base_url.clone(),
-                                                token: token(),
-                                                on_change: move |value| card_edit_body.set(value),
+                                        if card_edit_scope() == CardEditScope::Description {
+                                            div { class: "field",
+                                                label { "Description" }
+                                                CardMarkdownEditor {
+                                                    value: card_edit_body(),
+                                                    base_url: base_url.clone(),
+                                                    token: token(),
+                                                    on_change: move |value| card_edit_body.set(value),
+                                                    slot: "description".to_owned(),
+                                                }
                                             }
                                         }
                                         div { class: "card-detail-form-actions",
@@ -3128,6 +3154,7 @@ pub fn KanbanPanel(
                                                                 card_edit_labels.set(draft.labels.join(", "));
                                                                 card_edit_assignee.set(draft.assignee);
                                                                 card_edit_due.set(draft.due);
+                                                                card_edit_scope.set(CardEditScope::Summary);
                                                                 editing_card_detail.set(true);
                                                             }
                                                         },
@@ -3201,6 +3228,7 @@ pub fn KanbanPanel(
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
+                                                                            card_edit_scope.set(CardEditScope::Description);
                                                                             editing_card_detail.set(true);
                                                                         }
                                                                     },
@@ -3223,6 +3251,7 @@ pub fn KanbanPanel(
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
+                                                                            card_edit_scope.set(CardEditScope::Description);
                                                                             editing_card_detail.set(true);
                                                                         }
                                                                     },
