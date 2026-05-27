@@ -4,6 +4,16 @@ All notable yougen changes are recorded here. Yougen is the Dioxus
 cross-platform Contrix v1 reference client (macOS / Windows / Linux / iOS /
 Android / web).
 
+## R3 — Spec sync 2026-05-27 (contrix-spec @ b47ff6ec)
+
+- CALL-1 / CALL-2: RTC token acquisition wires the chime / SDK `cx.call.media.token_exchange` helper in `src/media/rtc.rs`; `focus_unavailable_for_client` surfaced as a retry / leave-call toast in `src/views/call.rs` with no silent focus fallback.
+- MEDIA-1..3: documented SFrame-key derivation from MLS-Exporter `cx-rtc-frame-key/v1` (rejects backend-supplied keys with `e2ee_key_source_unauthorised`); ParticipantConnected cross-check against `cx.call.state.participants[]` (`participant_identity_unrecognised`); recording-artifact pipeline rejects non-Contrix Egress destinations (`recording_artifact_pipeline_bypassed`). Renderer enforcement stubbed for R3.1.
+- AGENT-1..3: HTTP path switched `/revoke` → `/deactivate`; agent list renders `paused` / `deactivated` states with Resume / Provision affordances and a default-hide-deactivated filter (`src/views/agents.rs`); localized en + zh toasts for `pairing_request_expired`, `proof_invalid`, `agent_paused`, `agent_deactivated`.
+- HDL-1 / CURSOR-1 / SEL-1: new `src/identity_handle.rs` plus onboarding inline NFC + script-mixed warnings and friendly `handle_homograph_forbidden` copy; cursors treated as fully opaque in the network layer; circle UI uses `cx:circle:<uuid>` selector kind for grant pages.
+- REC-1: recovery stub view (`src/views/recovery.rs`) renders policy detail (proof_kind enum, threshold), receipt history with `proof_summary[]`, and surfaces `recovery_witness_revoke_lagging` / `recovery_policy_mismatch` / `challenge_proof_invalid`.
+
+> No version tag, no crates.io / Docker Hub / npm publish — git commit only.
+
 ## [Unreleased]
 
 ### Circle rollout (CXP-0007 + cross-stack P3B)

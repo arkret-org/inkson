@@ -1,5 +1,7 @@
 # yougen
 
+> **Spec target**: [contrix-spec @ b47ff6ec](../contrix-spec) (R3 sync 2026-05-27)
+
 Cross-platform Contrix client built with Dioxus 0.7.
 
 ## Realm vs Space
