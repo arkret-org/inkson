@@ -5719,8 +5719,8 @@ pub fn RouterView() -> Element {
     // Default empty — the placeholder/sealed paths still work; once the
     // user enters a passphrase the real MLS encrypt + decrypt path
     // engages for that Space.
-    use_context_provider::<Signal<crate::mls_passphrase::MlsPassphraseStore>>(|| {
-        Signal::new(crate::mls_passphrase::MlsPassphraseStore::default())
+    use_context_provider::<Signal<crate::mls::passphrase::MlsPassphraseStore>>(|| {
+        Signal::new(crate::mls::passphrase::MlsPassphraseStore::default())
     });
     // Cap-Gate-1: shared `Signal<CapabilityEngine>` for UI-side pre-gates.
     // Starts empty; views call `engine.ui_gate(...)` which returns an open
@@ -5803,8 +5803,8 @@ pub fn RouterView() -> Element {
                     store.load_oidc_tokens_with_secure_store(&active_actor, secure_store.as_ref())
                 };
                 if let Some(bundle) = oidc_bundle {
-                    if crate::oidc_lifecycle::due_for_refresh(&bundle) {
-                        if crate::oidc_lifecycle::has_refresh_token(&bundle) {
+                    if crate::oidc::lifecycle::due_for_refresh(&bundle) {
+                        if crate::oidc::lifecycle::has_refresh_token(&bundle) {
                             let result = refresh_oidc_bearer_for_server(
                                 &active_base,
                                 &active_actor,
@@ -7591,7 +7591,7 @@ pub fn RouterView() -> Element {
                     // into them without scrolling past unrelated
                     // settings sections.
                     Route::SettingsDevices | Route::SettingsDevicesPair => rsx! {
-                        crate::views::settings_devices::SettingsDevicesPanel {
+                        crate::views::settings::devices::SettingsDevicesPanel {
                             base_url,
                             account_did,
                             device_id,
@@ -7600,13 +7600,13 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::SettingsRecovery => rsx! {
-                        crate::views::settings_recovery::SettingsRecoveryPanel {
+                        crate::views::settings::recovery::SettingsRecoveryPanel {
                             account_did,
                             state_store,
                         }
                     },
                     Route::SettingsSecurity => rsx! {
-                        crate::views::settings_security::SettingsSecurityPanel {
+                        crate::views::settings::security::SettingsSecurityPanel {
                             base_url,
                             account_did,
                             device_id,
@@ -7615,7 +7615,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Recover => rsx! {
-                        crate::views::settings_recover_restore::RecoverPanel {
+                        crate::views::settings::recover_restore::RecoverPanel {
                             base_url,
                             token,
                         }
@@ -8488,7 +8488,7 @@ async fn refresh_oidc_bearer_for_server(
     let response = coauth
         .refresh_oidc_tokens(&plan.token_endpoint, &plan.client_id, refresh_token)
         .await?;
-    Ok(crate::oidc_lifecycle::apply_refresh_response(
+    Ok(crate::oidc::lifecycle::apply_refresh_response(
         previous, &response,
     ))
 }

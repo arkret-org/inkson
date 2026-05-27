@@ -1,3 +1,21 @@
+//! Settings surface.
+//!
+//! Territory split (preserved from former sibling files):
+//! - G3.Y1 (device + key-backup): [`devices`], [`recover_restore`],
+//!   [`recovery`], [`security`].
+//! - G3.Y3 (policy / consent / capabilities): [`blocklist`],
+//!   [`capabilities`], [`consent`].
+//! The aggregate routing entry + the generic profile card live in
+//! this `mod.rs`.
+
+pub mod blocklist;
+pub mod capabilities;
+pub mod consent;
+pub mod devices;
+pub mod recover_restore;
+pub mod recovery;
+pub mod security;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use dioxus::prelude::*;
 use dioxus_router::{Link, hooks::use_route};
@@ -1964,7 +1982,7 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         let principal_did = (!principal_did.trim().is_empty())
                                             .then_some(principal_did);
-                                        let context = crate::push_registration::RegisterContext {
+                                        let context = crate::push::registration::RegisterContext {
                                             principal_server_url: base,
                                             floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
@@ -1973,7 +1991,7 @@ pub fn SettingsPanel(
                                             session_grant: None,
                                             active_circle_id: None,
                                         };
-                                        match crate::push_registration::register_via_chime(
+                                        match crate::push::registration::register_via_chime(
                                             context,
                                             &mut local_store,
                                         )
@@ -3018,7 +3036,7 @@ pub fn SettingsPanel(
                     // ── G3.Y3 consent grants ─────────────────────────────
                     if active_section == SettingsSection::Consent {
                         div { class: "settings-content-stack",
-                            crate::views::settings_consent::ConsentSettingsCard {
+                            crate::views::settings::consent::ConsentSettingsCard {
                                 base_url,
                                 account_did,
                                 token,
@@ -3030,7 +3048,7 @@ pub fn SettingsPanel(
                     // ── G3.Y3 personal blocklist ─────────────────────────
                     if active_section == SettingsSection::Blocklist {
                         div { class: "settings-content-stack",
-                            crate::views::settings_blocklist::BlocklistSettingsCard {
+                            crate::views::settings::blocklist::BlocklistSettingsCard {
                                 base_url,
                                 account_did,
                                 token,
@@ -3042,7 +3060,7 @@ pub fn SettingsPanel(
                     // ── G3.Y3 capability viewer ──────────────────────────
                     if active_section == SettingsSection::Capabilities {
                         div { class: "settings-content-stack",
-                            crate::views::settings_capabilities::CapabilitiesSettingsCard {
+                            crate::views::settings::capabilities::CapabilitiesSettingsCard {
                                 base_url,
                                 account_did,
                                 token,

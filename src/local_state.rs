@@ -898,11 +898,11 @@ pub struct ClientLocalState {
     pub telemetry_log: Vec<UserActionLogEntry>,
     /// Persisted MLS group state snapshots, keyed by `space_id`. Each
     /// entry is the encrypted envelope produced by
-    /// [`crate::mls_persistence::encrypt_state`]; the boot path
+    /// [`crate::mls::persistence::encrypt_state`]; the boot path
     /// rehydrates each space's `LocalMlsDevice` from the latest envelope
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
-    pub mls_snapshots: BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope>,
+    pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Actor-private Space remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -2418,7 +2418,7 @@ impl LocalStateStore {
     pub fn save_mls_snapshot(
         &mut self,
         space_id: impl Into<String>,
-        envelope: crate::mls_persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
         self.ensure_cached_loaded();
         self.cached.mls_snapshots.insert(space_id.into(), envelope);
@@ -2432,7 +2432,7 @@ impl LocalStateStore {
     pub fn mls_snapshot_for(
         &self,
         space_id: &str,
-    ) -> Option<crate::mls_persistence::MlsSnapshotEnvelope> {
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots.get(space_id).cloned()
     }
 
@@ -2440,7 +2440,7 @@ impl LocalStateStore {
     /// path to rehydrate every known space's group in one pass and by
     /// the cross-device sync UI to enumerate what's available before
     /// asking the user for a passphrase.
-    pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls_persistence::MlsSnapshotEnvelope> {
+    pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots
     }
 
@@ -4045,7 +4045,7 @@ mod tests {
         // MLS snapshot envelope is durable across store instances and the
         // boot path can rehydrate every space's group from the persisted
         // record.
-        use crate::mls_persistence::encrypt_state;
+        use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-persist");
         let space = "cx:space:round28-mls";
         let envelope = encrypt_state(
@@ -4071,7 +4071,7 @@ mod tests {
 
     #[test]
     fn mls_snapshot_drop_clears_persisted_record() {
-        use crate::mls_persistence::encrypt_state;
+        use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-drop");
         let mut store = LocalStateStore::with_path(path);
         let space = "cx:space:drop-me";

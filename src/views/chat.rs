@@ -204,7 +204,7 @@ fn run_local_mls_encrypt(
     }
     let snapshot = state_store.read().mls_snapshot_for(space_id);
     let mut group = if let Some(env) = snapshot {
-        match crate::mls_persistence::restore_envelope(&env, passphrase, 0) {
+        match crate::mls::persistence::restore_envelope(&env, passphrase, 0) {
             Ok(group) => group,
             Err(_) => return empty,
         }
@@ -275,7 +275,7 @@ fn run_local_mls_encrypt(
             commit_envelope,
         );
     }
-    let new_envelope = crate::mls_persistence::encrypt_state(
+    let new_envelope = crate::mls::persistence::encrypt_state(
         space_id,
         &post_state.group_id,
         post_state.epoch,
@@ -2351,7 +2351,7 @@ pub fn ChatPanel(
     // Read the shared per-Space MLS passphrase store. Set from the
     // passphrase input above Send Secure; read by the secure-send path
     // to run `group.encrypt_payload()`.
-    let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
     let mut mls_passphrase_draft = use_signal(String::new);
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_topic = use_signal(String::new);
@@ -2794,7 +2794,7 @@ pub fn ChatPanel(
                         if getrandom::fill(&mut salt).is_err() {
                             continue;
                         }
-                        let snapshot = crate::mls_persistence::encrypt_state(
+                        let snapshot = crate::mls::persistence::encrypt_state(
                             &space,
                             &post_state.group_id,
                             post_state.epoch,
@@ -5685,7 +5685,7 @@ pub fn ChatPanel(
                                 let mls_commit_epoch = real_commit_envelope.epoch;
 
                                 let mls_binding = (|| -> anyhow::Result<
-                                    crate::mls_governance::GovernanceBindingPayload,
+                                    crate::mls::governance::GovernanceBindingPayload,
                                 > {
                                     use contrix_sdk::{AnchorId, SpaceId};
                                     let space_id = SpaceId::new(space.clone()).map_err(|e| {
@@ -5695,7 +5695,7 @@ pub fn ChatPanel(
                                         .map_err(|e| {
                                             anyhow::anyhow!("invalid anchor ref: {e:?}")
                                         })?;
-                                    crate::mls_governance::GovernanceBindingPayload::from_anchor(
+                                    crate::mls::governance::GovernanceBindingPayload::from_anchor(
                                         &space,
                                         &space_id,
                                         prev_epoch,

@@ -27,7 +27,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
 /// Yougen ships the canonical `governance_binding` payload (see
-/// [`crate::mls_governance::GovernanceBindingPayload`]) and the
+/// [`crate::mls::governance::GovernanceBindingPayload`]) and the
 /// `covered_frontier_cell` add-effect through [`contrix_sdk::mls_move`]. The
 /// commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.

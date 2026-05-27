@@ -2853,7 +2853,7 @@ async fn run_device_revoke_from_snapshot(
                 ));
                 return;
             }
-            let new_envelope = crate::mls_persistence::encrypt_state(
+            let new_envelope = crate::mls::persistence::encrypt_state(
                 &space_id,
                 &post_state.group_id,
                 post_state.epoch,

@@ -400,7 +400,7 @@ pub fn build_mls_commit_move(
 
 /// Build an MLS commit Move that carries the canonical
 /// [`mls_governance_binding.full.v1`] preconditions + effects from a
-/// [`crate::mls_governance::GovernanceBindingPayload`].
+/// [`crate::mls::governance::GovernanceBindingPayload`].
 ///
 /// Unlike [`build_mls_commit_move`] (which writes only the local epoch
 /// cas-register and leaves preconditions empty), this builder threads
@@ -412,12 +412,12 @@ pub fn build_mls_commit_move(
 ///
 /// Caller-supplied `prev_epoch` / `new_epoch` / `new_schedule` / etc.
 /// live inside the binding — see
-/// [`crate::mls_governance::GovernanceBindingPayload::from_anchor`] for
+/// [`crate::mls::governance::GovernanceBindingPayload::from_anchor`] for
 /// the constructor that validates those typed ids.
 pub fn build_mls_commit_move_with_governance_binding(
     issuer: &str,
     space_id: &str,
-    binding: &crate::mls_governance::GovernanceBindingPayload,
+    binding: &crate::mls::governance::GovernanceBindingPayload,
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[test]
     fn mls_commit_move_with_binding_attaches_sdk_preconditions_and_effects() {
-        use crate::mls_governance::GovernanceBindingPayload;
+        use crate::mls::governance::GovernanceBindingPayload;
         use contrix_sdk::{AnchorId, Hash, SpaceId};
 
         let space_id =

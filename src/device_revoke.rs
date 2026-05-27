@@ -240,7 +240,7 @@ pub struct DeviceRevokeMlsRemoveOutput {
 /// Native-only convenience: hydrate the MLS group from a persisted
 /// snapshot envelope, run [`execute_mls_remove`], and re-serialize the
 /// post-commit group state so the caller can persist it back through
-/// [`crate::mls_persistence::encrypt_state`].
+/// [`crate::mls::persistence::encrypt_state`].
 ///
 /// This wraps the three pieces of a real-world revocation flow (read,
 /// mutate, write) so views and orchestrators only need to deal with the
@@ -256,13 +256,13 @@ pub struct DeviceRevokeMlsRemoveOutput {
 /// behind the server.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn execute_mls_remove_from_snapshot(
-    envelope: &crate::mls_persistence::MlsSnapshotEnvelope,
+    envelope: &crate::mls::persistence::MlsSnapshotEnvelope,
     passphrase: &str,
     target: &contrix_sdk::Did,
     operation_id: contrix_sdk::OperationId,
     realm_id: contrix_sdk::RealmId,
 ) -> anyhow::Result<DeviceRevokeFullSnapshot> {
-    let mut group = crate::mls_persistence::restore_envelope(envelope, passphrase, 0)
+    let mut group = crate::mls::persistence::restore_envelope(envelope, passphrase, 0)
         .map_err(|err| anyhow::anyhow!("restore mls snapshot: {err}"))?;
     let output = execute_mls_remove(&mut group, target, operation_id, realm_id)?;
     let post_state = group
@@ -273,7 +273,7 @@ pub fn execute_mls_remove_from_snapshot(
 
 /// Combined result of [`execute_mls_remove_from_snapshot`]: the
 /// submission envelope + the post-commit group state record that MUST
-/// be re-encrypted via [`crate::mls_persistence::encrypt_state`] and
+/// be re-encrypted via [`crate::mls::persistence::encrypt_state`] and
 /// persisted before the commit is submitted to the server.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct DeviceRevokeFullSnapshot {

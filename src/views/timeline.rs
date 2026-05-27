@@ -514,7 +514,7 @@ pub fn TimelinePanel(
     // emits a single `cx.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
     let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
-    let mls_passphrase_store = use_context::<Signal<crate::mls_passphrase::MlsPassphraseStore>>();
+    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
     {
         let base_a = base_url.clone();
         let token_a = token;
@@ -2185,7 +2185,7 @@ fn try_local_mls_decrypt(
         return None;
     }
     let envelope = state_store.read().mls_snapshot_for(space_id)?;
-    let mut group = crate::mls_persistence::restore_envelope(&envelope, passphrase, 0).ok()?;
+    let mut group = crate::mls::persistence::restore_envelope(&envelope, passphrase, 0).ok()?;
     let payload: contrix_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     group.decrypt_payload(&payload).ok()

@@ -1,3 +1,6 @@
+pub mod native;
+pub mod registration;
+
 use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::Engine as _;

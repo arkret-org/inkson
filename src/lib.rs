@@ -46,28 +46,21 @@ pub mod key_store;
 pub mod late_recovery;
 pub mod local_state;
 pub mod media;
-pub mod media_cache;
 /// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
 /// discussion-promote, sidecar-hash). The chat view consumes these
 /// helpers; see `crate::messaging::mod` for the rationale.
 pub mod messaging;
-pub mod mimi_client;
-pub mod mls_governance;
-pub mod mls_passphrase;
-pub mod mls_persistence;
+pub mod mls;
 pub mod models;
 pub mod move_builder;
-pub mod native_notify;
 pub mod notification_rules;
 pub mod objects;
 pub mod offline;
 pub mod offline_queue;
-pub mod oidc_callback;
-pub mod oidc_lifecycle;
+pub mod oidc;
 pub mod operation;
 pub mod presence_rx;
 pub mod push;
-pub mod push_registration;
 pub mod rank;
 pub mod recovery_crypto;
 pub mod routes;
