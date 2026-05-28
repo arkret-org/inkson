@@ -1,6 +1,6 @@
-//! R3.1 — Realm-scoped `cx.member.identity.update` event store.
+//! R3.2 — Realm-scoped `cx.member.identity.update` event store.
 //!
-//! Spec source: contrix-spec @ 7157ee8 (2026-05-27)
+//! Spec source: contrix-spec @ b56cab1 (2026-05-28)
 //! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
 //!
 //! Sync ingest pipeline (MID-2): when a `members[]` roster entry on an
@@ -12,9 +12,11 @@
 //!
 //! MID-4 (MLS decryption) + MID-5 (proof signature verification) are
 //! `TODO(R4)` — the typed wire surface + the effective-set + carrier
-//! digest binding (MID-3) are all in place so the UI can pick the right
-//! `primary_handle` / `display_name` as soon as the crypto pipeline
-//! lands.
+//! digest binding (MID-3) are all in place so the UI can resolve the
+//! effective `MemberIdentity` (subject_id + display_profile) as soon as
+//! the crypto pipeline lands. Handle now comes from the
+//! `cx.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
+//! `MemberIdentity` no longer carries `primary_handle` / `handles[]`.
 
 use std::collections::BTreeMap;
 
@@ -224,8 +226,7 @@ impl MemberIdentityStore {
 mod tests {
     use super::*;
     use contrix_sdk::{
-        DisplayProfile, Handle, MemberIdentity, MemberIdentityProof,
-        MemberIdentitySignatureAlgorithm,
+        DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
     use serde_json::json;
 
@@ -240,7 +241,6 @@ mod tests {
                     "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
                     "actor_id": actor_id,
                     "subject_id": actor_id,
-                    "primary_handle": "alice:example.com",
                     "display_profile": { "display_name": name },
                     "asserted_at": "2026-05-27T12:00:00Z",
                     "proof": {
@@ -266,10 +266,10 @@ mod tests {
         });
         store.ingest_inline(realm, actor, &[event]);
         let identity = store.current_identity(realm, actor).expect("resolved");
-        assert_eq!(
-            identity.primary_handle.as_ref().map(Handle::canonical),
-            Some("alice:example.com")
-        );
+        // R3.2: `MemberIdentity` no longer carries handle fields — the
+        // effective identity discloses `subject_id` + `display_profile`
+        // only. Handle resolution runs §3.2.1 over the handle-claim set.
+        assert_eq!(identity.subject_id.as_str(), actor);
         assert_eq!(identity.display_profile.display_name, "Alice v1");
         assert!(!store.is_decryption_pending(realm, actor));
     }
@@ -329,8 +329,6 @@ mod tests {
             realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
-            primary_handle: Some(Handle::parse("alice:example.com").unwrap()),
-            handles: Vec::new(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
                 avatar_ref: None,

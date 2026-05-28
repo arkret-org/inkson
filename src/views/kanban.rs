@@ -3737,23 +3737,32 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
 
 /// Per-member entry harvested from a cached space projection.
 ///
-/// R3.1 (contrix-spec @ 7157ee8) — roster entries MUST NOT carry raw
+/// R3.2 (contrix-spec @ b56cab1) — roster entries MUST NOT carry raw
 /// handle / display fields. Identity resolution happens by following
 /// `identity_event_ids[]` (or inline `identity_events[]`) and applying
-/// the SDK's `effective_identity_events` helper. The legacy `handle_uri`
-/// field has been removed from the wire schema.
+/// the SDK's `effective_identity_events` helper. Handle strings only ever
+/// appear inside signed `cx.schema.handle_claim.v1` evidence.
 ///
 /// `actor_id` is the actor DID. `membership` is `join` / `invite` /
 /// `knock`. `identity_event_ids` are the effective
 /// `cx.member.identity.update` event ids (after replacement edges).
-/// `identity_state_digest` is the optional optimistic-concurrency guard.
+/// `member_display_state_digest` is the roster display cache key (R3.2
+/// rename of the prior `identity_state_digest`; now folds the visible
+/// handle-claim digest set). `subject_id` is the disclosed principal DID
+/// — present only when the server disclosed it (gates the handle-claim
+/// evidence fields per the roster v2 dependentRequired rule).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct RealmMemberRow {
     /// Actor DID. Carried as both `actor_id` and (legacy) `did`.
     pub actor_id: String,
     pub membership: Option<String>,
     pub identity_event_ids: Vec<String>,
-    pub identity_state_digest: Option<String>,
+    pub member_display_state_digest: Option<String>,
+    /// R3.2 roster v2 — disclosed principal/holder DID. `None` when the
+    /// server did not disclose it (then the handle-claim fields are also
+    /// absent). Drives §3.2.1 primary-handle selection + the
+    /// "Why am I seeing this handle?" panel.
+    pub subject_id: Option<String>,
 }
 
 impl RealmMemberRow {
@@ -3780,14 +3789,11 @@ fn member_display_label(
     identity: Option<&contrix_sdk::MemberIdentity>,
 ) -> String {
     if let Some(identity) = identity {
-        // Prefer `primary_handle` (canonical wire form), then the first
-        // verified handle, then the display name.
-        if let Some(primary) = identity.primary_handle.as_ref() {
-            return primary.canonical().to_owned();
-        }
-        if let Some(first) = identity.handles.first() {
-            return first.handle.canonical().to_owned();
-        }
+        // R3.2: `MemberIdentity` no longer carries handle fields. The
+        // verified handle (if any) comes from running §3.2.1 over the
+        // roster handle-claim set; that resolution happens in the mention
+        // / member-detail render path (see `render_member_handle`). The
+        // roster row label falls back to the disclosed display name.
         let name = identity.display_profile.display_name.trim();
         if !name.is_empty() {
             return name.to_owned();
@@ -3797,10 +3803,14 @@ fn member_display_label(
 }
 
 /// Collect the sorted roster of realm members from a cached space
-/// projection. R3.1 wire shape per
+/// projection. R3.2 roster v2 wire shape per
 /// `account-subscribe-frame.schema.json#/$defs/member_roster_entry`:
-/// `{actor_id, membership, identity_event_ids?, identity_state_digest?,
-/// identity_events?}`. Falls back to bare DID strings or legacy `{did}`
+/// `{actor_id, membership, subject_id?, identity_event_ids?,
+/// member_display_state_digest?, identity_events?, handle_claim_digests?,
+/// handle_claims?, handle_claims_limited?}`. The four handle-claim /
+/// identity-event evidence fields are disclosure-gated on `subject_id`;
+/// when the server omits `subject_id` it omits them all (we just treat
+/// them as `None`). Falls back to bare DID strings or legacy `{did}`
 /// objects for projections that haven't been migrated yet.
 fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
     let Some(root) = projection else {
@@ -3836,7 +3846,8 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         actor_id: trimmed.to_owned(),
                         membership: None,
                         identity_event_ids: Vec::new(),
-                        identity_state_digest: None,
+                        member_display_state_digest: None,
+                        subject_id: None,
                     });
             }
         }
@@ -3869,8 +3880,23 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         .collect()
                 })
                 .unwrap_or_default();
-            let identity_state_digest = map
-                .get("identity_state_digest")
+            // R3.2 roster v2 rename: `identity_state_digest` →
+            // `member_display_state_digest`. Accept the legacy field name
+            // as a fallback for projections not yet migrated.
+            let member_display_state_digest = map
+                .get("member_display_state_digest")
+                .or_else(|| map.get("identity_state_digest"))
+                .and_then(|child| child.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            // R3.2 roster v2: disclosed principal/holder DID. Gates the
+            // inline handle-claim evidence (which we treat as optional /
+            // None for now — the mention render path resolves handles
+            // live). dependentRequired is enforced server-side; here we
+            // simply read what was disclosed.
+            let subject_id = map
+                .get("subject_id")
                 .and_then(|child| child.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -3880,7 +3906,8 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                     actor_id: did.clone(),
                     membership: membership.clone(),
                     identity_event_ids: identity_event_ids.clone(),
-                    identity_state_digest: identity_state_digest.clone(),
+                    member_display_state_digest: member_display_state_digest.clone(),
+                    subject_id: subject_id.clone(),
                 };
                 match out.entry(did) {
                     std::collections::btree_map::Entry::Vacant(entry) => {
@@ -3894,8 +3921,11 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         if existing.identity_event_ids.is_empty() {
                             existing.identity_event_ids = identity_event_ids;
                         }
-                        if existing.identity_state_digest.is_none() {
-                            existing.identity_state_digest = identity_state_digest;
+                        if existing.member_display_state_digest.is_none() {
+                            existing.member_display_state_digest = member_display_state_digest;
+                        }
+                        if existing.subject_id.is_none() {
+                            existing.subject_id = subject_id;
                         }
                     }
                 }
@@ -5524,18 +5554,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn realm_member_roster_reads_r31_wire_shape() {
-        // R3.1 (contrix-spec @ 7157ee8): roster entries carry
-        // `actor_id` + `membership` + optional `identity_event_ids` /
-        // `identity_state_digest`. The legacy `handle_uri` field has
-        // been retired.
+    fn realm_member_roster_reads_r32_wire_shape() {
+        // R3.2 (contrix-spec @ b56cab1): roster v2 entries carry
+        // `actor_id` + `membership` + optional `subject_id` /
+        // `identity_event_ids` / `member_display_state_digest`. Handle
+        // strings only appear inside signed handle_claim evidence.
         let projection = json!({
             "members": [
                 {
                     "actor_id": "did:web:acme.example:users:alice",
                     "membership": "join",
+                    "subject_id": "did:web:acme.example:principals:alice",
                     "identity_event_ids": ["cx:event:01904100-0000-7000-8000-00000000000a"],
-                    "identity_state_digest": "sha256:abababababababababababababababababababababababababababababababab"
+                    "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab"
                 },
                 {
                     "actor_id": "did:webvh:zQmPr8",
@@ -5554,7 +5585,11 @@ mod tests {
             alice.identity_event_ids,
             vec!["cx:event:01904100-0000-7000-8000-00000000000a".to_owned()]
         );
-        assert!(alice.identity_state_digest.is_some());
+        assert!(alice.member_display_state_digest.is_some());
+        assert_eq!(
+            alice.subject_id.as_deref(),
+            Some("did:web:acme.example:principals:alice")
+        );
 
         let webvh = rows
             .iter()
@@ -5562,7 +5597,28 @@ mod tests {
             .unwrap();
         assert_eq!(webvh.membership.as_deref(), Some("invite"));
         assert!(webvh.identity_event_ids.is_empty());
-        assert!(webvh.identity_state_digest.is_none());
+        assert!(webvh.member_display_state_digest.is_none());
+        // subject_id not disclosed for the invite row.
+        assert!(webvh.subject_id.is_none());
+    }
+
+    #[test]
+    fn realm_member_roster_accepts_legacy_digest_field_name() {
+        // Backward compat: a not-yet-migrated projection that still uses
+        // the pre-R3.2 `identity_state_digest` key is read into
+        // `member_display_state_digest`.
+        let projection = json!({
+            "members": [
+                {
+                    "actor_id": "did:web:acme.example:users:legacy",
+                    "membership": "join",
+                    "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                }
+            ]
+        });
+        let rows = realm_member_roster(Some(&projection));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].member_display_state_digest.is_some());
     }
 
     #[test]
@@ -5579,10 +5635,12 @@ mod tests {
     #[test]
     fn member_display_label_uses_member_identity_when_available() {
         use contrix_sdk::{
-            DisplayProfile, Handle, MemberIdentity, MemberIdentityProof,
-            MemberIdentitySignatureAlgorithm,
+            DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
         };
 
+        // R3.2: `MemberIdentity` discloses subject_id + display_profile
+        // only; the roster label falls back to the display name (handle
+        // resolution runs §3.2.1 in the dedicated render path).
         let identity = MemberIdentity {
             schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
             realm_id: contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001")
@@ -5590,8 +5648,6 @@ mod tests {
             actor_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
             subject_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned())
                 .unwrap(),
-            primary_handle: Some(Handle::parse("alice:acme.example").unwrap()),
-            handles: Vec::new(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
                 avatar_ref: None,
@@ -5613,19 +5669,18 @@ mod tests {
             actor_id: "did:web:acme.example:users:alice".to_owned(),
             membership: Some("join".to_owned()),
             identity_event_ids: vec![],
-            identity_state_digest: None,
+            member_display_state_digest: None,
+            subject_id: None,
         };
-        assert_eq!(
-            member_display_label(&row, Some(&identity)),
-            "alice:acme.example"
-        );
+        assert_eq!(member_display_label(&row, Some(&identity)), "Alice");
 
         // Decryption-pending / no MemberIdentity → fall back to compact DID.
         let bare = RealmMemberRow {
             actor_id: "did:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha".to_owned(),
             membership: None,
             identity_event_ids: vec![],
-            identity_state_digest: None,
+            member_display_state_digest: None,
+            subject_id: None,
         };
         let label = member_display_label(&bare, None);
         assert!(label.starts_with("did:webvh:"));
