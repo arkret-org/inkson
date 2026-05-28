@@ -2,9 +2,9 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use chime::{
-    PushRuleEventContext, ShouldNotify, WatchLevel as ChimeWatchLevel, evaluate_watch_level,
-    push_rule_reason_code,
+use contrix_sdk::push_rule_core::{
+    EventContext as PushRuleEventContext, ShouldNotify, evaluate_watch_level,
+    reason_code as push_rule_reason_code,
 };
 
 use crate::{
@@ -592,7 +592,7 @@ fn notification_from_value(
 }
 
 /// T4.4 — Resolve the wire-safe reason code for a watch-suppressed
-/// notification through the shared `chime::evaluate_watch_level`
+/// notification through the shared SDK `evaluate_watch_level`
 /// helper, then map that to a localised UI string.
 ///
 /// Routing the decision through the shared client helper (instead of
@@ -604,14 +604,8 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
     // Default to `MentionsOnly` to match the yougen evaluator's
     // default; cosmetic only since the caller already established
     // `watch_suppressed=true`.
-    let level = ctx.watch_level.unwrap_or_default();
-    let chime_level = match level {
-        WatchLevel::Muted => ChimeWatchLevel::Muted,
-        WatchLevel::MentionsOnly => ChimeWatchLevel::MentionsOnly,
-        WatchLevel::Participating => ChimeWatchLevel::Participating,
-        WatchLevel::All => ChimeWatchLevel::All,
-    };
-    let chime_ctx = PushRuleEventContext {
+    let core_level = ctx.watch_level.unwrap_or_default();
+    let core_ctx = PushRuleEventContext {
         mentions_actor: ctx.mentions_actor.unwrap_or(false),
         assigned_to_actor: ctx.assigned_to_actor,
         reply_to_self: ctx.reply_to_self,
@@ -619,9 +613,9 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
         is_e2ee: ctx.is_e2ee,
         local_decrypted: ctx.local_decrypted,
     };
-    let (decision, reason) = evaluate_watch_level(chime_level, &chime_ctx);
+    let (decision, reason) = evaluate_watch_level(core_level, &core_ctx);
 
-    // Even if chime says "Notify" (the inputs disagree with the
+    // Even if the core says "Notify" (the inputs disagree with the
     // yougen evaluator's richer rules), still surface a generic
     // change-watch-level hint so the UI stays consistent with what
     // the user observed.

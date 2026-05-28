@@ -8,6 +8,10 @@
 //! the client must not show a user-visible banner until it has decrypted and
 //! evaluated the rule locally.
 
+pub use contrix_sdk::push_rule_core::WatchLevel;
+use contrix_sdk::push_rule_core::{
+    self, EventContext as PushRuleEventContext, ShouldNotify as PushRuleDecision,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -67,28 +71,6 @@ pub struct DndSchedule {
 pub struct DndPeriod {
     pub start: String,
     pub end: String,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WatchLevel {
-    #[default]
-    MentionsOnly,
-    Participating,
-    All,
-    Muted,
-}
-
-impl WatchLevel {
-    pub fn from_wire(value: &str) -> Option<Self> {
-        match value {
-            "mentions_only" => Some(Self::MentionsOnly),
-            "participating" => Some(Self::Participating),
-            "all" => Some(Self::All),
-            "muted" => Some(Self::Muted),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -182,18 +164,8 @@ pub fn evaluate_notification(
     dnd: Option<&DndSettings>,
     ctx: &NotificationEvalContext,
 ) -> NotificationDecision {
-    if let Some(level) = effective_watch_level(ctx) {
-        if level == WatchLevel::Muted {
-            let mut decision = NotificationDecision::dont_notify("watch muted");
-            decision.muted_short_circuit = true;
-            decision.watch_suppressed = true;
-            return decision;
-        }
-        if !watch_allows_event(level, ctx) {
-            let mut decision = NotificationDecision::dont_notify("watch level suppressed event");
-            decision.watch_suppressed = true;
-            return decision;
-        }
+    if let Some(decision) = evaluate_watch_gate(ctx) {
+        return decision;
     }
 
     let decision = match rules {
@@ -311,14 +283,38 @@ fn effective_watch_level(ctx: &NotificationEvalContext) -> Option<WatchLevel> {
     ctx.watch_level
 }
 
-fn watch_allows_event(level: WatchLevel, ctx: &NotificationEvalContext) -> bool {
-    match level {
-        WatchLevel::Muted => false,
-        WatchLevel::All => true,
-        WatchLevel::Participating => {
-            directed_event(ctx) || ctx.reply_to_self || ctx.participating_thread_update
+fn evaluate_watch_gate(ctx: &NotificationEvalContext) -> Option<NotificationDecision> {
+    let level = effective_watch_level(ctx)?;
+    let core_ctx = PushRuleEventContext {
+        mentions_actor: ctx.mentions_actor.unwrap_or(false),
+        assigned_to_actor: ctx.assigned_to_actor,
+        reply_to_self: ctx.reply_to_self,
+        participating_thread_update: ctx.participating_thread_update,
+        is_e2ee: ctx.is_e2ee,
+        local_decrypted: ctx.local_decrypted,
+    };
+    let (decision, reason) = push_rule_core::evaluate_watch_level(level, &core_ctx);
+
+    match decision {
+        PushRuleDecision::Notify => None,
+        PushRuleDecision::DontNotify => {
+            let mut decision = if reason == push_rule_core::reason_code::MUTED {
+                NotificationDecision::dont_notify("watch muted")
+            } else {
+                NotificationDecision::dont_notify("watch level suppressed event")
+            };
+            decision.watch_suppressed = true;
+            decision.muted_short_circuit = reason == push_rule_core::reason_code::MUTED;
+            Some(decision)
         }
-        WatchLevel::MentionsOnly => directed_event(ctx),
+        PushRuleDecision::BlindWakeup => {
+            let mut decision = NotificationDecision::dont_notify(
+                "client-side watch evaluation unresolved in E2EE context",
+            );
+            decision.unresolved_client_evaluation = true;
+            decision.blind_wakeup_required = true;
+            Some(decision)
+        }
     }
 }
 
@@ -410,7 +406,7 @@ fn condition_matches(condition: &PushCondition, ctx: &NotificationEvalContext) -
         }
         "watch_state" => {
             let level = effective_watch_level(ctx).unwrap_or_default();
-            let level = watch_level_wire(level);
+            let level = level.as_wire();
             if pattern_matches(condition.pattern.as_ref(), level) {
                 ConditionResult::Matched
             } else {
@@ -459,7 +455,7 @@ fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'
         "sender" => ctx.sender.as_deref(),
         "flow_track" | "track_name" => ctx.flow_track.as_deref(),
         "priority" | "notification_priority" => ctx.priority.as_deref(),
-        "watch_state" => effective_watch_level(ctx).map(watch_level_wire),
+        "watch_state" => effective_watch_level(ctx).map(WatchLevel::as_wire),
         _ => None,
     }
 }
@@ -565,15 +561,6 @@ fn current_local_minute() -> u16 {
 
     let now = chrono::Local::now();
     (now.hour() as u16) * 60 + now.minute() as u16
-}
-
-fn watch_level_wire(level: WatchLevel) -> &'static str {
-    match level {
-        WatchLevel::MentionsOnly => "mentions_only",
-        WatchLevel::Participating => "participating",
-        WatchLevel::All => "all",
-        WatchLevel::Muted => "muted",
-    }
 }
 
 fn account_data_content<'a>(entries: &'a [Value], key: &str) -> Option<&'a Value> {
@@ -739,6 +726,29 @@ mod tests {
         let decision = evaluate_notification(None, None, &ctx);
         assert!(decision.should_notify);
         assert!(decision.highlight);
+    }
+
+    #[test]
+    fn e2ee_unknown_watch_gate_uses_blind_wakeup_not_suppression() {
+        for level in [
+            WatchLevel::MentionsOnly,
+            WatchLevel::Participating,
+            WatchLevel::All,
+        ] {
+            let mut ctx = message_context();
+            ctx.watch_level = Some(level);
+            ctx.is_e2ee = true;
+            ctx.local_decrypted = false;
+            ctx.mentions_actor = None;
+
+            let decision = evaluate_notification(None, None, &ctx);
+
+            assert!(!decision.should_notify);
+            assert!(!decision.watch_suppressed);
+            assert!(!decision.muted_short_circuit);
+            assert!(decision.blind_wakeup_required);
+            assert!(decision.unresolved_client_evaluation);
+        }
     }
 
     #[test]

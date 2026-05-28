@@ -1,3 +1,4 @@
+use contrix_sdk::push_rule_core::WatchLevel;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
@@ -1184,45 +1185,25 @@ fn chat_reply_quote_preview(
     Some((name, body))
 }
 
-/// T7.2: discussion watch level fast switcher. Mirrors the spec's
-/// `cx.flow.watch.set` level enumeration. `Muted` maps to `none` on the
-/// wire — the term used in the dropdown is the user-friendly label.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WatchLevel {
-    MentionsOnly,
-    Participating,
-    All,
-    Muted,
+fn watch_level_label_key(level: WatchLevel) -> &'static str {
+    match level {
+        WatchLevel::MentionsOnly => "chat.watch_level.mentions_only",
+        WatchLevel::Participating => "chat.watch_level.participating",
+        WatchLevel::All => "chat.watch_level.all",
+        WatchLevel::Muted => "chat.watch_level.muted",
+    }
 }
 
-impl WatchLevel {
-    fn wire_value(self) -> &'static str {
-        match self {
-            Self::MentionsOnly => "mentions_only",
-            Self::Participating => "participating",
-            Self::All => "all",
-            Self::Muted => "none",
-        }
-    }
+fn watch_level_wire_value(level: WatchLevel) -> &'static str {
+    level.as_wire()
+}
 
-    fn label_key(self) -> &'static str {
-        match self {
-            Self::MentionsOnly => "chat.watch_level.mentions_only",
-            Self::Participating => "chat.watch_level.participating",
-            Self::All => "chat.watch_level.all",
-            Self::Muted => "chat.watch_level.muted",
-        }
-    }
-
-    #[cfg(test)]
-    fn from_wire(value: &str) -> Self {
-        match value {
-            "mentions_only" => Self::MentionsOnly,
-            "participating" => Self::Participating,
-            "all" => Self::All,
-            "none" | "muted" => Self::Muted,
-            _ => Self::All,
-        }
+#[cfg(test)]
+fn watch_level_from_wire(value: &str) -> WatchLevel {
+    if value == "none" {
+        WatchLevel::Muted
+    } else {
+        WatchLevel::from_wire(value).unwrap_or(WatchLevel::All)
     }
 }
 
@@ -3146,7 +3127,7 @@ pub fn ChatPanel(
                         {
                             let level_now = flow_watch_level();
                             let menu_open = watch_level_menu_open();
-                            let level_label = crate::i18n::tr(level_now.label_key());
+                            let level_label = crate::i18n::tr(watch_level_label_key(level_now));
                             let flow_id_for_watch = selected_channel_value.clone();
                             let space_for_watch = selected_space.clone();
                             let actor_for_watch = account_did.clone();
@@ -3179,7 +3160,7 @@ pub fn ChatPanel(
                                                 rsx! {
                                                     for option in options.iter().copied() {
                                                         {
-                                                            let option_label = crate::i18n::tr(option.label_key());
+                                                            let option_label = crate::i18n::tr(watch_level_label_key(option));
                                                             let flow_id_for_click = flow_id_for_watch.clone();
                                                             let space_for_click = space_for_watch.clone();
                                                             let actor_for_click = actor_for_watch.clone();
@@ -3202,7 +3183,7 @@ pub fn ChatPanel(
                                                                             &actor_for_click,
                                                                             &actor_for_click,
                                                                             &flow_id_for_click,
-                                                                            Some(option.wire_value()),
+                                                                            Some(watch_level_wire_value(option)),
                                                                             None,
                                                                         )
                                                                         .build("yougen");
@@ -6478,8 +6459,9 @@ mod tests {
             WatchLevel::All,
             WatchLevel::Muted,
         ] {
-            assert_eq!(WatchLevel::from_wire(level.wire_value()), level);
+            assert_eq!(watch_level_from_wire(watch_level_wire_value(level)), level);
         }
+        assert_eq!(watch_level_from_wire("none"), WatchLevel::Muted);
     }
 
     // ── T7.4 crypto state helpers ────────────────────────────────

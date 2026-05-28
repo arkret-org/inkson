@@ -12,8 +12,8 @@ pub struct ClientEncryptedMessage {
 mod native {
     use contrix_sdk::{
         ContrixMlsGroup, ContrixMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
-        MessageCryptoDecrypt, MlsAddMemberResult, MlsKeyPackageRecord, MlsRemoveMemberResult,
-        MlsWelcomeEnvelope,
+        MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
+        MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
 
     use super::ClientEncryptedMessage;
@@ -108,6 +108,14 @@ mod native {
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
             Ok(group.remove_member_by_leaf(leaf_index)?)
+        }
+
+        pub fn apply_commit(&mut self, commit: &MlsCommitEnvelope) -> anyhow::Result<u64> {
+            let group = self
+                .group
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+            Ok(group.apply_commit(commit)?)
         }
 
         pub fn encrypt_message(
@@ -286,6 +294,81 @@ mod tests {
         assert_eq!(payload.payload_digest, digest);
         assert!(matches!(reason, MessageCryptoUnavailable::NoSession));
         assert_eq!(offline.pending_count(), 1);
+    }
+
+    #[test]
+    fn removed_mls_member_cannot_decrypt_post_remove_ciphertext() {
+        let mut alice = LocalMlsDevice::new(
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+        )
+        .unwrap();
+        let mut bob = LocalMlsDevice::new(
+            "did:web:bob.example",
+            "cx:device:01904100-0000-7000-8000-000000000002",
+        )
+        .unwrap();
+        let mut carol = LocalMlsDevice::new(
+            "did:web:carol.example",
+            "cx:device:01904100-0000-7000-8000-000000000003",
+        )
+        .unwrap();
+
+        let bob_keys = bob.key_package_record().unwrap();
+        let carol_keys = carol.key_package_record().unwrap();
+
+        alice.create_group(b"cx:space:local-e2ee-remove").unwrap();
+        let bob_add = alice.add_member(&bob_keys).unwrap();
+        bob.join_from_welcome(&bob_add.welcome).unwrap();
+
+        let carol_add = alice.add_member(&carol_keys).unwrap();
+        bob.apply_commit(&carol_add.commit).unwrap();
+        carol.join_from_welcome(&carol_add.welcome).unwrap();
+
+        let before_remove = alice
+            .encrypt_message("cx:message:pre-remove", br#"{"body":"before remove"}"#)
+            .unwrap();
+        let before_epoch = before_remove.payload.epoch;
+        let bob_before = bob.decrypt_or_preserve(before_remove.clone()).unwrap();
+        assert!(matches!(bob_before, MessageCryptoDecrypt::Plaintext { .. }));
+        let carol_before = carol.decrypt_or_preserve(before_remove).unwrap();
+        assert!(matches!(
+            carol_before,
+            MessageCryptoDecrypt::Plaintext { .. }
+        ));
+
+        let remove = alice
+            .remove_member_by_principal("did:web:bob.example")
+            .unwrap();
+        assert!(
+            remove
+                .removed_principals
+                .iter()
+                .any(|did| did.as_str() == "did:web:bob.example"),
+            "remove commit must name Bob as the removed principal"
+        );
+        carol.apply_commit(&remove.commit).unwrap();
+
+        let after_remove = alice
+            .encrypt_message("cx:message:post-remove", br#"{"body":"after remove"}"#)
+            .unwrap();
+        assert!(
+            after_remove.payload.epoch > before_epoch,
+            "post-remove message must be encrypted under a newer MLS epoch"
+        );
+
+        let carol_after = carol.decrypt_or_preserve(after_remove.clone()).unwrap();
+        assert!(matches!(
+            carol_after,
+            MessageCryptoDecrypt::Plaintext { .. }
+        ));
+
+        let bob_after = bob.decrypt_or_preserve(after_remove.clone()).unwrap();
+        let MessageCryptoDecrypt::Encrypted { payload, .. } = bob_after else {
+            panic!("removed member must not decrypt post-remove ciphertext");
+        };
+        assert_eq!(payload.ciphertext, after_remove.payload.ciphertext);
+        assert_eq!(bob.pending_count(), 1);
     }
 
     #[test]
