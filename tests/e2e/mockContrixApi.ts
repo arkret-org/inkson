@@ -11,6 +11,10 @@ const DEMO_TODO_LIST = "cx:space:01list-todo000000000000000000";
 const DEMO_PROGRESS_LIST = "cx:space:01list-progress00000000000000";
 const DEMO_DONE_LIST = "cx:space:01list-done00000000000000000";
 const DEMO_SECOND_LIST = "cx:space:01list-secondary000000000000";
+const DEMO_FLOW_LEGAL_REVIEW = "cx:flow:0196419b-0000-7000-8000-000000000101";
+const DEMO_FLOW_ONBOARDING_COPY = "cx:flow:0196419b-0000-7000-8000-000000000102";
+const DEMO_FLOW_SECURITY_SIGNOFF = "cx:flow:0196419b-0000-7000-8000-000000000103";
+const DEMO_FLOW_SECONDARY_CARD = "cx:flow:0196419b-0000-7000-8000-000000000104";
 
 type SpaceContainerProjection = {
   container_space_id: string;
@@ -92,7 +96,7 @@ export async function mockContrixApi(page: Page) {
   ];
   const boardFlowProjections: FlowProjection[] = [
     {
-      flow_id: "cx:flow:legal-review",
+      flow_id: DEMO_FLOW_LEGAL_REVIEW,
       realm_id: DEMO_SPACE,
       title: "Legal review for public beta",
       summary: "Finalize external processor wording before launch checklist can move.",
@@ -110,7 +114,7 @@ export async function mockContrixApi(page: Page) {
       },
     },
     {
-      flow_id: "cx:flow:onboarding-copy",
+      flow_id: DEMO_FLOW_ONBOARDING_COPY,
       realm_id: DEMO_SPACE,
       title: "Onboarding copy",
       summary: "Waiting on discussion-scoped feedback from support and docs reviewers.",
@@ -121,7 +125,7 @@ export async function mockContrixApi(page: Page) {
       fields: { labels: ["copy", "support"], assignee: "Bob", due_at: "May 10" },
     },
     {
-      flow_id: "cx:flow:security-signoff",
+      flow_id: DEMO_FLOW_SECURITY_SIGNOFF,
       realm_id: DEMO_SPACE,
       title: "Security sign-off",
       summary: "Projection detected a stale column head after an offline move.",
@@ -132,7 +136,7 @@ export async function mockContrixApi(page: Page) {
       fields: { labels: ["security", "reviewed"], assignee: "Carol", due_at: "May 01" },
     },
     {
-      flow_id: "cx:flow:secondary-card",
+      flow_id: DEMO_FLOW_SECONDARY_CARD,
       realm_id: DEMO_SPACE,
       title: "Secondary board card",
       summary: "Only visible after the Board selector switches projection scope.",

@@ -38,6 +38,12 @@ const KANBAN_LIVE_POLL_SECONDS: u64 = 5;
 const LOCAL_PENDING_CARD_DESCRIPTION: &str = "New local card waiting for reducer receipt.";
 const CARD_DESCRIPTION_COLLAPSE_CHAR_THRESHOLD: usize = 360;
 const CARD_DESCRIPTION_COLLAPSE_LINE_THRESHOLD: usize = 6;
+const DEMO_FLOW_LEGAL_REVIEW_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000101";
+const DEMO_FLOW_ONBOARDING_COPY_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000102";
+const DEMO_FLOW_SECURITY_SIGNOFF_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000103";
+const DEMO_FLOW_REVIEW_DISCUSSION_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000201";
+const DEMO_FLOW_SUPPORT_DISCUSSION_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000202";
+const DEMO_FLOW_SECURITY_REVIEW_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000203";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
@@ -5965,7 +5971,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "To Do".to_owned(),
             rank: "U".to_owned(),
             cards: vec![KanbanCard {
-                id: "cx:flow:legal-review".to_owned(),
+                id: DEMO_FLOW_LEGAL_REVIEW_ID.to_owned(),
                 // Seed cards seed `cards[i].rank` from the
                 // lexofractional alphabet so the next rank_between
                 // call has well-formed neighbours to work with. "U" is
@@ -5982,7 +5988,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
                 assignee: "Alice".to_owned(),
                 due: "May 08".to_owned(),
-                primary_flow_id: "cx:flow:review-discussion".to_owned(),
+                primary_flow_id: DEMO_FLOW_REVIEW_DISCUSSION_ID.to_owned(),
                 locked_flow: Some(LockedFlow {
                     flow_id_hash: "sha256:locked-private-decision".to_owned(),
                 reason: "You can see that a restricted discussion is linked, but not its name or members.".to_owned(),
@@ -6001,7 +6007,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "In Progress".to_owned(),
             rank: "f".to_owned(),
             cards: vec![KanbanCard {
-                id: "cx:flow:onboarding-copy".to_owned(),
+                id: DEMO_FLOW_ONBOARDING_COPY_ID.to_owned(),
                 rank: "U".to_owned(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
@@ -6013,7 +6019,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 labels: vec!["copy".to_owned(), "support".to_owned()],
                 assignee: "Bob".to_owned(),
                 due: "May 10".to_owned(),
-                primary_flow_id: "cx:flow:support-discussion".to_owned(),
+                primary_flow_id: DEMO_FLOW_SUPPORT_DISCUSSION_ID.to_owned(),
                 locked_flow: None,
                 external_visibility: "No external discussions linked".to_owned(),
                 history_visibility: "shared history".to_owned(),
@@ -6029,7 +6035,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
             title: "Done".to_owned(),
             rank: "p".to_owned(),
             cards: vec![KanbanCard {
-                id: "cx:flow:security-signoff".to_owned(),
+                id: DEMO_FLOW_SECURITY_SIGNOFF_ID.to_owned(),
                 rank: "U".to_owned(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
@@ -6041,7 +6047,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],
                 assignee: "Carol".to_owned(),
                 due: "May 01".to_owned(),
-                primary_flow_id: "cx:flow:security-review".to_owned(),
+                primary_flow_id: DEMO_FLOW_SECURITY_REVIEW_ID.to_owned(),
                 locked_flow: Some(LockedFlow {
                     flow_id_hash: "sha256:locked-incident-notes".to_owned(),
                     reason: "Incident notes require separate discussion capability.".to_owned(),
@@ -6571,12 +6577,12 @@ mod tests {
     fn find_card_by_flow_id_matches_card_or_primary_flow() {
         let columns = seed_columns();
         assert_eq!(
-            find_card_by_flow_id(&columns, "cx:flow:legal-review").map(|card| card.title),
+            find_card_by_flow_id(&columns, DEMO_FLOW_LEGAL_REVIEW_ID).map(|card| card.title),
             Some("Legal review for public beta".to_owned())
         );
         assert_eq!(
-            find_card_by_flow_id(&columns, "cx:flow:review-discussion").map(|card| card.id),
-            Some("cx:flow:legal-review".to_owned())
+            find_card_by_flow_id(&columns, DEMO_FLOW_REVIEW_DISCUSSION_ID).map(|card| card.id),
+            Some(DEMO_FLOW_LEGAL_REVIEW_ID.to_owned())
         );
     }
 
@@ -7335,5 +7341,24 @@ mod tests {
             states.contains(&"CAS conflict"),
             "seed missing Conflict demo card"
         );
+    }
+
+    #[test]
+    fn seed_flow_ids_are_valid_object_patch_targets() {
+        for flow_id in [
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            DEMO_FLOW_ONBOARDING_COPY_ID,
+            DEMO_FLOW_SECURITY_SIGNOFF_ID,
+        ] {
+            let event = crate::operation::cx_ops::flow_update_patch(
+                DEMO_BOARD_SPACE_ID,
+                "did:web:acme.example:users:alice",
+                flow_id,
+                json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
+            )
+            .build("yougen");
+            assert_eq!(event.kind, "cx.flow.update");
+            assert_eq!(event.local_target_ref(), Some(flow_id));
+        }
     }
 }
