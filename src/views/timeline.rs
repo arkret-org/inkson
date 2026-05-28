@@ -51,7 +51,7 @@ struct BlobAttachment {
     /// on blob/media metadata.
     size_bytes: usize,
     media_type: String,
-    sha256: String,
+    content_digest: String,
     thumbnail_ref: Option<String>,
 }
 
@@ -1677,7 +1677,7 @@ pub fn TimelinePanel(
                                 match api.upload_blob(ATTACHMENT_BYTES).await {
                                     Ok(blob) => {
                                         let local_hash = sha256_hex(ATTACHMENT_BYTES);
-                                        let hash_state = if blob.sha256.trim_start_matches("sha256:") == local_hash {
+                                        let hash_state = if blob.content_digest.trim_start_matches("sha256:") == local_hash {
                                             "upload hash ok"
                                         } else {
                                             "upload hash mismatch"
@@ -1687,7 +1687,7 @@ pub fn TimelinePanel(
                                             blob_ref: blob.blob_ref.clone(),
                                             size_bytes: blob.size_bytes,
                                             media_type: blob.media_type.clone(),
-                                            sha256: blob.sha256.clone(),
+                                            content_digest: blob.content_digest.clone(),
                                             thumbnail_ref: blob.thumbnail_ref.clone(),
                                         }));
                                         blob_status.set(format!(
@@ -1711,7 +1711,7 @@ pub fn TimelinePanel(
                             span { "{blob.media_type}" }
                         }
                         div { class: "muted", "Ref: {blob.blob_ref}" }
-                        div { class: "muted", "SHA-256: {blob.sha256}" }
+                        div { class: "muted", "Digest: {blob.content_digest}" }
                         div { class: "muted", "Size: {blob.size_bytes} bytes" }
                         div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
                         div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
@@ -1724,27 +1724,27 @@ pub fn TimelinePanel(
                                 "data-testid": "verify-blob-download",
                                 onclick: {
                                     let blob_ref = blob.blob_ref.clone();
-                                    let expected_sha256 = blob.sha256.clone();
+                                    let expected_content_digest = blob.content_digest.clone();
                                     move |_| {
                                         let base = base_url_sig();
                                         let api_token = token();
                                         let wait_for = active_sync_token(sync_cursor());
                                         let blob_ref = blob_ref.clone();
-                                        let expected_sha256 = expected_sha256.clone();
+                                        let expected_content_digest = expected_content_digest.clone();
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => match api.get_blob_bytes(&blob_ref).await {
-                                                    Ok(bytes) if hash_matches(&expected_sha256, &bytes) => {
+                                                    Ok(bytes) if hash_matches(&expected_content_digest, &bytes) => {
                                                         blob_status.set(format!(
-                                                            "download verified sha256 {} ({} bytes)",
-                                                            expected_sha256,
+                                                            "download verified digest {} ({} bytes)",
+                                                            expected_content_digest,
                                                             bytes.len()
                                                         ));
                                                     }
                                                     Ok(bytes) => {
                                                         blob_status.set(format!(
                                                             "download hash mismatch expected {} got {}",
-                                                            expected_sha256,
+                                                            expected_content_digest,
                                                             sha256_hex(&bytes)
                                                         ));
                                                     }

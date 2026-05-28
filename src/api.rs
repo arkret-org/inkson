@@ -1925,7 +1925,7 @@ impl ContrixApi {
             .header("x-contrix-space-id", space_id)
             .header("x-contrix-blob-encrypted", "true")
             .header("x-contrix-attachment-envelope", envelope)
-            .header("x-contrix-sha256", &asset.ciphertext_digest)
+            .header("x-contrix-content-digest", &asset.ciphertext_digest)
             .body(asset.ciphertext.clone());
         self.send_json(self.prepare_request(request), Method::POST)
             .await

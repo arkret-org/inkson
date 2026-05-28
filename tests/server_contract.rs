@@ -262,17 +262,18 @@ fn yougen_accepts_server_contract_payloads() {
     let ok: yougen::models::OkResBody = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
-    // Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`
-    // on blob/media metadata. No serde alias — aggressive migration.
+    // Spec rename: blob upload response uses `size_bytes` and
+    // `content_digest`; no serde aliases in aggressive migration mode.
     let blob: yougen::models::BlobUploadResBody = serde_json::from_value(json!({
         "blob_ref": "cx:blob:sha256:abc",
         "size_bytes": 23,
         "media_type": "application/octet-stream",
-        "sha256": "abc",
+        "content_digest": "sha256:abc",
         "upload_receipt": {"service_did": "did:web:server.local"}
     }))
     .unwrap();
     assert_eq!(blob.size_bytes, 23);
+    assert_eq!(blob.content_digest, "sha256:abc");
 
     let report: yougen::models::ModerationReportResBody = serde_json::from_value(json!({
         "report_id": "cx:report:1760000000000",

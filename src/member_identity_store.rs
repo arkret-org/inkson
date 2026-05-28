@@ -331,7 +331,7 @@ mod tests {
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
-                avatar_ref: None,
+                avatar_blob_ref: None,
             },
             asserted_at: chrono::Utc::now(),
             expires_at: None,

@@ -1111,7 +1111,7 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
   expect(download.headers()["authorization"]).toContain("Bearer");
   expect(download.url()).not.toContain("access_token");
   expect(download.url()).not.toContain("Bearer");
-  await expect(page.getByTestId("blob-status")).toContainText("download verified sha256");
+  await expect(page.getByTestId("blob-status")).toContainText("download verified digest");
 });
 
 test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {

@@ -6378,7 +6378,7 @@ mod tests {
                 .unwrap(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
-                avatar_ref: None,
+                avatar_blob_ref: None,
             },
             asserted_at: chrono::Utc::now(),
             expires_at: None,

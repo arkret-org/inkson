@@ -994,11 +994,11 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/blob/upload") {
       return json(route, {
         blob_ref: "cx:blob:sha256:e2e",
-        size: 22,
+        size_bytes: 22,
         media_type: "application/octet-stream",
-        sha256: "01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+        content_digest: "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
         thumbnail_ref: "cx:blob:sha256:e2e-thumb",
-        upload_receipt: { service_did: "did:web:server.local", content_hash_verified: true },
+        upload_receipt: { service_did: "did:web:server.local", content_digest_verified: true },
       });
     }
 

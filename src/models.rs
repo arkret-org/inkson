@@ -567,7 +567,7 @@ pub struct BlobUploadResBody {
     /// migration mode.
     pub size_bytes: usize,
     pub media_type: String,
-    pub sha256: String,
+    pub content_digest: String,
     #[serde(default)]
     pub thumbnail_ref: Option<String>,
     pub upload_receipt: Value,
