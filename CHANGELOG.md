@@ -4,6 +4,14 @@ All notable yougen changes are recorded here. Yougen is the Dioxus
 cross-platform Contrix v1 reference client (macOS / Windows / Linux / iOS /
 Android / web).
 
+## R3.2 — Spec sync 2026-05-28 (contrix-spec @ b56cab1)
+
+- Dropped `MemberIdentity.primary_handle`/`handles[]`; roster `identity_state_digest` → `member_display_state_digest`; payload digest → `identity_payload_digest`.
+- Mention shape v2: `subject_id` authoritative; `handle_at_time`/`display_name_at_time`/`mention_text_original` audit-only. Render path uses the SDK `render_mention` helper with `MentionRender` fallback tiers (verified/cached/name-only/unresolved CSS).
+- New `list_handles_for_subject` API call + "Why am I seeing this handle?" panel; handle settings now point users to the org issuer flow (yougen never sets handles via profile/member-identity).
+- Live claim-set snapshot plumbing + DID metadata as_of resolution deferred `TODO(R3.2.1)`.
+
+> No version tag, no crates.io / Docker Hub / npm publish — git commit only.
 ## R3 — Spec sync 2026-05-27 (contrix-spec @ b47ff6ec)
 
 - CALL-1 / CALL-2: RTC token acquisition wires the chime / SDK `cx.call.media.token_exchange` helper in `src/media/rtc.rs`; `focus_unavailable_for_client` surfaced as a retry / leave-call toast in `src/views/call.rs` with no silent focus fallback.
