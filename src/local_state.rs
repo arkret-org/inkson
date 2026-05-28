@@ -50,6 +50,28 @@ pub struct NotificationClientState {
     pub archived: bool,
 }
 
+/// Realm-scoped cache for `cx.directory.list_handles_for_subject`.
+///
+/// Handles are display evidence, not identity keys. Cache entries are
+/// therefore bound to the visible subject DID, the Realm context, and the
+/// roster `member_display_state_digest` when the server provided one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberHandleCacheEntry {
+    pub subject_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_handle: Option<String>,
+    #[serde(default)]
+    pub claims_count: usize,
+    pub fetched_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<DateTime<Utc>>,
+    pub cache_expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_display_state_digest: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadScope {
     pub kind: String,
@@ -956,6 +978,12 @@ pub struct ClientLocalState {
     /// re-decrypt encrypted carriers once an MLS welcome arrives later.
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
+    /// Display-only cache for reverse handle lookup by subject DID. Entries
+    /// come from validated `cx.directory.list_handles_for_subject` responses
+    /// or equivalent roster evidence and are never used as authority for
+    /// ACL, attribution, membership, or delivery.
+    #[serde(default)]
+    pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
 }
 
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
@@ -993,6 +1021,8 @@ pub struct DpopDeviceKeyRecord {
 /// enough to survive a network blip, well below the size at which
 /// `state.json` becomes painful to round-trip.
 pub const TELEMETRY_BUFFER_CAP: usize = 256;
+const MEMBER_HANDLE_CACHE_TTL_SECONDS: i64 = 60 * 60;
+const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 
 /// Structured client-side telemetry record produced by
 /// [`crate::telemetry::emit_user_action_log`]. Mirrors sodmin's
@@ -1124,6 +1154,7 @@ impl Default for ClientLocalState {
             server_trust_domain: None,
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),
+            member_handle_cache: BTreeMap::new(),
         }
     }
 }
@@ -1191,6 +1222,14 @@ impl Default for LocalStateStore {
             path: default_state_path(),
         }
     }
+}
+
+fn member_handle_cache_key(subject_id: &str, realm_id: Option<&str>) -> String {
+    let realm = realm_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("*");
+    format!("{realm}\u{1f}{subject_id}")
 }
 
 impl LocalStateStore {
@@ -1350,6 +1389,92 @@ impl LocalStateStore {
         let mut store = crate::member_identity_store::MemberIdentityStore::new();
         store.ingest_inline(realm_id, actor_id, &envelopes);
         store.is_decryption_pending(realm_id, actor_id)
+    }
+
+    /// Return a fresh cached primary handle lookup for a subject in a Realm
+    /// display context. `Some(entry)` with `entry.primary_handle == None` is
+    /// a fresh negative cache entry; callers should not immediately re-query.
+    pub fn cached_member_handle_lookup(
+        &self,
+        subject_id: &str,
+        realm_id: Option<&str>,
+        member_display_state_digest: Option<&str>,
+    ) -> Option<MemberHandleCacheEntry> {
+        let subject_id = subject_id.trim();
+        if subject_id.is_empty() {
+            return None;
+        }
+        let state = self.load();
+        let key = member_handle_cache_key(subject_id, realm_id);
+        let entry = state.member_handle_cache.get(&key)?;
+        if entry.cache_expires_at <= Utc::now() {
+            return None;
+        }
+        if let Some(expected) = member_display_state_digest
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match entry.member_display_state_digest.as_deref() {
+                Some(cached) if cached == expected => {}
+                _ => return None,
+            }
+        }
+        Some(entry.clone())
+    }
+
+    /// Save a display-only `list_handles_for_subject` result. The cache TTL
+    /// is capped at one hour, and additionally capped by the earliest visible
+    /// claim expiry when the response supplies one. Empty results use a short
+    /// negative-cache TTL so a render loop does not hammer the Directory.
+    pub fn save_member_handle_lookup(
+        &mut self,
+        subject_id: impl Into<String>,
+        realm_id: Option<String>,
+        member_display_state_digest: Option<String>,
+        primary_handle: Option<String>,
+        claims_count: usize,
+        as_of: Option<DateTime<Utc>>,
+        earliest_claim_expires_at: Option<DateTime<Utc>>,
+    ) {
+        self.ensure_cached_loaded();
+        let subject_id = subject_id.into();
+        let subject_id = subject_id.trim();
+        if subject_id.is_empty() {
+            return;
+        }
+        let realm_id = realm_id
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let primary_handle = primary_handle
+            .and_then(|value| crate::identity_handle::parse_user_handle(&value).map(|h| h.display));
+        let now = Utc::now();
+        let ttl = if primary_handle.is_some() || claims_count > 0 {
+            MEMBER_HANDLE_CACHE_TTL_SECONDS
+        } else {
+            MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS
+        };
+        let mut cache_expires_at = now + chrono::Duration::seconds(ttl);
+        if let Some(claim_expiry) = earliest_claim_expires_at
+            && claim_expiry > now
+            && claim_expiry < cache_expires_at
+        {
+            cache_expires_at = claim_expiry;
+        }
+        let entry = MemberHandleCacheEntry {
+            subject_id: subject_id.to_owned(),
+            realm_id: realm_id.clone(),
+            primary_handle,
+            claims_count,
+            fetched_at: now,
+            as_of,
+            cache_expires_at,
+            member_display_state_digest: member_display_state_digest
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
+        };
+        let key = member_handle_cache_key(subject_id, realm_id.as_deref());
+        self.cached.member_handle_cache.insert(key, entry);
+        let _ = self.flush();
     }
 
     fn member_identity_envelopes(&self, realm_id: &str, actor_id: &str) -> Vec<Value> {
@@ -3029,6 +3154,78 @@ mod tests {
             }),
         );
         assert!(!store.space_projection_is_mls_encrypted(plain));
+    }
+
+    #[test]
+    fn member_handle_cache_is_realm_and_digest_scoped() {
+        let path = temp_state_path("member-handle-cache");
+        let mut store = LocalStateStore::with_path(path);
+        let subject = "did:webvh:zQmMember";
+        let realm = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        store.save_member_handle_lookup(
+            subject,
+            Some(realm.to_owned()),
+            Some(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+            ),
+            Some("Alice:Example.COM".to_owned()),
+            1,
+            Some(Utc::now()),
+            Some(Utc::now() + chrono::Duration::hours(2)),
+        );
+
+        let entry = store
+            .cached_member_handle_lookup(
+                subject,
+                Some(realm),
+                Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            )
+            .expect("fresh cache entry");
+        assert_eq!(entry.primary_handle.as_deref(), Some("alice:example.com"));
+        assert!(
+            store
+                .cached_member_handle_lookup(
+                    subject,
+                    Some(realm),
+                    Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                )
+                .is_none()
+        );
+        assert!(
+            store
+                .cached_member_handle_lookup(
+                    subject,
+                    Some("cx:realm:0196419b-0000-7000-8000-000000000002"),
+                    Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn member_handle_cache_records_fresh_negative_lookup() {
+        let path = temp_state_path("member-handle-negative-cache");
+        let mut store = LocalStateStore::with_path(path);
+        let subject = "did:webvh:zQmNoVisibleHandle";
+        store.save_member_handle_lookup(
+            subject,
+            Some("cx:realm:0196419b-0000-7000-8000-000000000001".to_owned()),
+            None,
+            None,
+            0,
+            None,
+            None,
+        );
+
+        let entry = store
+            .cached_member_handle_lookup(
+                subject,
+                Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
+                None,
+            )
+            .expect("fresh negative entry");
+        assert!(entry.primary_handle.is_none());
     }
 
     #[test]

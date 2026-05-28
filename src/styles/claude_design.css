@@ -562,6 +562,83 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 
 /* ===== 7. COMMON COMPONENTS ======================================= */
 
+.security-state-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+.security-state-badge .ui-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.security-state-badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.security-state-badge--plaintext {
+  color: var(--danger-ink);
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 84%, var(--surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.security-state-badge--encrypted {
+  color: var(--success-ink);
+  border-color: color-mix(in srgb, var(--success) 44%, var(--border));
+  background: color-mix(in srgb, var(--success-soft) 82%, var(--surface));
+}
+.security-state-badge--compact {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.security-state-badge--compact .security-state-badge-label {
+  display: none;
+}
+.topbar-context > .security-state-badge {
+  overflow: visible;
+  text-overflow: clip;
+}
+.flow-title-with-security,
+.discussion-track-name-row {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.flow-title-with-security .flow-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.discussion-track-name-row {
+  align-items: center;
+}
+.discussion-track-name-row .discussion-track-name {
+  min-width: 0;
+}
+.card-detail-title-row > .security-state-badge--compact,
+.discussion-title-row > .security-state-badge--compact {
+  margin-top: 2px;
+}
+
 /* ----- 7.1 Buttons ----- */
 
 .btn {

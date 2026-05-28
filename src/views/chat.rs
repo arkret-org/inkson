@@ -10,7 +10,7 @@ use crate::{
         is_space_membership_denied_error,
     },
     audit::build_audit_ryw_receipt,
-    components::{HelpTip, UiIcon},
+    components::{HelpTip, SecurityStateBadge, UiIcon},
     hlc::{Hlc, observe_seq},
     local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
     models::SubmitEventResponse,
@@ -2891,7 +2891,17 @@ pub fn ChatPanel(
                                     move |_| selected_channel.set(id.clone())
                                 },
                                 div { class: "discussion-track-main",
-                                    span { class: "discussion-track-name", "{channel.name}" }
+                                    span { class: "discussion-track-name-row",
+                                        // TODO(security-state): resolve this from Flow scope/encryption
+                                        // metadata once Circle/Realm security semantics land in the
+                                        // projection. For now this is the plaintext visual placeholder.
+                                        SecurityStateBadge {
+                                            encrypted: false,
+                                            compact: true,
+                                            test_id: Some("flow-track-security-state".to_owned()),
+                                        }
+                                        span { class: "discussion-track-name", "{channel.name}" }
+                                    }
                                     span { class: "discussion-track-topic",
                                         if let Some(topic) = &channel.topic {
                                             "{topic}"
@@ -3115,6 +3125,13 @@ pub fn ChatPanel(
                 header { class: "discussion-chat-head",
                     div { class: "discussion-title-stack",
                         div { class: "discussion-title-row",
+                            // TODO(security-state): replace the placeholder with the selected
+                            // Flow's effective encryption state after the projection exposes it.
+                            SecurityStateBadge {
+                                encrypted: false,
+                                compact: true,
+                                test_id: Some("selected-flow-security-state".to_owned()),
+                            }
                             h1 { "{selected_channel_name}" }
                         }
                     }

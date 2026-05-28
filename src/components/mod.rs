@@ -101,6 +101,41 @@ pub fn StatusBadge(status: String, kind: Option<String>) -> Element {
 }
 
 #[component]
+pub fn SecurityStateBadge(encrypted: bool, compact: bool, test_id: Option<String>) -> Element {
+    let state_class = if encrypted { "encrypted" } else { "plaintext" };
+    let icon = if encrypted { "lock" } else { "unlock" };
+    let label = if encrypted {
+        "Encrypted"
+    } else {
+        "Unencrypted"
+    };
+    let title = if encrypted {
+        "Encrypted communication is enabled."
+    } else {
+        "Unencrypted plaintext communication."
+    };
+    let mut class = format!("security-state-badge security-state-badge--{state_class}");
+    if compact {
+        class.push_str(" security-state-badge--compact");
+    }
+    let testid = test_id.unwrap_or_else(|| format!("security-state-{state_class}"));
+
+    rsx! {
+        span {
+            class: "{class}",
+            "data-testid": "{testid}",
+            role: "img",
+            title: "{title}",
+            "aria-label": "{title}",
+            UiIcon { name: icon }
+            if !compact {
+                span { class: "security-state-badge-label", "{label}" }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn UiIcon(name: String) -> Element {
     let path = match name.as_str() {
         "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",

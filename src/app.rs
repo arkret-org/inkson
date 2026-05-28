@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::{
     api::{ContrixApi, is_auth_expired_error},
-    components::UiIcon,
+    components::{SecurityStateBadge, UiIcon},
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     conformance::{
         PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
@@ -7428,6 +7428,16 @@ pub fn RouterView() -> Element {
                             }
                         }
                         div { class: "topbar-context", "data-testid": "topbar-crumbs",
+                            if route_uses_space_context && !active_space_id.is_empty() {
+                                // TODO(security-state): replace this visual placeholder with
+                                // current Space/Realm encryption metadata. Render plaintext only
+                                // when the selected scope is known to be unencrypted.
+                                SecurityStateBadge {
+                                    encrypted: false,
+                                    compact: false,
+                                    test_id: Some("space-security-state".to_owned()),
+                                }
+                            }
                             span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
                             if route_uses_space_context && !active_space_id.is_empty() {
                                 {

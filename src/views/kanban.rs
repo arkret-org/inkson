@@ -4,11 +4,11 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    components::{EmptyState, EmptyStateKind, UiIcon},
+    components::{EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon},
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord},
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
-    operation::uuid_v7,
+    operation::{scope_id_as_realm_id, uuid_v7},
     rank::{RankError, rank_for_drop},
     routes::Route,
     views::helpers::{
@@ -1460,6 +1460,7 @@ pub fn KanbanPanel(
     let mut card_detail_resizing = use_signal(|| false);
     let mut card_detail_resize_start_x = use_signal(|| 0.0_f64);
     let mut card_detail_resize_start_width = use_signal(|| 0.0_f64);
+    let mut member_handle_fetching = use_signal(BTreeSet::<String>::new);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
     let mut card_edit_body = use_signal(String::new);
@@ -1875,6 +1876,124 @@ pub fn KanbanPanel(
             }
             if applied > 0 && !server_projection_applied {
                 board_status.set(format!("Board refreshed: {applied} item(s) reconciled"));
+            }
+        });
+    }
+
+    // R3.2 handle rendering: roster rows may omit inline handle claims for
+    // privacy, size, or freshness. When the Members tab is actually open,
+    // backfill missing current primary handles through the subject/context
+    // reverse lookup and cache the result locally with a short TTL.
+    {
+        let handle_base_url = base_url.clone();
+        let handle_space_id = selected_space.clone();
+        let handle_token = token;
+        use_effect(move || {
+            if card_detail_sidebar_tab() != CardDetailSidebarTab::Members {
+                return;
+            }
+            if selected_card().is_none() {
+                return;
+            }
+            let store_snapshot = state_store.read().load();
+            let rows = realm_member_roster(store_snapshot.space_projections.get(&handle_space_id));
+            if rows.is_empty() {
+                return;
+            }
+            let realm_context = scope_id_as_realm_id(&handle_space_id);
+            let mut fetches: Vec<(String, String, String, Option<String>)> = Vec::new();
+            for row in rows {
+                if member_inline_handle_label(&row).is_some() {
+                    continue;
+                }
+                let identity = state_store
+                    .read()
+                    .resolved_member_identity(&handle_space_id, &row.actor_id);
+                let decryption_pending = state_store
+                    .read()
+                    .is_member_decryption_pending(&handle_space_id, &row.actor_id);
+                let Some(subject_id) =
+                    member_handle_lookup_subject(&row, identity.as_ref(), decryption_pending)
+                else {
+                    continue;
+                };
+                let digest = row.member_display_state_digest.clone();
+                if state_store
+                    .read()
+                    .cached_member_handle_lookup(
+                        &subject_id,
+                        Some(&realm_context),
+                        digest.as_deref(),
+                    )
+                    .is_some()
+                {
+                    continue;
+                }
+                let request_key =
+                    member_handle_fetch_key(&realm_context, &subject_id, digest.as_deref());
+                if member_handle_fetching.read().contains(&request_key) {
+                    continue;
+                }
+                member_handle_fetching.write().insert(request_key.clone());
+                fetches.push((request_key, subject_id, realm_context.clone(), digest));
+            }
+
+            for (request_key, subject_id, realm_id, digest) in fetches {
+                let base = handle_base_url.clone();
+                let api_token = handle_token();
+                let mut fetching = member_handle_fetching;
+                let mut store = state_store;
+                spawn(async move {
+                    let result = with_authed_api(&base, api_token, {
+                        let subject_id = subject_id.clone();
+                        let realm_id = realm_id.clone();
+                        move |api| async move {
+                            api.list_handles_for_subject(
+                                &subject_id,
+                                Some(&realm_id),
+                                Some("display"),
+                            )
+                            .await
+                        }
+                    })
+                    .await;
+                    match result {
+                        Ok(res) => {
+                            let primary = res
+                                .primary_handle
+                                .as_ref()
+                                .map(|handle| handle.canonical().to_owned());
+                            let claims_count = res.claims.len();
+                            let earliest_expiry = res
+                                .claims
+                                .iter()
+                                .filter_map(|claim| claim.expires_at.as_ref().cloned())
+                                .min();
+                            store.write().save_member_handle_lookup(
+                                res.subject.as_str().to_owned(),
+                                Some(realm_id),
+                                digest,
+                                primary,
+                                claims_count,
+                                Some(res.as_of),
+                                earliest_expiry,
+                            );
+                        }
+                        Err(err) if !err.is_auth_expired() => {
+                            store.write().save_member_handle_lookup(
+                                subject_id,
+                                Some(realm_id),
+                                digest,
+                                None,
+                                0,
+                                None,
+                                None,
+                            );
+                        }
+                        Err(_) => {}
+                    }
+                    fetching.write().remove(&request_key);
+                });
             }
         });
     }
@@ -2720,7 +2839,18 @@ pub fn KanbanPanel(
                                     }
                                 },
                                 div { class: "event-head",
-                                    span { class: "space-title", "{card.title}" }
+                                    span { class: "space-title flow-title-with-security",
+                                        // TODO(security-state): wire this to Flow scope/encryption
+                                        // metadata. Circle-scoped encrypted Flows should render the
+                                        // encrypted variant; plaintext Realm/Space Flows should keep
+                                        // the warning variant.
+                                        SecurityStateBadge {
+                                            encrypted: false,
+                                            compact: true,
+                                            test_id: Some("flow-card-security-state".to_owned()),
+                                        }
+                                        span { class: "flow-title-text", "{card.title}" }
+                                    }
                                     span { class: card.state.class_name(), "{card.state.label()}" }
                                 }
                                 div { class: "actions",
@@ -3016,7 +3146,14 @@ pub fn KanbanPanel(
                             for row in archived_cards.iter() {
                                 div { class: "event", "data-testid": "kanban-archived-card-row",
                                     div { class: "event-head",
-                                        span { class: "space-title", "{row.card.title}" }
+                                        span { class: "space-title flow-title-with-security",
+                                            SecurityStateBadge {
+                                                encrypted: false,
+                                                compact: true,
+                                                test_id: Some("flow-card-security-state".to_owned()),
+                                            }
+                                            span { class: "flow-title-text", "{row.card.title}" }
+                                        }
                                         span { "from list: {row.column_title}" }
                                         {
                                             let gate = capability_gate_for_flow(
@@ -3245,6 +3382,14 @@ pub fn KanbanPanel(
                                 div { class: "card-detail-header",
                                     div { class: "card-detail-title-block",
                                         div { class: "card-detail-title-row",
+                                            // TODO(security-state): use the selected Flow's resolved
+                                            // scope/encryption state here instead of the plaintext
+                                            // visual placeholder.
+                                            SecurityStateBadge {
+                                                encrypted: false,
+                                                compact: true,
+                                                test_id: Some("flow-detail-security-state".to_owned()),
+                                            }
                                             h2 { "{card.title}" }
                                             div { class: "card-detail-title-meta",
                                                 span { class: card.state.class_name(), "{card.state.label()}" }
@@ -3942,10 +4087,32 @@ pub fn KanbanPanel(
                                                                         // branch for an explicit muted
                                                                         // placeholder string instead of the
                                                                         // bare DID.
-                                                                        let identity = state_store
-                                                                            .read()
-                                                                            .resolved_member_identity(&selected_space, &did);
-                                                                        let label = member_display_label(row, identity.as_ref());
+                                                                        let store = state_store.read();
+                                                                        let identity =
+                                                                            store.resolved_member_identity(&selected_space, &did);
+                                                                        let decryption_pending = store
+                                                                            .is_member_decryption_pending(&selected_space, &did);
+                                                                        let realm_context =
+                                                                            scope_id_as_realm_id(&selected_space);
+                                                                        let cached_handle = member_handle_lookup_subject(
+                                                                            row,
+                                                                            identity.as_ref(),
+                                                                            decryption_pending,
+                                                                        )
+                                                                        .and_then(|subject_id| {
+                                                                            store
+                                                                                .cached_member_handle_lookup(
+                                                                                    &subject_id,
+                                                                                    Some(&realm_context),
+                                                                                    row.member_display_state_digest.as_deref(),
+                                                                                )
+                                                                                .and_then(|entry| entry.primary_handle)
+                                                                        });
+                                                                        let label = member_display_label(
+                                                                            row,
+                                                                            identity.as_ref(),
+                                                                            cached_handle.as_deref(),
+                                                                        );
                                                                         let in_flow = participant_set.contains(&did);
                                                                         let row_class = if in_flow {
                                                                             "card-detail-actor-row participant"
@@ -4103,8 +4270,9 @@ pub(super) struct RealmMemberRow {
 
 /// Pick the best UI label for a roster row.
 ///
-/// R3.2: prefer a handle-shaped display when visible handle-claim
-/// evidence or a materialized subject DID gives us one; otherwise use a
+/// R3.2: prefer visible handle-claim evidence, then a fresh
+/// `list_handles_for_subject` cache entry, then a materialized subject DID
+/// display fallback. If no handle-shaped label is available, use the
 /// resolved [`MemberIdentity`] display (via the SDK's effective-set
 /// helper), then a compact actor-DID fallback so long `did:webvh:...`
 /// strings don't overflow.
@@ -4116,8 +4284,17 @@ pub(super) struct RealmMemberRow {
 fn member_display_label(
     row: &RealmMemberRow,
     identity: Option<&contrix_sdk::MemberIdentity>,
+    cached_primary_handle: Option<&str>,
 ) -> String {
-    if let Some(handle) = member_handle_label(row) {
+    if let Some(handle) = member_inline_handle_label(row) {
+        return handle;
+    }
+    if let Some(handle) =
+        cached_primary_handle.and_then(|raw| crate::identity_handle::parse_user_handle(raw))
+    {
+        return handle.display;
+    }
+    if let Some(handle) = member_fallback_handle_label(row) {
         return handle;
     }
     if let Some(identity) = identity {
@@ -4134,9 +4311,9 @@ fn member_display_label(
     short_protocol_id(&row.actor_id)
 }
 
-fn member_handle_label(row: &RealmMemberRow) -> Option<String> {
+fn member_inline_handle_label(row: &RealmMemberRow) -> Option<String> {
     let subject = row.subject_id.as_deref().unwrap_or(row.actor_id.as_str());
-    let handle_from_claims = row.handle_claims.iter().find_map(|claim| {
+    row.handle_claims.iter().find_map(|claim| {
         let claim_subject = json_path_string(Some(claim), &["subject"])
             .or_else(|| json_path_string(Some(claim), &["subject_id"]))?;
         if claim_subject.trim() != subject {
@@ -4149,10 +4326,51 @@ fn member_handle_label(row: &RealmMemberRow) -> Option<String> {
         }
         json_path_string(Some(claim), &["handle"])
             .and_then(|raw| crate::identity_handle::parse_user_handle(&raw).map(|h| h.display))
-    });
-    handle_from_claims
-        .or_else(|| row.subject_id.as_deref().and_then(handle_display_from_did))
+    })
+}
+
+fn member_fallback_handle_label(row: &RealmMemberRow) -> Option<String> {
+    row.subject_id
+        .as_deref()
+        .and_then(handle_display_from_did)
         .or_else(|| handle_display_from_did(&row.actor_id))
+}
+
+fn member_handle_lookup_subject(
+    row: &RealmMemberRow,
+    identity: Option<&contrix_sdk::MemberIdentity>,
+    decryption_pending: bool,
+) -> Option<String> {
+    if let Some(subject) = row
+        .subject_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|subject| subject.starts_with("did:"))
+        .filter(|subject| !subject.is_empty())
+    {
+        return Some(subject.to_owned());
+    }
+    if let Some(identity) = identity {
+        return Some(identity.subject_id.as_str().to_owned());
+    }
+    // If the subject is still hidden inside an encrypted MemberIdentity,
+    // do not guess. Without that pending state, the actor DID is the only
+    // available DID; the lookup is still Realm-scoped and display-only, so
+    // a pairwise actor simply resolves to a negative cache entry.
+    if decryption_pending {
+        return None;
+    }
+    let actor = row.actor_id.trim();
+    actor.starts_with("did:").then(|| actor.to_owned())
+}
+
+fn member_handle_fetch_key(realm_id: &str, subject_id: &str, digest: Option<&str>) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        realm_id.trim(),
+        subject_id.trim(),
+        digest.unwrap_or("")
+    )
 }
 
 /// Collect the sorted roster of realm members from a cached space
@@ -6185,7 +6403,7 @@ mod tests {
             handle_claims_limited: false,
         };
         assert_eq!(
-            member_display_label(&row, Some(&identity)),
+            member_display_label(&row, Some(&identity), None),
             "alice:acme.example"
         );
 
@@ -6199,7 +6417,7 @@ mod tests {
             handle_claims: Vec::new(),
             handle_claims_limited: false,
         };
-        let label = member_display_label(&bare, None);
+        let label = member_display_label(&bare, None, None);
         assert!(label.starts_with("did:webvh:"));
         assert!(label.contains("..."));
     }
@@ -6230,7 +6448,25 @@ mod tests {
             handle_claims_limited: false,
         };
 
-        assert_eq!(member_display_label(&row, None), "alice:acme.example");
+        assert_eq!(member_display_label(&row, None, None), "alice:acme.example");
+    }
+
+    #[test]
+    fn member_display_label_uses_cached_directory_primary_handle() {
+        let row = RealmMemberRow {
+            actor_id: "did:webvh:zQmPrincipal".to_owned(),
+            membership: Some("join".to_owned()),
+            identity_event_ids: vec![],
+            member_display_state_digest: None,
+            subject_id: Some("did:webvh:zQmPrincipal".to_owned()),
+            handle_claims: Vec::new(),
+            handle_claims_limited: false,
+        };
+
+        assert_eq!(
+            member_display_label(&row, None, Some("Alice:Example.COM")),
+            "alice:example.com"
+        );
     }
 
     #[test]
