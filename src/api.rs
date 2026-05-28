@@ -202,6 +202,12 @@ pub struct FlowProjectionView {
     pub rank: Option<String>,
     #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// `active` / `archived` / `deleted` / `redacted` per spec
     /// `common-fields.md §5.1`. yougen folds the two terminal states
     /// into `FlowLifecycleState::Tombstoned`.

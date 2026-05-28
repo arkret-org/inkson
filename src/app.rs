@@ -485,24 +485,27 @@ body {
   min-height: 0;
   overflow: hidden;
   padding: 12px 16px 0;
+  background: var(--bg);
 }
 
 .workspace-body > .kanban-panel {
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   gap: 10px;
   overflow: hidden;
+  background: var(--bg);
 }
 
-.board-toolbar {
+.event.board-toolbar {
   flex: 0 0 auto;
   display: grid;
   gap: 8px;
   padding: 10px 12px;
 }
 
-.board-toolbar-main,
-.board-toolbar-secondary {
+.board-toolbar-main {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -510,7 +513,7 @@ body {
 }
 
 .board-toolbar-main {
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .board-title-block {
@@ -531,21 +534,33 @@ body {
 .board-queue-actions {
   align-items: center;
   gap: 6px;
-  flex-wrap: nowrap;
 }
 
-.board-toolbar-secondary {
-  justify-content: flex-start;
+.board-toolbar-controls {
+  flex: 1 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.board-select-label {
+  flex: 0 0 auto;
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .board-list-compose {
-  flex: 1 1 280px;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .board-list-compose input {
-  width: 100%;
-  max-width: 360px;
+  width: 180px;
+  max-width: 20vw;
+  min-width: 132px;
   min-height: 38px;
   box-sizing: border-box;
   border: 1px solid var(--border, var(--cx-line-strong));
@@ -566,9 +581,142 @@ body {
   color: var(--cx-ink);
 }
 
-.board-select {
-  min-width: 180px;
-  max-width: 260px;
+.board-select-menu-host {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 184px;
+}
+
+.board-select-menu-host.is-open {
+  z-index: var(--layer-local-popover);
+}
+
+.board-select-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.board-select-button {
+  width: 184px;
+  min-width: 172px;
+  max-width: 240px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--cx-brand)) 42%, var(--border-strong, var(--cx-line-strong)));
+  border-radius: 9px;
+  padding: 0 10px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent, var(--cx-brand)) 16%, var(--surface, var(--cx-surface))), var(--surface, var(--cx-surface)));
+  color: var(--text, var(--cx-ink));
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+
+.board-select-button:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--cx-brand)) 70%, var(--border-strong, var(--cx-line-strong)));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent, var(--cx-brand)) 22%, var(--surface, var(--cx-surface))), var(--surface, var(--cx-surface)));
+}
+
+.board-select-button:focus-visible,
+.board-select-menu-host.is-open .board-select-button {
+  outline: none;
+  border-color: var(--accent, var(--cx-brand));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--cx-brand)) 18%, transparent);
+}
+
+.board-select-button .ui-icon:first-child {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--accent, var(--cx-brand));
+}
+
+.board-select-button .ui-icon:last-child {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--text-3, var(--cx-muted));
+}
+
+.board-select-button-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-select-menu-panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: calc(var(--layer-local-popover) + 1);
+  width: min(240px, calc(100vw - 48px));
+  max-height: min(360px, calc(100vh - 180px));
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 10px;
+  background: var(--surface-solid, var(--surface, var(--cx-surface)));
+  box-shadow: var(--shadow-lg, var(--cx-shadow));
+}
+
+.board-select-menu-item {
+  min-height: 36px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--text, var(--cx-ink));
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-select-menu-item:hover,
+.board-select-menu-item:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, var(--cx-brand)) 34%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--cx-brand)) 10%, var(--surface, var(--cx-surface)));
+}
+
+.board-select-menu-item.is-active {
+  border-color: color-mix(in srgb, var(--accent, var(--cx-brand)) 48%, var(--border, var(--cx-line)));
+  background: color-mix(in srgb, var(--accent, var(--cx-brand)) 18%, var(--surface, var(--cx-surface)));
+}
+
+.board-select-menu-item .ui-icon {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--accent, var(--cx-brand));
+}
+
+.board-select-menu-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .board-popover-host {
@@ -675,16 +823,16 @@ body {
 .board-diagnostics > .muted {
   margin-top: 8px;
 }
-.board-column {
+.event.board-column {
   flex: 0 0 300px;
   width: 300px;
   min-width: 300px;
   max-height: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  padding: 8px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
   border-radius: 8px;
   scroll-snap-align: start;
@@ -692,11 +840,31 @@ body {
 .board-column > .event-head.board-column-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px 10px;
+  align-items: center;
+  gap: 4px 8px;
 }
 .board-column-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+.board-column-title .space-title {
+  min-width: 0;
+  color: var(--text, var(--cx-ink));
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.board-column-title .column-drag-handle {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  border-radius: 6px;
 }
 .board-column-meta {
   margin-top: 2px;
@@ -729,9 +897,9 @@ body {
   min-height: 34px;
   padding: 6px 10px;
 }
-.board-card {
+.event.board-card {
   cursor: grab;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border-radius: 8px;
   box-shadow: none;
 }
@@ -1025,6 +1193,18 @@ body {
   border-radius: 8px;
   box-shadow: none;
 }
+.card-detail-edit-action {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.card-detail-section:hover .card-detail-edit-action,
+.card-detail-section:focus-within .card-detail-edit-action,
+.card-detail-description-panel:hover .card-detail-edit-action,
+.card-detail-description-panel:focus-within .card-detail-edit-action,
+.card-detail-synthesis-panel:hover .card-detail-edit-action,
+.card-detail-synthesis-panel:focus-within .card-detail-edit-action {
+  opacity: 1;
+}
 .card-detail-description {
   margin: 0;
   max-width: 72ch;
@@ -1149,12 +1329,10 @@ body {
   gap: 8px;
 }
 .card-detail-synthesis-panel {
-  min-height: 260px;
   display: grid;
-  place-items: center;
-  border: 1px solid var(--border, var(--cx-line));
-  border-radius: 8px;
-  background: var(--surface, var(--cx-surface));
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
 }
 .card-detail-synthesis-empty {
   color: var(--text-3, var(--cx-muted));
@@ -1163,6 +1341,35 @@ body {
   gap: 10px;
   justify-items: center;
   text-align: center;
+}
+.card-synthesis-track {
+  display: grid;
+  gap: 12px;
+  max-width: 78ch;
+}
+.card-synthesis-entry {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 0 12px;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--cx-brand)) 72%, var(--border, var(--cx-line)));
+}
+.card-synthesis-entry-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--text-2, var(--cx-muted));
+  font-size: 12px;
+}
+.card-synthesis-author {
+  color: var(--text, var(--cx-ink));
+  font-weight: 800;
+}
+.card-synthesis-time {
+  color: var(--text-3, var(--cx-muted));
+}
+.card-synthesis-body {
+  max-width: 72ch;
 }
 .card-detail-side-section {
   min-width: 0;
@@ -3816,8 +4023,20 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 .workspace-header {
   position: relative;
   z-index: var(--layer-chrome);
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
   min-width: 0;
+  container: workspace-header / inline-size;
+}
+
+.topbar-left {
+  grid-column: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: stretch;
 }
 
 .workspace-header .actions {
@@ -3837,14 +4056,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   min-width: 0;
 }
 
-.workspace-header > .sidebar-collapse-toggle {
+.topbar-left > .sidebar-collapse-toggle {
   margin-inline-end: 4px;
   flex-shrink: 0;
 }
 
 .topbar-context {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -3859,8 +4079,196 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
 }
 
 .topbar-context-title {
+  flex: 1 1 auto;
   color: var(--text);
   font-weight: 750;
+}
+
+.topbar-current-surface {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.topbar-current-surface .ui-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+}
+
+.space-context-bar {
+  grid-column: 2;
+  justify-self: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.space-nav-inline {
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.space-nav-inline .primary,
+.space-nav-inline .secondary {
+  min-height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.space-nav-inline .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.space-nav-menu-host {
+  position: relative;
+  display: none;
+}
+
+.space-nav-menu-button {
+  position: relative;
+  width: 36px;
+  min-width: 36px;
+  height: 34px;
+  min-height: 34px;
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 18%, var(--surface)), var(--surface));
+  color: var(--accent);
+}
+
+.space-nav-menu-button::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--accent-2);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.space-nav-menu-host.is-open .space-nav-menu-button {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.space-nav-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-local-popover);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.space-nav-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: calc(var(--layer-local-popover) + 1);
+  width: 190px;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-lg);
+}
+
+.space-nav-menu-item {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--text);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.space-nav-menu-item:hover,
+.space-nav-menu-item:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.space-nav-menu-item.is-active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.space-nav-menu-item:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.space-nav-menu-item .ui-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.workspace-header > .actions {
+  grid-column: 3;
+  justify-self: end;
+}
+
+@container workspace-header (max-width: 940px) {
+  .workspace-header .space-nav-inline {
+    display: none;
+  }
+
+  .workspace-header .space-nav-menu-host {
+    display: block;
+  }
+
+  .workspace-header .topbar-current-surface {
+    display: inline-flex;
+  }
+
+  .workspace-header .topbar-context-pill.muted {
+    display: none;
+  }
+}
+
+@container workspace-header (max-width: 700px) {
+  .workspace-header .topbar-current-surface-label {
+    display: none;
+  }
+
+  .workspace-header .space-nav-menu-panel {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
 }
 
 .topbar-context-pill {
@@ -4542,6 +4950,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   gap: 0;
   min-width: 0;
   min-height: 0;
+  height: 100vh;
   overflow: hidden;
 }
 
@@ -4568,6 +4977,15 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
   overflow: visible;
   align-content: start;
   gap: 16px;
+}
+
+.workspace-body > .timeline.kanban-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  overflow: hidden;
+  gap: 10px;
+  background: var(--bg);
 }
 
 .workspace-body:has(> .timeline):has(> .composer[data-testid="composer"]) {
@@ -5014,8 +5432,12 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     overflow: visible;
   }
 
+  .workspace-body > .timeline.kanban-panel {
+    min-height: 0;
+    overflow: visible;
+  }
+
   .board-toolbar-main,
-  .board-toolbar-secondary,
   .board-toolbar-controls,
   .board-list-compose {
     align-items: stretch;
@@ -5029,10 +5451,16 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     max-width: 100%;
   }
 
-  .board-select,
+  .board-select-menu-host,
+  .board-select-button,
   .board-list-compose input {
     width: 100%;
     min-width: 0;
+    max-width: 100%;
+  }
+
+  .board-select-menu-panel {
+    width: 100%;
     max-width: 100%;
   }
 
@@ -6260,15 +6688,6 @@ pub fn RouterView() -> Element {
                 route_title.to_owned()
             }
         });
-    let topbar_surface_label = if route_uses_space_context {
-        match resolved_space_surface {
-            Some(SpaceSurface::Document) => None,
-            Some(surface) => Some(surface.title()),
-            None => Some(route_label(&route)),
-        }
-    } else {
-        None
-    };
     let topbar_search_is_open =
         palette_open() || topbar_search_expanded() || !global_query().is_empty();
     let document_title = if matches!(&route, Route::Dashboard) {
@@ -6991,32 +7410,61 @@ pub fn RouterView() -> Element {
                         sidebar_resizing.set(false);
                     },
                 }
-            }
+                }
 
             main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar workspace-header",
-                    button {
-                        class: "btn icon sm ghost sidebar-collapse-toggle",
-                        "data-testid": "sidebar-collapse-toggle",
-                        title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
-                        "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
-                        onclick: move |_| sidebar_collapsed.toggle(),
-                        if sidebar_is_collapsed {
-                            UiIcon { name: "panel-left-open" }
-                        } else {
-                            UiIcon { name: "panel-left-close" }
+                    div { class: "topbar-left",
+                        button {
+                            class: "btn icon sm ghost sidebar-collapse-toggle",
+                            "data-testid": "sidebar-collapse-toggle",
+                            title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                            "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                            onclick: move |_| sidebar_collapsed.toggle(),
+                            if sidebar_is_collapsed {
+                                UiIcon { name: "panel-left-open" }
+                            } else {
+                                UiIcon { name: "panel-left-close" }
+                            }
+                        }
+                        div { class: "topbar-context", "data-testid": "topbar-crumbs",
+                            span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
+                            if route_uses_space_context && !active_space_id.is_empty() {
+                                {
+                                    let (current_surface_label, current_surface_icon) = match resolved_space_surface {
+                                        Some(surface) => (surface.short_label(), surface.icon_name()),
+                                        None => ("Admin", "settings"),
+                                    };
+                                    rsx! {
+                                        span {
+                                            class: "topbar-current-surface",
+                                            "data-testid": "current-space-surface",
+                                            title: "Current view: {current_surface_label}",
+                                            UiIcon { name: current_surface_icon }
+                                            span { class: "topbar-current-surface-label", "{current_surface_label}" }
+                                        }
+                                    }
+                                }
+                            }
+                            if route_uses_space_context && active_space_scope_count > 1 {
+                                span { class: "topbar-context-pill muted", "{active_space_scope_label}" }
+                            }
+                            if !active_space_id.is_empty() {
+                                span { class: "sr-only mono", "data-testid": "selected-space-id", "{active_space_id}" }
+                            }
                         }
                     }
-                    div { class: "topbar-context", "data-testid": "topbar-crumbs",
-                        span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
-                        if let Some(label) = topbar_surface_label {
-                            span { class: "topbar-context-pill", "{label}" }
-                        }
-                        if route_uses_space_context && active_space_scope_count > 1 {
-                            span { class: "topbar-context-pill muted", "{active_space_scope_label}" }
-                        }
-                        if !active_space_id.is_empty() {
-                            span { class: "sr-only mono", "data-testid": "selected-space-id", "{active_space_id}" }
+                    if route_uses_space_context && !active_space_id.is_empty() {
+                        SpaceContextBar {
+                            space_id: active_space_id.clone(),
+                            scope_label: active_space_scope_label.clone(),
+                            scope_count: active_space_scope_count,
+                            current_surface: resolved_space_surface,
+                            account_did: account_did(),
+                            state_store,
+                            minimal_ready,
+                            kanban_ready,
+                            full_ready,
                         }
                     }
                     div { class: "actions",
@@ -7447,19 +7895,6 @@ pub fn RouterView() -> Element {
                                 }
                             }
                         }
-                    }
-                }
-                if route_uses_space_context && !active_space_id.is_empty() {
-                    SpaceContextBar {
-                        space_id: active_space_id.clone(),
-                        scope_label: active_space_scope_label.clone(),
-                        scope_count: active_space_scope_count,
-                        current_surface: resolved_space_surface,
-                        account_did: account_did(),
-                        state_store,
-                        minimal_ready,
-                        kanban_ready,
-                        full_ready,
                     }
                 }
                 div { class: "workspace-body",
@@ -7926,9 +8361,14 @@ fn SpaceContextBar(
     full_ready: bool,
 ) -> Element {
     let _ = (&scope_label, scope_count);
+    let mut menu_open = use_signal(|| false);
+    let (current_nav_label, current_nav_icon) = match current_surface {
+        Some(surface) => (surface.short_label(), surface.icon_name()),
+        None => ("Admin", "settings"),
+    };
     rsx! {
-        div { class: "event", "data-testid": "space-context-bar",
-            div { class: "actions",
+        div { class: "space-context-bar", "data-testid": "space-context-bar",
+            div { class: "actions space-nav-inline", "data-testid": "space-context-inline",
                 for surface in SpaceSurface::top_nav() {
                     if surface.is_available(minimal_ready, kanban_ready, full_ready) {
                         Link {
@@ -7963,6 +8403,71 @@ fn SpaceContextBar(
                     to: Route::SpaceAdmin { space_id: space_id.clone() },
                     UiIcon { name: "settings" }
                     "Admin"
+                }
+            }
+            div {
+                class: if menu_open() { "space-nav-menu-host is-open" } else { "space-nav-menu-host" },
+                "data-testid": "space-context-menu",
+                button {
+                    class: "btn icon sm secondary space-nav-menu-button",
+                    "data-testid": "space-context-menu-button",
+                    title: "Switch view: {current_nav_label}",
+                    "aria-label": "Switch Space view",
+                    "aria-expanded": "{menu_open()}",
+                    onclick: move |_| menu_open.toggle(),
+                    UiIcon { name: current_nav_icon }
+                }
+                if menu_open() {
+                    button {
+                        class: "space-nav-menu-scrim",
+                        "aria-label": "Close Space view menu",
+                        onclick: move |_| menu_open.set(false),
+                    }
+                    div {
+                        class: "space-nav-menu-panel",
+                        role: "menu",
+                        "aria-label": "Space views",
+                        for surface in SpaceSurface::top_nav() {
+                            if surface.is_available(minimal_ready, kanban_ready, full_ready) {
+                                Link {
+                                    class: if current_surface == Some(surface) { "space-nav-menu-item is-active" } else { "space-nav-menu-item" },
+                                    role: "menuitem",
+                                    to: surface.route(space_id.clone()),
+                                    onclick: {
+                                        let account_did = account_did.clone();
+                                        let space_id = space_id.clone();
+                                        move |_| {
+                                            persist_space_surface_preference(
+                                                &mut state_store.write(),
+                                                &account_did,
+                                                &space_id,
+                                                surface,
+                                            );
+                                            menu_open.set(false);
+                                        }
+                                    },
+                                    UiIcon { name: surface.icon_name() }
+                                    "{surface.short_label()}"
+                                }
+                            } else {
+                                button {
+                                    class: "space-nav-menu-item",
+                                    role: "menuitem",
+                                    disabled: true,
+                                    UiIcon { name: surface.icon_name() }
+                                    "{surface.short_label()}"
+                                }
+                            }
+                        }
+                        Link {
+                            class: if current_surface.is_none() { "space-nav-menu-item is-active" } else { "space-nav-menu-item" },
+                            role: "menuitem",
+                            to: Route::SpaceAdmin { space_id: space_id.clone() },
+                            onclick: move |_| menu_open.set(false),
+                            UiIcon { name: "settings" }
+                            "Admin"
+                        }
+                    }
                 }
             }
         }

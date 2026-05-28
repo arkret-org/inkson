@@ -134,6 +134,34 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
+/// Derive the canonical display handle from a DID produced by
+/// [`crate::identity_handle::parse_user_handle`].
+///
+/// This is a display-only fallback for the common materialized subject
+/// shape (`did:web:<domain>:users:<localpart>`). Verified handle display
+/// still comes from signed `cx.schema.handle_claim.v1` evidence or
+/// `cx.directory.list_handles_for_subject`; this helper only keeps UI
+/// rows readable while soland's roster handle-claim inline path is still
+/// being wired.
+pub fn handle_display_from_did(did: &str) -> Option<String> {
+    let without_prefix = did.trim().strip_prefix("did:web:")?;
+    let segments = without_prefix.split(':').collect::<Vec<_>>();
+    let marker_index = segments
+        .iter()
+        .position(|segment| matches!(*segment, "users" | "user" | "principals" | "principal"))?;
+    if marker_index == 0 || marker_index + 2 != segments.len() {
+        return None;
+    }
+    let localpart = segments[marker_index + 1].trim();
+    if localpart.is_empty() {
+        return None;
+    }
+    let authority = segments[..marker_index].join(":");
+    let authority = authority.replace("%3A", ":").replace("%3a", ":");
+    let candidate = format!("{localpart}:{authority}");
+    crate::identity_handle::parse_user_handle(&candidate).map(|handle| handle.display)
+}
+
 /// F-REMARK-FANOUT-1: actor-private `local_name` lookup for a DID,
 /// reused everywhere yougen would otherwise show a raw `did:web:...`.
 ///
@@ -144,13 +172,17 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 /// chat headers, @mention popovers, directory rows, verify-device peer
 /// labels, and message-author lines stay consistent.
 ///
-/// The `did` argument falls back to a compact display-only label when no
-/// remark / no `local_name` is set. Use the original DID for inputs, copies,
-/// routes, and protocol payloads.
+/// The `did` argument falls back to a handle-shaped display label when
+/// the DID is the materialized form of a Contrix user handle, then to a
+/// compact display-only protocol id. Use the original DID for inputs,
+/// copies, routes, and protocol payloads.
 pub fn display_name_for_did(
     state_store: &crate::local_state::LocalStateStore,
     did: &str,
 ) -> String {
+    if let Some(handle) = handle_display_from_did(did) {
+        return handle;
+    }
     match state_store.contact_remark(did) {
         Some(remark) => remark.display_name(did).to_owned(),
         None => short_protocol_id(did),
@@ -434,7 +466,10 @@ pub struct HandleClaimRow {
 pub fn handle_claim_rows(
     res: &contrix_sdk::model::DirectoryListHandlesForSubjectResBody,
 ) -> Vec<HandleClaimRow> {
-    let primary = res.primary_handle.as_ref().map(|h| h.canonical().to_owned());
+    let primary = res
+        .primary_handle
+        .as_ref()
+        .map(|h| h.canonical().to_owned());
     res.claims
         .iter()
         .map(|claim| {
@@ -447,19 +482,16 @@ pub fn handle_claim_rows(
             HandleClaimRow {
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
-                issuer: claim.issuer.clone().unwrap_or_else(|| "(unknown)".to_owned()),
+                issuer: claim
+                    .issuer
+                    .clone()
+                    .unwrap_or_else(|| "(unknown)".to_owned()),
                 binding_state: claim
                     .binding_state
                     .map(|s| format!("{s:?}").to_lowercase())
                     .unwrap_or_else(|| "(unset)".to_owned()),
-                created_at: claim
-                    .issued_at
-                    .map(|t| t.to_rfc3339())
-                    .unwrap_or_default(),
-                expires_at: claim
-                    .expires_at
-                    .map(|t| t.to_rfc3339())
-                    .unwrap_or_default(),
+                created_at: claim.issued_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                expires_at: claim.expires_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
                 claim_digest: digest,
             }
         })
@@ -501,17 +533,17 @@ pub fn WhyThisHandlePanel(
             spawn(async move {
                 status.set("Resolving visible handle claims…".to_owned());
                 match with_authed_api(&base_url, token, move |api| async move {
-                    api.list_handles_for_subject(
-                        &subject_id,
-                        realm_id.as_deref(),
-                        Some("display"),
-                    )
-                    .await
+                    api.list_handles_for_subject(&subject_id, realm_id.as_deref(), Some("display"))
+                        .await
                 })
                 .await
                 {
                     Ok(res) => {
-                        primary.set(res.primary_handle.as_ref().map(|h| h.canonical().to_owned()));
+                        primary.set(
+                            res.primary_handle
+                                .as_ref()
+                                .map(|h| h.canonical().to_owned()),
+                        );
                         let projected = handle_claim_rows(&res);
                         let count = projected.len();
                         rows.set(projected);
@@ -618,7 +650,9 @@ mod tests {
         let now = chrono::Utc::now();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
-            subject: Some(contrix_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap()),
+            subject: Some(
+                contrix_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
+            ),
             issuer: Some("did:web:issuer.acme.example".to_owned()),
             binding_state: Some(HandleBindingState::Verified),
             issued_at: Some(now - chrono::Duration::hours(1)),
@@ -745,5 +779,18 @@ mod tests {
             short_protocol_id("did:web:auth.local.host:users:01KCANONICAL"),
             "did:web:auth.loc...ANONICAL"
         );
+    }
+
+    #[test]
+    fn handle_display_from_did_recovers_materialized_user_handle() {
+        assert_eq!(
+            handle_display_from_did("did:web:acme.example:users:alice").as_deref(),
+            Some("alice:acme.example")
+        );
+        assert_eq!(
+            handle_display_from_did("did:web:acme.example%3A8443:users:bob").as_deref(),
+            Some("bob:acme.example:8443")
+        );
+        assert!(handle_display_from_did("did:web:alice.example").is_none());
     }
 }

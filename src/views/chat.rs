@@ -538,12 +538,16 @@ fn participant_handle_label_from_value(value: &Value, did: Option<&str>) -> Opti
 }
 
 fn mention_label_for_participant(participant: &SpaceParticipant) -> Option<String> {
-    participant.handle_label.clone().or_else(|| {
-        participant
-            .display_name
-            .as_deref()
-            .and_then(mention_handle_label_from_value)
-    })
+    participant
+        .handle_label
+        .clone()
+        .or_else(|| {
+            participant
+                .display_name
+                .as_deref()
+                .and_then(mention_handle_label_from_value)
+        })
+        .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -574,14 +578,14 @@ fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> 
             .strip_prefix('@')
             .and_then(mention_handle_label_from_value);
     }
-    let display_name = (!mention.display_name_at_time.is_empty())
-        .then_some(mention.display_name_at_time.as_str());
+    let display_name =
+        (!mention.display_name_at_time.is_empty()).then_some(mention.display_name_at_time.as_str());
     let rendered = crate::views::helpers::render_actor_mention(
         &mention.target,
-        &[],   // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
-        &[],   // accepted_issuers — TODO(R3.2.1) Realm policy
-        None,  // context (target Realm id)
-        None,  // cached verified handle — TODO(R3.2.1) local cache
+        &[],  // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
+        &[],  // accepted_issuers — TODO(R3.2.1) Realm policy
+        None, // context (target Realm id)
+        None, // cached verified handle — TODO(R3.2.1) local cache
         display_name,
     );
     // The verified / cached tiers render `@{localpart}:{domain}`; strip
@@ -1122,10 +1126,10 @@ fn display_label_for_actor(
         .find(|participant| participant.did == did)
         .and_then(|participant| {
             participant
-                .display_name
-                .as_ref()
-                .or(participant.handle_label.as_ref())
-                .cloned()
+                .handle_label
+                .clone()
+                .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
+                .or_else(|| participant.display_name.clone())
         })
         .unwrap_or_else(|| crate::views::helpers::display_name_for_did(state_store, did))
 }
@@ -6264,6 +6268,24 @@ mod tests {
 
         assert_eq!(
             mention_label_for_participant(bob).as_deref(),
+            Some("bob:example.com")
+        );
+    }
+
+    #[test]
+    fn mention_label_for_participant_falls_back_to_materialized_handle_did() {
+        let participant = SpaceParticipant {
+            did: "did:web:example.com:users:bob".to_owned(),
+            display_name: None,
+            handle_label: None,
+            display_name_rank: u8::MAX,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: false,
+        };
+
+        assert_eq!(
+            mention_label_for_participant(&participant).as_deref(),
             Some("bob:example.com")
         );
     }

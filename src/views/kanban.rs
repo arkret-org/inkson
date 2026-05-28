@@ -11,7 +11,9 @@ use crate::{
     operation::uuid_v7,
     rank::{RankError, rank_for_drop},
     routes::Route,
-    views::helpers::{short_protocol_id, with_authed_api},
+    views::helpers::{
+        display_name_for_did, handle_display_from_did, short_protocol_id, with_authed_api,
+    },
 };
 
 /// Board Space id used only when the explicit demo seed fallback is
@@ -150,6 +152,9 @@ struct KanbanCard {
     /// Canonical wire path: `object.synthesis` (with `object.tracks.synthesis.body`
     /// honored as a back-compat fallback in projection reads).
     synthesis: String,
+    created_by: String,
+    created_at: String,
+    updated_at: String,
     labels: Vec<String>,
     assignee: String,
     due: String,
@@ -179,6 +184,17 @@ struct CardDetailDraft {
     labels: Vec<String>,
     assignee: String,
     due: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CardSynthesisTrackEntry {
+    id: String,
+    body: String,
+    actor_did: String,
+    author_label: String,
+    timestamp_label: String,
+    sort_key: String,
+    edited: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -229,6 +245,7 @@ struct BoardSpaceOption {
 enum BoardToolbarPopover {
     #[default]
     None,
+    SelectBoard,
     CreateBoard,
     Projection,
     Queue,
@@ -728,6 +745,28 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
         .as_ref()
         .map(|p| p.rank.clone())
         .unwrap_or_default();
+    let created_by = item
+        .object
+        .get("created_by")
+        .or_else(|| item.object.get("actor_id"))
+        .or_else(|| item.object.get("author"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let created_at = item
+        .object
+        .get("created_at")
+        .or_else(|| item.object.get("timestamp"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let updated_at = item
+        .object
+        .get("updated_at")
+        .or_else(|| item.object.get("edited_at"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     KanbanCard {
         id,
         rank,
@@ -750,6 +789,9 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
                 .and_then(|tracks| tracks.get("synthesis"))
                 .and_then(|track| track.get("body"))
         })),
+        created_by,
+        created_at,
+        updated_at,
         labels: item
             .object
             .get("fields")
@@ -1012,6 +1054,21 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
                 .and_then(|tracks| tracks.get("synthesis"))
                 .and_then(|track| track.get("body"))
         })),
+        created_by: flow
+            .created_by
+            .clone()
+            .or_else(|| flow_projection_field_string(flow, None, &["created_by", "actor_id"]))
+            .unwrap_or_default(),
+        created_at: flow
+            .created_at
+            .clone()
+            .or_else(|| flow_projection_field_string(flow, None, &["created_at", "timestamp"]))
+            .unwrap_or_default(),
+        updated_at: flow
+            .updated_at
+            .clone()
+            .or_else(|| flow_projection_field_string(flow, None, &["updated_at", "edited_at"]))
+            .unwrap_or_default(),
         labels: flow_projection_labels(flow),
         assignee: flow_projection_field_string(flow, None, &["assignee"])
             .unwrap_or_else(|| "—".to_owned()),
@@ -1048,6 +1105,9 @@ fn local_created_card(
         description,
         body: String::new(),
         synthesis: String::new(),
+        created_by: "yougen".to_owned(),
+        created_at: String::new(),
+        updated_at: String::new(),
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),
         due: "unscheduled".to_owned(),
@@ -1312,18 +1372,6 @@ fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-const INCIDENT_INITIAL_STATUS: &str = "investigating";
-
-fn incident_status_transition_local_error(current: &str, target: &str) -> Option<&'static str> {
-    if current == target {
-        return None;
-    }
-    match (current, target) {
-        ("investigating", "resolved") => Some("invalid transition: must mitigate first"),
-        _ => None,
-    }
-}
-
 #[component]
 pub fn KanbanPanel(
     base_url: String,
@@ -1418,11 +1466,6 @@ pub fn KanbanPanel(
     let mut card_edit_due = use_signal(String::new);
     let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
     let mut dragging_column = use_signal(|| Option::<DraggedColumn>::None);
-    let incident_flow_id = use_signal(|| format!("cx:flow:{}", uuid_v7()));
-    let incident_status_current = use_signal(|| INCIDENT_INITIAL_STATUS.to_owned());
-    let mut incident_status_select = use_signal(|| INCIDENT_INITIAL_STATUS.to_owned());
-    let incident_status_error = use_signal(String::new);
-    let incident_flow_initialized = use_signal(|| false);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
     let mut board_status = use_signal(|| {
         if initial_source == BoardProjectionSource::Unavailable {
@@ -1433,24 +1476,20 @@ pub fn KanbanPanel(
             "Event write plane unavailable; board writes queue locally".to_owned()
         }
     });
-    let scope_count = selected_space_scope.len().max(1);
-    let scope_label = if scope_count > 1 {
-        format!("{scope_count} Spaces in scope")
-    } else {
-        "Current Space".to_owned()
-    };
-    let selected_board_label = {
-        let board_id = selected_board_space_id();
-        board_space_options()
-            .iter()
-            .find(|option| option.id == board_id)
-            .map(|option| option.title.clone())
-            .unwrap_or_else(|| crate::i18n::tr("kanban.board_title"))
-    };
     let selected_board_space_id_value = selected_board_space_id();
     let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
     let board_view_id_value = board_view_id();
     let board_view_id_label = short_protocol_id(&board_view_id_value);
+    let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
+    let selected_board_title = if selected_board_space_id_value.trim().is_empty() {
+        "Select board".to_owned()
+    } else {
+        board_space_options()
+            .iter()
+            .find(|option| option.id == selected_board_space_id_value)
+            .map(|option| option.title.clone())
+            .unwrap_or_else(|| short_protocol_id(&selected_board_space_id_value))
+    };
 
     {
         let routed_flow_id = route_card_flow_id(&route);
@@ -1851,16 +1890,6 @@ pub fn KanbanPanel(
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             div { class: "event board-header board-toolbar",
                 div { class: "board-toolbar-main",
-                    div { class: "board-title-block",
-                        div { class: "event-head board-kicker",
-                            span { {crate::i18n::tr("kanban.board_header")} }
-                            span {
-                                title: "writes to {selected_space}",
-                                "{scope_label}"
-                            }
-                        }
-                        div { class: "space-title", "{selected_board_label}" }
-                    }
                     div { class: "actions board-toolbar-controls", "data-testid": "board-space-selector",
                         if board_popover() != BoardToolbarPopover::None {
                             div {
@@ -1868,81 +1897,205 @@ pub fn KanbanPanel(
                                 onclick: move |_| board_popover.set(BoardToolbarPopover::None),
                             }
                         }
-                        select {
-                            class: "board-select",
-                            "data-testid": "board-space-select",
-                            value: "{selected_board_space_id}",
-                            onchange: move |event| {
-                                let board_id = event.value();
-                                selected_board_space_id.set(board_id.clone());
-                                board_popover.set(BoardToolbarPopover::None);
-                                // Persist the board in the URL so a refresh
-                                // restores it instead of falling back to the
-                                // first board. Closing any open card too: a
-                                // board switch should not keep a card from a
-                                // different board mounted.
-                                selected_card.set(None);
-                                let _ = navigator
-                                    .replace(kanban_board_route(&board_route_space_id, &board_id));
-                                let containers = lifecycle_container_projection();
-                                let flows = lifecycle_flow_projection();
-                                if board_id.trim().is_empty() {
-                                    columns.set(Vec::new());
-                                    adding_card_to.set(None);
-                                    board_status.set("Select or create a board before adding lists".to_owned());
-                                    return;
+                        span { class: "board-select-label", "{board_select_label}" }
+                        div {
+                            class: if board_popover() == BoardToolbarPopover::SelectBoard { "board-select-menu-host is-open" } else { "board-select-menu-host" },
+                            {
+                                let board_route_space_id_for_select = board_route_space_id.clone();
+                                rsx! {
+                                    select {
+                                        class: "board-select-native",
+                                        "data-testid": "board-space-select",
+                                        value: "{selected_board_space_id}",
+                                        onchange: move |event| {
+                                            select_kanban_board(
+                                                event.value(),
+                                                selected_board_space_id,
+                                                board_popover,
+                                                selected_card,
+                                                board_route_space_id_for_select.clone(),
+                                                lifecycle_container_projection,
+                                                lifecycle_flow_projection,
+                                                columns,
+                                                adding_card_to,
+                                                board_status,
+                                                board_space_options,
+                                                projection_source,
+                                                state_store,
+                                            );
+                                        },
+                                        option {
+                                            value: "",
+                                            selected: selected_board_space_id().is_empty(),
+                                            "Select board"
+                                        }
+                                        for board_option in board_space_options().iter() {
+                                            option {
+                                                value: "{board_option.id}",
+                                                selected: selected_board_space_id() == board_option.id,
+                                                "{board_option.title}"
+                                            }
+                                        }
+                                    }
                                 }
-                                if containers.is_empty() && flows.is_empty() {
-                                    board_status.set(format!(
-                                        "Board selected · {}",
-                                        short_protocol_id(&board_id)
-                                    ));
-                                    return;
-                                }
-                                let (projected_columns, options, projected_board_id) =
-                                    columns_from_lifecycle_projection(
-                                        &containers,
-                                        &flows,
-                                        &board_id,
-                                    );
-                                if !options.is_empty() {
-                                    board_space_options.set(options);
-                                }
-                                if projected_board_id.as_deref() == Some(board_id.as_str()) {
-                                    let projected_columns = overlay_local_card_creates(
-                                        projected_columns,
-                                        &state_store.read(),
-                                        &board_id,
-                                    );
-                                    let list_count = projected_columns.len();
-                                    let card_count = projected_columns
-                                        .iter()
-                                        .map(|column| column.cards.len())
-                                        .sum::<usize>();
-                                    columns.set(projected_columns);
-                                    projection_source.set(BoardProjectionSource::ApiDerived);
-                                    board_status.set(format!(
-                                        "Board loaded: {list_count} list(s), {card_count} card(s)"
-                                    ));
-                                } else {
-                                    columns.set(Vec::new());
-                                    adding_card_to.set(None);
-                                    board_status.set(format!(
-                                        "No list projection available for selected Board · {}",
-                                        short_protocol_id(&board_id)
-                                    ));
-                                }
-                            },
-                            option {
-                                value: "",
-                                selected: selected_board_space_id().is_empty(),
-                                "Select board"
                             }
-                            for board_option in board_space_options().iter() {
-                                option {
-                                    value: "{board_option.id}",
-                                    selected: selected_board_space_id() == board_option.id,
-                                    "{board_option.title}"
+                            button {
+                                class: "board-select-button",
+                                "data-testid": "board-space-select-button",
+                                title: "Switch board: {selected_board_title}",
+                                "aria-label": "Switch board",
+                                "aria-expanded": "{board_popover() == BoardToolbarPopover::SelectBoard}",
+                                onclick: move |_| {
+                                    let next = if board_popover() == BoardToolbarPopover::SelectBoard {
+                                        BoardToolbarPopover::None
+                                    } else {
+                                        BoardToolbarPopover::SelectBoard
+                                    };
+                                    board_popover.set(next);
+                                },
+                                UiIcon { name: "board" }
+                                span { class: "board-select-button-label", "{selected_board_title}" }
+                                UiIcon { name: "chevron-down" }
+                            }
+                            if board_popover() == BoardToolbarPopover::SelectBoard {
+                                div {
+                                    class: "board-select-menu-panel",
+                                    role: "listbox",
+                                    "aria-label": "Boards",
+                                    {
+                                        let board_route_space_id_for_empty = board_route_space_id.clone();
+                                        rsx! {
+                                            button {
+                                                class: if selected_board_space_id().trim().is_empty() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
+                                                role: "option",
+                                                "aria-selected": "{selected_board_space_id().trim().is_empty()}",
+                                                onclick: move |_| {
+                                                    select_kanban_board(
+                                                        String::new(),
+                                                        selected_board_space_id,
+                                                        board_popover,
+                                                        selected_card,
+                                                        board_route_space_id_for_empty.clone(),
+                                                        lifecycle_container_projection,
+                                                        lifecycle_flow_projection,
+                                                        columns,
+                                                        adding_card_to,
+                                                        board_status,
+                                                        board_space_options,
+                                                        projection_source,
+                                                        state_store,
+                                                    );
+                                                },
+                                                UiIcon { name: "board" }
+                                                span { "Select board" }
+                                            }
+                                        }
+                                    }
+                                    for board_option in board_space_options().iter() {
+                                        {
+                                            let option_id = board_option.id.clone();
+                                            let option_title = board_option.title.clone();
+                                            let option_is_active = selected_board_space_id() == option_id;
+                                            let board_route_space_id_for_option = board_route_space_id.clone();
+                                            rsx! {
+                                                button {
+                                                    class: if option_is_active { "board-select-menu-item is-active" } else { "board-select-menu-item" },
+                                                    role: "option",
+                                                    "aria-selected": "{option_is_active}",
+                                                    title: "{option_title}",
+                                                    onclick: {
+                                                        let option_id = option_id.clone();
+                                                        move |_| {
+                                                            select_kanban_board(
+                                                                option_id.clone(),
+                                                                selected_board_space_id,
+                                                                board_popover,
+                                                                selected_card,
+                                                                board_route_space_id_for_option.clone(),
+                                                                lifecycle_container_projection,
+                                                                lifecycle_flow_projection,
+                                                                columns,
+                                                                adding_card_to,
+                                                                board_status,
+                                                                board_space_options,
+                                                                projection_source,
+                                                                state_store,
+                                                            );
+                                                        }
+                                                    },
+                                                    UiIcon { name: "board" }
+                                                    span { "{option_title}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if board_selected {
+                            div { class: "actions board-list-compose",
+                                input {
+                                    "data-testid": "new-column-input",
+                                    value: "{new_column_title}",
+                                    placeholder: "New list title",
+                                    oninput: move |evt| new_column_title.set(evt.value()),
+                                }
+                                button {
+                                    class: "btn sm secondary",
+                                    "data-testid": "add-column-button",
+                                    onclick: {
+                                        // Lists are Space containers in v1. The optimistic
+                                        // local column uses the new Space-container id while
+                                        // the write submits `cx.space.create`.
+                                        let base = base_url.clone();
+                                        let space = selected_space.clone();
+                                        let actor = account_did.clone();
+                                        move |_| {
+                                            let title = new_column_title().trim().to_owned();
+                                            if title.is_empty() {
+                                                return;
+                                            }
+                                            if actor.trim().is_empty() {
+                                                board_status.set("sign in before adding lists".to_owned());
+                                                return;
+                                            }
+                                            let board_space_id = selected_board_space_id();
+                                            if board_space_id.trim().is_empty() {
+                                                board_status.set("select or create a Board Space before adding lists".to_owned());
+                                                return;
+                                            }
+                                            let col_count = columns().len();
+                                            let rank = format!("r{:03}", col_count + 1);
+                                            let list_space_id = format!("cx:space:{}", uuid_v7());
+                                            columns.write().push(KanbanColumn {
+                                                id: list_space_id.clone(),
+                                                title: title.clone(),
+                                                rank: rank.clone(),
+                                                cards: Vec::new(),
+                                                state: SpaceContainerLifecycleState::Active,
+                                            });
+                                            let op = crate::operation::cx_ops::space_create(
+                                                &space,
+                                                &actor,
+                                                &list_space_id,
+                                                "list",
+                                                &title,
+                                                Some(&board_space_id),
+                                                Some(&rank),
+                                            )
+                                            .build("yougen");
+                                            submit_kanban_operation_event(
+                                                base.clone(),
+                                                token,
+                                                space.clone(),
+                                                op,
+                                                state_store,
+                                                board_status,
+                                            );
+                                            new_column_title.set(String::new());
+                                        }
+                                    },
+                                    {crate::i18n::tr("kanban.add_list")}
                                 }
                             }
                         }
@@ -2214,132 +2367,6 @@ pub fn KanbanPanel(
                                 }
                             }
                         }
-                    }
-                }
-
-                if board_selected {
-                    div { class: "board-toolbar-secondary",
-                        div { class: "actions board-list-compose",
-                            input {
-                                "data-testid": "new-column-input",
-                                value: "{new_column_title}",
-                                placeholder: "New list title",
-                                oninput: move |evt| new_column_title.set(evt.value()),
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "add-column-button",
-                                onclick: {
-                                    // Lists are Space containers in v1. The optimistic
-                                    // local column uses the new Space-container id while
-                                    // the write submits `cx.space.create`.
-                                    let base = base_url.clone();
-                                    let space = selected_space.clone();
-                                    let actor = account_did.clone();
-                                    move |_| {
-                                        let title = new_column_title().trim().to_owned();
-                                        if title.is_empty() {
-                                            return;
-                                        }
-                                        if actor.trim().is_empty() {
-                                            board_status.set("sign in before adding lists".to_owned());
-                                            return;
-                                        }
-                                        let board_space_id = selected_board_space_id();
-                                        if board_space_id.trim().is_empty() {
-                                            board_status.set("select or create a Board Space before adding lists".to_owned());
-                                            return;
-                                        }
-                                        let col_count = columns().len();
-                                        let rank = format!("r{:03}", col_count + 1);
-                                        let list_space_id = format!("cx:space:{}", uuid_v7());
-                                        columns.write().push(KanbanColumn {
-                                            id: list_space_id.clone(),
-                                            title: title.clone(),
-                                            rank: rank.clone(),
-                                            cards: Vec::new(),
-                                            state: SpaceContainerLifecycleState::Active,
-                                        });
-                                        let op = crate::operation::cx_ops::space_create(
-                                            &space,
-                                            &actor,
-                                            &list_space_id,
-                                            "list",
-                                            &title,
-                                            Some(&board_space_id),
-                                            Some(&rank),
-                                        )
-                                        .build("yougen");
-                                        submit_kanban_operation_event(
-                                            base.clone(),
-                                            token,
-                                            space.clone(),
-                                            op,
-                                            state_store,
-                                            board_status,
-                                        );
-                                        new_column_title.set(String::new());
-                                    }
-                                },
-                                {crate::i18n::tr("kanban.add_list")}
-                            }
-                        }
-                    }
-                }
-            }
-
-            div { class: "event incident-status-panel", "data-testid": "incident-status-panel",
-                div { class: "event-head",
-                    span { "Incident status" }
-                    span { title: "{incident_flow_id()}", "{short_protocol_id(&incident_flow_id())}" }
-                }
-                div { class: "actions",
-                    label {
-                        span { "Status" }
-                        select {
-                            "data-testid": "incident-status-select",
-                            value: "{incident_status_select}",
-                            onchange: move |evt| incident_status_select.set(evt.value()),
-                            option { value: "investigating", "Investigating" }
-                            option { value: "mitigated", "Mitigated" }
-                            option { value: "resolved", "Resolved" }
-                        }
-                    }
-                    button {
-                        class: "primary",
-                        "data-testid": "save-incident-status-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            let space = selected_space.clone();
-                            let actor = account_did.clone();
-                            move |_| {
-                                submit_incident_status_transition(
-                                    base.clone(),
-                                    token,
-                                    space.clone(),
-                                    actor.clone(),
-                                    incident_flow_id(),
-                                    incident_status_select(),
-                                    incident_status_current,
-                                    incident_flow_initialized,
-                                    incident_status_error,
-                                    board_status,
-                                );
-                            }
-                        },
-                        "Save Status"
-                    }
-                }
-                div {
-                    class: "muted",
-                    "data-testid": "incident-status-current",
-                    "Current: {incident_status_current}"
-                }
-                if !incident_status_error().is_empty() {
-                    div {
-                        class: "muted",
-                        "data-testid": "incident-status-error",
-                        "{incident_status_error}"
                     }
                 }
             }
@@ -3126,6 +3153,11 @@ pub fn KanbanPanel(
                         "card-detail-action-menu"
                     };
                     let summary_text = card_summary_text(&card.description);
+                    let synthesis_entries = {
+                        let store = state_store.read();
+                        let snapshot = store.load();
+                        card_synthesis_track_entries(&card, &snapshot.raw_operations, &store)
+                    };
                     let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();
                     let close_navigator = navigator;
@@ -3539,7 +3571,7 @@ pub fn KanbanPanel(
                                                         span { "Summary" }
                                                     }
                                                     button {
-                                                        class: "secondary card-detail-mini-action",
+                                                        class: "secondary card-detail-mini-action card-detail-edit-action",
                                                         "data-testid": "card-detail-edit-button",
                                                         onclick: {
                                                             let current = card.clone();
@@ -3638,7 +3670,7 @@ pub fn KanbanPanel(
                                                         } else {
                                                             div { class: "card-detail-tab-actions",
                                                                 button {
-                                                                    class: "secondary card-detail-mini-action",
+                                                                    class: "secondary card-detail-mini-action card-detail-edit-action",
                                                                     "data-testid": "card-detail-edit-description-button",
                                                                     onclick: {
                                                                         let current = card.clone();
@@ -3680,10 +3712,10 @@ pub fn KanbanPanel(
                                                     }
                                                 } else if active_detail_tab == CardDetailContentTab::Synthesis {
                                                     div {
-                                                        class: "card-detail-description-panel",
+                                                        class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
-                                                        if card.synthesis.trim().is_empty() {
+                                                        if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
                                                                 div { "No synthesis yet." }
                                                                 button {
@@ -3711,7 +3743,7 @@ pub fn KanbanPanel(
                                                         } else {
                                                             div { class: "card-detail-tab-actions",
                                                                 button {
-                                                                    class: "secondary card-detail-mini-action",
+                                                                    class: "secondary card-detail-mini-action card-detail-edit-action",
                                                                     "data-testid": "card-detail-edit-synthesis-button",
                                                                     onclick: {
                                                                         let current = card.clone();
@@ -3732,10 +3764,37 @@ pub fn KanbanPanel(
                                                                     span { {crate::i18n::tr("common.edit")} }
                                                                 }
                                                             }
-                                                            div { class: "card-detail-description",
-                                                                {crate::content::render_blocks(
-                                                                    &crate::content::parse_message_body(&card.synthesis),
-                                                                )}
+                                                            div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
+                                                                for (index, entry) in synthesis_entries.iter().enumerate() {
+                                                                    {
+                                                                        let version_label = format!("v{}", index + 1);
+                                                                        let actor_title = if entry.actor_did.trim().is_empty() {
+                                                                            "Unknown author".to_owned()
+                                                                        } else {
+                                                                            entry.actor_did.clone()
+                                                                        };
+                                                                        rsx! {
+                                                                            article {
+                                                                                key: "{entry.id}",
+                                                                                class: "card-synthesis-entry",
+                                                                                "data-testid": "card-synthesis-entry",
+                                                                                header { class: "card-synthesis-entry-head",
+                                                                                    span { class: "card-synthesis-author", title: "{actor_title}", "{entry.author_label}" }
+                                                                                    time { class: "card-synthesis-time", "{entry.timestamp_label}" }
+                                                                                    span { class: "badge", "{version_label}" }
+                                                                                    if entry.edited {
+                                                                                        span { class: "badge", "edited" }
+                                                                                    }
+                                                                                }
+                                                                                div { class: "card-detail-description card-synthesis-body",
+                                                                                    {crate::content::render_blocks(
+                                                                                        &crate::content::parse_message_body(&entry.body),
+                                                                                    )}
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -3813,6 +3872,12 @@ pub fn KanbanPanel(
                                                         }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
+                                                        {
+                                                            let assignee_label = {
+                                                                let store = state_store.read();
+                                                                display_user_reference(&card.assignee, &store)
+                                                            };
+                                                            rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
                                                                 div {
@@ -3821,7 +3886,7 @@ pub fn KanbanPanel(
                                                                 }
                                                                 div {
                                                                     dt { "Assignee" }
-                                                                    dd { "{card.assignee}" }
+                                                                    dd { title: "{card.assignee}", "{assignee_label}" }
                                                                 }
                                                                 div {
                                                                     dt { "Due" }
@@ -3831,6 +3896,8 @@ pub fn KanbanPanel(
                                                                     dt { "Visibility" }
                                                                     dd { "{card.external_visibility}" }
                                                                 }
+                                                            }
+                                                        }
                                                             }
                                                         }
                                                         div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
@@ -3866,7 +3933,8 @@ pub fn KanbanPanel(
                                                                         // still `decryption_pending` (MLS
                                                                         // epoch missing — MID-4 stub).
                                                                         // member_display_label falls back to
-                                                                        // the compact DID in both cases.
+                                                                        // handle-shaped DID display, then a
+                                                                        // compact DID.
                                                                         // TODO(R4): swap the decryption-pending
                                                                         // branch for an explicit muted
                                                                         // placeholder string instead of the
@@ -4026,6 +4094,8 @@ pub(super) struct RealmMemberRow {
     /// absent). Drives §3.2.1 primary-handle selection + the
     /// "Why am I seeing this handle?" panel.
     pub subject_id: Option<String>,
+    pub handle_claims: Vec<Value>,
+    pub handle_claims_limited: bool,
 }
 
 impl RealmMemberRow {
@@ -4039,9 +4109,11 @@ impl RealmMemberRow {
 
 /// Pick the best UI label for a roster row.
 ///
-/// R3.1: prefer a resolved [`MemberIdentity`] display (via the SDK's
-/// effective-set helper); otherwise fall back to the compact actor-DID
-/// form so long `did:webvh:...` strings don't overflow.
+/// R3.2: prefer a handle-shaped display when visible handle-claim
+/// evidence or a materialized subject DID gives us one; otherwise use a
+/// resolved [`MemberIdentity`] display (via the SDK's effective-set
+/// helper), then a compact actor-DID fallback so long `did:webvh:...`
+/// strings don't overflow.
 ///
 /// `identity` is the current effective [`MemberIdentity`] for this row
 /// (when one has been decrypted + verified). [`None`] means the row is
@@ -4051,6 +4123,9 @@ fn member_display_label(
     row: &RealmMemberRow,
     identity: Option<&contrix_sdk::MemberIdentity>,
 ) -> String {
+    if let Some(handle) = member_handle_label(row) {
+        return handle;
+    }
     if let Some(identity) = identity {
         // R3.2: `MemberIdentity` no longer carries handle fields. The
         // verified handle (if any) comes from running §3.2.1 over the
@@ -4063,6 +4138,27 @@ fn member_display_label(
         }
     }
     short_protocol_id(&row.actor_id)
+}
+
+fn member_handle_label(row: &RealmMemberRow) -> Option<String> {
+    let subject = row.subject_id.as_deref().unwrap_or(row.actor_id.as_str());
+    let handle_from_claims = row.handle_claims.iter().find_map(|claim| {
+        let claim_subject = json_path_string(Some(claim), &["subject"])
+            .or_else(|| json_path_string(Some(claim), &["subject_id"]))?;
+        if claim_subject.trim() != subject {
+            return None;
+        }
+        let binding_state = json_path_string(Some(claim), &["binding_state"])
+            .unwrap_or_else(|| "verified".to_owned());
+        if !matches!(binding_state.as_str(), "verified" | "active") {
+            return None;
+        }
+        json_path_string(Some(claim), &["handle"])
+            .and_then(|raw| crate::identity_handle::parse_user_handle(&raw).map(|h| h.display))
+    });
+    handle_from_claims
+        .or_else(|| row.subject_id.as_deref().and_then(handle_display_from_did))
+        .or_else(|| handle_display_from_did(&row.actor_id))
 }
 
 /// Collect the sorted roster of realm members from a cached space
@@ -4111,6 +4207,8 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         identity_event_ids: Vec::new(),
                         member_display_state_digest: None,
                         subject_id: None,
+                        handle_claims: Vec::new(),
+                        handle_claims_limited: false,
                     });
             }
         }
@@ -4152,16 +4250,23 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
             // R3.2 roster v2: disclosed principal/holder DID. Gates the
-            // inline handle-claim evidence (which we treat as optional /
-            // None for now — the mention render path resolves handles
-            // live). dependentRequired is enforced server-side; here we
-            // simply read what was disclosed.
+            // inline handle-claim evidence. dependentRequired is enforced
+            // server-side; here we simply read what was disclosed.
             let subject_id = map
                 .get("subject_id")
                 .and_then(|child| child.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
+            let handle_claims = map
+                .get("handle_claims")
+                .and_then(Value::as_array)
+                .map(|items| items.to_vec())
+                .unwrap_or_default();
+            let handle_claims_limited = map
+                .get("handle_claims_limited")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if let Some(did) = did {
                 let candidate = RealmMemberRow {
                     actor_id: did.clone(),
@@ -4169,6 +4274,8 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                     identity_event_ids: identity_event_ids.clone(),
                     member_display_state_digest: member_display_state_digest.clone(),
                     subject_id: subject_id.clone(),
+                    handle_claims: handle_claims.clone(),
+                    handle_claims_limited,
                 };
                 match out.entry(did) {
                     std::collections::btree_map::Entry::Vacant(entry) => {
@@ -4188,6 +4295,10 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         if existing.subject_id.is_none() {
                             existing.subject_id = subject_id;
                         }
+                        if existing.handle_claims.is_empty() {
+                            existing.handle_claims = handle_claims;
+                        }
+                        existing.handle_claims_limited |= handle_claims_limited;
                     }
                 }
             }
@@ -4279,6 +4390,128 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
     let mut out: Vec<String> = dids.into_iter().collect();
     out.sort();
     out
+}
+
+fn display_user_reference(value: &str, state_store: &LocalStateStore) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        return "unassigned".to_owned();
+    }
+    if trimmed.starts_with("did:") {
+        return display_name_for_did(state_store, trimmed);
+    }
+    crate::identity_handle::parse_user_handle(trimmed)
+        .map(|handle| handle.display)
+        .unwrap_or_else(|| trimmed.to_owned())
+}
+
+fn compact_timestamp_label(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "time unknown".to_owned();
+    }
+    if let Some((date, rest)) = trimmed.split_once('T') {
+        let time = rest.trim_end_matches('Z').split('.').next().unwrap_or(rest);
+        let hhmm = time.split(':').take(2).collect::<Vec<_>>().join(":");
+        if !date.is_empty() && hhmm.len() >= 4 {
+            return format!("{date} {hhmm}");
+        }
+    }
+    trimmed.to_owned()
+}
+
+fn synthesis_track_entry_from_raw_operation(
+    record: &RawOperationRecord,
+    state_store: &LocalStateStore,
+) -> Option<(String, CardSynthesisTrackEntry)> {
+    let update = local_card_update_from_raw_operation(record)?;
+    let body = update.synthesis.clone()?.unwrap_or_default();
+    if body.trim().is_empty() {
+        return None;
+    }
+    let payload = &record.payload;
+    let actor_did = json_path_string(Some(payload), &["actor_id"])
+        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
+        .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
+        .unwrap_or_default();
+    let timestamp = json_path_string(Some(payload), &["created_at"])
+        .or_else(|| json_path_string(Some(payload), &["body", "created_at"]))
+        .or_else(|| json_path_string(Some(payload), &["payload", "created_at"]))
+        .unwrap_or_else(|| {
+            record
+                .received_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        });
+    let author_label = if actor_did.trim().is_empty() {
+        "Unknown author".to_owned()
+    } else {
+        display_name_for_did(state_store, &actor_did)
+    };
+    Some((
+        update.flow_id,
+        CardSynthesisTrackEntry {
+            id: record.operation_id.clone(),
+            body,
+            actor_did,
+            author_label,
+            timestamp_label: compact_timestamp_label(&timestamp),
+            sort_key: timestamp,
+            edited: false,
+        },
+    ))
+}
+
+fn card_synthesis_track_entries(
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+    state_store: &LocalStateStore,
+) -> Vec<CardSynthesisTrackEntry> {
+    let mut entries = raw_operations
+        .iter()
+        .filter_map(|record| synthesis_track_entry_from_raw_operation(record, state_store))
+        .filter_map(|(flow_id, entry)| (flow_id == card.id).then_some(entry))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.sort_key
+            .cmp(&right.sort_key)
+            .then(left.id.cmp(&right.id))
+    });
+    entries.dedup_by(|left, right| left.id == right.id);
+
+    let current_body = card.synthesis.trim();
+    if !current_body.is_empty() {
+        let latest_body = entries.last().map(|entry| entry.body.trim());
+        if latest_body != Some(current_body) {
+            let actor_did = card.created_by.trim().to_owned();
+            let timestamp = if !card.updated_at.trim().is_empty() {
+                card.updated_at.clone()
+            } else {
+                card.created_at.clone()
+            };
+            let author_label = if actor_did.is_empty() {
+                "Unknown author".to_owned()
+            } else {
+                display_name_for_did(state_store, &actor_did)
+            };
+            entries.push(CardSynthesisTrackEntry {
+                id: format!("{}:projection-synthesis", card.id),
+                body: current_body.to_owned(),
+                actor_did,
+                author_label,
+                timestamp_label: compact_timestamp_label(&timestamp),
+                sort_key: timestamp,
+                edited: !card.updated_at.trim().is_empty()
+                    && card.updated_at.trim() != card.created_at.trim(),
+            });
+        }
+    }
+
+    if entries.len() > 1
+        && let Some(last) = entries.last_mut()
+    {
+        last.edited = true;
+    }
+    entries
 }
 
 fn card_detail_route_space_id(space_id: &str) -> String {
@@ -4541,6 +4774,85 @@ fn dispatch_card_detail_update(
     true
 }
 
+fn select_kanban_board(
+    board_id: String,
+    mut selected_board_space_id: Signal<String>,
+    mut board_popover: Signal<BoardToolbarPopover>,
+    mut selected_card: Signal<Option<KanbanCard>>,
+    board_route_space_id: String,
+    lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
+    lifecycle_flow_projection: Signal<Vec<crate::api::FlowProjectionView>>,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut adding_card_to: Signal<Option<String>>,
+    mut board_status: Signal<String>,
+    mut board_space_options: Signal<Vec<BoardSpaceOption>>,
+    mut projection_source: Signal<BoardProjectionSource>,
+    state_store: Signal<LocalStateStore>,
+) {
+    selected_board_space_id.set(board_id.clone());
+    board_popover.set(BoardToolbarPopover::None);
+    // Persist the board in the URL so a refresh restores it instead of
+    // falling back to the first board. Closing any open card too: a board
+    // switch should not keep a card from a different board mounted.
+    selected_card.set(None);
+    let containers = lifecycle_container_projection();
+    let flows = lifecycle_flow_projection();
+    if board_id.trim().is_empty() {
+        columns.set(Vec::new());
+        adding_card_to.set(None);
+        board_status.set("Select or create a board before adding lists".to_owned());
+        replace_kanban_board_url(&board_route_space_id, &board_id);
+        return;
+    }
+    if containers.is_empty() && flows.is_empty() {
+        board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+        replace_kanban_board_url(&board_route_space_id, &board_id);
+        return;
+    }
+    let (projected_columns, options, projected_board_id) =
+        columns_from_lifecycle_projection(&containers, &flows, &board_id);
+    if !options.is_empty() {
+        board_space_options.set(options);
+    }
+    if projected_board_id.as_deref() == Some(board_id.as_str()) {
+        let projected_columns =
+            overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+        let list_count = projected_columns.len();
+        let card_count = projected_columns
+            .iter()
+            .map(|column| column.cards.len())
+            .sum::<usize>();
+        columns.set(projected_columns);
+        projection_source.set(BoardProjectionSource::ApiDerived);
+        board_status.set(format!(
+            "Board loaded: {list_count} list(s), {card_count} card(s)"
+        ));
+    } else {
+        columns.set(Vec::new());
+        adding_card_to.set(None);
+        board_status.set(format!(
+            "No list projection available for selected Board · {}",
+            short_protocol_id(&board_id)
+        ));
+    }
+    replace_kanban_board_url(&board_route_space_id, &board_id);
+}
+
+fn replace_kanban_board_url(space_id: &str, board_id: &str) {
+    let space_id = card_detail_route_space_id(space_id);
+    let board_id = board_id.trim();
+    let path = if board_id.is_empty() {
+        format!("/kanban/{space_id}")
+    } else {
+        format!("/kanban/{space_id}/board/{board_id}")
+    };
+    let Ok(encoded_path) = serde_json::to_string(&path) else {
+        return;
+    };
+    let script = format!("window.history.replaceState(null, '', {encoded_path});");
+    let _ = document::eval(&script);
+}
+
 /// Build + sign + submit a `cx.component.flow.position.v1` Move via
 /// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
 /// queue regardless of submit outcome. Used by both list and card create
@@ -4557,12 +4869,16 @@ fn submit_kanban_operation_event(
 ) {
     let operation_id = operation.local_operation_id().to_owned();
     let kind = operation.kind.clone();
+    let actor_id = operation.actor_id.clone();
+    let created_at = operation.created_at.clone();
     state_store.write().append_raw_operation(
         operation_id.clone(),
         Some(space_id),
         json!({
             "kind": kind,
             "operation_id": operation_id,
+            "actor_id": actor_id,
+            "created_at": created_at,
             "write_state": "queued",
             "body": operation.payload.clone(),
         }),
@@ -4584,83 +4900,6 @@ fn submit_kanban_operation_event(
             }
             Err(err) => {
                 board_status.set(format!("{kind} operation failed: {}", err.display()));
-            }
-        }
-    });
-}
-
-fn submit_incident_status_transition(
-    base_url: String,
-    token: Signal<String>,
-    space_id: String,
-    actor_did: String,
-    incident_flow_id: String,
-    target_status: String,
-    mut current_status: Signal<String>,
-    mut initialized: Signal<bool>,
-    mut status_error: Signal<String>,
-    mut board_status: Signal<String>,
-) {
-    let current = current_status();
-    if let Some(message) = incident_status_transition_local_error(&current, &target_status) {
-        status_error.set(message.to_owned());
-        return;
-    }
-    if space_id.trim().is_empty() {
-        status_error.set("select a Space before updating incident status".to_owned());
-        return;
-    }
-    if actor_did.trim().is_empty() {
-        status_error.set("sign in before updating incident status".to_owned());
-        return;
-    }
-    status_error.set("saving incident status".to_owned());
-    board_status.set(format!(
-        "submitting incident status {current} -> {target_status}"
-    ));
-    let api_token = token();
-    spawn(async move {
-        let should_create = !initialized();
-        let create_op = should_create.then(|| {
-            crate::operation::cx_ops::incident_flow_create(
-                &space_id,
-                &actor_did,
-                &incident_flow_id,
-                "Incident response",
-                &current,
-                "sev2",
-            )
-            .build("yougen")
-        });
-        let update_op = (target_status != current).then(|| {
-            crate::operation::cx_ops::incident_status_update(
-                &space_id,
-                &actor_did,
-                &incident_flow_id,
-                &target_status,
-            )
-            .build("yougen")
-        });
-        let result = with_authed_api(&base_url, api_token, |api| async move {
-            if let Some(op) = create_op {
-                api.submit_event_envelope(&op).await?;
-            }
-            if let Some(op) = update_op {
-                api.submit_event_envelope(&op).await?;
-            }
-            Ok(())
-        })
-        .await;
-        match result {
-            Ok(()) => {
-                initialized.set(true);
-                current_status.set(target_status.clone());
-                status_error.set(String::new());
-                board_status.set(format!("Incident status saved: {target_status}"));
-            }
-            Err(err) => {
-                status_error.set(format!("invalid transition: {}", err.display()));
-                board_status.set(format!("incident status rejected: {}", err.display()));
             }
         }
     });
@@ -4800,6 +5039,8 @@ fn submit_kanban_move(
         json!({
             "kind": kind,
             "operation_id": op_id,
+            "actor_id": actor_did.clone(),
+            "created_at": envelope.created_at.clone(),
             "cell": cell_id,
             "effect": value,
             "wire_kind": wire_kind.clone(),
@@ -5735,6 +5976,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                created_by: "did:web:acme.example:users:alice".to_owned(),
+                created_at: "2026-05-08T08:00:00Z".to_owned(),
+                updated_at: String::new(),
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
                 assignee: "Alice".to_owned(),
                 due: "May 08".to_owned(),
@@ -5763,6 +6007,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                created_by: "did:web:acme.example:users:bob".to_owned(),
+                created_at: "2026-05-09T09:00:00Z".to_owned(),
+                updated_at: String::new(),
                 labels: vec!["copy".to_owned(), "support".to_owned()],
                 assignee: "Bob".to_owned(),
                 due: "May 10".to_owned(),
@@ -5788,6 +6035,9 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                created_by: "did:web:acme.example:users:carol".to_owned(),
+                created_at: "2026-05-01T10:00:00Z".to_owned(),
+                updated_at: String::new(),
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],
                 assignee: "Carol".to_owned(),
                 due: "May 01".to_owned(),
@@ -5825,7 +6075,13 @@ mod tests {
                     "membership": "join",
                     "subject_id": "did:web:acme.example:principals:alice",
                     "identity_event_ids": ["cx:event:01904100-0000-7000-8000-00000000000a"],
-                    "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab"
+                    "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
+                    "handle_claims": [{
+                        "subject": "did:web:acme.example:principals:alice",
+                        "handle": "alice:acme.example",
+                        "binding_state": "verified"
+                    }],
+                    "handle_claims_limited": false
                 },
                 {
                     "actor_id": "did:webvh:zQmPr8",
@@ -5849,6 +6105,8 @@ mod tests {
             alice.subject_id.as_deref(),
             Some("did:web:acme.example:principals:alice")
         );
+        assert_eq!(alice.handle_claims.len(), 1);
+        assert!(!alice.handle_claims_limited);
 
         let webvh = rows
             .iter()
@@ -5904,14 +6162,14 @@ mod tests {
     }
 
     #[test]
-    fn member_display_label_uses_member_identity_when_available() {
+    fn member_display_label_prefers_handle_shaped_user_label() {
         use contrix_sdk::{
             DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
         };
 
         // R3.2: `MemberIdentity` discloses subject_id + display_profile
-        // only; the roster label falls back to the display name (handle
-        // resolution runs §3.2.1 in the dedicated render path).
+        // only; the roster label still prefers a handle-shaped label when
+        // roster handle evidence or a materialized subject DID exposes one.
         let identity = MemberIdentity {
             schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
             realm_id: contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001")
@@ -5942,8 +6200,13 @@ mod tests {
             identity_event_ids: vec![],
             member_display_state_digest: None,
             subject_id: None,
+            handle_claims: Vec::new(),
+            handle_claims_limited: false,
         };
-        assert_eq!(member_display_label(&row, Some(&identity)), "Alice");
+        assert_eq!(
+            member_display_label(&row, Some(&identity)),
+            "alice:acme.example"
+        );
 
         // Decryption-pending / no MemberIdentity → fall back to compact DID.
         let bare = RealmMemberRow {
@@ -5952,10 +6215,41 @@ mod tests {
             identity_event_ids: vec![],
             member_display_state_digest: None,
             subject_id: None,
+            handle_claims: Vec::new(),
+            handle_claims_limited: false,
         };
         let label = member_display_label(&bare, None);
         assert!(label.starts_with("did:webvh:"));
         assert!(label.contains("..."));
+    }
+
+    #[test]
+    fn member_display_label_prefers_inline_verified_handle_claim() {
+        let row = RealmMemberRow {
+            actor_id: "did:webvh:zQmPairwiseActor".to_owned(),
+            membership: Some("join".to_owned()),
+            identity_event_ids: vec![],
+            member_display_state_digest: Some(
+                "sha256:abababababababababababababababababababababababababababababababab"
+                    .to_owned(),
+            ),
+            subject_id: Some("did:key:z6MkPrincipal".to_owned()),
+            handle_claims: vec![
+                json!({
+                    "subject": "did:key:z6MkOther",
+                    "handle": "other:acme.example",
+                    "binding_state": "verified"
+                }),
+                json!({
+                    "subject": "did:key:z6MkPrincipal",
+                    "handle": "alice:acme.example",
+                    "binding_state": "verified"
+                }),
+            ],
+            handle_claims_limited: false,
+        };
+
+        assert_eq!(member_display_label(&row, None), "alice:acme.example");
     }
 
     #[test]
@@ -6486,6 +6780,9 @@ mod tests {
                 ("assignee".to_owned(), json!("Alice")),
                 ("due_at".to_owned(), json!("2026-05-22")),
             ]),
+            created_by: Some("did:web:acme.example:users:alice".to_owned()),
+            created_at: Some("2026-05-22T10:00:00Z".to_owned()),
+            updated_at: None,
             state: "active".to_owned(),
         }];
 
@@ -6666,6 +6963,70 @@ mod tests {
         assert_eq!(card.body, "new body");
         assert_eq!(card.synthesis, "new synthesis");
         assert_eq!(card.state, CardState::Queued);
+    }
+
+    #[test]
+    fn card_synthesis_track_entries_preserve_append_history() {
+        let mut card = test_card("cx:flow:edit-me", "U");
+        card.synthesis = "second synthesis".to_owned();
+        card.created_by = "did:web:acme.example:users:alice".to_owned();
+        card.created_at = "2026-05-22T09:00:00Z".to_owned();
+        card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+        let received_at = |value: &str| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let raw_operations = vec![
+            RawOperationRecord {
+                operation_id: "op-1".to_owned(),
+                space_id: Some("cx:realm:r1".to_owned()),
+                received_at: received_at("2026-05-22T10:00:00Z"),
+                payload: json!({
+                    "kind": "cx.flow.update",
+                    "operation_id": "op-1",
+                    "actor_id": "did:web:acme.example:users:alice",
+                    "created_at": "2026-05-22T10:00:00Z",
+                    "write_state": "queued",
+                    "body": {
+                        "flow_id": "cx:flow:edit-me",
+                        "patch": {
+                            "synthesis": { "$op": "set", "value": "first synthesis" }
+                        }
+                    }
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "op-2".to_owned(),
+                space_id: Some("cx:realm:r1".to_owned()),
+                received_at: received_at("2026-05-22T11:00:00Z"),
+                payload: json!({
+                    "kind": "cx.flow.update",
+                    "operation_id": "op-2",
+                    "actor_id": "did:web:acme.example:users:bob",
+                    "created_at": "2026-05-22T11:00:00Z",
+                    "write_state": "queued",
+                    "body": {
+                        "flow_id": "cx:flow:edit-me",
+                        "patch": {
+                            "synthesis": { "$op": "set", "value": "second synthesis" }
+                        }
+                    }
+                }),
+            },
+        ];
+
+        let entries =
+            card_synthesis_track_entries(&card, &raw_operations, &LocalStateStore::default());
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].body, "first synthesis");
+        assert_eq!(entries[0].author_label, "alice:acme.example");
+        assert_eq!(entries[0].timestamp_label, "2026-05-22 10:00");
+        assert!(!entries[0].edited);
+        assert_eq!(entries[1].body, "second synthesis");
+        assert_eq!(entries[1].author_label, "bob:acme.example");
+        assert_eq!(entries[1].timestamp_label, "2026-05-22 11:00");
+        assert!(entries[1].edited);
     }
 
     #[test]
@@ -6938,6 +7299,9 @@ mod tests {
             description: String::new(),
             body: String::new(),
             synthesis: String::new(),
+            created_by: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
             due: String::new(),
