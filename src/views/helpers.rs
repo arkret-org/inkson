@@ -27,13 +27,13 @@ pub struct StructuredMention {
     /// (`display_name_at_time`). Renamed from the pre-R3.2
     /// `display_snapshot`. NEVER the current display value. Empty when
     /// no snapshot was captured.
-    #[serde(default, alias = "display_snapshot")]
+    #[serde(default)]
     pub display_name_at_time: String,
     /// R3.2 audit-only: canonical handle `<localpart>:<domain>` at compose
     /// time (`handle_at_time`). Renamed from the pre-R3.2 `handle`. NEVER
     /// the current display value — resolution runs §3.2.1 live. Empty when
     /// only a DID was supplied.
-    #[serde(default, alias = "handle", alias = "handle_uri")]
+    #[serde(default)]
     pub handle_at_time: String,
     /// R3.2 audit-only: the original string the user typed
     /// (`mention_text_original`, e.g. `@alice:acme.com`).

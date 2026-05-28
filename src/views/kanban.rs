@@ -3881,11 +3881,9 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                 })
                 .unwrap_or_default();
             // R3.2 roster v2 rename: `identity_state_digest` →
-            // `member_display_state_digest`. Accept the legacy field name
-            // as a fallback for projections not yet migrated.
+            // `member_display_state_digest` (no pre-R3.2 compat).
             let member_display_state_digest = map
                 .get("member_display_state_digest")
-                .or_else(|| map.get("identity_state_digest"))
                 .and_then(|child| child.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -5603,22 +5601,34 @@ mod tests {
     }
 
     #[test]
-    fn realm_member_roster_accepts_legacy_digest_field_name() {
-        // Backward compat: a not-yet-migrated projection that still uses
-        // the pre-R3.2 `identity_state_digest` key is read into
-        // `member_display_state_digest`.
-        let projection = json!({
-            "members": [
-                {
-                    "actor_id": "did:web:acme.example:users:legacy",
-                    "membership": "join",
-                    "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-                }
-            ]
+    fn realm_member_roster_reads_v2_digest_only() {
+        // Aggressive no-compat: only the R3.2 `member_display_state_digest`
+        // key is read.
+        let v2 = json!({
+            "members": [{
+                "actor_id": "did:web:acme.example:users:v2",
+                "membership": "join",
+                "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            }]
         });
-        let rows = realm_member_roster(Some(&projection));
+        let rows = realm_member_roster(Some(&v2));
         assert_eq!(rows.len(), 1);
         assert!(rows[0].member_display_state_digest.is_some());
+    }
+
+    #[test]
+    fn realm_member_roster_ignores_legacy_digest_key() {
+        // The pre-R3.2 `identity_state_digest` key is NOT honoured.
+        let legacy = json!({
+            "members": [{
+                "actor_id": "did:web:acme.example:users:legacy",
+                "membership": "join",
+                "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            }]
+        });
+        let rows = realm_member_roster(Some(&legacy));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].member_display_state_digest.is_none());
     }
 
     #[test]

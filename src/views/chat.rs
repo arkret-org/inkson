@@ -1487,21 +1487,18 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .and_then(Value::as_str)
                             .unwrap_or(target)
                             .to_owned(),
-                        // R3.2 audit metadata: read the v2 field names,
-                        // tolerating pre-R3.2 names as serde-style aliases.
-                        // These NEVER drive the current display value —
-                        // the renderer runs §3.2.1 off `target` instead.
+                        // R3.2 audit metadata: v2 field names only (no
+                        // pre-R3.2 compat). These NEVER drive the current
+                        // display value — the renderer runs §3.2.1 off
+                        // `target` instead.
                         display_name_at_time: item
                             .get("display_name_at_time")
                             .and_then(Value::as_str)
-                            .or_else(|| item.get("display_snapshot").and_then(Value::as_str))
                             .unwrap_or_default()
                             .to_owned(),
                         handle_at_time: item
                             .get("handle_at_time")
                             .and_then(Value::as_str)
-                            .or_else(|| item.get("handle").and_then(Value::as_str))
-                            .or_else(|| item.get("handle_uri").and_then(Value::as_str))
                             .unwrap_or_default()
                             .to_owned(),
                         mention_text_original: item
