@@ -113,6 +113,28 @@ pub enum Route {
     #[route("/kanban/:space_id", KanbanSpacePage)]
     KanbanSpace { space_id: String },
 
+    /// CXP board-persistence — the selected Board id is part of the URL
+    /// so a page refresh (or a deep link) restores the exact board the
+    /// user was looking at instead of falling back to
+    /// `board_options.first()`. `space_id` is the Realm id; `board_id`
+    /// is the board Space-container id.
+    #[route("/kanban/:space_id/board/:board_id", KanbanBoardPage)]
+    KanbanBoard { space_id: String, board_id: String },
+
+    /// Board + card-detail deep link. Carries the board id alongside the
+    /// flow id so a refresh on an open card restores the right board
+    /// even when the card is a locally-queued draft the server
+    /// projection does not yet know about.
+    #[route("/kanban/:space_id/board/:board_id/task/:task_id", KanbanBoardTaskPage)]
+    KanbanBoardTask {
+        space_id: String,
+        board_id: String,
+        task_id: String,
+    },
+
+    /// Board-less card deep link. Retained for share links / global
+    /// search results that only know the flow id; the board is resolved
+    /// from the projection (or local queue) on arrival.
     #[route("/kanban/:space_id/task/:task_id", KanbanTaskPage)]
     KanbanTask { space_id: String, task_id: String },
 
@@ -218,6 +240,18 @@ fn KanbanTaskPage(space_id: String, task_id: String) -> Element {
 }
 
 #[component]
+fn KanbanBoardPage(space_id: String, board_id: String) -> Element {
+    let _ = (space_id, board_id);
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
+fn KanbanBoardTaskPage(space_id: String, board_id: String, task_id: String) -> Element {
+    let _ = (space_id, board_id, task_id);
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn DocumentSpacePage(space_id: String) -> Element {
     let _ = space_id;
     rsx! { crate::app::RouterView {} }
@@ -263,7 +297,11 @@ impl Route {
             // and nothing in the UI dispatches on them. Map to Dashboard so
             // `view` signal stays consistent for sidebar / palette state.
             Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
-            Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => View::Kanban,
+            Route::Kanban
+            | Route::KanbanSpace { .. }
+            | Route::KanbanBoard { .. }
+            | Route::KanbanBoardTask { .. }
+            | Route::KanbanTask { .. } => View::Kanban,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => View::Document,
             Route::Recovery => View::Recovery,
@@ -282,6 +320,8 @@ impl Route {
             | Route::TimelineMessage { space_id, .. }
             | Route::Chat { space_id }
             | Route::KanbanSpace { space_id }
+            | Route::KanbanBoard { space_id, .. }
+            | Route::KanbanBoardTask { space_id, .. }
             | Route::KanbanTask { space_id, .. }
             | Route::SpaceAdmin { space_id }
             | Route::SpaceAdminSection { space_id, .. } => Some(space_id.as_str()),

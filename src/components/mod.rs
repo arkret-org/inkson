@@ -128,6 +128,8 @@ pub fn UiIcon(name: String) -> Element {
         "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
         "lock" => "M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5V10Zm7 4v2",
         "menu" => "M4 6h16M4 12h16M4 18h16",
+        "maximize" => "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
+        "minimize" => "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
         "message" => "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z",
         "more-horizontal" => "M5 12h.01M12 12h.01M19 12h.01",
         "moon" => "M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z",

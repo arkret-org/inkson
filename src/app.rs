@@ -777,16 +777,17 @@ body {
   inset: 0;
   z-index: var(--layer-modal);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 42px 16px 24px;
+  padding: 50px 16px;
   background: rgba(8, 16, 12, 0.52);
   overflow: auto;
 }
 .card-detail-popup {
-  width: min(1080px, 100%);
-  max-height: calc(100vh - 68px);
-  min-height: min(620px, calc(100vh - 68px));
+  position: relative;
+  width: min(1240px, 100%);
+  height: calc(100vh - 100px);
+  max-height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -795,6 +796,45 @@ body {
   background: var(--surface-solid, var(--surface, var(--cx-surface)));
   color: var(--text, var(--cx-ink));
   box-shadow: var(--shadow-lg, var(--cx-shadow));
+}
+.card-detail-overlay.is-docked {
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+  pointer-events: none;
+}
+.card-detail-popup.is-docked {
+  pointer-events: auto;
+  width: 720px;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  box-shadow: -12px 0 34px rgba(0, 0, 0, 0.22);
+}
+.card-detail-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 100%;
+  z-index: 4;
+  cursor: col-resize;
+}
+.card-detail-resize-handle:hover,
+.card-detail-resize-handle:active {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.card-detail-resize-capture {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--layer-modal) + 1);
+  cursor: col-resize;
 }
 .card-detail-header {
   flex: 0 0 auto;
@@ -1133,6 +1173,11 @@ body {
   border-radius: 8px;
   background: var(--surface, var(--cx-surface));
   box-shadow: none;
+}
+.card-detail-side-fields {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
 }
 .card-detail-side-actions .secondary {
   min-height: 34px;
@@ -1506,8 +1551,16 @@ body {
     padding: 16px 10px;
   }
   .card-detail-popup {
-    min-height: 0;
+    height: calc(100vh - 32px);
     max-height: calc(100vh - 32px);
+  }
+  .card-detail-overlay.is-docked {
+    padding: 0;
+  }
+  .card-detail-popup.is-docked {
+    width: 100vw !important;
+    height: 100vh;
+    max-height: 100vh;
   }
   .card-detail-layout {
     grid-template-columns: 1fr;
@@ -6134,7 +6187,11 @@ pub fn RouterView() -> Element {
     if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface)
         && matches!(
             &route,
-            Route::TimelineSpace { .. } | Route::KanbanSpace { .. } | Route::DocumentSpace { .. }
+            Route::TimelineSpace { .. }
+                | Route::KanbanSpace { .. }
+                | Route::KanbanBoard { .. }
+                | Route::KanbanBoardTask { .. }
+                | Route::DocumentSpace { .. }
         )
     {
         let stored_surface =
@@ -7701,7 +7758,11 @@ pub fn RouterView() -> Element {
                     Route::Developer => rsx! {
                         crate::views::developer::DeveloperToolsPanel { state_store }
                     },
-                    Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
+                    Route::Kanban
+                    | Route::KanbanSpace { .. }
+                    | Route::KanbanBoard { .. }
+                    | Route::KanbanBoardTask { .. }
+                    | Route::KanbanTask { .. } => {
                         if let Some(sid) = route.space_id()
                             && selected_space() != sid
                         {
@@ -8255,9 +8316,11 @@ fn resolve_space_surface(
             Some(SpaceSurface::Timeline)
         }
         Route::Chat { .. } => None,
-        Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => {
-            Some(SpaceSurface::Board)
-        }
+        Route::Kanban
+        | Route::KanbanSpace { .. }
+        | Route::KanbanBoard { .. }
+        | Route::KanbanBoardTask { .. }
+        | Route::KanbanTask { .. } => Some(SpaceSurface::Board),
         Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
             Some(SpaceSurface::Document)
         }
@@ -8276,6 +8339,8 @@ fn route_uses_space_context(route: &Route) -> bool {
             | Route::Chat { .. }
             | Route::Kanban
             | Route::KanbanSpace { .. }
+            | Route::KanbanBoard { .. }
+            | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. }
             | Route::Document
             | Route::DocumentNew
@@ -8322,7 +8387,11 @@ fn route_label(route: &Route) -> &'static str {
         },
         Route::Audit => "Audit",
         Route::Developer => "Developer Tools",
-        Route::Kanban | Route::KanbanSpace { .. } | Route::KanbanTask { .. } => "Board View",
+        Route::Kanban
+        | Route::KanbanSpace { .. }
+        | Route::KanbanBoard { .. }
+        | Route::KanbanBoardTask { .. }
+        | Route::KanbanTask { .. } => "Board View",
         Route::Notifications => "Notifications",
         Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => "Document View",
         Route::Call => "Call",

@@ -37,6 +37,73 @@ const LOCAL_PENDING_CARD_DESCRIPTION: &str = "New local card waiting for reducer
 const CARD_DESCRIPTION_COLLAPSE_CHAR_THRESHOLD: usize = 360;
 const CARD_DESCRIPTION_COLLAPSE_LINE_THRESHOLD: usize = 6;
 
+/// Browser-`localStorage` keys for the card-detail panel display
+/// preference. Dock mode + width are device-/browser-level UI state
+/// (not tied to an account or Space), so they live in `localStorage`
+/// on the web build and become no-ops on desktop where there is no
+/// browser storage — the session-default applies there instead.
+const CARD_DETAIL_DOCKED_STORAGE_KEY: &str = "yougen.card-detail.docked";
+const CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY: &str = "yougen.card-detail.dock-width";
+const CARD_DETAIL_DOCK_WIDTH_DEFAULT: f64 = 720.0;
+const CARD_DETAIL_DOCK_WIDTH_MIN: f64 = 380.0;
+const CARD_DETAIL_DOCK_WIDTH_MAX: f64 = 1100.0;
+
+#[cfg(target_arch = "wasm32")]
+fn local_storage_get(key: &str) -> Option<String> {
+    web_sys::window()?
+        .local_storage()
+        .ok()
+        .flatten()?
+        .get_item(key)
+        .ok()
+        .flatten()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn local_storage_set(key: &str, value: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(key, value);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn local_storage_get(_key: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn local_storage_set(_key: &str, _value: &str) {}
+
+/// Hydrate the docked-vs-dialog choice from `localStorage`. Defaults to
+/// the centered dialog when unset or on desktop.
+fn read_card_detail_docked() -> bool {
+    local_storage_get(CARD_DETAIL_DOCKED_STORAGE_KEY)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+/// Hydrate the docked-panel width from `localStorage`, clamped to the
+/// same bounds the drag handle enforces. Falls back to the default when
+/// unset, unparseable, or on desktop.
+fn read_card_detail_dock_width() -> f64 {
+    local_storage_get(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY)
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|width| width.is_finite())
+        .map(|width| width.clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX))
+        .unwrap_or(CARD_DETAIL_DOCK_WIDTH_DEFAULT)
+}
+
+fn persist_card_detail_docked(docked: bool) {
+    local_storage_set(
+        CARD_DETAIL_DOCKED_STORAGE_KEY,
+        if docked { "true" } else { "false" },
+    );
+}
+
+fn persist_card_detail_dock_width(width: f64) {
+    local_storage_set(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY, &format!("{width:.0}"));
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct KanbanColumn {
     id: String,
@@ -1288,11 +1355,22 @@ pub fn KanbanPanel(
             Vec::new()
         }
     });
+    let navigator = use_navigator();
+    let route = use_route::<Route>();
+    // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
+    // its `/task/<flow>` extension). Seeding `selected_board_space_id`
+    // from the route — instead of always `board_options.first()` — is
+    // what makes a refresh restore the exact board the user had open,
+    // including when the open card is a local draft the server
+    // projection does not know about yet.
+    let routed_board_id = route_board_id(&route);
     let initial_board_options = initial_board_space_options(seed_fallback_allowed);
-    let initial_board_space_id = initial_board_options
-        .first()
-        .map(|option| option.id.clone())
-        .unwrap_or_default();
+    let initial_board_space_id = routed_board_id.clone().unwrap_or_else(|| {
+        initial_board_options
+            .first()
+            .map(|option| option.id.clone())
+            .unwrap_or_default()
+    });
     let initial_columns = {
         let store = state_store.read();
         overlay_local_card_creates(initial_columns, &store, &initial_board_space_id)
@@ -1304,8 +1382,6 @@ pub fn KanbanPanel(
     let mut lifecycle_container_projection =
         use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
     let mut lifecycle_flow_projection = use_signal(Vec::<crate::api::FlowProjectionView>::new);
-    let navigator = use_navigator();
-    let route = use_route::<Route>();
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still
@@ -1328,6 +1404,11 @@ pub fn KanbanPanel(
     let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
+    let mut card_detail_docked = use_signal(read_card_detail_docked);
+    let mut card_detail_dock_width = use_signal(read_card_detail_dock_width);
+    let mut card_detail_resizing = use_signal(|| false);
+    let mut card_detail_resize_start_x = use_signal(|| 0.0_f64);
+    let mut card_detail_resize_start_width = use_signal(|| 0.0_f64);
     let mut card_edit_title = use_signal(String::new);
     let mut card_edit_description = use_signal(String::new);
     let mut card_edit_body = use_signal(String::new);
@@ -1399,6 +1480,46 @@ pub fn KanbanPanel(
                 card_detail_overlay_press_started.set(false);
                 card_detail_overlay_press_ended.set(false);
                 selected_card.set(Some(card));
+            }
+        });
+    }
+
+    // Route board → selection sync. The board id is authoritative when
+    // it is present in the URL (`/kanban/<realm>/board/<board>` and the
+    // `/task/<flow>` extension). This effect keeps
+    // `selected_board_space_id` aligned with the route across in-app
+    // navigations (back/forward, arriving from another KanbanPanel) and
+    // re-projects the columns from the cached lifecycle snapshot so the
+    // matching board's lists/cards render without waiting for a refetch.
+    // The initial mount is already handled by seeding the signal from
+    // the route above; this effect covers later route changes.
+    {
+        let routed_board_id = route_board_id(&route);
+        use_effect(move || {
+            let Some(board_id) = routed_board_id.clone() else {
+                return;
+            };
+            if selected_board_space_id() == board_id {
+                return;
+            }
+            selected_board_space_id.set(board_id.clone());
+            let containers = lifecycle_container_projection();
+            let flows = lifecycle_flow_projection();
+            if containers.is_empty() && flows.is_empty() {
+                return;
+            }
+            let (projected_columns, options, projected_board_id) =
+                columns_from_lifecycle_projection(&containers, &flows, &board_id);
+            if projected_board_id.as_deref() == Some(board_id.as_str()) {
+                if !options.is_empty() {
+                    board_space_options.set(options);
+                }
+                let projected_columns =
+                    overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+                if columns() != projected_columns {
+                    columns.set(projected_columns);
+                }
+                projection_source.set(BoardProjectionSource::ApiDerived);
             }
         });
     }
@@ -1722,6 +1843,10 @@ pub fn KanbanPanel(
         .filter(|record| matches!(record.state, CardState::Conflict | CardState::Quarantined))
         .count();
     let board_selected = !selected_board_space_id().trim().is_empty();
+    // Pre-wrapped Realm id for building board / card URLs inside event
+    // handlers (the raw `selected_space` String can't be moved into more
+    // than one closure).
+    let board_route_space_id = card_detail_route_space_id(&selected_space);
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             div { class: "event board-header board-toolbar",
@@ -1751,6 +1876,14 @@ pub fn KanbanPanel(
                                 let board_id = event.value();
                                 selected_board_space_id.set(board_id.clone());
                                 board_popover.set(BoardToolbarPopover::None);
+                                // Persist the board in the URL so a refresh
+                                // restores it instead of falling back to the
+                                // first board. Closing any open card too: a
+                                // board switch should not keep a card from a
+                                // different board mounted.
+                                selected_card.set(None);
+                                let _ = navigator
+                                    .replace(kanban_board_route(&board_route_space_id, &board_id));
                                 let containers = lifecycle_container_projection();
                                 let flows = lifecycle_flow_projection();
                                 if board_id.trim().is_empty() {
@@ -1862,6 +1995,8 @@ pub fn KanbanPanel(
                                                     state: SpaceContainerLifecycleState::Active,
                                                 });
                                                 selected_board_space_id.set(board_space_id.clone());
+                                                let _ = navigator
+                                                    .replace(kanban_board_route(&space, &board_space_id));
                                                 columns.set(Vec::new());
                                                 adding_card_to.set(None);
                                                 let op = crate::operation::cx_ops::space_create(
@@ -2547,10 +2682,11 @@ pub fn KanbanPanel(
                                         card_detail_overlay_press_started.set(false);
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
-                                        let _ = navigator.push(Route::KanbanTask {
-                                            space_id: route_space_id.clone(),
-                                            task_id: c.id.clone(),
-                                        });
+                                        let _ = navigator.push(kanban_card_task_route(
+                                            &route_space_id,
+                                            &selected_board_space_id(),
+                                            &c.id,
+                                        ));
                                     }
                                 },
                                 div { class: "event-head",
@@ -2911,8 +3047,12 @@ pub fn KanbanPanel(
                 {
                     let card_id_label = short_protocol_id(&card.id);
                     let card_link_path = flow_detail_deep_link_path(&selected_space, &card.id);
-                    let board_route_after_close = kanban_card_detail_board_route(&selected_space);
-                    let route_is_card_detail = matches!(route, Route::KanbanTask { .. });
+                    let board_route_after_close =
+                        kanban_card_detail_board_route(&selected_space, &selected_board_space_id());
+                    let route_is_card_detail = matches!(
+                        route,
+                        Route::KanbanTask { .. } | Route::KanbanBoardTask { .. }
+                    );
                     let sidebar_is_visible = card_detail_sidebar_visible();
                     let sidebar_toggle_label = if sidebar_is_visible {
                         "Hide details"
@@ -2928,6 +3068,29 @@ pub fn KanbanPanel(
                         "card-detail-layout"
                     } else {
                         "card-detail-layout no-sidebar"
+                    };
+                    let is_docked = card_detail_docked();
+                    let dock_width = card_detail_dock_width();
+                    let dock_toggle_label = if is_docked {
+                        "Expand to dialog"
+                    } else {
+                        "Dock to side"
+                    };
+                    let dock_toggle_icon = if is_docked { "maximize" } else { "minimize" };
+                    let overlay_class = if is_docked {
+                        "card-detail-overlay is-docked"
+                    } else {
+                        "card-detail-overlay"
+                    };
+                    let popup_class = if is_docked {
+                        "card-detail-popup is-docked"
+                    } else {
+                        "card-detail-popup"
+                    };
+                    let popup_style = if is_docked {
+                        format!("width: {dock_width}px;")
+                    } else {
+                        String::new()
                     };
                     let active_detail_tab = card_detail_tab();
                     let description_tab_class = if active_detail_tab == CardDetailContentTab::Description {
@@ -2968,8 +3131,30 @@ pub fn KanbanPanel(
                     let close_navigator = navigator;
                     let close_board_route = board_route_after_close.clone();
                     rsx! {
+                        if card_detail_resizing() {
+                            div {
+                                class: "card-detail-resize-capture",
+                                "data-testid": "card-detail-resize-capture",
+                                onmousemove: move |event: dioxus::events::MouseEvent| {
+                                    let current_x = event.client_coordinates().x;
+                                    let delta = card_detail_resize_start_x() - current_x;
+                                    let next = (card_detail_resize_start_width() + delta)
+                                        .clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX);
+                                    card_detail_dock_width.set(next);
+                                },
+                                onmouseup: move |event: dioxus::events::MouseEvent| {
+                                    event.stop_propagation();
+                                    card_detail_resizing.set(false);
+                                    persist_card_detail_dock_width(card_detail_dock_width());
+                                },
+                                onmouseleave: move |_| {
+                                    card_detail_resizing.set(false);
+                                    persist_card_detail_dock_width(card_detail_dock_width());
+                                },
+                            }
+                        }
                         div {
-                            class: "card-detail-overlay",
+                            class: "{overlay_class}",
                             "data-testid": "card-detail-overlay",
                             role: "presentation",
                             onmousedown: move |_| {
@@ -2994,7 +3179,8 @@ pub fn KanbanPanel(
                                 card_detail_overlay_press_ended.set(false);
                             },
                             div {
-                                class: "card-detail-popup",
+                                class: "{popup_class}",
+                                style: "{popup_style}",
                                 "data-testid": "card-detail-modal",
                                 role: "dialog",
                                 "aria-modal": "true",
@@ -3008,6 +3194,19 @@ pub fn KanbanPanel(
                                     event.stop_propagation();
                                 },
                                 onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                                if is_docked {
+                                    div {
+                                        class: "card-detail-resize-handle",
+                                        "data-testid": "card-detail-resize-handle",
+                                        "aria-hidden": "true",
+                                        onmousedown: move |event: dioxus::events::MouseEvent| {
+                                            event.stop_propagation();
+                                            card_detail_resize_start_x.set(event.client_coordinates().x);
+                                            card_detail_resize_start_width.set(card_detail_dock_width());
+                                            card_detail_resizing.set(true);
+                                        },
+                                    }
+                                }
                                 div { class: "card-detail-header",
                                     div { class: "card-detail-title-block",
                                         div { class: "card-detail-title-row",
@@ -3049,6 +3248,20 @@ pub fn KanbanPanel(
                                                 },
                                                 UiIcon { name: sidebar_toggle_icon }
                                             }
+                                        }
+                                        button {
+                                            class: "secondary card-detail-header-button",
+                                            "data-testid": "card-detail-dock-toggle",
+                                            "aria-label": "{dock_toggle_label}",
+                                            "aria-pressed": "{is_docked}",
+                                            title: "{dock_toggle_label}",
+                                            onclick: move |_| {
+                                                let next = !card_detail_docked();
+                                                card_detail_docked.set(next);
+                                                persist_card_detail_docked(next);
+                                                card_detail_actions_open.set(false);
+                                            },
+                                            UiIcon { name: dock_toggle_icon }
                                         }
                                         div { class: "card-detail-action-menu-wrap",
                                             button {
@@ -3600,8 +3813,7 @@ pub fn KanbanPanel(
                                                         }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
-                                                        div { class: "card-detail-side-section", "data-testid": "card-fields",
-                                                            h3 { "Details" }
+                                                        div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
                                                                 div {
                                                                     dt { "Flow ID" }
@@ -3710,7 +3922,7 @@ pub fn KanbanPanel(
 
 fn route_card_flow_id(route: &Route) -> Option<String> {
     match route {
-        Route::KanbanTask { task_id, .. } => {
+        Route::KanbanTask { task_id, .. } | Route::KanbanBoardTask { task_id, .. } => {
             let task_id = task_id.trim();
             if task_id.is_empty() {
                 None
@@ -3719,6 +3931,57 @@ fn route_card_flow_id(route: &Route) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+/// Extract the board Space-container id carried by the board-aware
+/// kanban routes. `None` for the board-less routes (plain `/kanban`,
+/// `/kanban/<realm>`, and the legacy `/kanban/<realm>/task/<flow>`
+/// share-link form) where the board must be resolved from projection.
+fn route_board_id(route: &Route) -> Option<String> {
+    match route {
+        Route::KanbanBoard { board_id, .. } | Route::KanbanBoardTask { board_id, .. } => {
+            let board_id = board_id.trim();
+            if board_id.is_empty() {
+                None
+            } else {
+                Some(board_id.to_owned())
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Build the URL for selecting a board (no card open). Falls back to the
+/// board-less `/kanban/<realm>` route when no board is selected yet.
+fn kanban_board_route(space_id: &str, board_id: &str) -> Route {
+    let space_id = card_detail_route_space_id(space_id);
+    let board_id = board_id.trim();
+    if board_id.is_empty() {
+        Route::KanbanSpace { space_id }
+    } else {
+        Route::KanbanBoard {
+            space_id,
+            board_id: board_id.to_owned(),
+        }
+    }
+}
+
+/// Build the URL for an open card. Prefers the board-carrying form so a
+/// refresh restores the board; falls back to the board-less task route
+/// when the board id is unknown.
+fn kanban_card_task_route(space_id: &str, board_id: &str, task_id: &str) -> Route {
+    let space_id = card_detail_route_space_id(space_id);
+    let board_id = board_id.trim();
+    let task_id = task_id.trim().to_owned();
+    if board_id.is_empty() {
+        Route::KanbanTask { space_id, task_id }
+    } else {
+        Route::KanbanBoardTask {
+            space_id,
+            board_id: board_id.to_owned(),
+            task_id,
+        }
     }
 }
 
@@ -4027,14 +4290,12 @@ fn card_detail_route_space_id(space_id: &str) -> String {
     }
 }
 
-fn kanban_card_detail_board_route(space_id: &str) -> Route {
+fn kanban_card_detail_board_route(space_id: &str, board_id: &str) -> Route {
     let space_id = space_id.trim();
     if space_id.is_empty() {
         Route::Kanban
     } else {
-        Route::KanbanSpace {
-            space_id: space_id.to_owned(),
-        }
+        kanban_board_route(space_id, board_id)
     }
 }
 
@@ -5931,7 +6192,85 @@ mod tests {
             }),
             Some("cx:flow:abc".to_owned())
         );
+        assert_eq!(
+            route_card_flow_id(&Route::KanbanBoardTask {
+                space_id: "cx:space:ops".to_owned(),
+                board_id: "cx:space:board".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }),
+            Some("cx:flow:abc".to_owned())
+        );
         assert_eq!(route_card_flow_id(&Route::Kanban), None);
+    }
+
+    #[test]
+    fn route_board_id_reads_board_segment_only() {
+        assert_eq!(
+            route_board_id(&Route::KanbanBoard {
+                space_id: "cx:realm:ops".to_owned(),
+                board_id: "cx:space:board".to_owned(),
+            }),
+            Some("cx:space:board".to_owned())
+        );
+        assert_eq!(
+            route_board_id(&Route::KanbanBoardTask {
+                space_id: "cx:realm:ops".to_owned(),
+                board_id: "cx:space:board".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }),
+            Some("cx:space:board".to_owned())
+        );
+        // The board-less routes carry no board id — it is resolved from
+        // the projection on arrival.
+        assert_eq!(
+            route_board_id(&Route::KanbanTask {
+                space_id: "cx:realm:ops".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }),
+            None
+        );
+        assert_eq!(
+            route_board_id(&Route::KanbanSpace {
+                space_id: "cx:realm:ops".to_owned(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn kanban_board_route_carries_board_or_falls_back() {
+        assert_eq!(
+            kanban_board_route("cx:realm:ops", "cx:space:board"),
+            Route::KanbanBoard {
+                space_id: "cx:realm:ops".to_owned(),
+                board_id: "cx:space:board".to_owned(),
+            }
+        );
+        assert_eq!(
+            kanban_board_route("cx:realm:ops", ""),
+            Route::KanbanSpace {
+                space_id: "cx:realm:ops".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn kanban_card_task_route_carries_board_or_falls_back() {
+        assert_eq!(
+            kanban_card_task_route("cx:realm:ops", "cx:space:board", "cx:flow:abc"),
+            Route::KanbanBoardTask {
+                space_id: "cx:realm:ops".to_owned(),
+                board_id: "cx:space:board".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }
+        );
+        assert_eq!(
+            kanban_card_task_route("cx:realm:ops", "", "cx:flow:abc"),
+            Route::KanbanTask {
+                space_id: "cx:realm:ops".to_owned(),
+                task_id: "cx:flow:abc".to_owned(),
+            }
+        );
     }
 
     #[test]
