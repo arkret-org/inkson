@@ -40,7 +40,6 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use contrix_sdk::EncryptedPayload;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -570,12 +569,6 @@ fn apply_account_data(
         }
     }
 }
-
-/// `EncryptedPayload` is re-exported here so app.rs can build a
-/// `SyncEngineContext` without pulling contrix_sdk into its surface
-/// imports.
-#[allow(dead_code)]
-pub(crate) type _EnsureSdkLink = EncryptedPayload;
 
 #[cfg(test)]
 mod tests {

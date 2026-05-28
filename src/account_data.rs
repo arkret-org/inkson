@@ -453,14 +453,15 @@ impl ContactRemark {
     }
 }
 
-/// A single entry in the actor-private personal blocklist
-/// (`cx.account.blocklist` per `discovery/client-preferences.md`).
+/// A single local actor-DID entry in the actor-private personal blocklist
+/// (`cx.account.blocklist` per `discovery/client-preferences.md` §3.5).
 ///
-/// Every entry MUST carry `did`. `reason` is free-form text shown back
-/// to the user in the Privacy settings;
-/// `blocked_at` is an RFC 3339 timestamp set at the time of the block,
-/// useful for the UI "blocked since…" hint and for conflict resolution
-/// across devices.
+/// The local UI model stays compact (`did`, optional reason, timestamp).
+/// [`build_blocklist_account_data_body`] expands it to the canonical account
+/// data wire shape: `{ target: { kind: "actor", did }, mode, applies_to,
+/// created_at }`. [`blocklist_entries_from_account_data`] accepts that
+/// canonical shape and the pre-canonical `{ did, reason, blocked_at }` shape
+/// so existing local state and older soland rows continue to hydrate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlocklistEntry {
     /// Target DID. Lower-cased + trimmed by [`block_user_in`] before
@@ -491,7 +492,7 @@ impl BlocklistEntry {
         Self {
             did,
             reason,
-            blocked_at: None,
+            blocked_at: Some(chrono::Utc::now().to_rfc3339()),
         }
     }
 }
@@ -524,7 +525,9 @@ pub fn block_user_in(
     if list.iter().any(|e| e.did == entry.did) {
         return false;
     }
-    entry.blocked_at = blocked_at;
+    if let Some(blocked_at) = blocked_at {
+        entry.blocked_at = Some(blocked_at);
+    }
     list.push(entry);
     true
 }
@@ -541,30 +544,147 @@ pub fn unblock_user_in(list: &mut Vec<BlocklistEntry>, did: &str) -> bool {
     list.len() != before
 }
 
+const BLOCKLIST_ACCOUNT_DATA_VERSION: u32 = 1;
+const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
+    "messages",
+    "mentions",
+    "dm",
+    "calls",
+    "presence",
+    "notifications",
+    "directory",
+];
+
 /// Canonical wire body for the `cx.account.blocklist` account-data entry.
-/// The settings UI calls this just before POSTing via
-/// [`crate::api::ContrixApi::set_account_data`]; keep the shape stable
-/// so other clients agree on the layout.
+/// The settings UI calls this just before PUTting via
+/// [`crate::api::ContrixApi::set_account_data`]; keep the shape aligned with
+/// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
 pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
+    let entries = entries
+        .iter()
+        .filter(|entry| !entry.did.trim().is_empty())
+        .map(|entry| {
+            let mut object = serde_json::json!({
+                "target": {
+                    "kind": "actor",
+                    "did": entry.did.trim(),
+                },
+                "mode": "block",
+                "applies_to": DEFAULT_BLOCKLIST_APPLIES_TO,
+                "created_at": entry
+                    .blocked_at
+                    .clone()
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            });
+            if let Some(reason) = entry
+                .reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                && let Some(map) = object.as_object_mut()
+            {
+                map.insert("reason_code".to_owned(), Value::String(reason.to_owned()));
+            }
+            object
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
+        "version": BLOCKLIST_ACCOUNT_DATA_VERSION,
         "entries": entries,
     })
 }
 
 /// Parse the `cx.account.blocklist` account-data content body. Malformed
-/// entries are rejected as a batch rather than partially applied so a
-/// corrupt remote write cannot silently drop part of the user's local
-/// privacy policy.
+/// actor entries are skipped instead of partially corrupting the local UI.
+/// This parser intentionally accepts legacy rows written by earlier yougen
+/// and cotest fixtures: `{ did, reason, blocked_at }`,
+/// `{ target: "did:...", kind: "block" }`, and the canonical
+/// `{ target: { kind: "actor", did }, mode: "block", created_at }`.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value
         .get("entries")
         .ok_or_else(|| "cx.account.blocklist.entries missing".to_owned())?;
-    let parsed = serde_json::from_value::<Vec<BlocklistEntry>>(entries.clone())
-        .map_err(|e| format!("cx.account.blocklist.entries invalid: {e}"))?;
-    Ok(parsed
-        .into_iter()
-        .filter(|entry| !entry.did.trim().is_empty())
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| "cx.account.blocklist.entries must be an array".to_owned())?;
+    Ok(entries
+        .iter()
+        .filter_map(blocklist_entry_from_account_data_value)
         .collect())
+}
+
+fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEntry> {
+    match value {
+        Value::String(did) => blocklist_entry_from_parts(did, None, None),
+        Value::Object(object) => {
+            let mode = object
+                .get("mode")
+                .or_else(|| object.get("kind"))
+                .or_else(|| object.get("action"))
+                .or_else(|| object.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("block");
+            if matches!(mode, "allow" | "unblock" | "removed" | "deleted") {
+                return None;
+            }
+            if !matches!(mode, "block" | "mute" | "hide") {
+                return None;
+            }
+            let did = object
+                .get("target")
+                .and_then(blocklist_target_did)
+                .or_else(|| object.get("did").and_then(Value::as_str))
+                .or_else(|| object.get("actor").and_then(Value::as_str))?;
+            let reason = object
+                .get("reason_code")
+                .or_else(|| object.get("reason"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            let blocked_at = object
+                .get("created_at")
+                .or_else(|| object.get("blocked_at"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            blocklist_entry_from_parts(did, reason, blocked_at)
+        }
+        _ => None,
+    }
+}
+
+fn blocklist_target_did(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(did) => Some(did.as_str()),
+        Value::Object(object) => {
+            let target_kind = object.get("kind").and_then(Value::as_str);
+            if target_kind.is_some_and(|kind| kind != "actor") {
+                return None;
+            }
+            object
+                .get("did")
+                .or_else(|| object.get("actor"))
+                .or_else(|| object.get("id"))
+                .and_then(Value::as_str)
+        }
+        _ => None,
+    }
+}
+
+fn blocklist_entry_from_parts(
+    did: &str,
+    reason: Option<String>,
+    blocked_at: Option<String>,
+) -> Option<BlocklistEntry> {
+    let mut entry = BlocklistEntry::new(did, reason);
+    if entry.did.trim().is_empty() {
+        return None;
+    }
+    if let Some(blocked_at) = blocked_at {
+        let blocked_at = blocked_at.trim();
+        if !blocked_at.is_empty() {
+            entry.blocked_at = Some(blocked_at.to_owned());
+        }
+    }
+    Some(entry)
 }
 
 /// Build a `cx.account_data.set` operation envelope for `key` -> `value`.
@@ -865,15 +985,22 @@ mod tests {
             Some("spam".into()),
         )];
         let body = build_blocklist_account_data_body(&entries);
-        assert_eq!(body["entries"][0]["did"], "did:web:alice.example");
-        assert_eq!(body["entries"][0]["reason"], "spam");
-        // `blocked_at` is None on `BlocklistEntry::new` so the wire
-        // payload elides it.
-        assert!(body["entries"][0].get("blocked_at").is_none());
+        assert_eq!(body["version"], 1);
+        assert_eq!(body["entries"][0]["target"]["kind"], "actor");
+        assert_eq!(body["entries"][0]["target"]["did"], "did:web:alice.example");
+        assert_eq!(body["entries"][0]["mode"], "block");
+        assert_eq!(body["entries"][0]["reason_code"], "spam");
+        assert!(body["entries"][0]["created_at"].is_string());
+        assert!(
+            body["entries"][0]["applies_to"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("messages"))
+        );
     }
 
     #[test]
-    fn blocklist_entries_parse_from_account_data_body() {
+    fn blocklist_entries_parse_legacy_account_data_body() {
         let body = json!({
             "entries": [
                 {"did": "did:web:mallory.example", "reason": "spam"},
@@ -883,6 +1010,39 @@ mod tests {
         let entries = blocklist_entries_from_account_data(&body).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].did, "did:web:mallory.example");
+    }
+
+    #[test]
+    fn blocklist_entries_parse_canonical_account_data_body() {
+        let body = json!({
+            "version": 1,
+            "entries": [
+                {
+                    "target": {"kind": "actor", "did": "did:web:mallory.example"},
+                    "mode": "block",
+                    "reason_code": "harassment",
+                    "created_at": "2026-05-29T00:00:00Z"
+                },
+                {
+                    "target": {"kind": "actor", "did": "did:web:carol.example"},
+                    "mode": "unblock",
+                    "created_at": "2026-05-29T00:00:00Z"
+                },
+                {
+                    "target": {"kind": "domain", "value": "example.com"},
+                    "mode": "block",
+                    "created_at": "2026-05-29T00:00:00Z"
+                }
+            ]
+        });
+        let entries = blocklist_entries_from_account_data(&body).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].did, "did:web:mallory.example");
+        assert_eq!(entries[0].reason.as_deref(), Some("harassment"));
+        assert_eq!(
+            entries[0].blocked_at.as_deref(),
+            Some("2026-05-29T00:00:00Z")
+        );
     }
 
     // ── A4a — client.ui shape + merge logic ────────────────────────────

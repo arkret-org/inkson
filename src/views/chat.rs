@@ -67,7 +67,7 @@ struct FlowScopeCircle {
 /// Derived from the presence of `content.encrypted_payload` on the
 /// envelope plus what the local MLS group can currently do with it.
 /// `Plaintext` is the default; encrypted messages cycle
-/// `Decrypting → (Plaintext | DecryptFailed | KeyMissing | NeedsVerification)`.
+/// `Decrypting → (Plaintext | KeyMissing | NeedsVerification)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum MessageCryptoState {
     /// Body is already plaintext (no `encrypted_payload`).
@@ -75,25 +75,17 @@ enum MessageCryptoState {
     /// We see an `encrypted_payload` and the MLS group exists, but a
     /// decrypt round-trip hasn't completed for this event yet.
     Decrypting,
-    /// We have the group and tried to decrypt, but it returned an error
-    /// (e.g. wrong epoch, tamper). Body falls back to a placeholder.
-    #[allow(dead_code)]
-    DecryptFailed,
     /// `encrypted_payload` present but no local MLS group / no
     /// passphrase / no key package received yet — Welcome is pending.
     KeyMissing,
     /// Sender device hasn't been verified (cross-signing missing or
     /// fingerprint mismatch). The body still decrypted, but we flag it.
-    #[allow(dead_code)]
     NeedsVerification,
 }
 
 impl MessageCryptoState {
     fn is_pending(&self) -> bool {
-        matches!(
-            self,
-            Self::Decrypting | Self::DecryptFailed | Self::KeyMissing
-        )
+        matches!(self, Self::Decrypting | Self::KeyMissing)
     }
 }
 
@@ -1222,7 +1214,7 @@ impl WatchLevel {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn from_wire(value: &str) -> Self {
         match value {
             "mentions_only" => Self::MentionsOnly,
@@ -1231,46 +1223,6 @@ impl WatchLevel {
             "none" | "muted" => Self::Muted,
             _ => Self::All,
         }
-    }
-}
-
-#[allow(dead_code)]
-fn current_mention_query(text: &str) -> Option<(usize, String)> {
-    for (idx, ch) in text.char_indices().rev() {
-        if ch == '@' {
-            let preceding_ok = text[..idx]
-                .chars()
-                .next_back()
-                .is_none_or(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | ',' | ';'));
-            if preceding_ok {
-                let query_start = idx + '@'.len_utf8();
-                return Some((idx, text[query_start..].to_owned()));
-            }
-            return None;
-        }
-        if matches!(ch, ' ' | '\t' | '\n' | '\r' | ',' | ';') {
-            return None;
-        }
-    }
-    None
-}
-
-#[allow(dead_code)]
-fn apply_mention_completion(current: &str, replacement: &str) -> String {
-    if let Some((idx, _)) = current_mention_query(current) {
-        let mut out = current[..idx].to_owned();
-        out.push_str(replacement);
-        out.push_str(", ");
-        out
-    } else {
-        let trimmed = current.trim_end_matches(|c: char| c.is_whitespace() || c == ',');
-        let mut out = trimmed.to_owned();
-        if !out.is_empty() {
-            out.push_str(", ");
-        }
-        out.push_str(replacement);
-        out.push_str(", ");
-        out
     }
 }
 
@@ -3455,8 +3407,7 @@ pub fn ChatPanel(
                                     "discussion-message".to_owned()
                                 };
                                 // T7.4: grey out and italicise messages
-                                // that are still waiting on key material
-                                // or whose decrypt failed.
+                                // that are still waiting on key material.
                                 if msg.crypto_state.is_pending() {
                                     base.push_str(" is-crypto-pending");
                                 }
@@ -3468,7 +3419,6 @@ pub fn ChatPanel(
                             "data-crypto-state": match msg.crypto_state {
                                 MessageCryptoState::Plaintext => "plaintext",
                                 MessageCryptoState::Decrypting => "decrypting",
-                                MessageCryptoState::DecryptFailed => "decrypt_failed",
                                 MessageCryptoState::KeyMissing => "key_missing",
                                 MessageCryptoState::NeedsVerification => "needs_verification",
                             },
@@ -3611,22 +3561,6 @@ pub fn ChatPanel(
                                                 "data-testid": "crypto-status-decrypting",
                                                 span { class: "crypto-status-icon", "\u{23f3}" }
                                                 span { {crate::i18n::tr("chat.crypto.decrypting")} }
-                                            }
-                                        },
-                                        MessageCryptoState::DecryptFailed => rsx! {
-                                            div {
-                                                class: "crypto-status-row crypto-status-failed",
-                                                "data-testid": "crypto-status-failed",
-                                                span { class: "crypto-status-icon", "\u{274c}" }
-                                                span { {crate::i18n::tr("chat.crypto.decrypt_failed")} }
-                                                button {
-                                                    class: "crypto-status-action",
-                                                    "data-testid": "crypto-status-action-recovery",
-                                                    onclick: move |_| {
-                                                        navigator.push(Route::Recovery);
-                                                    },
-                                                    {crate::i18n::tr("chat.crypto.decrypt_failed_action")}
-                                                }
                                             }
                                         },
                                         MessageCryptoState::KeyMissing => rsx! {
@@ -6554,7 +6488,6 @@ mod tests {
     fn message_crypto_state_pending_detects_grey_states() {
         assert!(!MessageCryptoState::Plaintext.is_pending());
         assert!(MessageCryptoState::Decrypting.is_pending());
-        assert!(MessageCryptoState::DecryptFailed.is_pending());
         assert!(MessageCryptoState::KeyMissing.is_pending());
         assert!(!MessageCryptoState::NeedsVerification.is_pending());
     }

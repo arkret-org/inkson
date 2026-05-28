@@ -134,7 +134,6 @@ enum SpaceContainerLifecycleState {
     Archived,
     /// Server-only terminal state. UI never produces this; the variant
     /// exists so `dispatch_space_container_lifecycle` can exhaustively match.
-    #[allow(dead_code)]
     Tombstoned,
 }
 
@@ -211,7 +210,6 @@ enum FlowLifecycleState {
     /// Server-only terminal (`deleted` / `redacted` per the wire enum,
     /// merged here for UI). The UI never produces this; the variant
     /// exists so `dispatch_flow_lifecycle` can exhaustively match.
-    #[allow(dead_code)]
     Tombstoned,
 }
 
@@ -619,7 +617,6 @@ fn truthy_env_value(value: Option<&str>) -> bool {
 /// The `_view_id` parameter is reserved so the future signature is stable:
 /// the UI holds the saved View's `cx:view:` id and threads it in when calling
 /// the probe.
-#[allow(dead_code)]
 fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     // Synchronous init context — always returns None. UI starts with
     // Unavailable unless explicit demo seed is enabled; async projection
@@ -4104,15 +4101,6 @@ pub(super) struct RealmMemberRow {
     pub handle_claims_limited: bool,
 }
 
-impl RealmMemberRow {
-    /// Legacy alias retained for one release. New code SHOULD read
-    /// [`actor_id`] directly.
-    #[allow(dead_code)]
-    pub fn did(&self) -> &str {
-        &self.actor_id
-    }
-}
-
 /// Pick the best UI label for a roster row.
 ///
 /// R3.2: prefer a handle-shaped display when visible handle-claim
@@ -4313,28 +4301,15 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
     }
 }
 
-/// R3.1 ROST-4 — roster pagination state harvested from the
-/// `account.subscribe` frame.
-///
-/// `members_limited=true` means the server truncated the `members[]`
-/// array; UI MUST NOT treat the visible roster as authoritative and
-/// SHOULD expose a "load more" affordance (or trigger
-/// `cx.events.query` backfill) keyed on `members_next_cursor`.
-///
-/// Wire-level type — UI hookup (the actual "load more" button + the
-/// `cx.events.query` backfill call) lands in a follow-up that uses
-/// this projection. Marked `#[allow(dead_code)]` until then so the
-/// unused-warning lint doesn't fire while the renderer wiring is
-/// still in flight.
+#[cfg(test)]
 #[derive(Clone, Debug, Default, PartialEq)]
-#[allow(dead_code)]
 pub(super) struct RealmRosterPagination {
     pub members_limited: bool,
     pub members_next_cursor: Option<String>,
 }
 
+#[cfg(test)]
 impl RealmRosterPagination {
-    #[allow(dead_code)]
     pub fn from_projection(projection: Option<&Value>) -> Self {
         let Some(root) = projection else {
             return Self::default();

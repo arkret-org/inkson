@@ -575,18 +575,6 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         .collect()
 }
 
-#[allow(dead_code)]
-fn require_feature_or_operation(
-    server: &ServerDescription,
-    feature: &str,
-    operation: &str,
-    missing: &mut Vec<String>,
-) {
-    if !server.supports_feature(feature) && !server.supports_operation(operation) {
-        missing.push(format!("{feature} or {operation}"));
-    }
-}
-
 /// Plaintext boundary check per contrix-spec section 12.1.
 /// Verifies that non-E2EE private content does not reach undelegated services.
 pub struct PlaintextBoundary {

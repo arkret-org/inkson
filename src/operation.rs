@@ -1823,9 +1823,6 @@ mod tests {
         });
     }
 
-    // R1.7 (realm-rework): kept as local schema-test helpers for cases that
-    // need to assert required-property presence directly.
-    #[allow(dead_code)]
     fn required_fields(schema: &serde_json::Value) -> Vec<String> {
         schema
             .get("required")
@@ -1836,7 +1833,6 @@ mod tests {
             .collect()
     }
 
-    #[allow(dead_code)]
     fn assert_required_fields_present(schema: &serde_json::Value, value: &serde_json::Value) {
         for field in required_fields(schema) {
             assert!(

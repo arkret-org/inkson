@@ -1736,13 +1736,9 @@ impl ContrixApi {
     }
 
     /// Without the `demo-crypto` feature, the demo fallback is wholly
-    /// disabled — even loopback hosts fail closed. The function is kept
-    /// in scope so test assertions can verify the guard is wired; in
-    /// practice every public caller (`upload_keys`,
-    /// `publish_mls_key_package`, `send_to_device`) is itself feature-
-    /// gated and never reaches this helper without `demo-crypto`.
-    #[cfg(not(feature = "demo-crypto"))]
-    #[allow(dead_code)]
+    /// disabled — even loopback hosts fail closed. This test-only guard
+    /// keeps the fail-closed assertion next to the feature-enabled path.
+    #[cfg(all(not(feature = "demo-crypto"), test))]
     fn ensure_demo_crypto_fallback_allowed(&self, label: &str) -> anyhow::Result<()> {
         anyhow::bail!(
             "{label} requires the `demo-crypto` build feature (compiled out of this binary)"
