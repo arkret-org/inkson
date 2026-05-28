@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
-use dioxus_router::Link;
+use dioxus_router::{Link, hooks::use_navigator};
 use serde_json::Value;
 
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip},
     local_state::LocalStateStore,
     models::*,
+    object_address::OpenedLink,
     routes::Route,
     views::helpers::{display_name_for_did, short_protocol_id, with_authed_api},
 };
@@ -55,6 +56,9 @@ pub fn DirectoryPanel(
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
     let mut pagination = use_signal(PaginationState::default);
+    // R3.3 (CXP-0011) — "Open shared link" scratch state.
+    let mut open_link_input = use_signal(String::new);
+    let navigator = use_navigator();
     let base_url_key = base_url.clone();
 
     rsx! {
@@ -502,6 +506,76 @@ pub fn DirectoryPanel(
                                 {crate::i18n::tr("directory.resolve_selected")}
                             }
                         }
+                    }
+                }
+            }
+
+            // R3.3 (CXP-0011) — "Open shared link" entry point. Accepts a
+            // pasted `web+contrix:` or HTTPS-fragment link, resolves it via
+            // `directory_resolve_target`, and routes to the local UI by
+            // `target_kind`. Failures collapse to one friendly message
+            // (never distinguish not_found vs unauthorized).
+            // TODO(R3.3.1): a richer share/open surface (per-object "Share"
+            // context-menu actions in the timeline/kanban/realm pages, an
+            // invite-token issuance flow, and a confirm-before-navigate
+            // preview card) lives here in a follow-up.
+            div { class: "event", "data-testid": "open-shared-link",
+                div { class: "event-head",
+                    span { {crate::i18n::tr("object_link.open")} }
+                    HelpTip { text: "Paste a Contrix share link to open the Realm, Flow, or Message it points at." }
+                }
+                div { class: "actions",
+                    input {
+                        r#type: "text",
+                        "data-testid": "open-link-input",
+                        placeholder: crate::i18n::tr("object_link.open_placeholder"),
+                        value: "{open_link_input}",
+                        oninput: move |event| open_link_input.set(event.value()),
+                    }
+                    button {
+                        class: "primary",
+                        "data-testid": "open-link-button",
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let raw = open_link_input();
+                                if raw.trim().is_empty() {
+                                    return;
+                                }
+                                // Parse + fail closed locally before any network call.
+                                let opened = match OpenedLink::parse(&raw) {
+                                    Ok(opened) => opened,
+                                    Err(_) => {
+                                        status.set(crate::i18n::tr("object_link.error.invalid"));
+                                        return;
+                                    }
+                                };
+                                let base = base.clone();
+                                let api_token = token();
+                                let navigator = navigator;
+                                status.set(crate::i18n::tr("object_link.opening"));
+                                spawn(async move {
+                                    let address = opened.resolve_address();
+                                    let token_arg = opened.token.clone();
+                                    let resolved = with_authed_api(&base, api_token, |api| async move {
+                                        api.directory_resolve_target(&address, token_arg.as_deref())
+                                            .await
+                                    })
+                                    .await;
+                                    match resolved {
+                                        Ok(res) => {
+                                            let route = opened.route_for(res.target_kind);
+                                            navigator.push(route);
+                                        }
+                                        // Anti-enumeration: every failure is the
+                                        // same friendly message.
+                                        Err(_) => status
+                                            .set(crate::i18n::tr("object_link.error.unavailable")),
+                                    }
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("object_link.open")}
                     }
                 }
             }

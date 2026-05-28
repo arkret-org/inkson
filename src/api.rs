@@ -1340,6 +1340,40 @@ impl ContrixApi {
         .await
     }
 
+    /// R3.3 (CXP-0011) — resolve a shareable object address (Realm / Flow /
+    /// Message) to a directory preview via `cx.directory.resolve_target`
+    /// (`POST /api/v1/directory/resolve-target`).
+    ///
+    /// `address` is the canonical `web+contrix:` (or HTTPS-fragment) string
+    /// derived from [`contrix_sdk::model::parse_address`]; `token` is present
+    /// iff the address carried `lt=invite`. The server binds an invite token
+    /// to the resolved object via the SDK's
+    /// [`contrix_sdk::model::verify_token_target`]; the client only forwards
+    /// the opaque token here.
+    ///
+    /// Wraps the SDK's typed request/response bodies so the wire shape stays
+    /// in sync with `spec/v1` (mirrors how [`Self::resolve_realm`] wraps the
+    /// `resolve-realm` endpoint). On any failure the caller MUST collapse the
+    /// error to a single "link unavailable" message — `not_found` and
+    /// `unauthorized` are intentionally indistinguishable (anti-enumeration).
+    pub async fn directory_resolve_target(
+        &self,
+        address: &str,
+        token: Option<&str>,
+    ) -> anyhow::Result<contrix_sdk::model::DirectoryResolveTargetResBody> {
+        let body = contrix_sdk::model::DirectoryResolveTargetReqBody {
+            address: address.to_owned(),
+            requester: None,
+            proofs: Vec::new(),
+            token: token.map(str::to_owned),
+        };
+        self.post_json(
+            "api/v1/directory/resolve-target",
+            serde_json::to_value(&body)?,
+        )
+        .await
+    }
+
     /// Query durable events through the current `/api/v1/events` surface.
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResBody> {
         self.get_json(&events_query_path(space_id)).await
@@ -2059,7 +2093,10 @@ impl ContrixApi {
         let body = DirectoryListHandlesForSubjectReqBody {
             subject: subject_did,
             realm_id: realm,
-            intent: intent.map(str::trim).filter(|s| !s.is_empty()).map(ToOwned::to_owned),
+            intent: intent
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned),
             requester: None,
             proof_challenge: None,
             proofs: Vec::new(),

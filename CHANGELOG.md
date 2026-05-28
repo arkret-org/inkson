@@ -4,6 +4,37 @@ All notable yougen changes are recorded here. Yougen is the Dioxus
 cross-platform Contrix v1 reference client (macOS / Windows / Linux / iOS /
 Android / web).
 
+## R3.3 — Spec sync 2026-05-28 (contrix-spec @ cced4b8)
+
+- CXP-0011: client-side shareable object links. New `src/object_address.rs`
+  wraps the SDK addressing grammar (`parse_address` / `build_address` /
+  `build_https_landing` / `target_digest`) into a typed `ShareTarget`
+  (Realm / Flow / Message) that builds both link forms — the default
+  HTTPS-fragment landing link (target + token live in the `#` fragment, never
+  reaching the landing host) and the `web+contrix:` "open in app" form — plus
+  `OpenedLink` which parses either form, fails closed on bad grammar, and routes
+  to the local UI by `target_kind` (Realm → Space page, Flow → flow timeline,
+  Message → message anchor).
+- New `ContrixApi::directory_resolve_target` wraps `cx.directory.resolve_target`
+  (mirrors `resolve_realm`); the directory view gains a minimal "Open shared
+  link" entry point that resolves a pasted link and navigates on success. All
+  resolve failures collapse to one friendly "link unavailable or expired"
+  message (never distinguishes not_found vs unauthorized — anti-enumeration).
+- Invite-token target binding: `ShareTarget::invite_target_digest` computes the
+  `target_digest` an invite token would bind (fails closed on alias realms). The
+  parse path lifts a `tok=` out of `lt=invite` links for the resolve request.
+  Web protocol-handler registration ships the **HTTPS-fragment-only** path by
+  default; `web_protocol_handler_template` enforces a fragment-only `%s`
+  substitution for opt-in `registerProtocolHandler` callers so the substituted
+  URI never leaks to the landing host.
+- i18n: `object_link.*` share / open-link strings (Chinese-first + English).
+- Deeper UI (per-object context-menu Share actions, invite-token issuance,
+  confirm-before-navigate preview card) and native OS deep-link registration
+  (Info.plist / AndroidManifest / `.desktop` / Windows registry) deferred
+  `TODO(R3.3.1)`.
+
+> No version tag, no crates.io / Docker Hub / npm publish — git commit only.
+
 ## R3.2 — Spec sync 2026-05-28 (contrix-spec @ b56cab1)
 
 - Dropped `MemberIdentity.primary_handle`/`handles[]`; roster `identity_state_digest` → `member_display_state_digest`; payload digest → `identity_payload_digest`.

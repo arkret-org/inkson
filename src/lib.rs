@@ -68,6 +68,7 @@ pub mod mls;
 pub mod models;
 pub mod move_builder;
 pub mod notification_rules;
+pub mod object_address;
 pub mod objects;
 pub mod offline;
 pub mod offline_queue;

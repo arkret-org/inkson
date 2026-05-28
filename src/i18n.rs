@@ -1258,6 +1258,31 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "error.recovery.challenge_proof_invalid",
         "Recovery 挑战证明验证失败。请重新采集证明后再试。",
     );
+
+    // R3.3 (CXP-0011) — shareable object links (English dict). Error copy in
+    // this dict follows the existing Chinese-first convention for `error.*`;
+    // the dedicated zh dict carries the Chinese UI strings.
+    dict.set("object_link.share", "Share link");
+    dict.set("object_link.share_realm", "Share this Realm");
+    dict.set("object_link.share_flow", "Share this Flow");
+    dict.set("object_link.share_message", "Share this Message");
+    dict.set("object_link.copy_https", "Copy link");
+    dict.set("object_link.copy_app", "Copy \"open in app\" link");
+    dict.set("object_link.copied", "Link copied");
+    dict.set("object_link.open", "Open shared link");
+    dict.set(
+        "object_link.open_placeholder",
+        "Paste a web+contrix: or https share link",
+    );
+    dict.set("object_link.opening", "Opening link\u{2026}");
+    dict.set(
+        "object_link.error.unavailable",
+        "This link is unavailable or has expired.",
+    );
+    dict.set(
+        "object_link.error.invalid",
+        "That link format was not recognized.",
+    );
 }
 
 /// Build Chinese translation dictionary.
@@ -1836,6 +1861,23 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "error.circle.delivery_binding_handed_over",
         "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
     );
+
+    // R3.3 (CXP-0011) — shareable object links (Chinese-first).
+    dict.set("object_link.share", "分享链接");
+    dict.set("object_link.share_realm", "分享此领域");
+    dict.set("object_link.share_flow", "分享此流程");
+    dict.set("object_link.share_message", "分享此消息");
+    dict.set("object_link.copy_https", "复制链接");
+    dict.set("object_link.copy_app", "复制“在应用中打开”链接");
+    dict.set("object_link.copied", "链接已复制");
+    dict.set("object_link.open", "打开分享链接");
+    dict.set(
+        "object_link.open_placeholder",
+        "粘贴 web+contrix: 或 https 分享链接",
+    );
+    dict.set("object_link.opening", "正在打开链接…");
+    dict.set("object_link.error.unavailable", "链接不可用或已过期。");
+    dict.set("object_link.error.invalid", "无法识别该链接格式。");
 }
 
 /// Build Arabic translation dictionary.
