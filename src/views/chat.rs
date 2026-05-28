@@ -553,17 +553,48 @@ struct MentionInlinePart {
     is_local: bool,
 }
 
+/// R3.2 §3.8.2 (YG-MENT-2) — resolve the *current* display label for a
+/// structured actor mention via the shared SDK `render_mention()` helper.
+///
+/// The authoritative `target` (principal `subject_id`) drives §3.2.1
+/// primary-handle selection. `handle_at_time` / `display_name_at_time`
+/// are audit metadata and feed ONLY the degraded fallback ladder — they
+/// are NEVER used as the current display value directly.
+///
+/// `TODO(R3.2.1)`: feed the Realm-scoped roster handle-claim snapshot +
+/// accepted_issuers + a locally cached verified handle in here. Until the
+/// live claim cache + `list_handles_for_subject` plumbing lands we pass an
+/// empty snapshot, so the renderer steps down to the cached/name/DID
+/// fallback ladder (each visually degraded) instead of inventing a
+/// handle.
 fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> {
-    if let Some(label) = mention_handle_label_from_value(&mention.handle) {
-        return Some(label);
+    if mention.kind != "actor" {
+        return mention
+            .token
+            .strip_prefix('@')
+            .and_then(mention_handle_label_from_value);
     }
-    if let Some(label) = mention_handle_label_from_value(&mention.display_snapshot) {
-        return Some(label);
-    }
-    mention
-        .token
-        .strip_prefix('@')
-        .and_then(mention_handle_label_from_value)
+    let display_name = (!mention.display_name_at_time.is_empty())
+        .then_some(mention.display_name_at_time.as_str());
+    let rendered = crate::views::helpers::render_actor_mention(
+        &mention.target,
+        &[],   // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
+        &[],   // accepted_issuers — TODO(R3.2.1) Realm policy
+        None,  // context (target Realm id)
+        None,  // cached verified handle — TODO(R3.2.1) local cache
+        display_name,
+    );
+    // The verified / cached tiers render `@{localpart}:{domain}`; strip
+    // the leading `@` to match the inline label shape used by the chat
+    // renderer (which adds its own `@` styling). Name-only / unresolved
+    // tiers return the bare name / truncated DID.
+    Some(
+        rendered
+            .label
+            .strip_prefix('@')
+            .unwrap_or(&rendered.label)
+            .to_owned(),
+    )
 }
 
 fn local_server_domain(base_url: &str) -> Option<String> {
@@ -1435,12 +1466,14 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
             items
                 .iter()
                 .filter_map(|item| {
-                    // Subject can come from `subject` (spec) or `target`
-                    // (yougen legacy). Either works for actor/entity
-                    // resolution.
+                    // R3.2 §3.8: the authoritative reference is
+                    // `subject_id` (principal DID). Accept the pre-R3.2
+                    // `subject` and yougen-legacy `target` as fallbacks
+                    // for not-yet-migrated payloads.
                     let target = item
-                        .get("subject")
+                        .get("subject_id")
                         .and_then(Value::as_str)
+                        .or_else(|| item.get("subject").and_then(Value::as_str))
                         .or_else(|| item.get("target").and_then(Value::as_str))?;
                     Some(StructuredMention {
                         kind: item
@@ -1454,20 +1487,26 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .and_then(Value::as_str)
                             .unwrap_or(target)
                             .to_owned(),
-                        // T7.3 / R3.1: pull the compose-time snapshot
-                        // fields through from the event payload so the
-                        // renderer can flag handle reassignments. Spec
-                        // field is `handle`; older payloads may carry
-                        // the legacy `handle_uri` URI form.
-                        display_snapshot: item
-                            .get("display_snapshot")
+                        // R3.2 audit metadata: read the v2 field names,
+                        // tolerating pre-R3.2 names as serde-style aliases.
+                        // These NEVER drive the current display value —
+                        // the renderer runs §3.2.1 off `target` instead.
+                        display_name_at_time: item
+                            .get("display_name_at_time")
                             .and_then(Value::as_str)
+                            .or_else(|| item.get("display_snapshot").and_then(Value::as_str))
                             .unwrap_or_default()
                             .to_owned(),
-                        handle: item
-                            .get("handle")
+                        handle_at_time: item
+                            .get("handle_at_time")
                             .and_then(Value::as_str)
+                            .or_else(|| item.get("handle").and_then(Value::as_str))
                             .or_else(|| item.get("handle_uri").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_owned(),
+                        mention_text_original: item
+                            .get("mention_text_original")
+                            .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_owned(),
                         resolved_at: item
@@ -5313,14 +5352,22 @@ pub fn ChatPanel(
                                             let parsed_handle = crate::identity_handle::parse_user_handle(
                                                 &chip.display_name,
                                             );
+                                            // R3.2: `target` is the authoritative
+                                            // subject_id (principal DID). The handle /
+                                            // display strings are compose-time audit
+                                            // metadata only.
                                             mentions.push(crate::views::helpers::StructuredMention {
                                                 kind: "actor".to_owned(),
                                                 target: chip.did.clone(),
                                                 token: format!("@{}", chip.display_name),
-                                                display_snapshot: chip.display_name.clone(),
-                                                handle: parsed_handle
+                                                display_name_at_time: chip.display_name.clone(),
+                                                handle_at_time: parsed_handle
                                                     .map(|h| h.handle)
                                                     .unwrap_or_default(),
+                                                mention_text_original: format!(
+                                                    "@{}",
+                                                    chip.display_name
+                                                ),
                                                 resolved_at: String::new(),
                                             });
                                         }
@@ -5880,26 +5927,31 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
     mentions
         .iter()
         .map(|mention| {
-            // T7.3 / R3.1: emit the spec's `subject` field alongside
-            // our legacy `target` so projections that already read
-            // `subject` receive it. `display_snapshot` / `handle` /
-            // `resolved_at` round-trip through the persisted local op
-            // record so the renderer can detect handle reassignments.
-            // `handle` is the R3.1 canonical `<localpart>:<domain>`
-            // form (renamed from `handle_uri` @ contrix-spec 7157ee8).
+            // R3.2 §3.8: emit `subject_id` (the authoritative principal
+            // DID) as the actor reference. `handle_at_time` /
+            // `display_name_at_time` / `mention_text_original` are
+            // compose-time audit metadata ONLY — verifier / reducer /
+            // policy MUST ignore them. We still carry yougen-legacy
+            // `target` for our own local-op round-trip.
             let mut obj = serde_json::Map::new();
             obj.insert("kind".to_owned(), json!(mention.kind));
-            obj.insert("subject".to_owned(), json!(mention.target));
+            obj.insert("subject_id".to_owned(), json!(mention.target));
             obj.insert("target".to_owned(), json!(mention.target));
             obj.insert("token".to_owned(), json!(mention.token));
-            if !mention.display_snapshot.is_empty() {
+            if !mention.display_name_at_time.is_empty() {
                 obj.insert(
-                    "display_snapshot".to_owned(),
-                    json!(mention.display_snapshot),
+                    "display_name_at_time".to_owned(),
+                    json!(mention.display_name_at_time),
                 );
             }
-            if !mention.handle.is_empty() {
-                obj.insert("handle".to_owned(), json!(mention.handle));
+            if !mention.handle_at_time.is_empty() {
+                obj.insert("handle_at_time".to_owned(), json!(mention.handle_at_time));
+            }
+            if !mention.mention_text_original.is_empty() {
+                obj.insert(
+                    "mention_text_original".to_owned(),
+                    json!(mention.mention_text_original),
+                );
             }
             if !mention.resolved_at.is_empty() {
                 obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
@@ -6240,8 +6292,9 @@ mod tests {
             kind: "actor".to_owned(),
             target: "did:web:local.host:users:alice".to_owned(),
             token: "@alice:local.host".to_owned(),
-            display_snapshot: "alice:local.host".to_owned(),
-            handle: "alice:local.host".to_owned(),
+            display_name_at_time: "alice:local.host".to_owned(),
+            handle_at_time: "alice:local.host".to_owned(),
+            mention_text_original: "@alice:local.host".to_owned(),
             resolved_at: String::new(),
         };
 
@@ -6266,8 +6319,9 @@ mod tests {
             kind: "actor".to_owned(),
             target: "did:web:example.com:users:bob".to_owned(),
             token: "@bob:example.com".to_owned(),
-            display_snapshot: "bob:example.com".to_owned(),
-            handle: "bob:example.com".to_owned(),
+            display_name_at_time: "bob:example.com".to_owned(),
+            handle_at_time: "bob:example.com".to_owned(),
+            mention_text_original: "@bob:example.com".to_owned(),
             resolved_at: String::new(),
         };
 

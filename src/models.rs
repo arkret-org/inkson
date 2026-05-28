@@ -621,21 +621,32 @@ pub struct ResolveHandleResponse {
     pub handle_claim: Option<Value>,
 }
 
-/// Structured mention node embedded in message body. Spec 7157ee8
-/// `models/flow-and-message.md §9.4`. `display_snapshot` is the human
-/// label captured at compose time; UI MUST surface a "handle reassigned"
-/// badge when current resolution diverges from the snapshot.
+/// Structured mention node embedded in message body. Spec b56cab1
+/// `models/flow-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
 ///
-/// R3.1 wire rename: the canonical handle field is `handle`
-/// (`<localpart>:<domain>`). The legacy `handle_uri` field name is
-/// accepted as a serde alias for one release.
+/// R3.2 wire-breaking: `subject_id` (principal DID) is the ONLY
+/// authoritative field — actor attribution, authorization, resolution
+/// and render lookup all key off it. `handle_at_time` /
+/// `display_name_at_time` / `mention_text_original` are compose-time
+/// audit metadata ONLY and MUST NOT be used as the current display value.
+/// The old `subject` / `handle` / `display_snapshot` fields are gone.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mention {
-    pub subject: String,
-    #[serde(alias = "handle_uri")]
-    pub handle: String,
-    pub display_snapshot: String,
-    pub resolved_at: String,
+    /// Principal DID of the mentioned subject (authoritative).
+    pub subject_id: String,
+    /// Audit-only snapshot of the canonical `<localpart>:<domain>` handle
+    /// at compose time. Never the current display value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_at_time: Option<String>,
+    /// Audit-only snapshot of the subject's display name at compose time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_at_time: Option<String>,
+    /// The original string the user typed (e.g. `@alice:acme.com`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_text_original: Option<String>,
+    /// When the handle was resolved. Audit metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 /// Per-Space delivery binding surfaced to the member detail view.

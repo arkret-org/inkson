@@ -2786,6 +2786,50 @@ pub fn SettingsPanel(
                     }
                 }
 
+                // ── YG-HC-1 — Handle management (issuer-managed) ─────
+                // Per spec §3.2.3 / §3.4 yougen MUST NOT set or override
+                // handles via cx.profile.update / cx.member.identity.update.
+                // Handles come from signed cx.schema.handle_claim.v1
+                // evidence issued by the org's coauth issuer. So instead
+                // of an "edit your handle" affordance we show a managed
+                // notice + a link out to the issuer flow.
+                            div { class: "event", "data-testid": "handle-managed-by-org",
+                    div { class: "event-head",
+                        span { "Handle" }
+                        span { title: "cx.schema.handle_claim.v1", "managed by your organization" }
+                        HelpTip { text: "Handles are issued and revoked by your organization's handle issuer (coauth), not from this client. yougen never writes a handle via profile or member-identity events — it only displays signed handle claims. To request or change a handle, use your organization's issuer flow." }
+                    }
+                    div { class: "muted",
+                        "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer."
+                    }
+                    div { class: "actions",
+                        if let Some(href) = crate::coauth::issuer_handle_management_url(&base_url()) {
+                            a {
+                                class: "btn secondary",
+                                "data-testid": "handle-issuer-link",
+                                href: "{href}",
+                                target: "_blank",
+                                rel: "noopener noreferrer",
+                                "Manage handle at your organization's issuer"
+                            }
+                        } else {
+                            button {
+                                class: "secondary",
+                                "data-testid": "handle-issuer-link-disabled",
+                                disabled: true,
+                                "Issuer link unavailable"
+                            }
+                        }
+                    }
+                    // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
+                    // §3.2.1 primary handle via list_handles_for_subject.
+                    crate::views::helpers::WhyThisHandlePanel {
+                        base_url: base_url(),
+                        token: token(),
+                        subject_id: account_did(),
+                    }
+                }
+
                 // Personal blocklist — discovery/client-preferences.md
                 // Blocks are actor-private filters; they do not affect other actors' clients.
                             div { class: "event", "data-testid": "personal-blocklist",

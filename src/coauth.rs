@@ -802,6 +802,29 @@ impl CoauthApi {
     }
 }
 
+/// R3.2 (YG-HC-1) — best-effort deep link to the issuer/coauth handle
+/// issuance flow (`/handles/me`). yougen does NOT manage handle lifecycle
+/// (per spec §3.2.3 / §3.4): `cx.profile.update` /
+/// `cx.member.identity.update` MUST NOT set or override handles. Instead
+/// the settings UI surfaces "Handle managed by your organization" with a
+/// link out to the issuer flow, where the org-run issuer signs
+/// `cx.schema.handle_claim.v1` evidence.
+///
+/// We derive the link from the principal/auth base URL synchronously
+/// (origin + `/handles/me`); deployments that publish a distinct coauth
+/// origin via `auth_metadata.auth_server_url` should resolve that first
+/// (see [`resolve_principal_auth_server_url`]). Returns `None` for an
+/// unparseable base URL.
+pub fn issuer_handle_management_url(base_url: &str) -> Option<String> {
+    let parsed = Url::parse(base_url.trim()).ok()?;
+    let origin = parsed.origin();
+    if origin.is_tuple() {
+        Some(format!("{}/handles/me", origin.ascii_serialization()))
+    } else {
+        None
+    }
+}
+
 pub async fn resolve_principal_auth_server_url(
     principal_server_url: &str,
 ) -> anyhow::Result<String> {

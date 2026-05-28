@@ -2024,6 +2024,62 @@ impl ContrixApi {
             .await
     }
 
+    /// R3.2 (contrix-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
+    ///
+    /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
+    /// DID, return the current context-visible signed handle claims +
+    /// the §3.2.1 primary handle. Powers the "Why am I seeing this
+    /// handle?" panel (YG-DIR-1/2) and the own-handles list (YG-HC-2).
+    ///
+    /// The response is validated with
+    /// [`contrix_sdk::model::DirectoryListHandlesForSubjectResBody::validate`]
+    /// which fails closed unless every `claims[].subject` byte-equals the
+    /// response `subject`.
+    ///
+    /// `realm_id` / `intent` scope the disclosure policy; pass `None` for
+    /// an unscoped lookup. `TODO(R3.2.1)`: thread `requester` /
+    /// `proof_challenge` / `proofs` for proof-gated disclosure.
+    pub async fn list_handles_for_subject(
+        &self,
+        subject: &str,
+        realm_id: Option<&str>,
+        intent: Option<&str>,
+    ) -> anyhow::Result<contrix_sdk::model::DirectoryListHandlesForSubjectResBody> {
+        use contrix_sdk::model::DirectoryListHandlesForSubjectReqBody;
+
+        let subject_did = contrix_sdk::Did::new(subject.trim().to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
+        let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(r) => Some(
+                contrix_sdk::RealmId::new(r)
+                    .map_err(|err| anyhow::anyhow!("invalid realm_id `{r}`: {err}"))?,
+            ),
+            None => None,
+        };
+        let body = DirectoryListHandlesForSubjectReqBody {
+            subject: subject_did,
+            realm_id: realm,
+            intent: intent.map(str::trim).filter(|s| !s.is_empty()).map(ToOwned::to_owned),
+            requester: None,
+            proof_challenge: None,
+            proofs: Vec::new(),
+            as_of: None,
+            cursor: None,
+            limit: None,
+        };
+        let res: contrix_sdk::model::DirectoryListHandlesForSubjectResBody = self
+            .post_json(
+                "api/v1/directory/list-handles-for-subject",
+                serde_json::to_value(&body)?,
+            )
+            .await?;
+        // §0.2 fail-closed: drop the whole response if any claim's subject
+        // doesn't match.
+        res.validate()
+            .map_err(|err| anyhow::anyhow!("list_handles_for_subject validation failed: {err}"))?;
+        Ok(res)
+    }
+
     // ── WebRTC calls ───────────────────────────────────────────────
 
     pub async fn create_webrtc_session(
