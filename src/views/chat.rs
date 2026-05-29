@@ -39,6 +39,9 @@ struct ChannelEntity {
     topic: Option<String>,
     unread: usize,
     is_default: bool,
+    /// Explicit Flow security state from Flow metadata. `None` inherits
+    /// the current Realm / Space security posture.
+    security_encrypted: Option<bool>,
     /// CXP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Flow was
     /// created under, when the Flow projection carries a
     /// `scope_circle_id`. The composer banner and the per-message
@@ -1867,6 +1870,12 @@ fn flow_create_has_synthesis_track(candidates: &[&Value]) -> bool {
         })
 }
 
+fn flow_security_state_from_candidates(candidates: &[&Value]) -> Option<bool> {
+    candidates
+        .iter()
+        .find_map(|candidate| crate::security_state::flow_projection_security_state(candidate))
+}
+
 fn channel_from_flow_projection(
     space_id: &str,
     flow: &Value,
@@ -1928,6 +1937,7 @@ fn channel_from_flow_projection(
         }
     });
     let has_synthesis = flow_create_has_synthesis_track(&[flow]);
+    let security_encrypted = crate::security_state::flow_projection_security_state(flow);
     let scope_circle = flow_scope_circle_from_projection(flow);
 
     Some(ChannelEntity {
@@ -1942,6 +1952,7 @@ fn channel_from_flow_projection(
         topic,
         unread: 0,
         is_default,
+        security_encrypted,
         scope_circle,
     })
 }
@@ -2019,6 +2030,7 @@ fn default_discussion_channel(space_id: &str, space_body: Option<&Value>) -> Cha
         topic: Some("Default Flow discussion track".to_owned()),
         unread: 0,
         is_default: true,
+        security_encrypted: space_body.map(crate::security_state::realm_projection_is_encrypted),
         scope_circle: None,
     }
 }
@@ -2037,6 +2049,7 @@ fn discussion_channel_for_flow(space_id: &str, flow_id: &str) -> ChannelEntity {
         topic: None,
         unread: 0,
         is_default: trimmed_flow_id == default_discussion_flow_id(space_id),
+        security_encrypted: None,
         scope_circle: None,
     }
 }
@@ -2118,6 +2131,7 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
     )
     .map(ToOwned::to_owned);
     let has_synthesis = flow_create_has_synthesis_track(&candidates);
+    let security_encrypted = flow_security_state_from_candidates(&candidates);
     let scope_circle = candidates
         .iter()
         .find_map(|candidate| flow_scope_circle_from_projection(candidate));
@@ -2134,6 +2148,7 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
         topic,
         unread: 0,
         is_default: flow_id == default_discussion_flow_id(space_id),
+        security_encrypted,
         scope_circle,
     })
 }
@@ -2432,6 +2447,19 @@ pub fn ChatPanel(
         .as_ref()
         .map(|channel| channel.unread)
         .unwrap_or(0);
+    let selected_space_security_encrypted = {
+        let state = state_store.read().load();
+        crate::security_state::security_projection_for_scope_id(
+            &state.space_projections,
+            &selected_space,
+        )
+        .map(crate::security_state::realm_projection_is_encrypted)
+        .unwrap_or(false)
+    };
+    let selected_channel_security_encrypted = selected_channel_info
+        .as_ref()
+        .and_then(|channel| channel.security_encrypted)
+        .unwrap_or(selected_space_security_encrypted);
     let all_messages_snapshot = messages();
     let visible_messages = all_messages_snapshot
         .iter()
@@ -2892,11 +2920,8 @@ pub fn ChatPanel(
                                 },
                                 div { class: "discussion-track-main",
                                     span { class: "discussion-track-name-row",
-                                        // TODO(security-state): resolve this from Flow scope/encryption
-                                        // metadata once Circle/Realm security semantics land in the
-                                        // projection. For now this is the plaintext visual placeholder.
                                         SecurityStateBadge {
-                                            encrypted: false,
+                                            encrypted: channel.security_encrypted.unwrap_or(selected_space_security_encrypted),
                                             compact: true,
                                             test_id: Some("flow-track-security-state".to_owned()),
                                         }
@@ -3072,6 +3097,7 @@ pub fn ChatPanel(
                                                                 topic: channel_topic.clone(),
                                                                 unread: 0,
                                                                 is_default: false,
+                                                                security_encrypted: None,
                                                                 // P3B.2.3 — the new-Flow form
                                                                 // currently creates Realm-scoped
                                                                 // Flows only; Circle scope
@@ -3125,10 +3151,8 @@ pub fn ChatPanel(
                 header { class: "discussion-chat-head",
                     div { class: "discussion-title-stack",
                         div { class: "discussion-title-row",
-                            // TODO(security-state): replace the placeholder with the selected
-                            // Flow's effective encryption state after the projection exposes it.
                             SecurityStateBadge {
-                                encrypted: false,
+                                encrypted: selected_channel_security_encrypted,
                                 compact: true,
                                 test_id: Some("selected-flow-security-state".to_owned()),
                             }

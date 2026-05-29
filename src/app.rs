@@ -113,7 +113,7 @@ a.primary, a.secondary { line-height: 1.5; }
   white-space: nowrap;
   border: 0;
 }
-.settings, .workflow-form { display: grid; gap: 10px; }
+.settings, .workflow-form { display: grid; gap: 10px; align-content: start; }
 .settings-inline-form {
   display: grid;
   grid-template-columns: minmax(180px, 1.1fr) minmax(160px, 0.9fr) auto;
@@ -1735,14 +1735,11 @@ body {
 .card-detail-form-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
 }
-/* The global `.primary` rule slaps a 14×28px accent-tinted box-shadow
- * on every primary button — in the dark theme that reads as a bright
- * orange halo around the Save button and makes Save/Cancel look chunky
- * inside the compact card-detail edit form. Match the rest of the
- * popup's modest mini-action sizing here (no shadow, tighter padding,
- * smaller min-height) without globally suppressing the CTA treatment. */
+/* Card detail forms inherit the shared workflow grid. Keep these actions
+ * compact while preserving the global CTA treatment elsewhere. */
 .card-detail-form-actions .primary,
 .card-detail-form-actions .secondary {
   min-height: 34px;
@@ -6657,6 +6654,23 @@ pub fn RouterView() -> Element {
     };
     let space_tree = space_tree_items(&loaded_spaces);
     let space_projections = state_store.read().load().space_projections;
+    let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
+        active_space_id.as_str()
+    } else {
+        active_projection_realm_id.as_str()
+    };
+    let active_space_security_encrypted = crate::security_state::security_projection_for_scope_id(
+        &space_projections,
+        active_security_scope_id,
+    )
+    .or_else(|| {
+        crate::security_state::security_projection_for_scope_id(
+            &space_projections,
+            &active_space_id,
+        )
+    })
+    .map(crate::security_state::realm_projection_is_encrypted)
+    .unwrap_or(false);
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -7429,11 +7443,8 @@ pub fn RouterView() -> Element {
                         }
                         div { class: "topbar-context", "data-testid": "topbar-crumbs",
                             if route_uses_space_context && !active_space_id.is_empty() {
-                                // TODO(security-state): replace this visual placeholder with
-                                // current Space/Realm encryption metadata. Render plaintext only
-                                // when the selected scope is known to be unencrypted.
                                 SecurityStateBadge {
-                                    encrypted: false,
+                                    encrypted: active_space_security_encrypted,
                                     compact: false,
                                     test_id: Some("space-security-state".to_owned()),
                                 }

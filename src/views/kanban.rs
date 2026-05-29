@@ -169,6 +169,9 @@ struct KanbanCard {
     history_visibility: String,
     activity_hint: String,
     audit_hint: String,
+    /// Explicit Flow security state from projection metadata. `None`
+    /// means the Flow inherits the active Realm / Space posture.
+    security_encrypted: Option<bool>,
     state: CardState,
     /// Flow lifecycle state (orthogonal to `state` above which is
     /// Move-lifecycle). Spec: `flow-and-message.md §3`,
@@ -636,6 +639,12 @@ fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOpt
     }
 }
 
+fn sort_board_space_options(options: &mut Vec<BoardSpaceOption>) {
+    options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
+    options.dedup_by(|left, right| left.id == right.id);
+    options.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
+}
+
 fn board_space_options_from_projection(
     containers: &[crate::api::SpaceContainerProjectionView],
 ) -> Vec<BoardSpaceOption> {
@@ -654,10 +663,105 @@ fn board_space_options_from_projection(
             state: space_container_state_from_wire(&view.state),
         })
         .collect::<Vec<_>>();
-    options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
-    options.dedup_by(|left, right| left.id == right.id);
-    options.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
+    sort_board_space_options(&mut options);
     options
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LocalSpaceCreate {
+    id: String,
+    realm_id: Option<String>,
+    kind: String,
+    title: String,
+    parent_space_id: Option<String>,
+    rank: Option<String>,
+}
+
+fn local_projection_realm_id(selected_space: &str, projection_realm_id: &str) -> String {
+    let candidate = projection_realm_id.trim();
+    if candidate.is_empty() {
+        scope_id_as_realm_id(selected_space)
+    } else {
+        scope_id_as_realm_id(candidate)
+    }
+}
+
+fn local_space_create_matches_realm(local_create: &LocalSpaceCreate, realm_id: &str) -> bool {
+    let realm_id = realm_id.trim();
+    realm_id.is_empty()
+        || local_create.realm_id.as_deref().is_none_or(|local_realm_id| {
+            scope_id_as_realm_id(local_realm_id) == scope_id_as_realm_id(realm_id)
+        })
+}
+
+fn local_space_create_records(
+    raw_operations: &[RawOperationRecord],
+    realm_id: &str,
+) -> Vec<LocalSpaceCreate> {
+    raw_operations
+        .iter()
+        .filter_map(local_space_create_from_raw_operation)
+        .filter(|local_create| local_space_create_matches_realm(local_create, realm_id))
+        .collect()
+}
+
+fn overlay_local_board_space_options(
+    mut options: Vec<BoardSpaceOption>,
+    raw_operations: &[RawOperationRecord],
+    realm_id: &str,
+) -> Vec<BoardSpaceOption> {
+    for local_create in local_space_create_records(raw_operations, realm_id)
+        .into_iter()
+        .filter(|local_create| local_create.kind == "board")
+    {
+        if let Some(existing) = options.iter_mut().find(|option| option.id == local_create.id) {
+            if existing.title.trim().is_empty() || existing.title == existing.id {
+                existing.title = local_create.title;
+            }
+            if existing.state == SpaceContainerLifecycleState::Tombstoned {
+                existing.state = SpaceContainerLifecycleState::Active;
+            }
+            continue;
+        }
+        options.push(BoardSpaceOption {
+            id: local_create.id,
+            title: local_create.title,
+            state: SpaceContainerLifecycleState::Active,
+        });
+    }
+    sort_board_space_options(&mut options);
+    options
+}
+
+fn containers_with_local_space_creates(
+    containers: &[crate::api::SpaceContainerProjectionView],
+    raw_operations: &[RawOperationRecord],
+    realm_id: &str,
+) -> Vec<crate::api::SpaceContainerProjectionView> {
+    let mut merged = containers.to_vec();
+    for local_create in local_space_create_records(raw_operations, realm_id) {
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|view| view.container_space_id == local_create.id)
+        {
+            if existing.title.trim().is_empty() || existing.title == existing.container_space_id {
+                existing.title = local_create.title;
+            }
+            continue;
+        }
+        merged.push(crate::api::SpaceContainerProjectionView {
+            container_space_id: local_create.id,
+            realm_id: local_create
+                .realm_id
+                .unwrap_or_else(|| scope_id_as_realm_id(realm_id)),
+            kind: local_create.kind,
+            title: local_create.title,
+            state: "active".to_owned(),
+            rank: local_create.rank,
+            parent_space_id: local_create.parent_space_id,
+        });
+    }
+    merged
 }
 
 /// T20 — Map a SDK [`CollectionProjectionResBody`] into the yougen
@@ -826,6 +930,7 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
         history_visibility,
         activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
         audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
+        security_encrypted: crate::security_state::flow_projection_security_state(&item.object),
         state: CardState::Synced,
         lifecycle: FlowLifecycleState::Active,
     }
@@ -896,6 +1001,17 @@ fn columns_from_lifecycle_projection(
     (cols, board_options, Some(board_id))
 }
 
+fn columns_from_lifecycle_projection_with_local(
+    containers: &[crate::api::SpaceContainerProjectionView],
+    flows: &[crate::api::FlowProjectionView],
+    preferred_board_id: &str,
+    raw_operations: &[RawOperationRecord],
+    realm_id: &str,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    let merged_containers = containers_with_local_space_creates(containers, raw_operations, realm_id);
+    columns_from_lifecycle_projection(&merged_containers, flows, preferred_board_id)
+}
+
 fn sort_kanban_cards(cards: &mut [KanbanCard]) {
     cards.sort_by(|left, right| {
         left.rank
@@ -963,6 +1079,15 @@ fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> Vec<String> 
         Some(Value::String(labels)) => parse_card_labels(labels),
         _ => Vec::new(),
     }
+}
+
+fn flow_projection_security_state(flow: &crate::api::FlowProjectionView) -> Option<bool> {
+    let mut value = Map::new();
+    value.insert("fields".to_owned(), Value::Object(flow.fields.clone()));
+    if let Some(body) = flow.body.as_ref() {
+        value.insert("body".to_owned(), body.clone());
+    }
+    crate::security_state::flow_projection_security_state(&Value::Object(value))
 }
 
 fn flow_body_display_text(value: Option<&Value>) -> String {
@@ -1083,6 +1208,7 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
         history_visibility,
         activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
         audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
+        security_encrypted: flow_projection_security_state(flow),
         state: CardState::Synced,
         lifecycle: flow_lifecycle_from_wire(&flow.state),
     }
@@ -1120,6 +1246,7 @@ fn local_created_card(
         history_visibility: "board default".to_owned(),
         activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
         audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
+        security_encrypted: None,
         state: CardState::Queued,
         lifecycle: FlowLifecycleState::Active,
     }
@@ -1133,6 +1260,15 @@ fn overlay_local_card_creates(
     let state = state_store.load();
     let columns = overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
     overlay_local_card_update_records(columns, &state.raw_operations)
+}
+
+fn raw_operation_allows_overlay(payload: &Value) -> bool {
+    let write_state =
+        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
+    !matches!(
+        write_state.as_str(),
+        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
+    )
 }
 
 /// Re-apply locally-queued `cx.flow.update` patches on top of the
@@ -1182,12 +1318,7 @@ fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<L
     if kind != "cx.flow.update" {
         return None;
     }
-    let write_state =
-        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
-    if matches!(
-        write_state.as_str(),
-        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
-    ) {
+    if !raw_operation_allows_overlay(payload) {
         return None;
     }
     let body = payload.get("body").or_else(|| payload.get("payload"))?;
@@ -1308,12 +1439,7 @@ fn local_card_create_from_raw_operation(record: &RawOperationRecord) -> Option<L
     if kind != "cx.flow.create" {
         return None;
     }
-    let write_state =
-        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
-    if matches!(
-        write_state.as_str(),
-        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
-    ) {
+    if !raw_operation_allows_overlay(payload) {
         return None;
     }
 
@@ -1350,6 +1476,47 @@ fn local_card_create_from_raw_operation(record: &RawOperationRecord) -> Option<L
         board_space_id,
         list_space_id,
         card: local_created_card(flow_id, title, rank, description),
+    })
+}
+
+fn local_space_create_from_raw_operation(record: &RawOperationRecord) -> Option<LocalSpaceCreate> {
+    let payload = &record.payload;
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    if kind != "cx.space.create" {
+        return None;
+    }
+    if !raw_operation_allows_overlay(payload) {
+        return None;
+    }
+
+    let body = payload.get("body").or_else(|| payload.get("payload"))?;
+    let object = body.get("object").unwrap_or(body);
+    let id = json_path_string(Some(object), &["id"])
+        .or_else(|| json_path_string(Some(body), &["space_id"]))
+        .or_else(|| json_path_string(Some(body), &["container_space_id"]))?;
+    let space_kind = json_path_string(Some(object), &["kind"])
+        .or_else(|| json_path_string(Some(body), &["space_kind"]))?;
+    if space_kind != "board" && space_kind != "list" {
+        return None;
+    }
+    let realm_id = json_path_string(Some(object), &["realm_id"])
+        .or_else(|| record.space_id.as_ref().map(|space_id| scope_id_as_realm_id(space_id)));
+    let title = json_path_string(Some(object), &["title"])
+        .or_else(|| json_path_string(Some(body), &["title"]))
+        .unwrap_or_else(|| id.clone());
+    let parent_space_id = json_path_string(Some(object), &["parent_space_id"])
+        .or_else(|| json_path_string(Some(body), &["parent_space_id"]));
+    let rank = json_path_string(Some(object), &["rank"])
+        .or_else(|| json_path_string(Some(body), &["rank"]));
+
+    Some(LocalSpaceCreate {
+        id,
+        realm_id,
+        kind: space_kind,
+        title,
+        parent_space_id,
+        rank,
     })
 }
 
@@ -1408,6 +1575,7 @@ pub fn KanbanPanel(
     });
     let navigator = use_navigator();
     let route = use_route::<Route>();
+    let local_realm_id = local_projection_realm_id(&selected_space, &projection_realm_id);
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<flow>` extension). Seeding `selected_board_space_id`
     // from the route — instead of always `board_options.first()` — is
@@ -1415,7 +1583,11 @@ pub fn KanbanPanel(
     // including when the open card is a local draft the server
     // projection does not know about yet.
     let routed_board_id = route_board_id(&route);
-    let initial_board_options = initial_board_space_options(seed_fallback_allowed);
+    let initial_board_options = {
+        let seed_options = initial_board_space_options(seed_fallback_allowed);
+        let state = state_store.read().load();
+        overlay_local_board_space_options(seed_options, &state.raw_operations, &local_realm_id)
+    };
     let initial_board_space_id = routed_board_id.clone().unwrap_or_else(|| {
         initial_board_options
             .first()
@@ -1423,8 +1595,27 @@ pub fn KanbanPanel(
             .unwrap_or_default()
     });
     let initial_columns = {
-        let store = state_store.read();
-        overlay_local_card_creates(initial_columns, &store, &initial_board_space_id)
+        let state = state_store.read().load();
+        let initial_columns = if initial_columns.is_empty()
+            && !initial_board_space_id.trim().is_empty()
+        {
+            let (local_columns, _, _) = columns_from_lifecycle_projection_with_local(
+                &[],
+                &[],
+                &initial_board_space_id,
+                &state.raw_operations,
+                &local_realm_id,
+            );
+            local_columns
+        } else {
+            initial_columns
+        };
+        let initial_columns = overlay_local_card_create_records(
+            initial_columns,
+            &state.raw_operations,
+            &initial_board_space_id,
+        );
+        overlay_local_card_update_records(initial_columns, &state.raw_operations)
     };
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
@@ -1538,6 +1729,7 @@ pub fn KanbanPanel(
     // the route above; this effect covers later route changes.
     {
         let routed_board_id = route_board_id(&route);
+        let route_local_realm_id = local_realm_id.clone();
         use_effect(move || {
             let Some(board_id) = routed_board_id.clone() else {
                 return;
@@ -1548,11 +1740,18 @@ pub fn KanbanPanel(
             selected_board_space_id.set(board_id.clone());
             let containers = lifecycle_container_projection();
             let flows = lifecycle_flow_projection();
-            if containers.is_empty() && flows.is_empty() {
+            let raw_operations = state_store.read().load().raw_operations;
+            if containers.is_empty() && flows.is_empty() && raw_operations.is_empty() {
                 return;
             }
             let (projected_columns, options, projected_board_id) =
-                columns_from_lifecycle_projection(&containers, &flows, &board_id);
+                columns_from_lifecycle_projection_with_local(
+                    &containers,
+                    &flows,
+                    &board_id,
+                    &raw_operations,
+                    &route_local_realm_id,
+                );
             if projected_board_id.as_deref() == Some(board_id.as_str()) {
                 if !options.is_empty() {
                     board_space_options.set(options);
@@ -1580,6 +1779,7 @@ pub fn KanbanPanel(
     // flow with a different `board_space_id`.
     {
         let routed_flow_id = route_card_flow_id(&route);
+        let route_local_realm_id = local_realm_id.clone();
         use_effect(move || {
             let Some(flow_id) = routed_flow_id.clone() else {
                 return;
@@ -1601,8 +1801,15 @@ pub fn KanbanPanel(
             let containers = lifecycle_container_projection.read().clone();
             let flows = flow_items.clone();
             drop(flow_items);
+            let raw_operations = state_store.read().load().raw_operations;
             let (projected_columns, options, projected_board_id) =
-                columns_from_lifecycle_projection(&containers, &flows, &flow_board);
+                columns_from_lifecycle_projection_with_local(
+                    &containers,
+                    &flows,
+                    &flow_board,
+                    &raw_operations,
+                    &route_local_realm_id,
+                );
             if let Some(board_id) = projected_board_id {
                 if !options.is_empty() {
                     board_space_options.set(options);
@@ -1770,6 +1977,7 @@ pub fn KanbanPanel(
         let base = base_url.clone();
         let lifecycle_token = token;
         let lifecycle_routed_flow_id = lifecycle_routed_flow_id.clone();
+        let lifecycle_local_realm_id = local_realm_id.clone();
         spawn(async move {
             let realm_id = lifecycle_realm_id.clone();
             let api_token = lifecycle_token();
@@ -1817,11 +2025,14 @@ pub fn KanbanPanel(
                 } else {
                     current_board
                 };
+                let raw_operations = state_store.read().load().raw_operations;
                 let (projected_columns, options, projected_board_id) =
-                    columns_from_lifecycle_projection(
+                    columns_from_lifecycle_projection_with_local(
                         &container_items,
                         &flow_items,
                         &current_board,
+                        &raw_operations,
+                        &lifecycle_local_realm_id,
                     );
                 if let Some(board_id) = projected_board_id {
                     if !options.is_empty() {
@@ -1887,6 +2098,7 @@ pub fn KanbanPanel(
     {
         let handle_base_url = base_url.clone();
         let handle_space_id = selected_space.clone();
+        let handle_projection_realm_id = projection_realm_id.clone();
         let handle_token = token;
         use_effect(move || {
             if card_detail_sidebar_tab() != CardDetailSidebarTab::Members {
@@ -1896,11 +2108,16 @@ pub fn KanbanPanel(
                 return;
             }
             let store_snapshot = state_store.read().load();
-            let rows = realm_member_roster(store_snapshot.space_projections.get(&handle_space_id));
+            let projection = store_snapshot.space_projections.get(&handle_space_id);
+            let rows = realm_member_roster(projection);
             if rows.is_empty() {
                 return;
             }
-            let realm_context = scope_id_as_realm_id(&handle_space_id);
+            let realm_context = member_roster_realm_context(
+                &handle_space_id,
+                &handle_projection_realm_id,
+                projection,
+            );
             let mut fetches: Vec<(String, String, String, Option<String>)> = Vec::new();
             for row in rows {
                 if member_inline_handle_label(&row).is_some() {
@@ -1908,13 +2125,8 @@ pub fn KanbanPanel(
                 }
                 let identity = state_store
                     .read()
-                    .resolved_member_identity(&handle_space_id, &row.actor_id);
-                let decryption_pending = state_store
-                    .read()
-                    .is_member_decryption_pending(&handle_space_id, &row.actor_id);
-                let Some(subject_id) =
-                    member_handle_lookup_subject(&row, identity.as_ref(), decryption_pending)
-                else {
+                    .resolved_member_identity(&realm_context, &row.actor_id);
+                let Some(subject_id) = member_handle_lookup_subject(&row, identity.as_ref()) else {
                     continue;
                 };
                 let digest = row.member_display_state_digest.clone();
@@ -2008,6 +2220,23 @@ pub fn KanbanPanel(
     // handlers (the raw `selected_space` String can't be moved into more
     // than one closure).
     let board_route_space_id = card_detail_route_space_id(&selected_space);
+    let selected_scope_security_encrypted = {
+        let state = state_store.read().load();
+        let scope_id = if projection_realm_id.trim().is_empty() {
+            selected_space.as_str()
+        } else {
+            projection_realm_id.as_str()
+        };
+        crate::security_state::security_projection_for_scope_id(&state.space_projections, scope_id)
+            .or_else(|| {
+                crate::security_state::security_projection_for_scope_id(
+                    &state.space_projections,
+                    &selected_space,
+                )
+            })
+            .map(crate::security_state::realm_projection_is_encrypted)
+            .unwrap_or(false)
+    };
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             div { class: "event board-header board-toolbar",
@@ -2024,6 +2253,7 @@ pub fn KanbanPanel(
                             class: if board_popover() == BoardToolbarPopover::SelectBoard { "board-select-menu-host is-open" } else { "board-select-menu-host" },
                             {
                                 let board_route_space_id_for_select = board_route_space_id.clone();
+                                let local_realm_id_for_select = local_realm_id.clone();
                                 rsx! {
                                     select {
                                         class: "board-select-native",
@@ -2036,6 +2266,7 @@ pub fn KanbanPanel(
                                                 board_popover,
                                                 selected_card,
                                                 board_route_space_id_for_select.clone(),
+                                                local_realm_id_for_select.clone(),
                                                 lifecycle_container_projection,
                                                 lifecycle_flow_projection,
                                                 columns,
@@ -2086,6 +2317,7 @@ pub fn KanbanPanel(
                                     "aria-label": "Boards",
                                     {
                                         let board_route_space_id_for_empty = board_route_space_id.clone();
+                                        let local_realm_id_for_empty = local_realm_id.clone();
                                         rsx! {
                                             button {
                                                 class: if selected_board_space_id().trim().is_empty() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
@@ -2098,6 +2330,7 @@ pub fn KanbanPanel(
                                                         board_popover,
                                                         selected_card,
                                                         board_route_space_id_for_empty.clone(),
+                                                        local_realm_id_for_empty.clone(),
                                                         lifecycle_container_projection,
                                                         lifecycle_flow_projection,
                                                         columns,
@@ -2119,6 +2352,7 @@ pub fn KanbanPanel(
                                             let option_title = board_option.title.clone();
                                             let option_is_active = selected_board_space_id() == option_id;
                                             let board_route_space_id_for_option = board_route_space_id.clone();
+                                            let local_realm_id_for_option = local_realm_id.clone();
                                             rsx! {
                                                 button {
                                                     class: if option_is_active { "board-select-menu-item is-active" } else { "board-select-menu-item" },
@@ -2134,6 +2368,7 @@ pub fn KanbanPanel(
                                                                 board_popover,
                                                                 selected_card,
                                                                 board_route_space_id_for_option.clone(),
+                                                                local_realm_id_for_option.clone(),
                                                                 lifecycle_container_projection,
                                                                 lifecycle_flow_projection,
                                                                 columns,
@@ -2840,12 +3075,8 @@ pub fn KanbanPanel(
                                 },
                                 div { class: "event-head",
                                     span { class: "space-title flow-title-with-security",
-                                        // TODO(security-state): wire this to Flow scope/encryption
-                                        // metadata. Circle-scoped encrypted Flows should render the
-                                        // encrypted variant; plaintext Realm/Space Flows should keep
-                                        // the warning variant.
                                         SecurityStateBadge {
-                                            encrypted: false,
+                                            encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
                                             compact: true,
                                             test_id: Some("flow-card-security-state".to_owned()),
                                         }
@@ -3148,7 +3379,7 @@ pub fn KanbanPanel(
                                     div { class: "event-head",
                                         span { class: "space-title flow-title-with-security",
                                             SecurityStateBadge {
-                                                encrypted: false,
+                                                encrypted: row.card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
                                                 compact: true,
                                                 test_id: Some("flow-card-security-state".to_owned()),
                                             }
@@ -3382,11 +3613,8 @@ pub fn KanbanPanel(
                                 div { class: "card-detail-header",
                                     div { class: "card-detail-title-block",
                                         div { class: "card-detail-title-row",
-                                            // TODO(security-state): use the selected Flow's resolved
-                                            // scope/encryption state here instead of the plaintext
-                                            // visual placeholder.
                                             SecurityStateBadge {
-                                                encrypted: false,
+                                                encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
                                                 compact: true,
                                                 test_id: Some("flow-detail-security-state".to_owned()),
                                             }
@@ -3973,8 +4201,14 @@ pub fn KanbanPanel(
                                         aside { class: "card-detail-sidebar",
                                             {
                                                 let store = state_store.read().load();
+                                                let projection = store.space_projections.get(&selected_space);
+                                                let realm_context = member_roster_realm_context(
+                                                    &selected_space,
+                                                    &projection_realm_id,
+                                                    projection,
+                                                );
                                                 let realm_member_rows = realm_member_roster(
-                                                    store.space_projections.get(&selected_space),
+                                                    projection,
                                                 );
                                                 let realm_member_count = realm_member_rows.len();
                                                 let participant_set: BTreeSet<String> = flow_participant_dids(
@@ -4089,15 +4323,10 @@ pub fn KanbanPanel(
                                                                         // bare DID.
                                                                         let store = state_store.read();
                                                                         let identity =
-                                                                            store.resolved_member_identity(&selected_space, &did);
-                                                                        let decryption_pending = store
-                                                                            .is_member_decryption_pending(&selected_space, &did);
-                                                                        let realm_context =
-                                                                            scope_id_as_realm_id(&selected_space);
+                                                                            store.resolved_member_identity(&realm_context, &did);
                                                                         let cached_handle = member_handle_lookup_subject(
                                                                             row,
                                                                             identity.as_ref(),
-                                                                            decryption_pending,
                                                                         )
                                                                         .and_then(|subject_id| {
                                                                             store
@@ -4339,7 +4568,6 @@ fn member_fallback_handle_label(row: &RealmMemberRow) -> Option<String> {
 fn member_handle_lookup_subject(
     row: &RealmMemberRow,
     identity: Option<&contrix_sdk::MemberIdentity>,
-    decryption_pending: bool,
 ) -> Option<String> {
     if let Some(subject) = row
         .subject_id
@@ -4353,15 +4581,31 @@ fn member_handle_lookup_subject(
     if let Some(identity) = identity {
         return Some(identity.subject_id.as_str().to_owned());
     }
-    // If the subject is still hidden inside an encrypted MemberIdentity,
-    // do not guess. Without that pending state, the actor DID is the only
-    // available DID; the lookup is still Realm-scoped and display-only, so
-    // a pairwise actor simply resolves to a negative cache entry.
-    if decryption_pending {
-        return None;
-    }
+    // The roster may omit `subject_id` while the current server still uses
+    // the visible actor DID as the principal DID. This lookup is
+    // Realm-scoped, display-only, and Directory-enforced; if the actor is a
+    // pairwise/private DID the response should simply be empty and cached
+    // briefly as a negative display lookup.
     let actor = row.actor_id.trim();
     actor.starts_with("did:").then(|| actor.to_owned())
+}
+
+fn member_roster_realm_context(
+    selected_space: &str,
+    projection_realm_id: &str,
+    projection: Option<&Value>,
+) -> String {
+    let raw = projection
+        .and_then(|body| {
+            json_path_string(Some(body), &["realm_id"])
+                .or_else(|| json_path_string(Some(body), &["summary", "realm_id"]))
+        })
+        .or_else(|| {
+            let trimmed = projection_realm_id.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        })
+        .unwrap_or_else(|| selected_space.to_owned());
+    scope_id_as_realm_id(&raw)
 }
 
 fn member_handle_fetch_key(realm_id: &str, subject_id: &str, digest: Option<&str>) -> String {
@@ -4979,6 +5223,7 @@ fn select_kanban_board(
     mut board_popover: Signal<BoardToolbarPopover>,
     mut selected_card: Signal<Option<KanbanCard>>,
     board_route_space_id: String,
+    local_realm_id: String,
     lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
     lifecycle_flow_projection: Signal<Vec<crate::api::FlowProjectionView>>,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -5004,12 +5249,42 @@ fn select_kanban_board(
         return;
     }
     if containers.is_empty() && flows.is_empty() {
-        board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+        let raw_operations = state_store.read().load().raw_operations;
+        if raw_operations.is_empty() {
+            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+            replace_kanban_board_url(&board_route_space_id, &board_id);
+            return;
+        }
+        let (projected_columns, options, projected_board_id) =
+            columns_from_lifecycle_projection_with_local(
+                &containers,
+                &flows,
+                &board_id,
+                &raw_operations,
+                &local_realm_id,
+            );
+        if !options.is_empty() {
+            board_space_options.set(options);
+        }
+        if projected_board_id.as_deref() == Some(board_id.as_str()) {
+            let projected_columns =
+                overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+            columns.set(projected_columns);
+            projection_source.set(BoardProjectionSource::ApiDerived);
+            board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+        }
         replace_kanban_board_url(&board_route_space_id, &board_id);
         return;
     }
+    let raw_operations = state_store.read().load().raw_operations;
     let (projected_columns, options, projected_board_id) =
-        columns_from_lifecycle_projection(&containers, &flows, &board_id);
+        columns_from_lifecycle_projection_with_local(
+            &containers,
+            &flows,
+            &board_id,
+            &raw_operations,
+            &local_realm_id,
+        );
     if !options.is_empty() {
         board_space_options.set(options);
     }
@@ -6190,6 +6465,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 history_visibility: "joined history".to_owned(),
                 activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
                 audit_hint: "Audit records cx.flow.track.member and cx.message.create without granting discussion access.".to_owned(),
+                security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,
             }],
@@ -6218,6 +6494,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 history_visibility: "shared history".to_owned(),
                 activity_hint: "Pending move is visible until the reducer accepts the board event.".to_owned(),
                 audit_hint: "Audit preview will include local pending event and final reducer receipt.".to_owned(),
+                security_encrypted: None,
                 state: CardState::Queued,
                 lifecycle: FlowLifecycleState::Active,
             }],
@@ -6249,6 +6526,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 history_visibility: "restricted history".to_owned(),
                 activity_hint: "Conflict banner links to the reducer result and competing event.".to_owned(),
                 audit_hint: "Audit trail preserves rejected cx.flow.move with cas_conflict.".to_owned(),
+                security_encrypted: None,
                 state: CardState::Conflict,
                 lifecycle: FlowLifecycleState::Active,
             }],
@@ -6466,6 +6744,44 @@ mod tests {
         assert_eq!(
             member_display_label(&row, None, Some("Alice:Example.COM")),
             "alice:example.com"
+        );
+    }
+
+    #[test]
+    fn member_handle_lookup_subject_falls_back_to_actor_did() {
+        let row = RealmMemberRow {
+            actor_id: "did:webvh:zQmPrincipal".to_owned(),
+            membership: Some("join".to_owned()),
+            identity_event_ids: vec![],
+            member_display_state_digest: None,
+            subject_id: None,
+            handle_claims: Vec::new(),
+            handle_claims_limited: false,
+        };
+
+        assert_eq!(
+            member_handle_lookup_subject(&row, None).as_deref(),
+            Some("did:webvh:zQmPrincipal")
+        );
+    }
+
+    #[test]
+    fn member_roster_realm_context_prefers_projection_realm_id() {
+        assert_eq!(
+            member_roster_realm_context(
+                "cx:space:board",
+                "cx:realm:prop",
+                Some(&json!({"realm_id": "cx:realm:projection"})),
+            ),
+            "cx:realm:projection"
+        );
+        assert_eq!(
+            member_roster_realm_context("cx:space:board", "cx:space:legacy", None),
+            "cx:realm:legacy"
+        );
+        assert_eq!(
+            member_roster_realm_context("cx:space:selected", "", None),
+            "cx:realm:selected"
         );
     }
 
@@ -7528,6 +7844,7 @@ mod tests {
             history_visibility: String::new(),
             activity_hint: String::new(),
             audit_hint: String::new(),
+            security_encrypted: None,
             state: CardState::Synced,
             lifecycle: FlowLifecycleState::Active,
         }

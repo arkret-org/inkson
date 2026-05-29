@@ -80,6 +80,7 @@ pub mod rank;
 pub mod recovery_crypto;
 pub mod routes;
 pub mod secure_key_store;
+pub mod security_state;
 pub mod session_refresh;
 pub mod snapshot;
 pub mod sync_engine;

@@ -383,6 +383,18 @@ test("kanban card detail embeds discussion without legacy boundary copy", async 
   await expect(detailPopup).not.toContainText("Primary discussion");
   await expect(detailPopup).not.toContainText("Launch discussion");
   await expect(detailPopup).not.toContainText("card visibility != discussion visibility");
+  await detailPopup.getByTestId("card-detail-edit-button").click();
+  await expect(detailPopup.getByTestId("card-detail-save-button")).toBeVisible();
+  await expect(detailPopup.getByTestId("card-detail-cancel-edit-button")).toBeVisible();
+  const saveButtonBox = await detailPopup.getByTestId("card-detail-save-button").boundingBox();
+  const cancelButtonBox = await detailPopup.getByTestId("card-detail-cancel-edit-button").boundingBox();
+  if (!saveButtonBox || !cancelButtonBox) {
+    throw new Error("card detail edit action buttons were not measurable");
+  }
+  expect(saveButtonBox.height).toBeLessThanOrEqual(44);
+  expect(cancelButtonBox.height).toBeLessThanOrEqual(44);
+  await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
+  await expect(detailPopup.getByTestId("card-description-panel")).toBeVisible();
   await detailPopup.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);

@@ -103,7 +103,7 @@ pub fn StatusBadge(status: String, kind: Option<String>) -> Element {
 #[component]
 pub fn SecurityStateBadge(encrypted: bool, compact: bool, test_id: Option<String>) -> Element {
     let state_class = if encrypted { "encrypted" } else { "plaintext" };
-    let icon = if encrypted { "lock" } else { "unlock" };
+    let icon = if encrypted { "lock" } else { "alert" };
     let label = if encrypted {
         "Encrypted"
     } else {

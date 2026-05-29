@@ -137,26 +137,36 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 /// Derive the canonical display handle from a DID produced by
 /// [`crate::identity_handle::parse_user_handle`].
 ///
-/// This is a display-only fallback for the common materialized subject
-/// shape (`did:web:<domain>:users:<localpart>`). Verified handle display
+/// This is a display-only fallback for common materialized subject shapes:
+/// `did:web:<domain>:users:<localpart>` and
+/// `did:webvh:<scid>:<domain>:users:<localpart>`. Verified handle display
 /// still comes from signed `cx.schema.handle_claim.v1` evidence or
 /// `cx.directory.list_handles_for_subject`; this helper only keeps UI
 /// rows readable while soland's roster handle-claim inline path is still
 /// being wired.
 pub fn handle_display_from_did(did: &str) -> Option<String> {
-    let without_prefix = did.trim().strip_prefix("did:web:")?;
+    let (without_prefix, method) = did
+        .trim()
+        .strip_prefix("did:web:")
+        .map(|rest| (rest, "web"))
+        .or_else(|| {
+            did.trim()
+                .strip_prefix("did:webvh:")
+                .map(|rest| (rest, "webvh"))
+        })?;
     let segments = without_prefix.split(':').collect::<Vec<_>>();
     let marker_index = segments
         .iter()
         .position(|segment| matches!(*segment, "users" | "user" | "principals" | "principal"))?;
-    if marker_index == 0 || marker_index + 2 != segments.len() {
+    let authority_start = if method == "webvh" { 1 } else { 0 };
+    if marker_index <= authority_start || marker_index + 2 != segments.len() {
         return None;
     }
     let localpart = segments[marker_index + 1].trim();
     if localpart.is_empty() {
         return None;
     }
-    let authority = segments[..marker_index].join(":");
+    let authority = segments[authority_start..marker_index].join(":");
     let authority = authority.replace("%3A", ":").replace("%3a", ":");
     let candidate = format!("{localpart}:{authority}");
     crate::identity_handle::parse_user_handle(&candidate).map(|handle| handle.display)
@@ -791,6 +801,11 @@ mod tests {
             handle_display_from_did("did:web:acme.example%3A8443:users:bob").as_deref(),
             Some("bob:acme.example:8443")
         );
+        assert_eq!(
+            handle_display_from_did("did:webvh:zQmScid:acme.example:users:carol").as_deref(),
+            Some("carol:acme.example")
+        );
         assert!(handle_display_from_did("did:web:alice.example").is_none());
+        assert!(handle_display_from_did("did:webvh:zQmScid:acme.example").is_none());
     }
 }
