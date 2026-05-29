@@ -1905,16 +1905,39 @@ impl ContrixApi {
         bytes: Vec<u8>,
         content_type: &str,
     ) -> anyhow::Result<BlobUploadResBody> {
+        self.upload_blob_bytes_scoped(bytes, content_type, None, None)
+            .await
+    }
+
+    /// Upload owned bytes with optional Space and filename metadata.
+    ///
+    /// Message / task attachments should pass the current `space_id` so
+    /// soland can enforce membership, plaintext-visibility policy and
+    /// per-Space quota on the authoritative blob record. Avatar and other
+    /// actor-private uploads intentionally leave it unset.
+    pub async fn upload_blob_bytes_scoped(
+        &self,
+        bytes: Vec<u8>,
+        content_type: &str,
+        space_id: Option<&str>,
+        filename: Option<&str>,
+    ) -> anyhow::Result<BlobUploadResBody> {
         let content_type = if content_type.trim().is_empty() {
             "application/octet-stream"
         } else {
             content_type
         };
-        let request = self
+        let mut request = self
             .http
             .post(self.endpoint("api/v1/blob/upload")?)
             .header("content-type", content_type)
             .body(bytes);
+        if let Some(space_id) = space_id.filter(|value| !value.trim().is_empty()) {
+            request = request.header("x-contrix-space-id", space_id.trim());
+        }
+        if let Some(filename) = filename.and_then(safe_blob_filename_header) {
+            request = request.header("x-contrix-filename", filename);
+        }
         self.send_json(self.prepare_request(request), Method::POST)
             .await
     }
@@ -1939,6 +1962,7 @@ impl ContrixApi {
     }
 
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
+        let blob_ref = query_component(canonical_blob_ref(blob_ref));
         let request = self.http.get(self.endpoint(&format!(
             "api/v1/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
         ))?);
@@ -3550,7 +3574,12 @@ impl BlobPresignError {
 /// [`ContrixApi::blob_download_url`].
 pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     let base = base_url.trim_end_matches('/');
+    let blob_ref = query_component(canonical_blob_ref(blob_ref));
     format!("{base}/api/v1/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
+}
+
+fn canonical_blob_ref(blob_ref: &str) -> &str {
+    blob_ref.split('#').next().unwrap_or(blob_ref).trim()
 }
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
@@ -4648,6 +4677,30 @@ fn query_component(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+fn safe_blob_filename_header(filename: &str) -> Option<String> {
+    let basename = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('"');
+    let mut sanitized = String::new();
+    for ch in basename.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            sanitized.push(ch);
+        } else if ch.is_ascii_whitespace() || ch.is_ascii_punctuation() {
+            sanitized.push('_');
+        }
+        if sanitized.len() >= 128 {
+            break;
+        }
+    }
+    let sanitized = sanitized
+        .trim_matches(|ch| matches!(ch, '.' | '_' | '-' | ' '))
+        .to_owned();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
 /// H3 — central guard for the `cx:cursor:*` prefix invariant. Every yougen
 /// entry point that takes a cursor / `next_cursor` / `after` query argument
 /// passes it through this helper before going on the wire. The nil-initial
@@ -4790,6 +4843,29 @@ mod tests {
             api.endpoint("/api/v1/server/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/api/v1/server/describe"
         );
+    }
+
+    #[test]
+    fn blob_download_url_strips_media_hint_before_query() {
+        let url =
+            blob_download_url_for("http://127.0.0.1:8787/", "cx:blob:sha256:abcdef#image/png");
+        assert_eq!(
+            url,
+            "http://127.0.0.1:8787/api/v1/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
+        );
+    }
+
+    #[test]
+    fn blob_upload_filename_header_is_ascii_safe() {
+        assert_eq!(
+            safe_blob_filename_header("..\\danger<script>.txt").as_deref(),
+            Some("danger_script_.txt")
+        );
+        assert_eq!(
+            safe_blob_filename_header("数据库.dump"),
+            Some("dump".to_owned())
+        );
+        assert_eq!(safe_blob_filename_header("🧪").as_deref(), None);
     }
 
     #[test]

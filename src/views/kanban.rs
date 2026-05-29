@@ -324,6 +324,7 @@ fn CardMarkdownEditor(
     value: String,
     base_url: String,
     token: String,
+    space_id: String,
     on_change: EventHandler<String>,
     /// Optional id suffix so multiple editor instances on the same card
     /// detail (e.g. Summary + Description) don't share a DOM id and
@@ -341,10 +342,16 @@ fn CardMarkdownEditor(
         let value = value.clone();
         let base_url = base_url.clone();
         let token = token.clone();
+        let space_id = space_id.clone();
         move || {
-            if let Some(script) =
-                toast_editor_bootstrap_script(&host_id, &fallback_id, &value, &base_url, &token)
-            {
+            if let Some(script) = toast_editor_bootstrap_script(
+                &host_id,
+                &fallback_id,
+                &value,
+                &base_url,
+                &token,
+                &space_id,
+            ) {
                 let _ = document::eval(&script);
             }
         }
@@ -375,6 +382,7 @@ fn toast_editor_bootstrap_script(
     value: &str,
     base_url: &str,
     token: &str,
+    space_id: &str,
 ) -> Option<String> {
     let config = serde_json::to_string(&json!({
         "hostId": host_id,
@@ -382,6 +390,7 @@ fn toast_editor_bootstrap_script(
         "value": value,
         "baseUrl": base_url,
         "token": token,
+        "spaceId": space_id,
         "scriptUrl": TOAST_EDITOR_SCRIPT_URL,
         "cssUrl": TOAST_EDITOR_CSS_URL,
     }))
@@ -473,6 +482,18 @@ fn toast_editor_bootstrap_script(
             }};
             if (config.token) {{
                 headers.authorization = `Bearer ${{config.token}}`;
+            }}
+            if (config.spaceId) {{
+                headers["x-contrix-space-id"] = config.spaceId;
+            }}
+            const safeName = (blob.name || "")
+                .split(/[\\/]/)
+                .pop()
+                .replace(/[^A-Za-z0-9._-]+/g, "_")
+                .replace(/^[._-]+|[._-]+$/g, "")
+                .slice(0, 128);
+            if (safeName) {{
+                headers["x-contrix-filename"] = safeName;
             }}
             const response = await fetch(`${{base}}/api/v1/blob/upload`, {{
                 method: "POST",
@@ -4247,6 +4268,7 @@ pub fn KanbanPanel(
                                                     value: card_edit_description(),
                                                     base_url: base_url.clone(),
                                                     token: token(),
+                                                    space_id: selected_space.clone(),
                                                     on_change: move |value| card_edit_description.set(value),
                                                     slot: "summary".to_owned(),
                                                 }
@@ -4259,6 +4281,7 @@ pub fn KanbanPanel(
                                                     value: card_edit_body(),
                                                     base_url: base_url.clone(),
                                                     token: token(),
+                                                    space_id: selected_space.clone(),
                                                     on_change: move |value| card_edit_body.set(value),
                                                     slot: "description".to_owned(),
                                                 }
@@ -4271,6 +4294,7 @@ pub fn KanbanPanel(
                                                     value: card_edit_synthesis(),
                                                     base_url: base_url.clone(),
                                                     token: token(),
+                                                    space_id: selected_space.clone(),
                                                     on_change: move |value| card_edit_synthesis.set(value),
                                                     slot: "synthesis".to_owned(),
                                                 }

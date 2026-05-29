@@ -342,7 +342,7 @@ test("settings avatar upload crops local image before publishing profile URL", a
   expect(upload.postDataBuffer()?.length ?? 0).toBeGreaterThan(100);
 
   const profileBody = await profileRequest.then((request) => request.postDataJSON());
-  expect(profileBody.avatar_url).toContain("blob_ref=cx:blob:sha256:e2e");
+  expect(profileBody.avatar_url).toContain("blob_ref=cx%3Ablob%3Asha256%3Ae2e");
   expect(profileBody.avatar_url).toContain("purpose=profile_avatar");
   await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
 });

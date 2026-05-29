@@ -1444,6 +1444,7 @@ pub fn TimelinePanel(
                 ondragleave: move |_| compose_dragover.set(false),
                 ondrop: {
                     let base = base_url_sig;
+                    let space = selected_space_c.clone();
                     move |evt| {
                         evt.prevent_default();
                         compose_dragover.set(false);
@@ -1456,6 +1457,7 @@ pub fn TimelinePanel(
                         }
                         let api_token = token();
                         let base = base();
+                        let space = space.clone();
                         compose_upload_status.set(
                             crate::i18n::tr("compose.upload_progress"),
                         );
@@ -1473,6 +1475,7 @@ pub fn TimelinePanel(
                             let mut ok_count = 0usize;
                             let mut last_error: Option<String> = None;
                             for file in files {
+                                let filename = file.name();
                                 let content_type = file
                                     .content_type()
                                     .unwrap_or_else(|| "application/octet-stream".to_owned());
@@ -1483,7 +1486,15 @@ pub fn TimelinePanel(
                                         continue;
                                     }
                                 };
-                                match api.upload_blob_bytes(bytes, &content_type).await {
+                                match api
+                                    .upload_blob_bytes_scoped(
+                                        bytes,
+                                        &content_type,
+                                        Some(&space),
+                                        Some(&filename),
+                                    )
+                                    .await
+                                {
                                     Ok(resp) => {
                                         let current = draft();
                                         let needs_space = !current.is_empty()

@@ -4922,6 +4922,7 @@ pub fn ChatPanel(
                     ondragleave: move |_| compose_dragover.set(false),
                     ondrop: {
                         let base = base_url.clone();
+                        let space = selected_space.clone();
                         move |evt| {
                             evt.prevent_default();
                             compose_dragover.set(false);
@@ -4938,6 +4939,7 @@ pub fn ChatPanel(
                             }
                             let api_token = token();
                             let base = base.clone();
+                            let space = space.clone();
                             compose_upload_status.set(
                                 crate::i18n::tr("compose.upload_progress"),
                             );
@@ -4959,6 +4961,7 @@ pub fn ChatPanel(
                                 let mut ok_count = 0usize;
                                 let mut last_error: Option<String> = None;
                                 for file in files {
+                                    let filename = file.name();
                                     let content_type = file
                                         .content_type()
                                         .unwrap_or_else(|| "application/octet-stream".to_owned());
@@ -4969,7 +4972,15 @@ pub fn ChatPanel(
                                             continue;
                                         }
                                     };
-                                    match api.upload_blob_bytes(bytes, &content_type).await {
+                                    match api
+                                        .upload_blob_bytes_scoped(
+                                            bytes,
+                                            &content_type,
+                                            Some(&space),
+                                            Some(&filename),
+                                        )
+                                        .await
+                                    {
                                         Ok(resp) => {
                                             let current = chat_draft();
                                             let needs_space = !current.is_empty()
