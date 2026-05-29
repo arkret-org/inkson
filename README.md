@@ -88,6 +88,12 @@ Per-project task lists are consolidated upstream — see
 
 ## Targets
 
+- Web: `just web`
+- Desktop Windows/Linux: `just desktop`
+- iOS/mobile: `just mobile`
+
+The `just` recipes wrap the underlying Dioxus commands:
+
 - Web: `dx serve --platform web`
 - Desktop Windows/Linux: `dx serve --platform desktop`
 - iOS/mobile: `dx serve --platform mobile`
