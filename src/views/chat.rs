@@ -1768,6 +1768,83 @@ fn profile_presence_status(profile: &Value) -> String {
         .to_owned()
 }
 
+const CHAT_SYNC_POLL_INTERVAL_MS: u64 = 400;
+const CHAT_PROFILE_PRESENCE_FALLBACK_EVERY_TICKS: usize = 4;
+const CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS: usize = 3;
+
+fn sync_presence_actor(event: &Value) -> Option<String> {
+    value_string_at(event, &["user_id", "actor_id", "actor"])
+        .map(str::trim)
+        .filter(|actor| !actor.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn sync_presence_status(event: &Value) -> Option<String> {
+    event
+        .get("presence")
+        .and_then(|presence| {
+            presence
+                .as_str()
+                .or_else(|| presence.get("status").and_then(Value::as_str))
+        })
+        .or_else(|| event.get("status").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn presence_maps_from_sync_events(
+    events: &[Value],
+    participants: &[String],
+    account_did: &str,
+    account_label: &str,
+) -> Option<(
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeMap<String, String>,
+)> {
+    if events.is_empty() {
+        return None;
+    }
+    let participant_set = participants
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut states = std::collections::BTreeMap::<String, String>::new();
+    let mut labels = std::collections::BTreeMap::<String, String>::new();
+    for did in participants {
+        states.insert(
+            did.clone(),
+            if did == account_did {
+                "online".to_owned()
+            } else {
+                "offline".to_owned()
+            },
+        );
+        if did == account_did
+            && let Some(label) = clean_participant_display_name(account_label, Some(did))
+        {
+            labels.insert(did.clone(), label);
+        }
+    }
+    let mut matched_remote = false;
+    for event in events {
+        let Some(actor) = sync_presence_actor(event) else {
+            continue;
+        };
+        if !participant_set.contains(&actor) {
+            continue;
+        }
+        if actor != account_did {
+            matched_remote = true;
+        }
+        states.insert(
+            actor,
+            sync_presence_status(event).unwrap_or_else(|| "offline".to_owned()),
+        );
+    }
+    matched_remote.then_some((states, labels))
+}
+
 fn profile_display_label(profile: &Value, did: &str) -> String {
     profile
         .get("display_name")
@@ -2578,49 +2655,68 @@ pub fn ChatPanel(
         let poll_key_for_task = poll_key.clone();
         let poll_key_signal = presence_poll_key;
         spawn(async move {
-            for _ in 0..240 {
+            for tick in 0..240 {
                 if poll_key_signal.read().as_str() != poll_key_for_task.as_str() {
                     break;
                 }
                 if let Ok(api) = authed_api_with_sync(&base, api_token.clone(), None) {
+                    let mut got_sync_presence = false;
                     if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                         let active_typers =
                             typing_actors_from_sync_spaces(&sync.spaces, &space, &actor);
                         if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
                             typing_actors_for_poll.set(active_typers);
                         }
+                        if let Some((next_presence, next_labels)) = presence_maps_from_sync_events(
+                            &sync.presence,
+                            &participants_for_poll,
+                            &actor,
+                            &self_label_for_poll,
+                        ) {
+                            got_sync_presence = true;
+                            if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
+                                presence_states_for_poll.set(next_presence);
+                                presence_labels_for_poll.set(next_labels);
+                            }
+                        }
                     }
 
-                    let mut next_presence = std::collections::BTreeMap::<String, String>::new();
-                    let mut next_labels = std::collections::BTreeMap::<String, String>::new();
-                    for did in &participants_for_poll {
-                        if did == &actor {
-                            next_presence.insert(did.clone(), "online".to_owned());
-                            if let Some(label) =
-                                clean_participant_display_name(&self_label_for_poll, Some(did))
-                            {
-                                next_labels.insert(did.clone(), label);
+                    if !got_sync_presence
+                        && (tick < CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS
+                            || tick % CHAT_PROFILE_PRESENCE_FALLBACK_EVERY_TICKS == 0)
+                    {
+                        let mut next_presence = std::collections::BTreeMap::<String, String>::new();
+                        let mut next_labels = std::collections::BTreeMap::<String, String>::new();
+                        for did in &participants_for_poll {
+                            if did == &actor {
+                                next_presence.insert(did.clone(), "online".to_owned());
+                                if let Some(label) =
+                                    clean_participant_display_name(&self_label_for_poll, Some(did))
+                                {
+                                    next_labels.insert(did.clone(), label);
+                                }
+                                continue;
                             }
-                            continue;
+                            match api.profile_presence(did).await {
+                                Ok(profile) => {
+                                    next_presence
+                                        .insert(did.clone(), profile_presence_status(&profile));
+                                    next_labels
+                                        .insert(did.clone(), profile_display_label(&profile, did));
+                                }
+                                Err(_) => {
+                                    next_presence.insert(did.clone(), "offline".to_owned());
+                                }
+                            }
                         }
-                        match api.profile_presence(did).await {
-                            Ok(profile) => {
-                                next_presence
-                                    .insert(did.clone(), profile_presence_status(&profile));
-                                next_labels
-                                    .insert(did.clone(), profile_display_label(&profile, did));
-                            }
-                            Err(_) => {
-                                next_presence.insert(did.clone(), "offline".to_owned());
-                            }
+                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
+                            presence_states_for_poll.set(next_presence);
+                            presence_labels_for_poll.set(next_labels);
                         }
-                    }
-                    if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
-                        presence_states_for_poll.set(next_presence);
-                        presence_labels_for_poll.set(next_labels);
                     }
                 }
-                crate::api::sleep_for(std::time::Duration::from_millis(400)).await;
+                crate::api::sleep_for(std::time::Duration::from_millis(CHAT_SYNC_POLL_INTERVAL_MS))
+                    .await;
             }
         });
     }
@@ -6602,6 +6698,52 @@ mod tests {
         assert_eq!(channel.name, "Discussion");
         assert_eq!(channel.category, "default flow");
         assert!(channel.is_default);
+    }
+
+    #[test]
+    fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
+        let participants = vec![
+            "did:web:alice.example".to_owned(),
+            "did:web:bob.example".to_owned(),
+            "did:web:carol.example".to_owned(),
+        ];
+        let events = vec![
+            json!({
+                "user_id": "did:web:bob.example",
+                "presence": "online",
+                "updated_at": "2026-05-29T04:12:43Z"
+            }),
+            json!({
+                "actor_id": "did:web:mallory.example",
+                "presence": "online"
+            }),
+        ];
+
+        let (states, labels) = presence_maps_from_sync_events(
+            &events,
+            &participants,
+            "did:web:alice.example",
+            "Alice",
+        )
+        .expect("presence events should match participants");
+
+        assert_eq!(
+            states.get("did:web:alice.example"),
+            Some(&"online".to_owned())
+        );
+        assert_eq!(
+            states.get("did:web:bob.example"),
+            Some(&"online".to_owned())
+        );
+        assert_eq!(
+            states.get("did:web:carol.example"),
+            Some(&"offline".to_owned())
+        );
+        assert_eq!(
+            labels.get("did:web:alice.example"),
+            Some(&"Alice".to_owned())
+        );
+        assert!(!states.contains_key("did:web:mallory.example"));
     }
 
     #[test]

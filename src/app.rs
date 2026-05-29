@@ -7,13 +7,13 @@ use serde_json::Value;
 use crate::{
     api::{ContrixApi, is_auth_expired_error},
     components::{SecurityStateBadge, UiIcon},
-    config::{LocalConfigStore, normalize_device_id, normalize_server_url},
+    config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url},
     conformance::{
         PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
         PROFILE_PUSH_GATEWAY, profile_ready,
     },
     i18n::{Locale, TextDirection},
-    local_state::LocalStateStore,
+    local_state::{ClientLocalState, LocalStateStore, OidcTokenBundle},
     models::{
         ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
         projection_realm_id_for_known_space,
@@ -29,6 +29,7 @@ use crate::{
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const SPACE_SCOPE_PREFERENCE_KEY: &str = "layout.space.scope";
+const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
 const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
 const MIN_SIDEBAR_WIDTH: f64 = 220.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
@@ -963,8 +964,10 @@ body {
   color: var(--cx-muted);
 }
 .board-column-actions {
-  display: inline-flex;
+  display: flex;
   justify-content: flex-end;
+  min-height: 14px;
+  padding-top: 2px;
 }
 .board-column-actions [data-testid="list-archive-button"],
 .board-card-footer [data-testid="card-archive-button"] {
@@ -981,12 +984,38 @@ body {
   visibility: visible;
   pointer-events: auto;
 }
-.board-column-actions button,
-.board-card-footer button,
 .board-add-card-row button {
   width: auto;
   min-height: 34px;
   padding: 6px 10px;
+}
+.kanban-inline-action {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2, var(--cx-muted));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0.76;
+  cursor: pointer;
+}
+.kanban-inline-action:hover,
+.kanban-inline-action:focus-visible {
+  color: var(--accent-ink, var(--accent));
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: transparent;
+}
+.kanban-inline-action:disabled {
+  color: var(--text-3, var(--cx-muted));
+  cursor: not-allowed;
+  opacity: 0.38;
+  text-decoration: none;
 }
 .event.board-card {
   cursor: grab;
@@ -1007,9 +1036,9 @@ body {
 .board-card-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-height: 14px;
+  margin-top: 2px;
 }
 .board-card-composer {
   display: grid;
@@ -1372,26 +1401,6 @@ body {
   color: var(--text, var(--cx-ink));
   line-height: 1.5;
   overflow-wrap: anywhere;
-}
-.card-detail-description.is-collapsed {
-  max-height: 96px;
-  overflow: hidden;
-}
-.card-detail-description-toggle {
-  justify-self: start;
-  min-height: 28px;
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent, var(--cx-brand));
-  font-size: 13px;
-  font-weight: 800;
-  box-shadow: none;
-}
-.card-detail-description-toggle:hover,
-.card-detail-description-toggle:focus-visible {
-  text-decoration: underline;
-  background: transparent;
 }
 .card-detail-empty {
   color: var(--text-3, var(--cx-muted));
@@ -6386,17 +6395,42 @@ fn next_manual_theme(theme: &str) -> String {
     if is_night { "light" } else { "night" }.to_owned()
 }
 
+fn oidc_access_token_boot_usable(bundle: &OidcTokenBundle, now_unix: i64) -> bool {
+    if bundle.access_token.trim().is_empty() {
+        return false;
+    }
+    match bundle.expires_at_unix {
+        Some(expires_at) => now_unix + BOOT_ACCESS_TOKEN_SKEW_SECS < expires_at,
+        None => true,
+    }
+}
+
+fn initial_session_token_from_state(
+    local_state: &ClientLocalState,
+    config: &ClientConfig,
+    now_unix: i64,
+) -> String {
+    if let Some(bundle) = local_state.oidc_tokens.as_ref() {
+        // Access tokens are short-lived cache material. On a hard page
+        // reload, let the refresh-token/session-grant poller mint a fresh
+        // bearer instead of racing boot API calls with an expired one.
+        return oidc_access_token_boot_usable(bundle, now_unix)
+            .then(|| bundle.access_token.clone())
+            .unwrap_or_default();
+    }
+    config.session_token.clone()
+}
+
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
-    let initial_session_token = initial_local_state
-        .oidc_tokens
-        .as_ref()
-        .map(|bundle| bundle.access_token.clone())
-        .filter(|access_token| !access_token.trim().is_empty())
-        .unwrap_or_else(|| initial_config.session_token.clone());
+    let initial_session_token = initial_session_token_from_state(
+        &initial_local_state,
+        &initial_config,
+        chrono::Utc::now().timestamp(),
+    );
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
@@ -6596,6 +6630,9 @@ pub fn RouterView() -> Element {
                     if crate::oidc::lifecycle::due_for_refresh(&bundle)
                         && crate::oidc::lifecycle::has_refresh_token(&bundle)
                     {
+                        if token().trim().is_empty() {
+                            status.set("Restoring session...".to_owned());
+                        }
                         let result = refresh_oidc_bearer_for_server(
                             &active_base,
                             &active_actor,
@@ -6629,9 +6666,21 @@ pub fn RouterView() -> Element {
                                 // Keep the current bearer in place. A
                                 // failed background refresh must not
                                 // interrupt an otherwise usable page.
+                                if token().trim().is_empty() {
+                                    status.set("Session restore failed; sign in again".to_owned());
+                                }
                                 last_error.set(Some(format!("OIDC refresh transient: {error}")));
                             }
                         }
+                    } else if crate::oidc::lifecycle::due_for_refresh(&bundle)
+                        && !crate::oidc::lifecycle::has_refresh_token(&bundle)
+                        && token().trim().is_empty()
+                    {
+                        status.set("Session expired; sign in again".to_owned());
+                        last_error.set(Some(
+                            "OIDC access token expired and no refresh_token is available"
+                                .to_owned(),
+                        ));
                     }
                     crate::api::sleep_for(std::time::Duration::from_secs(
                         crate::session_refresh::POLL_INTERVAL_SECS,
@@ -10301,6 +10350,86 @@ mod tests {
         assert!(
             crate::push::push_token_provider().is_some(),
             "second ensure call must keep the provider installed"
+        );
+    }
+
+    fn oidc_bundle(access_token: &str, expires_at_unix: Option<i64>) -> OidcTokenBundle {
+        OidcTokenBundle {
+            access_token: access_token.to_owned(),
+            refresh_token: Some("rt-test".to_owned()),
+            token_type: "Bearer".to_owned(),
+            expires_at_unix,
+            id_token: None,
+            scope: None,
+            audience: Some("https://local.host".to_owned()),
+            stored_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn boot_session_token_uses_fresh_oidc_access_token() {
+        let now = 1_000;
+        let mut state = ClientLocalState::default();
+        state.oidc_tokens = Some(oidc_bundle("sx-fresh", Some(now + 120)));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "legacy-token",
+        );
+
+        assert_eq!(
+            initial_session_token_from_state(&state, &config, now),
+            "sx-fresh"
+        );
+    }
+
+    #[test]
+    fn boot_session_token_ignores_expired_oidc_access_token() {
+        let now = 1_000;
+        let mut state = ClientLocalState::default();
+        state.oidc_tokens = Some(oidc_bundle("sx-expired", Some(now - 1)));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "legacy-token",
+        );
+
+        assert_eq!(initial_session_token_from_state(&state, &config, now), "");
+    }
+
+    #[test]
+    fn boot_session_token_ignores_nearly_expired_oidc_access_token() {
+        let now = 1_000;
+        let mut state = ClientLocalState::default();
+        state.oidc_tokens = Some(oidc_bundle(
+            "sx-nearly-expired",
+            Some(now + BOOT_ACCESS_TOKEN_SKEW_SECS),
+        ));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "legacy-token",
+        );
+
+        assert_eq!(initial_session_token_from_state(&state, &config, now), "");
+    }
+
+    #[test]
+    fn boot_session_token_falls_back_to_legacy_config_without_oidc_bundle() {
+        let state = ClientLocalState::default();
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "legacy-token",
+        );
+
+        assert_eq!(
+            initial_session_token_from_state(&state, &config, 1_000),
+            "legacy-token"
         );
     }
 

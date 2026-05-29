@@ -11,11 +11,13 @@ use contrix_sdk::push_rule_core::{
 
 use crate::{
     components::{EmptyState, EmptyStateKind, HelpTip, UiIcon},
-    local_state::{ClientLocalState, LocalStateStore},
+    local_state::{ClientLocalState, LocalAnchorView, LocalStateStore},
+    models::ClientSyncResponse,
     notification_rules::{
         DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
         dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
     },
+    operation::scope_id_as_realm_id,
     routes::Route,
     views::helpers::{short_protocol_id, with_authed_api},
 };
@@ -29,16 +31,23 @@ enum NotificationGroup {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+enum NotificationAction {
+    AcceptInvite { realm_id: String, invite_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct Notification {
     id: String,
     title: String,
     body: String,
     space_id: String,
+    space_label: Option<String>,
     kind: String,
     read: bool,
     archived: bool,
     timestamp: String,
     action_label: Option<String>,
+    action: Option<NotificationAction>,
     /// T4.4 — User-facing hint surfaced when the watch level
     /// suppressed delivery (e.g. "You're not getting notifications
     /// for this discussion — change watch level"). `None` for
@@ -246,12 +255,18 @@ pub fn NotificationsPanel(
                     }
                     if !notification.space_id.is_empty() {
                         {
-                            let space_id_label = short_protocol_id(&notification.space_id);
+                            let scope_kind = notification_scope_kind(notification);
+                            let space_id_label = notification
+                                .space_label
+                                .as_deref()
+                                .filter(|label| !label.trim().is_empty())
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| short_protocol_id(&notification.space_id));
                             rsx! {
                                 div {
                                     class: "muted",
                                     title: "{notification.space_id}",
-                                    "Space: {space_id_label}"
+                                    "{scope_kind}: {space_id_label}"
                                 }
                             }
                         }
@@ -334,8 +349,26 @@ pub fn NotificationsPanel(
                                 class: "primary",
                                 "data-testid": "notification-action",
                                 onclick: {
+                                    let action_to_run = notification.action.clone();
+                                    let base_url = base_url.clone();
+                                    let notification_id = notification.id.clone();
                                     let title = notification.title.clone();
-                                    move |_| status_msg.set(format!("Action queued for {title}."))
+                                    move |_| {
+                                        if let Some(action_to_run) = action_to_run.clone() {
+                                            run_notification_action(
+                                                base_url.clone(),
+                                                token(),
+                                                state_store,
+                                                notifications,
+                                                status_msg,
+                                                server_unread,
+                                                notification_id.clone(),
+                                                action_to_run,
+                                            );
+                                        } else {
+                                            status_msg.set(format!("Action queued for {title}."));
+                                        }
+                                    }
                                 },
                                 "{action}"
                             }
@@ -440,11 +473,18 @@ fn refresh_notifications(
                 let mut raw_notifications = server_items.unwrap_or_else(|| {
                     response
                         .account_data
-                        .into_iter()
-                        .filter(is_notification_account_data)
+                        .iter()
+                        .filter(|value| is_notification_account_data(value))
+                        .cloned()
                         .collect::<Vec<_>>()
                 });
-                append_invite_notifications(&mut raw_notifications, invite_notifications);
+                let joined_realms = joined_realm_ids(&response);
+                drop_joined_invite_notifications(&mut raw_notifications, &joined_realms);
+                append_invite_notifications(
+                    &mut raw_notifications,
+                    invite_notifications,
+                    &joined_realms,
+                );
                 let unread_count = notification_response
                     .get("unread_count")
                     .and_then(Value::as_u64)
@@ -516,6 +556,147 @@ fn mark_all_notifications_read(
     });
 }
 
+fn run_notification_action(
+    base_url: String,
+    access_token: String,
+    state_store: Signal<LocalStateStore>,
+    notifications: Signal<Vec<Notification>>,
+    status_msg: Signal<String>,
+    server_unread: Signal<usize>,
+    notification_id: String,
+    action: NotificationAction,
+) {
+    match action {
+        NotificationAction::AcceptInvite {
+            realm_id,
+            invite_id,
+        } => accept_invite_notification(
+            base_url,
+            access_token,
+            state_store,
+            notifications,
+            status_msg,
+            server_unread,
+            notification_id,
+            realm_id,
+            invite_id,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accept_invite_notification(
+    base_url: String,
+    access_token: String,
+    mut state_store: Signal<LocalStateStore>,
+    mut notifications: Signal<Vec<Notification>>,
+    mut status_msg: Signal<String>,
+    mut server_unread: Signal<usize>,
+    notification_id: String,
+    realm_id: String,
+    invite_id: String,
+) {
+    let accepted_realm = scope_id_as_realm_id(&realm_id);
+    status_msg.set(format!(
+        "Accepting Realm invite for {}...",
+        short_protocol_id(&accepted_realm)
+    ));
+    spawn(async move {
+        let accepted_realm_for_api = accepted_realm.clone();
+        match with_authed_api(&base_url, access_token, |api| async move {
+            let account = api.account_me().await?;
+            let submit = api
+                .join_realm_from_invite(&accepted_realm_for_api, &account.did, &invite_id)
+                .await?;
+            let sync = match api
+                .account_subscribe_snapshot(Some(&submit.sync_token))
+                .await
+            {
+                Ok(sync) => sync,
+                Err(_) => api.account_subscribe_snapshot(None).await?,
+            };
+            let notification_response = api
+                .list_notifications()
+                .await
+                .unwrap_or_else(|_| json!({ "items": [] }));
+            let invite_notifications = api
+                .invites()
+                .await
+                .map(|response| response.invites)
+                .unwrap_or_default();
+            Ok::<_, anyhow::Error>((sync, notification_response, invite_notifications))
+        })
+        .await
+        {
+            Ok((sync, notification_response, invite_notifications)) => {
+                let push_rules = push_rules_from_account_data(&sync.account_data);
+                let dnd = dnd_settings_from_account_data(&sync.account_data);
+                let mut hidden_realms = joined_realm_ids(&sync);
+                hidden_realms.insert(accepted_realm.clone());
+
+                let server_items = notification_response
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .cloned();
+                let mut raw_notifications = server_items.unwrap_or_else(|| {
+                    sync.account_data
+                        .iter()
+                        .filter(|value| is_notification_account_data(value))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
+                append_invite_notifications(
+                    &mut raw_notifications,
+                    invite_notifications,
+                    &hidden_realms,
+                );
+                if raw_notifications.iter().all(|notification| {
+                    notification_id_for_dedupe(notification).as_deref() != Some(&notification_id)
+                }) {
+                    state_store
+                        .write()
+                        .set_notification_archived(notification_id.clone(), true);
+                }
+                let unread_count = notification_response
+                    .get("unread_count")
+                    .and_then(Value::as_u64)
+                    .and_then(|count| usize::try_from(count).ok())
+                    .unwrap_or_else(|| {
+                        raw_notifications
+                            .iter()
+                            .filter(|value| {
+                                !value.get("read").and_then(Value::as_bool).unwrap_or(false)
+                            })
+                            .count()
+                    });
+                server_unread.set(unread_count);
+
+                let hydrated = {
+                    let mut store = state_store.write();
+                    apply_sync_projection_to_store(&mut store, &sync);
+                    store.save_notification_projection(raw_notifications.clone());
+                    let local_state = store.load();
+                    hydrate_notifications(
+                        raw_notifications,
+                        &local_state,
+                        push_rules.as_ref(),
+                        dnd.as_ref(),
+                    )
+                };
+                notifications.set(hydrated);
+                status_msg.set(format!(
+                    "Joined Realm {}.",
+                    short_protocol_id(&accepted_realm)
+                ));
+            }
+            Err(err) => {
+                status_msg.set(format!("Accept invite failed: {}", err.display()));
+            }
+        }
+    });
+}
+
 pub(crate) fn is_notification_account_data(value: &Value) -> bool {
     matches!(
         value
@@ -529,45 +710,55 @@ pub(crate) fn is_notification_account_data(value: &Value) -> bool {
     )
 }
 
-fn append_invite_notifications(raw_notifications: &mut Vec<Value>, invites: Vec<Value>) {
-    let mut existing_ids = raw_notifications
+fn append_invite_notifications(
+    raw_notifications: &mut Vec<Value>,
+    invites: Vec<Value>,
+    hidden_realms: &BTreeSet<String>,
+) {
+    let mut existing_targets = raw_notifications
         .iter()
-        .filter_map(notification_id_for_dedupe)
+        .filter_map(invite_notification_target_for_dedupe)
         .collect::<BTreeSet<_>>();
     for invite in invites {
+        let Some(target_realm) = invite_realm_id_from_value(&invite) else {
+            continue;
+        };
+        if hidden_realms.contains(&target_realm) || existing_targets.contains(&target_realm) {
+            continue;
+        }
         let Some(notification) = invite_notification_from_value(&invite) else {
             continue;
         };
-        let Some(id) = notification_id_for_dedupe(&notification) else {
-            continue;
-        };
-        if !existing_ids.contains(&id) {
-            existing_ids.insert(id);
-            raw_notifications.push(notification);
-        }
+        existing_targets.insert(target_realm);
+        raw_notifications.push(notification);
     }
 }
 
 fn invite_notification_from_value(invite: &Value) -> Option<Value> {
     let invite_id = value_string(invite, &["invite_id"])?;
-    let space_id = value_string(invite, &["space_id"]).unwrap_or_default();
-    let inviter = value_string(invite, &["inviter"]).unwrap_or_default();
+    let raw_space_id = value_string(invite, &["realm_id", "space_id"]).unwrap_or_default();
+    let realm_id = scope_id_as_realm_id(&raw_space_id);
+    let realm_title = value_string(invite, &["realm_title", "space_title", "title"])
+        .or_else(|| nested_value_string(invite, &["summary"], "title"));
     let created_at = value_string(invite, &["created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-    let body = if inviter.is_empty() {
-        format!("You were invited to {space_id}")
+    let body = if let Some(title) = realm_title.as_deref() {
+        format!("You were invited to join {title}.")
     } else {
-        format!("{} invited you to {space_id}", short_protocol_id(&inviter))
+        "You were invited to join a Realm.".to_owned()
     };
 
     Some(json!({
-        "notification_id": format!("invite:{invite_id}"),
+        "notification_id": format!("invite:{realm_id}"),
+        "invite_id": invite_id,
         "notification_kind": "invite",
         "notification_type": "invite",
         "kind": "invite",
-        "title": "Space invite",
+        "title": "Realm invite",
         "body": body,
-        "space_id": space_id,
+        "space_id": realm_id,
+        "realm_id": realm_id,
+        "space_label": realm_title,
         "timestamp": created_at,
         "read": false,
     }))
@@ -577,15 +768,79 @@ fn notification_id_for_dedupe(value: &Value) -> Option<String> {
     value_string(value, &["notification_id", "id"])
 }
 
+fn invite_notification_target_for_dedupe(value: &Value) -> Option<String> {
+    if !notification_is_invite(value) {
+        return None;
+    }
+    invite_realm_id_from_value(value)
+}
+
+fn invite_realm_id_from_value(value: &Value) -> Option<String> {
+    value_string(value, &["realm_id", "target_realm_id", "space_id"])
+        .map(|space_id| scope_id_as_realm_id(&space_id))
+}
+
+fn notification_is_invite(value: &Value) -> bool {
+    ["notification_kind", "notification_type", "type", "kind"]
+        .iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .any(|kind| matches!(kind, "invite" | "cx.invite" | "cx.invite.create"))
+}
+
+fn drop_joined_invite_notifications(
+    raw_notifications: &mut Vec<Value>,
+    joined_realms: &BTreeSet<String>,
+) {
+    raw_notifications.retain(|notification| {
+        let Some(realm_id) = invite_notification_target_for_dedupe(notification) else {
+            return true;
+        };
+        !joined_realms.contains(&realm_id)
+    });
+}
+
+fn joined_realm_ids(response: &ClientSyncResponse) -> BTreeSet<String> {
+    response
+        .spaces
+        .keys()
+        .map(|space_id| scope_id_as_realm_id(space_id))
+        .collect()
+}
+
+fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncResponse) {
+    store.save_sync_cursor(response.cursor.clone());
+    for left_id in &response.left_spaces {
+        store.forget_space(left_id);
+    }
+    for (id, body) in &response.spaces {
+        store.save_space_projection(id.clone(), body.clone());
+        let view = LocalAnchorView::from_sync_body(body);
+        store.set_anchor_view(id.clone(), view);
+        store.ingest_move_event_states(id, body);
+    }
+}
+
 fn hydrate_notifications(
     raw_notifications: Vec<Value>,
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
 ) -> Vec<Notification> {
+    let joined_realms = local_state
+        .space_projections
+        .keys()
+        .map(|space_id| scope_id_as_realm_id(space_id))
+        .collect::<BTreeSet<_>>();
+    let mut seen_invite_targets = BTreeSet::new();
     raw_notifications
         .into_iter()
         .enumerate()
+        .filter(|(_, value)| {
+            let Some(target) = invite_notification_target_for_dedupe(value) else {
+                return true;
+            };
+            !joined_realms.contains(&target) && seen_invite_targets.insert(target)
+        })
         .filter_map(|(index, value)| {
             notification_from_value(index, value, local_state, push_rules, dnd)
         })
@@ -623,13 +878,36 @@ fn notification_from_value(
         .get(&id)
         .cloned()
         .unwrap_or_default();
-    let kind = value_string(&value, &["notification_kind", "type", "kind"])
-        .unwrap_or_else(|| "message".to_owned());
+    let kind = value_string(
+        &value,
+        &["notification_type", "notification_kind", "type", "kind"],
+    )
+    .unwrap_or_else(|| "message".to_owned());
     let title =
         value_string(&value, &["title"]).unwrap_or_else(|| default_notification_title(&kind));
     let body = value_string(&value, &["body", "preview", "summary"])
         .unwrap_or_else(|| "Notification".to_owned());
-    let space_id = value_string(&value, &["space_id"]).unwrap_or_default();
+    let space_id = value_string(&value, &["realm_id", "space_id"]).unwrap_or_default();
+    let space_id = if kind == "invite" {
+        scope_id_as_realm_id(&space_id)
+    } else {
+        space_id
+    };
+    let invite_id = value_string(&value, &["invite_id"]);
+    let action = if kind == "invite" {
+        invite_id.clone().and_then(|invite_id| {
+            if space_id.is_empty() {
+                None
+            } else {
+                Some(NotificationAction::AcceptInvite {
+                    realm_id: space_id.clone(),
+                    invite_id,
+                })
+            }
+        })
+    } else {
+        None
+    };
     let timestamp = value_string(&value, &["timestamp", "created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
@@ -638,11 +916,15 @@ fn notification_from_value(
         title,
         body,
         space_id,
+        space_label: value_string(&value, &["space_label", "realm_title", "space_title"]),
         kind: kind.clone(),
         read: value_bool(&value, "read").unwrap_or(client_state.read),
         archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
         timestamp,
-        action_label: Some(default_notification_action(&kind).to_owned()),
+        action_label: action
+            .as_ref()
+            .map(|_| default_notification_action(&kind).to_owned()),
+        action,
         watch_hint,
     })
 }
@@ -688,7 +970,7 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
 
 fn default_notification_title(kind: &str) -> String {
     match kind {
-        "invite" => "Space invite".to_owned(),
+        "invite" => "Realm invite".to_owned(),
         "reaction" => "New reaction".to_owned(),
         "mention" => "You were mentioned".to_owned(),
         _ => "New message".to_owned(),
@@ -697,8 +979,16 @@ fn default_notification_title(kind: &str) -> String {
 
 fn default_notification_action(kind: &str) -> &'static str {
     match kind {
-        "invite" => "Review",
+        "invite" => "Accept",
         _ => "View",
+    }
+}
+
+fn notification_scope_kind(notification: &Notification) -> &'static str {
+    if notification.kind == "invite" {
+        "Realm"
+    } else {
+        "Space"
     }
 }
 
@@ -709,6 +999,17 @@ fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
             .and_then(|field| field.as_str())
             .map(ToOwned::to_owned)
     })
+}
+
+fn nested_value_string(value: &Value, parents: &[&str], key: &str) -> Option<String> {
+    let mut current = value;
+    for parent in parents {
+        current = current.get(*parent)?;
+    }
+    current
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn value_bool(value: &Value, key: &str) -> Option<bool> {
@@ -743,7 +1044,7 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
     NotificationEvalContext {
         event_kind,
         notification_type,
-        space_id: value_string(value, &["space_id"]).unwrap_or_default(),
+        space_id: value_string(value, &["realm_id", "space_id"]).unwrap_or_default(),
         flow_id: value_string(value, &["flow_id"]),
         flow_track: value_string(value, &["flow_track", "track_name"]),
         sender: value_string(value, &["sender", "sender_did", "actor_id"]),
@@ -827,20 +1128,38 @@ mod tests {
             "inviter": "did:web:alice.example",
             "created_at": "2026-05-29T00:00:00Z",
         });
+        let duplicate_invite = json!({
+            "invite_id": "cx:invite:01904100-0000-7000-8000-000000000099",
+            "space_id": "cx:realm:01904100-0000-7000-8000-000000000002",
+            "inviter": "did:web:alice.example",
+            "created_at": "2026-05-29T00:00:01Z",
+        });
         let mut raw = Vec::new();
-        append_invite_notifications(&mut raw, vec![invite.clone()]);
-        append_invite_notifications(&mut raw, vec![invite]);
-        assert_eq!(raw.len(), 1, "same invite should not duplicate");
+        append_invite_notifications(&mut raw, vec![invite.clone()], &BTreeSet::new());
+        append_invite_notifications(&mut raw, vec![duplicate_invite], &BTreeSet::new());
+        assert_eq!(raw.len(), 1, "same Realm invite should not duplicate");
 
-        let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
+        let notifications =
+            hydrate_notifications(raw.clone(), &ClientLocalState::default(), None, None);
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].kind, "invite");
-        assert_eq!(notifications[0].title, "Space invite");
+        assert_eq!(notifications[0].title, "Realm invite");
         assert_eq!(
             notifications[0].space_id,
             "cx:realm:01904100-0000-7000-8000-000000000002"
         );
-        assert!(notifications[0].body.contains("cx:realm:01904100"));
+        assert_eq!(notifications[0].body, "You were invited to join a Realm.");
+        assert_eq!(notifications[0].action_label.as_deref(), Some("Accept"));
+        assert!(matches!(
+            notifications[0].action,
+            Some(NotificationAction::AcceptInvite { .. })
+        ));
+
+        let joined_realms =
+            BTreeSet::from(["cx:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
+        append_invite_notifications(&mut raw, vec![invite], &joined_realms);
+        drop_joined_invite_notifications(&mut raw, &joined_realms);
+        assert!(raw.is_empty(), "joined Realm invites should be hidden");
     }
 
     #[test]

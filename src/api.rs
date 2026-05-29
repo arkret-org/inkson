@@ -2317,6 +2317,19 @@ impl ContrixApi {
         self.submit_event_envelope(&envelope).await
     }
 
+    /// Join a Realm through an outstanding invite. The invite projection
+    /// records are discovery state; the membership change itself is the
+    /// canonical `cx.member.state` invite -> join transition.
+    pub async fn join_realm_from_invite(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
+        self.submit_event_envelope(&envelope).await
+    }
+
     /// Reject an invite via `cx.invite.cancel` event (spec-canonical).
     pub async fn reject_space_invite(
         &self,
@@ -4155,6 +4168,27 @@ pub fn build_member_state_transition_event(
     )
 }
 
+pub fn build_member_state_invite_accept_event(
+    realm_id: &str,
+    actor_id: &str,
+    invite_id: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let invite_id = invite_id.trim();
+    if invite_id.is_empty() {
+        return Err(anyhow::anyhow!("invite_id is required for invite accept"));
+    }
+    let mut envelope = build_member_state_transition_event(
+        realm_id,
+        actor_id,
+        actor_id,
+        Some("invite"),
+        "join",
+        "invite_accept",
+    )?;
+    envelope.payload["invite_id"] = json!(invite_id);
+    Ok(envelope)
+}
+
 fn build_member_state_transition_event_with_binding(
     realm_id: &str,
     actor_id: &str,
@@ -5133,6 +5167,39 @@ mod tests {
                 .as_str()
                 .is_some_and(|value| value.starts_with("cx:event:"))
         );
+    }
+
+    #[test]
+    fn member_state_invite_accept_event_carries_invite_id() {
+        let event = build_member_state_invite_accept_event(
+            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "did:web:bob.example",
+            "cx:invite:0196419b-0000-7000-8000-000000000020",
+        )
+        .expect("invite accept event");
+
+        assert_eq!(event.kind, "cx.member.state");
+        assert_eq!(
+            event.realm_id,
+            "cx:realm:0196419b-0000-7000-8000-000000000010"
+        );
+        assert_eq!(event.actor_id, "did:web:bob.example");
+        assert_eq!(event.payload["actor_id"], "did:web:bob.example");
+        assert_eq!(event.payload["membership"], "join");
+        assert_eq!(event.payload["reason"], "invite_accept");
+        assert_eq!(
+            event.payload["invite_id"],
+            "cx:invite:0196419b-0000-7000-8000-000000000020"
+        );
+        assert_eq!(event.payload["delivery_status"], "unroutable");
+        assert_eq!(event.preconditions.len(), 1);
+        assert_eq!(
+            event.preconditions[0].predicate.value,
+            Some(json!("invite"))
+        );
+        assert_eq!(event.effects.len(), 1);
+        assert_eq!(event.effects[0].op.from, Some(json!("invite")));
+        assert_eq!(event.effects[0].op.to, Some(json!("join")));
     }
 
     #[test]

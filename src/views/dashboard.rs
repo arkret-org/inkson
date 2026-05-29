@@ -524,8 +524,11 @@ fn dashboard_notification_summaries(
             if archived {
                 return None;
             }
-            let kind = value_string(value, &["notification_kind", "type", "kind"])
-                .unwrap_or_else(|| "message".to_owned());
+            let kind = value_string(
+                value,
+                &["notification_type", "notification_kind", "type", "kind"],
+            )
+            .unwrap_or_else(|| "message".to_owned());
             Some(DashboardNotificationSummary {
                 id,
                 title: value_string(value, &["title"])
@@ -556,7 +559,7 @@ fn value_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
 
 fn default_notification_title(kind: &str) -> String {
     match kind {
-        "invite" => "Space invite".to_owned(),
+        "invite" => "Realm invite".to_owned(),
         "reaction" => "New reaction".to_owned(),
         "mention" => "You were mentioned".to_owned(),
         _ => "New message".to_owned(),
