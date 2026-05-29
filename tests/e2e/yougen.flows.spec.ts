@@ -166,6 +166,16 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
   await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
+  const refreshBox = await page.getByTestId("account-menu-session-refresh").boundingBox();
+  const logoutBox = await page.getByTestId("account-menu-session-logout").boundingBox();
+  const settingsBox = await page.getByTestId("account-menu-settings").boundingBox();
+  expect(refreshBox).not.toBeNull();
+  expect(logoutBox).not.toBeNull();
+  expect(settingsBox).not.toBeNull();
+  expect(Math.abs(refreshBox!.y - settingsBox!.y)).toBeLessThan(2);
+  expect(Math.abs(logoutBox!.y - settingsBox!.y)).toBeLessThan(2);
+  expect(refreshBox!.x).toBeLessThan(logoutBox!.x);
+  expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
 });
 
 test("workspace header collapses and sidebar edge resizes the menu", async ({ page }) => {
@@ -241,6 +251,8 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   const authorizeUrl = new URL(page.url());
   expect(authorizeUrl.searchParams.get("client_id")).toBe("01GFWR28C4KNE04WG3HKXB7C9R");
   expect(authorizeUrl.searchParams.get("login_hint")).toBeNull();
+  expect(authorizeUrl.searchParams.get("prompt")).toBe("login");
+  expect(authorizeUrl.searchParams.get("max_age")).toBe("0");
   expect(authorizeUrl.searchParams.get("redirect_uri")).toMatch(/\/auth\/callback$/);
   await expect(page.getByText("coauth")).toBeVisible();
   await expect(page.getByText("Create account")).toBeVisible();

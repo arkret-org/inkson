@@ -5556,6 +5556,7 @@ const CLAUDE_APP_OVERRIDES: &str = r#"
     --bg: #101722;
     --bg-elev: #223041;
     --surface: rgba(27, 36, 48, 0.94);
+    --surface-solid: #1b2430;
     --surface-2: #202b39;
     --surface-3: #283546;
     --surface-inv: #fffaf6;
@@ -8130,153 +8131,151 @@ pub fn RouterView() -> Element {
                                                 span { class: "mono", "data-testid": "account-menu-session-state", "{account_session_label}" }
                                             }
                                         }
-                                        div { class: "account-menu__actions",
-                                            button {
-                                                class: "btn sm ghost",
-                                                "data-testid": "account-menu-session-refresh",
-                                                "aria-label": "Refresh session",
-                                                disabled: !has_session,
-                                                onclick: {
-                                                    let base = base_url();
-                                                    move |_| {
-                                                        let base = base.clone();
-                                                        let api_token = token();
-                                                        let actor = account_did();
-                                                        let device = device_id();
-                                                        account_session_state.set("Refreshing session".to_owned());
-                                                        spawn(async move {
-                                                            match ContrixApi::new(&base) {
-                                                                Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
-                                                                    Ok(account) => {
-                                                                        let canonical_actor = account.did;
-                                                                        account_did.set(canonical_actor.clone());
+                                    }
+                                    div { class: "account-menu__actions",
+                                        button {
+                                            class: "btn sm ghost",
+                                            "data-testid": "account-menu-session-refresh",
+                                            "aria-label": "Refresh session",
+                                            disabled: !has_session,
+                                            onclick: {
+                                                let base = base_url();
+                                                move |_| {
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    let actor = account_did();
+                                                    let device = device_id();
+                                                    account_session_state.set("Refreshing session".to_owned());
+                                                    spawn(async move {
+                                                        match ContrixApi::new(&base) {
+                                                            Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
+                                                                Ok(account) => {
+                                                                    let canonical_actor = account.did;
+                                                                    account_did.set(canonical_actor.clone());
+                                                                    persist_config(
+                                                                        config_store,
+                                                                        base.clone(),
+                                                                        canonical_actor.clone(),
+                                                                        device.clone(),
+                                                                        api_token,
+                                                                    );
+                                                                    account_session_state.set(format!(
+                                                                        "Session refresh ok: {}",
+                                                                        canonical_actor
+                                                                    ));
+                                                                }
+                                                                Err(error) => {
+                                                                    if is_auth_expired_error(&error) {
+                                                                        token.set(String::new());
                                                                         persist_config(
                                                                             config_store,
                                                                             base.clone(),
-                                                                            canonical_actor.clone(),
+                                                                            actor.clone(),
                                                                             device.clone(),
-                                                                            api_token,
+                                                                            String::new(),
                                                                         );
+                                                                        status.set("Session expired; sign in again".to_owned());
+                                                                        last_error.set(Some("auth_expired: session expired".to_owned()));
+                                                                        account_session_state.set(
+                                                                            "Session expired. Sign in again.".to_owned()
+                                                                        );
+                                                                        redirect_to_login(navigator);
+                                                                    } else {
                                                                         account_session_state.set(format!(
-                                                                            "Session refresh ok: {}",
-                                                                            canonical_actor
+                                                                            "Session refresh failed: {error}"
                                                                         ));
                                                                     }
-                                                                    Err(error) => {
-                                                                        if is_auth_expired_error(&error) {
-                                                                            token.set(String::new());
-                                                                            persist_config(
-                                                                                config_store,
-                                                                                base.clone(),
-                                                                                actor.clone(),
-                                                                                device.clone(),
-                                                                                String::new(),
-                                                                            );
-                                                                            status.set("Session expired; sign in again".to_owned());
-                                                                            last_error.set(Some("auth_expired: session expired".to_owned()));
-                                                                            account_session_state.set(
-                                                                                "Session expired. Sign in again.".to_owned()
-                                                                            );
-                                                                            redirect_to_login(navigator);
-                                                                        } else {
-                                                                            account_session_state.set(format!(
-                                                                                "Session refresh failed: {error}"
-                                                                            ));
-                                                                        }
-                                                                    }
-                                                                },
-                                                                Err(error) => account_session_state
-                                                                    .set(format!("Invalid server URL: {error}")),
-                                                            }
-                                                        });
-                                                    }
-                                                },
-                                                "Refresh"
-                                            }
-                                            button {
-                                                class: "btn sm ghost",
-                                                "data-testid": "account-menu-session-logout",
-                                                "aria-label": "Log out",
-                                                disabled: !has_session,
-                                                onclick: move |_| {
-                                                    let base = base_url();
-                                                    let actor = account_did();
-                                                    let device = device_id();
-                                                    let api_token = token();
-                                                    account_session_state.set("Logging out".to_owned());
-                                                    // Clear OIDC + session-grant state up
-                                                    // front so a refresh-token-based silent
-                                                    // re-auth cannot resurrect the session
-                                                    // if the server-side logout call later
-                                                    // fails or is cancelled.
-                                                    state_store.write().set_oidc_tokens(None);
-                                                    state_store.write().set_session_grant(None);
-                                                    // Then wipe every account-scoped local
-                                                    // projection cache (spaces, drafts,
-                                                    // anchors, read markers, remarks…) so
-                                                    // whoever signs in next on this browser
-                                                    // can't see the previous session's data.
-                                                    // Device-level state (local_identity,
-                                                    // push_registration) is preserved.
-                                                    state_store.write().clear_account_scoped();
-                                                    // G3.Y0 — this is the *hard* logout path
-                                                    // (user clicked "Log out"). Wipe the
-                                                    // device DPoP key so the next sign-in
-                                                    // rotates `cnf.jkt`. The soft path
-                                                    // (`session_refresh`'s LoginRequired
-                                                    // outcome) deliberately keeps the key.
-                                                    state_store.write().set_dpop_device_key(None);
-                                                    let _ = crate::coauth::clear_persisted_oidc_scaffold();
-                                                    // Wipe the in-memory UI signals too so the
-                                                    // sidebar can't paint a frame of stale
-                                                    // spaces between this click and the
-                                                    // navigator.push(Login).
-                                                    spaces.set(Vec::new());
-                                                    timeline.set(Vec::new());
-                                                    sync_cursor.set("-".to_owned());
-                                                    selected_space.set(String::new());
-                                                    device_queue.set(0);
-                                                    last_error.set(None);
-                                                    // Bump the SyncEngine generation so any
-                                                    // in-flight long-poll exits on its next
-                                                    // iteration check instead of applying a
-                                                    // response after the wipe.
-                                                    sync_generation.set(sync_generation() + 1);
-                                                    spawn(async move {
-                                                        let api_result = ContrixApi::new(&base)
-                                                            .map(|api| api.with_bearer(api_token));
-                                                        let logout_message = match api_result {
-                                                            Ok(api) => match api.logout().await {
-                                                                Ok(response) => format!(
-                                                                    "Logout ok: revoked {}",
-                                                                    response.revoked
-                                                                ),
-                                                                Err(error) => {
-                                                                    format!("Logout failed: {error}")
                                                                 }
                                                             },
-                                                            Err(error) => {
-                                                                format!("Invalid server URL: {error}")
-                                                            }
-                                                        };
-                                                        token.set(String::new());
-                                                        persist_config(
-                                                            config_store,
-                                                            base,
-                                                            actor,
-                                                            device,
-                                                            String::new(),
-                                                        );
-                                                        account_session_state.set(logout_message);
-                                                        account_menu_open.set(false);
-                                                        redirect_to_login(navigator);
+                                                            Err(error) => account_session_state
+                                                                .set(format!("Invalid server URL: {error}")),
+                                                        }
                                                     });
-                                                },
-                                                "Log out"
-                                            }
+                                                }
+                                            },
+                                            "Refresh"
                                         }
-                                    }
-                                    div { class: "account-menu__actions",
+                                        button {
+                                            class: "btn sm ghost",
+                                            "data-testid": "account-menu-session-logout",
+                                            "aria-label": "Log out",
+                                            disabled: !has_session,
+                                            onclick: move |_| {
+                                                let base = base_url();
+                                                let actor = account_did();
+                                                let device = device_id();
+                                                let api_token = token();
+                                                account_session_state.set("Logging out".to_owned());
+                                                // Clear OIDC + session-grant state up
+                                                // front so a refresh-token-based silent
+                                                // re-auth cannot resurrect the session
+                                                // if the server-side logout call later
+                                                // fails or is cancelled.
+                                                state_store.write().set_oidc_tokens(None);
+                                                state_store.write().set_session_grant(None);
+                                                // Then wipe every account-scoped local
+                                                // projection cache (spaces, drafts,
+                                                // anchors, read markers, remarks…) so
+                                                // whoever signs in next on this browser
+                                                // can't see the previous session's data.
+                                                // Device-level state (local_identity,
+                                                // push_registration) is preserved.
+                                                state_store.write().clear_account_scoped();
+                                                // G3.Y0 — this is the *hard* logout path
+                                                // (user clicked "Log out"). Wipe the
+                                                // device DPoP key so the next sign-in
+                                                // rotates `cnf.jkt`. The soft path
+                                                // (`session_refresh`'s LoginRequired
+                                                // outcome) deliberately keeps the key.
+                                                state_store.write().set_dpop_device_key(None);
+                                                let _ = crate::coauth::clear_persisted_oidc_scaffold();
+                                                // Wipe the in-memory UI signals too so the
+                                                // sidebar can't paint a frame of stale
+                                                // spaces between this click and the
+                                                // navigator.push(Login).
+                                                spaces.set(Vec::new());
+                                                timeline.set(Vec::new());
+                                                sync_cursor.set("-".to_owned());
+                                                selected_space.set(String::new());
+                                                device_queue.set(0);
+                                                last_error.set(None);
+                                                // Bump the SyncEngine generation so any
+                                                // in-flight long-poll exits on its next
+                                                // iteration check instead of applying a
+                                                // response after the wipe.
+                                                sync_generation.set(sync_generation() + 1);
+                                                spawn(async move {
+                                                    let api_result = ContrixApi::new(&base)
+                                                        .map(|api| api.with_bearer(api_token));
+                                                    let logout_message = match api_result {
+                                                        Ok(api) => match api.logout().await {
+                                                            Ok(response) => format!(
+                                                                "Logout ok: revoked {}",
+                                                                response.revoked
+                                                            ),
+                                                            Err(error) => {
+                                                                format!("Logout failed: {error}")
+                                                            }
+                                                        },
+                                                        Err(error) => {
+                                                            format!("Invalid server URL: {error}")
+                                                        }
+                                                    };
+                                                    token.set(String::new());
+                                                    persist_config(
+                                                        config_store,
+                                                        base,
+                                                        actor,
+                                                        device,
+                                                        String::new(),
+                                                    );
+                                                    account_session_state.set(logout_message);
+                                                    account_menu_open.set(false);
+                                                    redirect_to_login(navigator);
+                                                });
+                                            },
+                                            "Log out"
+                                        }
                                         Link {
                                             class: "btn sm",
                                             "data-testid": "account-menu-settings",

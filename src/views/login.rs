@@ -5,13 +5,13 @@ use chrono::{DateTime, Utc};
 use crate::{
     api::ContrixApi,
     coauth::{
-        CoauthApi, CoauthSessionGrantInfo, build_oidc_code_exchange_plan,
-        build_session_grant_introspection_proof_bundle, capture_current_browser_callback_url,
-        clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
-        extract_error_description_from_callback, extract_error_from_callback,
-        extract_state_from_callback, oidc_scaffold_bundle_from_bridge_session,
-        open_oidc_authorize_url, persist_oidc_scaffold, resolve_principal_auth_server,
-        restore_oidc_scaffold, session_grant_signing_key_from_pem,
+        CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
+        build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
+        capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
+        extract_authorization_code_from_callback, extract_error_description_from_callback,
+        extract_error_from_callback, extract_state_from_callback,
+        oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
+        resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
@@ -365,7 +365,9 @@ pub(crate) async fn start_oidc_flow(
         )
         .await
         .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
-    let bundle = oidc_scaffold_bundle_from_bridge_session(&session);
+    let mut bundle = oidc_scaffold_bundle_from_bridge_session(&session);
+    bundle.authorize_url = authorize_url_with_forced_reauthentication(&bundle.authorize_url)
+        .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
     persist_oidc_scaffold(
         &bundle,

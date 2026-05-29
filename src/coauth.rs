@@ -1076,6 +1076,48 @@ pub fn oidc_scaffold_bundle_from_bridge_session(
     }
 }
 
+pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow::Result<String> {
+    let mut url = Url::parse(authorize_url)
+        .with_context(|| format!("invalid authorize URL: {authorize_url}"))?;
+    let mut query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+    let mut saw_prompt = false;
+    let mut saw_max_age = false;
+
+    for (key, value) in &mut query {
+        if key == "prompt" {
+            saw_prompt = true;
+            let mut prompts: Vec<String> = value
+                .split_ascii_whitespace()
+                .filter(|prompt| *prompt != "none")
+                .map(str::to_owned)
+                .collect();
+            if !prompts.iter().any(|prompt| prompt == "login") {
+                prompts.push("login".to_owned());
+            }
+            *value = prompts.join(" ");
+        } else if key == "max_age" {
+            saw_max_age = true;
+            *value = "0".to_owned();
+        }
+    }
+
+    if !saw_prompt {
+        query.push(("prompt".to_owned(), "login".to_owned()));
+    }
+    if !saw_max_age {
+        query.push(("max_age".to_owned(), "0".to_owned()));
+    }
+
+    url.set_query(None);
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (key, value) in query {
+            pairs.append_pair(&key, &value);
+        }
+    }
+    Ok(url.to_string())
+}
+
 /// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
 /// `coauth/crates/backend/src/handlers/contrix.rs:575`). soland forwards
@@ -1519,6 +1561,7 @@ fn build_authorize_url(
         // would silently re-authenticate the same user without a
         // password.
         query.append_pair("prompt", "login");
+        query.append_pair("max_age", "0");
         if let Some(pkce_method) = pkce_method {
             query.append_pair("code_challenge_method", pkce_method);
             query.append_pair("code_challenge", code_challenge);
@@ -1992,6 +2035,64 @@ mod tests {
             bundle.code_challenge,
             pkce_code_challenge_s256(&bundle.code_verifier),
             "S256 topology must produce S256(verifier) challenge"
+        );
+    }
+
+    #[test]
+    fn authorize_url_forces_reauthentication() {
+        let topology = test_topology();
+        let bundle = build_oidc_scaffold_bundle(
+            &topology,
+            "https://principal.example",
+            "did:web:alice.example",
+            "device-cccc-3333",
+        )
+        .unwrap();
+        let parsed = Url::parse(&bundle.authorize_url).unwrap();
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "prompt")
+                .unwrap()
+                .1,
+            "login"
+        );
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "max_age")
+                .unwrap()
+                .1,
+            "0"
+        );
+    }
+
+    #[test]
+    fn bridge_authorize_url_gets_reauthentication_params() {
+        let updated = authorize_url_with_forced_reauthentication(
+            "https://issuer.example/auth?client_id=c&prompt=consent&max_age=3600",
+        )
+        .unwrap();
+        let parsed = Url::parse(&updated).unwrap();
+        let prompt = parsed
+            .query_pairs()
+            .find(|(key, _)| key == "prompt")
+            .unwrap()
+            .1
+            .into_owned();
+        assert!(
+            prompt
+                .split_ascii_whitespace()
+                .any(|part| part == "consent")
+        );
+        assert!(prompt.split_ascii_whitespace().any(|part| part == "login"));
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "max_age")
+                .unwrap()
+                .1,
+            "0"
         );
     }
 

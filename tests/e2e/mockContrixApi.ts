@@ -316,6 +316,40 @@ export async function mockContrixApi(page: Page) {
       });
     }
 
+    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/auth/oidc/browser-bridge/session") {
+      const body = await route.request().postDataJSON();
+      const redirectUri = body.redirect_uri ?? "http://127.0.0.1:4527/auth/callback";
+      const principalAudience = body.principal_audience ?? "did:web:server.local";
+      const authorizeUrl = new URL("https://auth.local.host/authorize");
+      authorizeUrl.searchParams.set("response_type", "code");
+      authorizeUrl.searchParams.set("client_id", "01GFWR28C4KNE04WG3HKXB7C9R");
+      authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+      authorizeUrl.searchParams.set("scope", "openid");
+      authorizeUrl.searchParams.set("state", "oidc-state-e2e");
+      authorizeUrl.searchParams.set("nonce", "oidc-nonce-e2e");
+      authorizeUrl.searchParams.set("resource", principalAudience);
+      authorizeUrl.searchParams.set("code_challenge_method", "S256");
+      authorizeUrl.searchParams.set("code_challenge", "oidc-code-challenge-e2e");
+      return json(route, {
+        contract: "contrix.rest.auth_bridge.oidc_browser_session.v1",
+        version: "2026-05-04-scaffold",
+        authorize_url: authorizeUrl.toString(),
+        callback_uri: redirectUri,
+        issuer: "https://auth.local.host/",
+        authorization_endpoint: "https://auth.local.host/authorize",
+        token_endpoint: "https://auth.local.host/oauth/token",
+        userinfo_endpoint: "https://auth.local.host/oauth/userinfo",
+        client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
+        state: "oidc-state-e2e",
+        nonce: "oidc-nonce-e2e",
+        code_verifier: "oidc-code-verifier-e2e",
+        code_challenge: "oidc-code-challenge-e2e",
+        code_challenge_method: "S256",
+        principal_audience: principalAudience,
+        todo: "mock browser bridge session",
+      });
+    }
+
     if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/integration/describe") {
       return json(route, {
         contract: "contrix.rest.integration_manifest.v1",
