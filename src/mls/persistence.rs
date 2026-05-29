@@ -100,7 +100,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-#[cfg(not(target_arch = "wasm32"))]
 use contrix_sdk::MlsGroupStateRecord;
 
 /// Number of SHA-256 rounds applied during passphrase stretching. The
@@ -479,32 +478,17 @@ impl MlsSnapshotEnvelope {
     }
 
     /// Round-trip the inner `MlsGroupStateRecord` (after
-    /// `decrypt_envelope`) into the SDK's typed shape. Native-only —
-    /// the wasm build's MLS surface is stubbed.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// `decrypt_envelope`) into the SDK's typed shape.
     pub fn restore_state_record(bytes: &[u8]) -> Result<MlsGroupStateRecord, EnvelopeError> {
         serde_json::from_slice::<MlsGroupStateRecord>(bytes)
             .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
     }
 }
 
-/// F-WASM-MLS-1: native-only helper that decrypts an
-/// [`MlsSnapshotEnvelope`] + parses out the typed
-/// [`MlsGroupStateRecord`] without trying to reconstruct the live
-/// MLS group via the OpenMLS provider.
-///
-/// Yougen's `MlsGroupStateRecord` import is currently
-/// `cfg(not(target_arch = "wasm32"))`, so this metadata-only helper
-/// is too; the wasm `restore_envelope` does its own thinner
-/// epoch + passphrase check via [`decrypt_with_epoch_check`] without
-/// touching the typed record.
-///
-/// Native callers that need an executable
-/// [`contrix_sdk::ContrixMlsGroup`] keep using [`restore_envelope`];
-/// callers that only want the metadata (device_id / epoch /
-/// signer_public_key) without spinning up the OpenMLS provider can
-/// use this helper.
-#[cfg(not(target_arch = "wasm32"))]
+/// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
+/// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
+/// via the OpenMLS provider. Callers that need an executable
+/// [`contrix_sdk::ContrixMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
     passphrase: &str,
@@ -515,18 +499,13 @@ pub fn restore_state_record_only(
         .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
 }
 
-/// Helper used by both the boot path and the "sync from
-/// another device" UI button. Decrypts the envelope, sanity-checks
-/// the epoch, and (on native) reconstructs the SDK group via
-/// [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`]. The
-/// wasm path stops at the byte-level decrypt — yougen's wasm MLS
-/// surface is the placeholder shape that doesn't carry a live
-/// openmls provider.
+/// Helper used by both the boot path and the "sync from another device" UI
+/// button. Decrypts the envelope, sanity-checks the epoch, and reconstructs
+/// the SDK group via [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Anchor view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
 /// no Anchor view is known yet).
-#[cfg(not(target_arch = "wasm32"))]
 pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     passphrase: &str,
@@ -536,43 +515,6 @@ pub fn restore_envelope(
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
     contrix_sdk::ContrixMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
-}
-
-/// F-WASM-MLS-1: wasm-side companion to [`restore_envelope`].
-///
-/// The browser build can't construct a live `ContrixMlsGroup`
-/// because the SDK's restore path drives `OpenMlsRustCrypto`, which
-/// expects a native crypto provider. Until SDK ships a wasm-aware
-/// provider, the wasm flow goes:
-///
-/// 1. The byte-level decrypt + epoch check still runs — yougen
-///    rejects tampered envelopes / outdated snapshots even on web.
-/// 2. The typed metadata (`MlsGroupStateRecord`) is returned via
-///    [`restore_state_record_only`] so the UI can show
-///    epoch / device_id / signer_public_key.
-/// 3. Any caller that asks for the live group on wasm receives an
-///    explicit `Err(EnvelopeError::WasmMlsRestoreUnsupported)`
-///    instead of a compile error — the call site can fall back to
-///    "view metadata only / re-key from another device" instead of
-///    silently bypassing MLS encryption.
-///
-/// The function still verifies the passphrase + epoch first so a
-/// caller never gets the "unsupported" answer for a fundamentally
-/// invalid envelope.
-#[cfg(target_arch = "wasm32")]
-pub fn restore_envelope(
-    envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
-    current_epoch_floor: u64,
-) -> Result<(), EnvelopeError> {
-    // Even on wasm we still validate the envelope cryptographically
-    // first, so a tampered or stale snapshot is rejected with the
-    // precise typed error rather than the bland
-    // `WasmMlsRestoreUnsupported`. Only when the envelope is
-    // genuinely valid do we surface the "can't materialize the live
-    // group on web" message.
-    let _bytes = decrypt_with_epoch_check(envelope, passphrase, current_epoch_floor)?;
-    Err(EnvelopeError::WasmMlsRestoreUnsupported)
 }
 
 // ───────────────────── Crypto primitives ────────────────────────

@@ -13,7 +13,7 @@ use crate::{
         PROFILE_PUSH_GATEWAY, profile_ready,
     },
     i18n::{Locale, TextDirection},
-    local_state::{ClientLocalState, LocalStateStore, OidcTokenBundle},
+    local_state::{ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
     models::{
         ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
         projection_realm_id_for_known_space,
@@ -1485,6 +1485,10 @@ body {
   color: var(--text, var(--cx-ink));
   background: transparent;
 }
+.card-detail-tab:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
 .card-detail-description-panel,
 .card-detail-synthesis-panel,
 .card-detail-discussion-panel {
@@ -1761,10 +1765,21 @@ body {
   background: var(--accent);
 }
 .card-detail-edit-form {
-  flex: 1 1 auto;
+  width: 100%;
+  max-width: 72ch;
+  box-sizing: border-box;
   min-height: 0;
-  overflow: auto;
-  padding: 22px 24px 28px;
+  padding: 12px;
+  border: 1px solid var(--border, var(--cx-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2, var(--cx-bg-soft)) 62%, transparent);
+}
+.card-detail-tabs-section .card-detail-edit-form,
+.card-synthesis-entry .card-detail-edit-form {
+  max-width: none;
+}
+.card-detail-inline-edit-form {
+  margin-top: 2px;
 }
 .card-rich-editor {
   display: grid;
@@ -1781,10 +1796,10 @@ body {
   gap: 0;
 }
 .card-rich-editor-host {
-  min-height: 320px;
+  min-height: 240px;
 }
 .card-rich-editor-fallback {
-  min-height: 220px;
+  min-height: 180px;
   resize: vertical;
 }
 .card-rich-editor-fallback.toast-fallback-hidden {
@@ -2021,6 +2036,16 @@ body {
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
+}
+.card-detail-edit-status {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--border, var(--cx-line)));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-soft, #fff8e5) 28%, transparent);
+  color: var(--text, var(--cx-ink));
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 /* Card detail forms inherit the shared workflow grid. Keep these actions
  * compact while preserving the global CTA treatment elsewhere. */
@@ -6405,6 +6430,25 @@ fn oidc_access_token_boot_usable(bundle: &OidcTokenBundle, now_unix: i64) -> boo
     }
 }
 
+fn session_grant_access_token_boot_usable(
+    grant: &PersistedSessionGrant,
+    access_token: &str,
+    now_unix: i64,
+) -> bool {
+    if access_token.trim().is_empty() {
+        return false;
+    }
+    if grant
+        .grant_expires_at
+        .is_some_and(|expires_at| expires_at.timestamp() <= now_unix)
+    {
+        return false;
+    }
+    grant
+        .session_expires_at
+        .is_some_and(|expires_at| now_unix + BOOT_ACCESS_TOKEN_SKEW_SECS < expires_at.timestamp())
+}
+
 fn initial_session_token_from_state(
     local_state: &ClientLocalState,
     config: &ClientConfig,
@@ -6416,6 +6460,11 @@ fn initial_session_token_from_state(
         // bearer instead of racing boot API calls with an expired one.
         return oidc_access_token_boot_usable(bundle, now_unix)
             .then(|| bundle.access_token.clone())
+            .unwrap_or_default();
+    }
+    if let Some(grant) = local_state.session_grant.as_ref() {
+        return session_grant_access_token_boot_usable(grant, &config.session_token, now_unix)
+            .then(|| config.session_token.clone())
             .unwrap_or_default();
     }
     config.session_token.clone()
@@ -7778,7 +7827,7 @@ pub fn RouterView() -> Element {
                                 {
                                     let (current_surface_label, current_surface_icon) = match resolved_space_surface {
                                         Some(surface) => (surface.short_label(), surface.icon_name()),
-                                        None => ("Admin", "settings"),
+                                        None => ("Settings", "settings"),
                                     };
                                     rsx! {
                                         span {
@@ -8709,7 +8758,7 @@ fn SpaceContextBar(
     let mut menu_open = use_signal(|| false);
     let (current_nav_label, current_nav_icon) = match current_surface {
         Some(surface) => (surface.short_label(), surface.icon_name()),
-        None => ("Admin", "settings"),
+        None => ("Settings", "settings"),
     };
     rsx! {
         div { class: "space-context-bar", "data-testid": "space-context-bar",
@@ -8747,7 +8796,7 @@ fn SpaceContextBar(
                     class: if current_surface.is_none() { "primary" } else { "secondary" },
                     to: Route::SpaceAdmin { space_id: space_id.clone() },
                     UiIcon { name: "settings" }
-                    "Admin"
+                    "Settings"
                 }
             }
             div {
@@ -8810,7 +8859,7 @@ fn SpaceContextBar(
                             to: Route::SpaceAdmin { space_id: space_id.clone() },
                             onclick: move |_| menu_open.set(false),
                             UiIcon { name: "settings" }
-                            "Admin"
+                            "Settings"
                         }
                     }
                 }
@@ -9225,15 +9274,15 @@ fn route_label(route: &Route) -> &'static str {
             "Settings"
         }
         Route::VerifyDevice => "Verify Device",
-        Route::SpaceAdmin { .. } => "Space Admin",
+        Route::SpaceAdmin { .. } => "Space Settings",
         Route::SpaceAdminSection { section, .. } => match section.as_str() {
-            "members" => "Members Admin",
+            "members" => "Members Settings",
             "access" => "Access Policy",
             "security" => "Security & MLS",
             "governance" => "Governance",
             "federation" => "Federation Trust",
             "repair" => "Repair & Danger",
-            _ => "Space Admin",
+            _ => "Space Settings",
         },
         Route::Audit => "Audit",
         Route::Developer => "Developer Tools",
@@ -10366,6 +10415,23 @@ mod tests {
         }
     }
 
+    fn session_grant(session_expires_in: i64, grant_expires_in: i64) -> PersistedSessionGrant {
+        let now = chrono::Utc::now();
+        PersistedSessionGrant {
+            grant_jwt: "grant.jwt".to_owned(),
+            session_private_key_pem: "PEM".to_owned(),
+            grant_id: "grant-1".to_owned(),
+            audience: "https://local.host/api".to_owned(),
+            principal_did: "did:web:alice.example".to_owned(),
+            device_id: "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            principal_server_url: "https://local.host".to_owned(),
+            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
+            session_expires_at: Some(now + chrono::Duration::seconds(session_expires_in)),
+            stored_at: now,
+        }
+    }
+
     #[test]
     fn boot_session_token_uses_fresh_oidc_access_token() {
         let now = 1_000;
@@ -10431,6 +10497,39 @@ mod tests {
             initial_session_token_from_state(&state, &config, 1_000),
             "legacy-token"
         );
+    }
+
+    #[test]
+    fn boot_session_token_uses_fresh_session_grant_bearer() {
+        let now = chrono::Utc::now().timestamp();
+        let mut state = ClientLocalState::default();
+        state.session_grant = Some(session_grant(120, 3600));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "bridge-token",
+        );
+
+        assert_eq!(
+            initial_session_token_from_state(&state, &config, now),
+            "bridge-token"
+        );
+    }
+
+    #[test]
+    fn boot_session_token_ignores_expired_session_grant_bearer() {
+        let now = chrono::Utc::now().timestamp();
+        let mut state = ClientLocalState::default();
+        state.session_grant = Some(session_grant(-1, 3600));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "bridge-token",
+        );
+
+        assert_eq!(initial_session_token_from_state(&state, &config, now), "");
     }
 
     #[test]

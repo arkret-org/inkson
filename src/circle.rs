@@ -116,7 +116,7 @@ impl CircleSummary {
 /// layer. Maps from the wire `reason_code` (a `failed_precondition` /
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 ///
-/// The 6th CXP-0007 code is the top-level
+/// One Circle-adjacent code is the top-level
 /// [`contrix_sdk::error_codes::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER`]
 /// already registered in CXP-0006; we surface it through the same
 /// pipeline so a single Toast component handles all Circle-adjacent
@@ -139,6 +139,12 @@ pub enum CircleErrorKind {
     /// `metadata_encryption_floor_violation` — a write would expose
     /// metadata below the effective floor.
     MetadataFloorViolated,
+    /// `circle_encryption_below_realm_floor` — attempted to create a
+    /// plaintext Circle where the parent Realm requires E2EE.
+    EncryptionBelowRealmFloor,
+    /// `circle_encryption_profile_create_locked` — attempted to mutate
+    /// a Circle's create-locked encryption profile.
+    EncryptionProfileCreateLocked,
     /// `delivery_binding_handed_over` — the Circle's delivery binding
     /// moved to another epoch / device set; the caller must re-fetch.
     DeliveryBindingHandedOver,
@@ -146,7 +152,7 @@ pub enum CircleErrorKind {
 
 impl CircleErrorKind {
     /// Match a wire `reason_code` string against the typed enum.
-    /// Returns `None` if the reason isn't one of the 6 CXP-0007 codes.
+    /// Returns `None` if the reason isn't one of the Circle codes.
     pub fn from_reason_code(reason: &str) -> Option<Self> {
         match reason {
             "circle_realm_mismatch" => Some(Self::RealmMismatch),
@@ -154,19 +160,20 @@ impl CircleErrorKind {
             "circle_member_must_be_realm_member" => Some(Self::MemberNotInRealm),
             "scope_rebind_forbidden" => Some(Self::ScopeRebindForbidden),
             "metadata_encryption_floor_violation" => Some(Self::MetadataFloorViolated),
+            "circle_encryption_below_realm_floor" => Some(Self::EncryptionBelowRealmFloor),
+            "circle_encryption_profile_create_locked" => Some(Self::EncryptionProfileCreateLocked),
             _ => None,
         }
     }
 
-    /// Match an `ErrorEnvelope.code` against the CXP-0007 top-level
-    /// code (`delivery_binding_handed_over`). The other 5 codes ride on
-    /// generic `failed_precondition` / `schema_violation` envelopes and
-    /// are distinguished by [`Self::from_reason_code`].
+    /// Match an `ErrorEnvelope.code` against Circle-adjacent wire codes
+    /// that may be emitted directly as the envelope code.
     pub fn from_error_code(code: &str) -> Option<Self> {
-        if code == ERROR_CODE_DELIVERY_BINDING_HANDED_OVER {
-            Some(Self::DeliveryBindingHandedOver)
-        } else {
-            None
+        match code {
+            ERROR_CODE_DELIVERY_BINDING_HANDED_OVER => Some(Self::DeliveryBindingHandedOver),
+            "circle_encryption_below_realm_floor" => Some(Self::EncryptionBelowRealmFloor),
+            "circle_encryption_profile_create_locked" => Some(Self::EncryptionProfileCreateLocked),
+            _ => None,
         }
     }
 
@@ -180,6 +187,8 @@ impl CircleErrorKind {
             Self::MemberNotInRealm => "error.circle.member_not_in_realm",
             Self::ScopeRebindForbidden => "error.circle.scope_rebind_forbidden",
             Self::MetadataFloorViolated => "error.circle.metadata_floor",
+            Self::EncryptionBelowRealmFloor => "error.circle.encryption_below_realm_floor",
+            Self::EncryptionProfileCreateLocked => "error.circle.encryption_profile_locked",
             Self::DeliveryBindingHandedOver => "error.circle.delivery_binding_handed_over",
         }
     }
@@ -203,6 +212,12 @@ impl CircleErrorKind {
             }
             Self::MetadataFloorViolated => {
                 "This write would expose metadata below the Realm or Circle encryption floor."
+            }
+            Self::EncryptionBelowRealmFloor => {
+                "This Realm requires E2EE, so the Circle must stay MLS-backed."
+            }
+            Self::EncryptionProfileCreateLocked => {
+                "Circle encryption_profile is locked at creation. Create a new Circle to change its E2EE mode."
             }
             Self::DeliveryBindingHandedOver => {
                 "The Circle's delivery binding moved to a newer set of devices — please retry."
@@ -280,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn reason_code_maps_all_five() {
+    fn reason_code_maps_circle_reasons() {
         assert_eq!(
             CircleErrorKind::from_reason_code("circle_realm_mismatch"),
             Some(CircleErrorKind::RealmMismatch)
@@ -301,14 +316,30 @@ mod tests {
             CircleErrorKind::from_reason_code("metadata_encryption_floor_violation"),
             Some(CircleErrorKind::MetadataFloorViolated)
         );
+        assert_eq!(
+            CircleErrorKind::from_reason_code("circle_encryption_below_realm_floor"),
+            Some(CircleErrorKind::EncryptionBelowRealmFloor)
+        );
+        assert_eq!(
+            CircleErrorKind::from_reason_code("circle_encryption_profile_create_locked"),
+            Some(CircleErrorKind::EncryptionProfileCreateLocked)
+        );
         assert_eq!(CircleErrorKind::from_reason_code("unrelated"), None);
     }
 
     #[test]
-    fn delivery_binding_handed_over_uses_error_code() {
+    fn direct_circle_errors_use_error_code() {
         assert_eq!(
             CircleErrorKind::from_error_code(ERROR_CODE_DELIVERY_BINDING_HANDED_OVER),
             Some(CircleErrorKind::DeliveryBindingHandedOver)
+        );
+        assert_eq!(
+            CircleErrorKind::from_error_code("circle_encryption_below_realm_floor"),
+            Some(CircleErrorKind::EncryptionBelowRealmFloor)
+        );
+        assert_eq!(
+            CircleErrorKind::from_error_code("circle_encryption_profile_create_locked"),
+            Some(CircleErrorKind::EncryptionProfileCreateLocked)
         );
         assert_eq!(CircleErrorKind::from_error_code("invalid_param"), None);
     }
@@ -338,6 +369,8 @@ mod tests {
             CircleErrorKind::MemberNotInRealm.i18n_key(),
             CircleErrorKind::ScopeRebindForbidden.i18n_key(),
             CircleErrorKind::MetadataFloorViolated.i18n_key(),
+            CircleErrorKind::EncryptionBelowRealmFloor.i18n_key(),
+            CircleErrorKind::EncryptionProfileCreateLocked.i18n_key(),
             CircleErrorKind::DeliveryBindingHandedOver.i18n_key(),
         ];
         let unique: std::collections::HashSet<_> = keys.iter().copied().collect();

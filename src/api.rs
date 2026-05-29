@@ -2220,6 +2220,11 @@ impl ContrixApi {
         actor_id: &str,
         patch: Value,
     ) -> anyhow::Result<SubmitEventResponse> {
+        if patch_touches_create_locked_encryption_profile(&patch) {
+            anyhow::bail!(
+                "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
+            );
+        }
         let envelope =
             crate::operation::cx_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)
                 .build("yougen");
@@ -4831,6 +4836,34 @@ pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmResponse>
     Ok(serde_json::from_value(value)?)
 }
 
+fn patch_touches_create_locked_encryption_profile(patch: &Value) -> bool {
+    patch.as_object().is_some_and(|fields| {
+        fields.iter().any(|(key, value)| {
+            patch_key_touches_encryption_profile(key)
+                || (key == "object" && patch_value_has_direct_encryption_profile(value))
+        })
+    })
+}
+
+fn patch_key_touches_encryption_profile(key: &str) -> bool {
+    key == "encryption_profile"
+        || key.starts_with("encryption_profile.")
+        || key == "/encryption_profile"
+        || key.starts_with("/encryption_profile/")
+        || key == "object.encryption_profile"
+        || key.starts_with("object.encryption_profile.")
+        || key == "/object/encryption_profile"
+        || key.starts_with("/object/encryption_profile/")
+}
+
+fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
+    value
+        .get("value")
+        .unwrap_or(value)
+        .as_object()
+        .is_some_and(|fields| fields.contains_key("encryption_profile"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4866,6 +4899,27 @@ mod tests {
             Some("dump".to_owned())
         );
         assert_eq!(safe_blob_filename_header("🧪").as_deref(), None);
+    }
+
+    #[test]
+    fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
+        assert!(patch_touches_create_locked_encryption_profile(&json!({
+            "encryption_profile": "none"
+        })));
+        assert!(patch_touches_create_locked_encryption_profile(&json!({
+            "/encryption_profile": { "$op": "replace", "value": "none" }
+        })));
+        assert!(patch_touches_create_locked_encryption_profile(&json!({
+            "object": {
+                "value": {
+                    "encryption_profile": "none"
+                }
+            }
+        })));
+        assert!(!patch_touches_create_locked_encryption_profile(&json!({
+            "title": "Renamed Realm",
+            "summary": "Still editable"
+        })));
     }
 
     #[test]

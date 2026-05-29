@@ -1,6 +1,6 @@
 //! Circle-error toast (CXP-0007 / P3B.3).
 //!
-//! Surfaces the 6 CXP-0007 reason / error codes as user-facing toasts.
+//! Surfaces CXP-0007 reason / error codes as user-facing toasts.
 //! Uses the same process-wide queue pattern as
 //! [`crate::components::policy_deny_banner`]: API call sites push a
 //! [`CircleErrorKind`] via [`push_circle_error`]; the [`CircleErrorToast`]
@@ -32,7 +32,7 @@ pub fn take_circle_error() -> Option<CircleErrorKind> {
 }
 
 /// Helper that classifies a server-side error envelope and pushes a
-/// [`CircleErrorKind`] onto the queue if it matches one of the 6
+/// [`CircleErrorKind`] onto the queue if it matches one of the
 /// CXP-0007 codes. Returns `true` when a circle error was recognised.
 ///
 /// The HTTP layer can call this opportunistically next to
@@ -127,6 +127,19 @@ mod tests {
             Some("circle_not_active")
         ));
         assert_eq!(take_circle_error(), Some(CircleErrorKind::NotActive));
+    }
+
+    #[test]
+    fn dispatch_classifies_direct_encryption_floor_code() {
+        let _ = take_circle_error();
+        assert!(maybe_dispatch_circle_error(
+            "circle_encryption_below_realm_floor",
+            None
+        ));
+        assert_eq!(
+            take_circle_error(),
+            Some(CircleErrorKind::EncryptionBelowRealmFloor)
+        );
     }
 
     #[test]

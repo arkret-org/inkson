@@ -621,7 +621,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.social_section", "Social Recovery");
 
     // Space-admin view (section labels)
-    dict.set("space_admin.title", "Space Admin");
+    dict.set("space_admin.title", "Space Settings");
     dict.set("space_admin.governance", "Governance");
     dict.set("space_admin.devices", "Devices");
     dict.set("space_admin.members", "Members");
@@ -1528,7 +1528,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.social_section", "社交恢复");
 
     // Space-admin view
-    dict.set("space_admin.title", "Space 管理");
+    dict.set("space_admin.title", "Space 设置");
     dict.set("space_admin.governance", "治理");
     dict.set("space_admin.devices", "设备");
     dict.set("space_admin.members", "成员");
@@ -1856,6 +1856,14 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set(
         "error.circle.metadata_floor",
         "This write would expose metadata below the Realm or Circle encryption floor.",
+    );
+    dict.set(
+        "error.circle.encryption_below_realm_floor",
+        "This Realm requires E2EE, so the Circle must stay MLS-backed.",
+    );
+    dict.set(
+        "error.circle.encryption_profile_locked",
+        "Circle encryption_profile is locked at creation. Create a new Circle to change its E2EE mode.",
     );
     dict.set(
         "error.circle.delivery_binding_handed_over",

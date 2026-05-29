@@ -1,17 +1,21 @@
 use dioxus::prelude::*;
 
+use chrono::{DateTime, Utc};
+
 use crate::{
     api::ContrixApi,
     coauth::{
-        CoauthApi, build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
-        capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-        extract_authorization_code_from_callback, extract_error_description_from_callback,
-        extract_error_from_callback, extract_state_from_callback,
-        oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
-        resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
+        CoauthApi, CoauthSessionGrantInfo, build_oidc_code_exchange_plan,
+        build_session_grant_introspection_proof_bundle, capture_current_browser_callback_url,
+        clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
+        extract_error_description_from_callback, extract_error_from_callback,
+        extract_state_from_callback, oidc_scaffold_bundle_from_bridge_session,
+        open_oidc_authorize_url, persist_oidc_scaffold, resolve_principal_auth_server,
+        restore_oidc_scaffold, session_grant_signing_key_from_pem,
     },
     config::{LocalConfigStore, normalize_device_id, normalize_server_url},
     local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
+    models::DevLoginResponse,
     views::helpers::{persist_config, short_protocol_id},
 };
 
@@ -309,6 +313,8 @@ fn persist_completed_login_state(
         store.set_oidc_tokens_with_secure_store(Some(bundle), actor_did, secure_store.as_ref());
         store.set_session_grant(None);
     } else {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        store.set_oidc_tokens_with_secure_store(None, actor_did, secure_store.as_ref());
         store.set_session_grant(grant);
     }
 }
@@ -609,6 +615,14 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         Ok(account) if !account.did.trim().is_empty() => account.did,
         _ => session.actor.clone(),
     };
+    let persisted_grant = persisted_session_grant_from_login(
+        grant,
+        &session,
+        &principal_target,
+        &actor,
+        &bridge.auth.session_grant_exchange_path,
+    )
+    .map_err(|error| format!("Could not persist session grant: {error}"))?;
     let _ = clear_persisted_oidc_scaffold();
 
     Ok(CompletedLogin {
@@ -616,9 +630,47 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         actor,
         device_id: session.device_id,
         access_token: session.access_token,
-        grant: None,
-        oidc_tokens: oidc_bundle,
+        grant: Some(persisted_grant),
+        oidc_tokens: None,
     })
+}
+
+fn persisted_session_grant_from_login(
+    grant: &CoauthSessionGrantInfo,
+    session: &DevLoginResponse,
+    principal_server_url: &str,
+    actor: &str,
+    session_grant_exchange_path: &str,
+) -> Result<PersistedSessionGrant, String> {
+    let grant_id = grant
+        .id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Server sign-in did not return a session grant id.".to_owned())?;
+    let audience = grant
+        .audience
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Server sign-in did not return a session grant audience.".to_owned())?;
+    Ok(PersistedSessionGrant {
+        grant_jwt: grant.grant_jwt.clone(),
+        session_private_key_pem: grant.session_private_key_pem.clone(),
+        grant_id: grant_id.to_owned(),
+        audience: audience.to_owned(),
+        principal_did: actor.to_owned(),
+        device_id: session.device_id.clone(),
+        principal_server_url: principal_server_url.to_owned(),
+        session_grant_exchange_path: session_grant_exchange_path.to_owned(),
+        grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
+        session_expires_at: parse_rfc3339_utc(&session.expires_at),
+        stored_at: Utc::now(),
+    })
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc))
 }
 
 fn requires_oidc_refresh_token(principal_server_url: &str) -> bool {
@@ -710,5 +762,65 @@ mod tests {
             "https://two.example",
             "did:web:alice.example"
         ));
+    }
+
+    #[test]
+    fn persisted_session_grant_from_login_carries_refresh_material() {
+        let grant = CoauthSessionGrantInfo {
+            kind: Some("session_grant".to_owned()),
+            id: Some("grant-1".to_owned()),
+            grant_jwt: "grant.jwt".to_owned(),
+            session_public_key: "public-key".to_owned(),
+            session_private_key_pem: "private-key-pem".to_owned(),
+            expires_at: "2026-05-29T12:00:00Z".to_owned(),
+            audience: Some("https://local.host/api".to_owned()),
+            scopes: vec!["urn:contrix:principal-server:session.bind".to_owned()],
+            principal_server: None,
+        };
+        let session = DevLoginResponse {
+            access_token: "sx-bridge".to_owned(),
+            token_type: "Bearer".to_owned(),
+            actor: "did:web:alice.example".to_owned(),
+            device_id: "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            expires_at: "2026-05-29T11:05:00Z".to_owned(),
+        };
+
+        let persisted = persisted_session_grant_from_login(
+            &grant,
+            &session,
+            "https://local.host",
+            "did:web:alice.example",
+            "api/v1/auth/session-grant/exchange",
+        )
+        .expect("persistable grant");
+
+        assert_eq!(persisted.grant_jwt, "grant.jwt");
+        assert_eq!(persisted.session_private_key_pem, "private-key-pem");
+        assert_eq!(persisted.grant_id, "grant-1");
+        assert_eq!(persisted.audience, "https://local.host/api");
+        assert_eq!(persisted.principal_did, "did:web:alice.example");
+        assert_eq!(
+            persisted.device_id,
+            "cx:device:01964137-0000-7000-8000-000000000001"
+        );
+        assert_eq!(persisted.principal_server_url, "https://local.host");
+        assert_eq!(
+            persisted.session_grant_exchange_path,
+            "api/v1/auth/session-grant/exchange"
+        );
+        assert_eq!(
+            persisted
+                .grant_expires_at
+                .expect("grant expiry")
+                .to_rfc3339(),
+            "2026-05-29T12:00:00+00:00"
+        );
+        assert_eq!(
+            persisted
+                .session_expires_at
+                .expect("session expiry")
+                .to_rfc3339(),
+            "2026-05-29T11:05:00+00:00"
+        );
     }
 }

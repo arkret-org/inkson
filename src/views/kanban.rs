@@ -54,6 +54,7 @@ const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
     "tracks.synthesis.body",
     "tracks.discussion.body",
 ];
+const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str = "application/vnd.contrix.flow.patch-value+json";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
@@ -376,6 +377,41 @@ fn CardMarkdownEditor(
     }
 }
 
+#[component]
+fn CardDetailEditActions(
+    status: String,
+    on_save: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    rsx! {
+        if !status.trim().is_empty() {
+            div {
+                class: "card-detail-edit-status",
+                "data-testid": "card-detail-edit-status",
+                role: "status",
+                "aria-live": "polite",
+                "{status}"
+            }
+        }
+        div { class: "card-detail-form-actions",
+            button {
+                r#type: "button",
+                class: "primary",
+                "data-testid": "card-detail-save-button",
+                onclick: move |_| on_save.call(()),
+                {crate::i18n::tr("common.save")}
+            }
+            button {
+                r#type: "button",
+                class: "secondary",
+                "data-testid": "card-detail-cancel-edit-button",
+                onclick: move |_| on_cancel.call(()),
+                {crate::i18n::tr("common.cancel")}
+            }
+        }
+    }
+}
+
 fn toast_editor_bootstrap_script(
     host_id: &str,
     fallback_id: &str,
@@ -467,11 +503,14 @@ fn toast_editor_bootstrap_script(
 
     const sync = (editor) => {{
         fallback.value = editor.getMarkdown();
-        fallback.dispatchEvent(new InputEvent("input", {{
-            bubbles: true,
-            inputType: "insertText",
-            data: null
-        }}));
+        const event = typeof InputEvent === "function"
+            ? new InputEvent("input", {{
+                bubbles: true,
+                inputType: "insertText",
+                data: null
+            }})
+            : new Event("input", {{ bubbles: true }});
+        fallback.dispatchEvent(event);
     }};
 
     const uploadImage = async (blob, callback) => {{
@@ -520,7 +559,7 @@ fn toast_editor_bootstrap_script(
 
     const editor = new window.toastui.Editor({{
         el: host,
-        height: "320px",
+        height: "240px",
         initialEditType: "wysiwyg",
         previewStyle: "tab",
         initialValue: config.value || "",
@@ -1842,6 +1881,7 @@ pub fn KanbanPanel(
     // explicit demo seed in the board header.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
     let initial_api_columns = try_load_api_columns("");
+    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
     let initial_source = match initial_api_columns {
         Some(_) => BoardProjectionSource::ApiDerived,
         None if seed_fallback_allowed => BoardProjectionSource::SeedFallback,
@@ -1936,6 +1976,7 @@ pub fn KanbanPanel(
     let mut card_edit_body = use_signal(String::new);
     let mut card_edit_synthesis = use_signal(String::new);
     let mut card_edit_synthesis_target_id = use_signal(|| Option::<String>::None);
+    let mut card_detail_edit_status = use_signal(String::new);
     let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
     let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
@@ -1991,6 +2032,7 @@ pub fn KanbanPanel(
                 card_edit_assignee.set(draft.assignee);
                 card_edit_due.set(draft.due);
                 editing_card_detail.set(false);
+                card_detail_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
                 card_detail_tab.set(CardDetailContentTab::Description);
                 card_synthesis_history_open_id.set(None);
@@ -3430,6 +3472,7 @@ pub fn KanbanPanel(
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
+                                        card_detail_edit_status.set(String::new());
                                         card_detail_actions_open.set(false);
                                         card_detail_tab.set(CardDetailContentTab::Description);
                                         card_synthesis_history_open_id.set(None);
@@ -3993,6 +4036,7 @@ pub fn KanbanPanel(
                                 {
                                     selected_card.set(None);
                                     editing_card_detail.set(false);
+                                    card_detail_edit_status.set(String::new());
                                     card_detail_actions_open.set(false);
                                     if route_is_card_detail {
                                         let _ = overlay_navigator.push(overlay_board_route.clone());
@@ -4144,9 +4188,14 @@ pub fn KanbanPanel(
                                                                     let draft = card_detail_draft_from_card(&current);
                                                                     card_edit_title.set(draft.title);
                                                                     card_edit_description.set(draft.description);
+                                                                    card_edit_body.set(draft.body);
+                                                                    card_edit_synthesis.set(draft.synthesis);
+                                                                    card_edit_synthesis_target_id.set(None);
                                                                     card_edit_labels.set(draft.labels.join(", "));
                                                                     card_edit_assignee.set(draft.assignee);
                                                                     card_edit_due.set(draft.due);
+                                                                    card_edit_scope.set(CardEditScope::Summary);
+                                                                    card_detail_edit_status.set(String::new());
                                                                     editing_card_detail.set(true);
                                                                     card_detail_actions_open.set(false);
                                                                 }
@@ -4216,6 +4265,7 @@ pub fn KanbanPanel(
                                                                             );
                                                                             selected_card.set(None);
                                                                             editing_card_detail.set(false);
+                                                                            card_detail_edit_status.set(String::new());
                                                                             card_detail_actions_open.set(false);
                                                                             if route_is_card_detail {
                                                                                 let _ = action_navigator.push(action_board_route.clone());
@@ -4239,6 +4289,7 @@ pub fn KanbanPanel(
                                             onclick: move |_| {
                                                 selected_card.set(None);
                                                 editing_card_detail.set(false);
+                                                card_detail_edit_status.set(String::new());
                                                 card_detail_actions_open.set(false);
                                                 if route_is_card_detail {
                                                     let _ = close_navigator.push(close_board_route.clone());
@@ -4249,141 +4300,7 @@ pub fn KanbanPanel(
                                     }
                                 }
 
-                                if editing_card_detail() {
-                                    div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
-                                        if card_edit_scope() == CardEditScope::Summary {
-                                            div { class: "field",
-                                                label { "Title" }
-                                                input {
-                                                    class: "input",
-                                                    "data-testid": "card-detail-title-input",
-                                                    value: "{card_edit_title}",
-                                                    maxlength: "512",
-                                                    oninput: move |evt| card_edit_title.set(evt.value()),
-                                                }
-                                            }
-                                            div { class: "field",
-                                                label { "Summary" }
-                                                CardMarkdownEditor {
-                                                    value: card_edit_description(),
-                                                    base_url: base_url.clone(),
-                                                    token: token(),
-                                                    space_id: selected_space.clone(),
-                                                    on_change: move |value| card_edit_description.set(value),
-                                                    slot: "summary".to_owned(),
-                                                }
-                                            }
-                                        }
-                                        if card_edit_scope() == CardEditScope::Description {
-                                            div { class: "field",
-                                                label { "Description" }
-                                                CardMarkdownEditor {
-                                                    value: card_edit_body(),
-                                                    base_url: base_url.clone(),
-                                                    token: token(),
-                                                    space_id: selected_space.clone(),
-                                                    on_change: move |value| card_edit_body.set(value),
-                                                    slot: "description".to_owned(),
-                                                }
-                                            }
-                                        }
-                                        if card_edit_scope() == CardEditScope::Synthesis {
-                                            div { class: "field",
-                                                label { "Synthesis" }
-                                                CardMarkdownEditor {
-                                                    value: card_edit_synthesis(),
-                                                    base_url: base_url.clone(),
-                                                    token: token(),
-                                                    space_id: selected_space.clone(),
-                                                    on_change: move |value| card_edit_synthesis.set(value),
-                                                    slot: "synthesis".to_owned(),
-                                                }
-                                            }
-                                        }
-                                        div { class: "card-detail-form-actions",
-                                            button {
-                                                class: "primary",
-                                                "data-testid": "card-detail-save-button",
-                                                onclick: {
-                                                    let base = base_url.clone();
-                                                    let space = selected_space.clone();
-                                                    let actor = account_did.clone();
-                                                    let current = card.clone();
-                                                    move |_| {
-                                                        let edit_scope = card_edit_scope();
-                                                        let synthesis_target_id = card_edit_synthesis_target_id();
-                                                        let synthesis_revision_body =
-                                                            card_edit_synthesis().trim().to_owned();
-                                                        let synthesis_for_save =
-                                                            if edit_scope == CardEditScope::Synthesis {
-                                                                synthesis_body_after_entry_edit(
-                                                                    &synthesis_entries,
-                                                                    synthesis_target_id.as_deref(),
-                                                                    &synthesis_revision_body,
-                                                                )
-                                                            } else {
-                                                                synthesis_revision_body.clone()
-                                                            };
-                                                        let draft = CardDetailDraft {
-                                                            title: card_edit_title().trim().to_owned(),
-                                                            description: card_edit_description().trim().to_owned(),
-                                                            body: card_edit_body().trim().to_owned(),
-                                                            synthesis: synthesis_for_save,
-                                                            labels: parse_card_labels(&card_edit_labels()),
-                                                            assignee: card_edit_assignee().trim().to_owned(),
-                                                            due: card_edit_due().trim().to_owned(),
-                                                        };
-                                                        let synthesis_revision = (edit_scope == CardEditScope::Synthesis)
-                                                            .then_some(synthesis_revision_body);
-                                                        if dispatch_card_detail_update(
-                                                            base.clone(),
-                                                            token,
-                                                            space.clone(),
-                                                            actor.clone(),
-                                                            current.clone(),
-                                                            draft,
-                                                            selected_scope_security_encrypted,
-                                                            synthesis_target_id,
-                                                            synthesis_revision,
-                                                            columns,
-                                                            selected_card,
-                                                            state_store,
-                                                            board_status,
-                                                        ) {
-                                                            editing_card_detail.set(false);
-                                                            card_detail_actions_open.set(false);
-                                                        }
-                                                    }
-                                                },
-                                                {crate::i18n::tr("common.save")}
-                                            }
-                                            button {
-                                                class: "secondary",
-                                                "data-testid": "card-detail-cancel-edit-button",
-                                                onclick: {
-                                                    let current = card.clone();
-                                                    move |_| {
-                                                        let draft = card_detail_draft_from_card(&current);
-                                                        card_edit_title.set(draft.title);
-                                                        card_edit_description.set(draft.description);
-                                                        card_edit_body.set(draft.body);
-                                                        card_edit_synthesis.set(draft.synthesis);
-                                                        card_edit_synthesis_target_id.set(None);
-                                                        card_edit_labels.set(draft.labels.join(", "));
-                                                        card_edit_assignee.set(draft.assignee);
-                                                        card_edit_due.set(draft.due);
-                                                        editing_card_detail.set(false);
-                                                        card_detail_actions_open.set(false);
-                                                        card_synthesis_history_open_id.set(None);
-                                                        card_synthesis_selected_revision_id.set(None);
-                                                    }
-                                                },
-                                                {crate::i18n::tr("common.cancel")}
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    div { class: "{detail_layout_class}",
+                                div { class: "{detail_layout_class}",
                                         main { class: "card-detail-main",
                                             section { class: "card-detail-section",
                                                 div { class: "card-detail-section-head",
@@ -4391,30 +4308,116 @@ pub fn KanbanPanel(
                                                         UiIcon { name: "file" }
                                                         span { "Summary" }
                                                     }
-                                                    button {
-                                                        class: "secondary card-detail-mini-action card-detail-edit-action",
-                                                        "data-testid": "card-detail-edit-button",
-                                                        onclick: {
-                                                            let current = card.clone();
-                                                            move |_| {
-                                                                let draft = card_detail_draft_from_card(&current);
-                                                                card_edit_title.set(draft.title);
-                                                                card_edit_description.set(draft.description);
-                                                                card_edit_body.set(draft.body);
-                                                                card_edit_synthesis.set(draft.synthesis);
-                                                                card_edit_synthesis_target_id.set(None);
-                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                card_edit_assignee.set(draft.assignee);
-                                                                card_edit_due.set(draft.due);
-                                                                card_edit_scope.set(CardEditScope::Summary);
-                                                                editing_card_detail.set(true);
-                                                            }
-                                                        },
-                                                        UiIcon { name: "settings" }
-                                                        span { {crate::i18n::tr("common.edit")} }
+                                                    if !editing_card_detail() {
+                                                        button {
+                                                            class: "secondary card-detail-mini-action card-detail-edit-action",
+                                                            "data-testid": "card-detail-edit-button",
+                                                            onclick: {
+                                                                let current = card.clone();
+                                                                move |_| {
+                                                                    let draft = card_detail_draft_from_card(&current);
+                                                                    card_edit_title.set(draft.title);
+                                                                    card_edit_description.set(draft.description);
+                                                                    card_edit_body.set(draft.body);
+                                                                    card_edit_synthesis.set(draft.synthesis);
+                                                                    card_edit_synthesis_target_id.set(None);
+                                                                    card_edit_labels.set(draft.labels.join(", "));
+                                                                    card_edit_assignee.set(draft.assignee);
+                                                                    card_edit_due.set(draft.due);
+                                                                    card_edit_scope.set(CardEditScope::Summary);
+                                                                    card_detail_edit_status.set(String::new());
+                                                                    editing_card_detail.set(true);
+                                                                }
+                                                            },
+                                                            UiIcon { name: "settings" }
+                                                            span { {crate::i18n::tr("common.edit")} }
+                                                        }
                                                     }
                                                 }
-                                                if summary_text.is_empty() {
+                                                if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
+                                                    div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
+                                                        div { class: "field",
+                                                            label { "Title" }
+                                                            input {
+                                                                class: "input",
+                                                                "data-testid": "card-detail-title-input",
+                                                                value: "{card_edit_title}",
+                                                                maxlength: "512",
+                                                                oninput: move |evt| card_edit_title.set(evt.value()),
+                                                            }
+                                                        }
+                                                        div { class: "field",
+                                                            label { "Summary" }
+                                                            CardMarkdownEditor {
+                                                                value: card_edit_description(),
+                                                                base_url: base_url.clone(),
+                                                                token: token(),
+                                                                space_id: selected_space.clone(),
+                                                                on_change: move |value| card_edit_description.set(value),
+                                                                slot: "summary".to_owned(),
+                                                            }
+                                                        }
+                                                        CardDetailEditActions {
+                                                            status: card_detail_edit_status(),
+                                                            on_save: {
+                                                                let base = base_url.clone();
+                                                                let space = selected_space.clone();
+                                                                let actor = account_did.clone();
+                                                                let current = card.clone();
+                                                                let entries = synthesis_entries.clone();
+                                                                move |_| {
+                                                                    save_card_detail_edit(
+                                                                        base.clone(),
+                                                                        token,
+                                                                        space.clone(),
+                                                                        actor.clone(),
+                                                                        current.clone(),
+                                                                        entries.clone(),
+                                                                        selected_scope_security_encrypted,
+                                                                        card_edit_scope,
+                                                                        card_edit_title,
+                                                                        card_edit_description,
+                                                                        card_edit_body,
+                                                                        card_edit_synthesis,
+                                                                        card_edit_synthesis_target_id,
+                                                                        card_edit_labels,
+                                                                        card_edit_assignee,
+                                                                        card_edit_due,
+                                                                        editing_card_detail,
+                                                                        card_detail_actions_open,
+                                                                        card_detail_edit_status,
+                                                                        columns,
+                                                                        selected_card,
+                                                                        state_store,
+                                                                        mls_passphrase_store,
+                                                                        board_status,
+                                                                    );
+                                                                }
+                                                            },
+                                                            on_cancel: {
+                                                                let current = card.clone();
+                                                                move |_| {
+                                                                    reset_card_detail_edit(
+                                                                        &current,
+                                                                        card_edit_title,
+                                                                        card_edit_description,
+                                                                        card_edit_body,
+                                                                        card_edit_synthesis,
+                                                                        card_edit_synthesis_target_id,
+                                                                        card_edit_labels,
+                                                                        card_edit_assignee,
+                                                                        card_edit_due,
+                                                                        editing_card_detail,
+                                                                        card_detail_actions_open,
+                                                                        card_synthesis_history_open_id,
+                                                                        card_synthesis_selected_revision_id,
+                                                                        card_detail_edit_status,
+                                                                    );
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                } else if summary_text.is_empty() {
                                                     div { class: "card-detail-empty", "No summary" }
                                                 } else {
                                                     div {
@@ -4437,6 +4440,7 @@ pub fn KanbanPanel(
                                                         "data-testid": "card-detail-tab-description",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
+                                                        disabled: editing_card_detail(),
                                                         onclick: move |_| card_detail_tab.set(CardDetailContentTab::Description),
                                                         "Description"
                                                     }
@@ -4446,6 +4450,7 @@ pub fn KanbanPanel(
                                                         "data-testid": "card-detail-tab-synthesis",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
+                                                        disabled: editing_card_detail(),
                                                         onclick: move |_| card_detail_tab.set(CardDetailContentTab::Synthesis),
                                                         "Synthesis"
                                                     }
@@ -4455,6 +4460,7 @@ pub fn KanbanPanel(
                                                         "data-testid": "card-detail-tab-discussion",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
+                                                        disabled: editing_card_detail(),
                                                         onclick: move |_| card_detail_tab.set(CardDetailContentTab::Discussion),
                                                         "Discussion"
                                                     }
@@ -4464,55 +4470,134 @@ pub fn KanbanPanel(
                                                         class: "card-detail-description-panel",
                                                         "data-testid": "card-description-panel",
                                                         role: "tabpanel",
-                                                        if card.body.trim().is_empty() {
-                                                            div { class: "card-detail-empty",
-                                                                div { "No description" }
-                                                                button {
-                                                                    class: "secondary card-detail-mini-action",
-                                                                    "data-testid": "card-detail-add-description-button",
-                                                                    onclick: {
+                                                        if editing_card_detail() && card_edit_scope() == CardEditScope::Description {
+                                                            div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
+                                                                div { class: "field",
+                                                                    label { "Description" }
+                                                                    CardMarkdownEditor {
+                                                                        value: card_edit_body(),
+                                                                        base_url: base_url.clone(),
+                                                                        token: token(),
+                                                                        space_id: selected_space.clone(),
+                                                                        on_change: move |value| card_edit_body.set(value),
+                                                                        slot: "description".to_owned(),
+                                                                    }
+                                                                }
+                                                                CardDetailEditActions {
+                                                                    status: card_detail_edit_status(),
+                                                                    on_save: {
+                                                                        let base = base_url.clone();
+                                                                        let space = selected_space.clone();
+                                                                        let actor = account_did.clone();
                                                                         let current = card.clone();
+                                                                        let entries = synthesis_entries.clone();
                                                                         move |_| {
-                                                                            let draft = card_detail_draft_from_card(&current);
-                                                                            card_edit_title.set(draft.title);
-                                                                            card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.body);
-                                                                            card_edit_synthesis.set(draft.synthesis);
-                                                                            card_edit_synthesis_target_id.set(None);
-                                                                            card_edit_labels.set(draft.labels.join(", "));
-                                                                            card_edit_assignee.set(draft.assignee);
-                                                                            card_edit_due.set(draft.due);
-                                                                            card_edit_scope.set(CardEditScope::Description);
-                                                                            editing_card_detail.set(true);
+                                                                            save_card_detail_edit(
+                                                                                base.clone(),
+                                                                                token,
+                                                                                space.clone(),
+                                                                                actor.clone(),
+                                                                                current.clone(),
+                                                                                entries.clone(),
+                                                                                selected_scope_security_encrypted,
+                                                                                card_edit_scope,
+                                                                                card_edit_title,
+                                                                                card_edit_description,
+                                                                                card_edit_body,
+                                                                                card_edit_synthesis,
+                                                                                card_edit_synthesis_target_id,
+                                                                                card_edit_labels,
+                                                                                card_edit_assignee,
+                                                                                card_edit_due,
+                                                                                editing_card_detail,
+                                                                                card_detail_actions_open,
+                                                                                card_detail_edit_status,
+                                                                                columns,
+                                                                                selected_card,
+                                                                                state_store,
+                                                                                mls_passphrase_store,
+                                                                                board_status,
+                                                                            );
                                                                         }
                                                                     },
-                                                                    UiIcon { name: "plus" }
-                                                                    span { "Add description" }
+                                                                    on_cancel: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            reset_card_detail_edit(
+                                                                                &current,
+                                                                                card_edit_title,
+                                                                                card_edit_description,
+                                                                                card_edit_body,
+                                                                                card_edit_synthesis,
+                                                                                card_edit_synthesis_target_id,
+                                                                                card_edit_labels,
+                                                                                card_edit_assignee,
+                                                                                card_edit_due,
+                                                                                editing_card_detail,
+                                                                                card_detail_actions_open,
+                                                                                card_synthesis_history_open_id,
+                                                                                card_synthesis_selected_revision_id,
+                                                                                card_detail_edit_status,
+                                                                            );
+                                                                        }
+                                                                    },
+                                                                }
+                                                            }
+                                                        } else if card.body.trim().is_empty() {
+                                                            div { class: "card-detail-empty",
+                                                                div { "No description" }
+                                                                if !editing_card_detail() {
+                                                                    button {
+                                                                        class: "secondary card-detail-mini-action",
+                                                                        "data-testid": "card-detail-add-description-button",
+                                                                        onclick: {
+                                                                            let current = card.clone();
+                                                                            move |_| {
+                                                                                let draft = card_detail_draft_from_card(&current);
+                                                                                card_edit_title.set(draft.title);
+                                                                                card_edit_description.set(draft.description);
+                                                                                card_edit_body.set(draft.body);
+                                                                                card_edit_synthesis.set(draft.synthesis);
+                                                                                card_edit_synthesis_target_id.set(None);
+                                                                                card_edit_labels.set(draft.labels.join(", "));
+                                                                                card_edit_assignee.set(draft.assignee);
+                                                                                card_edit_due.set(draft.due);
+                                                                                card_edit_scope.set(CardEditScope::Description);
+                                                                                card_detail_edit_status.set(String::new());
+                                                                                editing_card_detail.set(true);
+                                                                            }
+                                                                        },
+                                                                        UiIcon { name: "plus" }
+                                                                        span { "Add description" }
+                                                                    }
                                                                 }
                                                             }
                                                         } else {
-                                                            div { class: "card-detail-tab-actions",
-                                                                button {
-                                                                    class: "secondary card-detail-mini-action card-detail-edit-action",
-                                                                    "data-testid": "card-detail-edit-description-button",
-                                                                    onclick: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            let draft = card_detail_draft_from_card(&current);
-                                                                            card_edit_title.set(draft.title);
-                                                                            card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.body);
-                                                                            card_edit_synthesis.set(draft.synthesis);
-                                                                            card_edit_synthesis_target_id.set(None);
-                                                                            card_edit_labels.set(draft.labels.join(", "));
-                                                                            card_edit_assignee.set(draft.assignee);
-                                                                            card_edit_due.set(draft.due);
-                                                                            card_edit_scope.set(CardEditScope::Description);
-                                                                            editing_card_detail.set(true);
-                                                                        }
-                                                                    },
-                                                                    UiIcon { name: "settings" }
-                                                                    span { {crate::i18n::tr("common.edit")} }
+                                                            if !editing_card_detail() {
+                                                                div { class: "card-detail-tab-actions",
+                                                                    button {
+                                                                        class: "secondary card-detail-mini-action card-detail-edit-action",
+                                                                        "data-testid": "card-detail-edit-description-button",
+                                                                        onclick: {
+                                                                            let current = card.clone();
+                                                                            move |_| {
+                                                                                let draft = card_detail_draft_from_card(&current);
+                                                                                card_edit_title.set(draft.title);
+                                                                                card_edit_description.set(draft.description);
+                                                                                card_edit_body.set(draft.body);
+                                                                                card_edit_synthesis.set(draft.synthesis);
+                                                                                card_edit_synthesis_target_id.set(None);
+                                                                                card_edit_labels.set(draft.labels.join(", "));
+                                                                                card_edit_assignee.set(draft.assignee);
+                                                                                card_edit_due.set(draft.due);
+                                                                                card_edit_scope.set(CardEditScope::Description);
+                                                                                card_detail_edit_status.set(String::new());
+                                                                                editing_card_detail.set(true);
+                                                                            }
+                                                                        },
+                                                                        UiIcon { name: "settings" }
+                                                                        span { {crate::i18n::tr("common.edit")} }
+                                                                    }
                                                                 }
                                                             }
                                                             div { class: "card-detail-description",
@@ -4676,38 +4761,118 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                         }
                                                                                     }
-                                                                                    button {
-                                                                                        r#type: "button",
-                                                                                        class: "secondary card-detail-mini-action card-synthesis-entry-edit",
-                                                                                        "data-testid": "card-detail-edit-synthesis-button",
-                                                                                        onclick: {
-                                                                                            let current = card.clone();
-                                                                                            let entry_id = entry.id.clone();
-                                                                                            let entry_body = entry.body.clone();
-                                                                                            move |_| {
-                                                                                                let draft = card_detail_draft_from_card(&current);
-                                                                                                card_edit_title.set(draft.title);
-                                                                                                card_edit_description.set(draft.description);
-                                                                                                card_edit_body.set(draft.body);
-                                                                                                card_edit_synthesis.set(entry_body.clone());
-                                                                                                card_edit_synthesis_target_id.set(Some(entry_id.clone()));
-                                                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                                                card_edit_assignee.set(draft.assignee);
-                                                                                                card_edit_due.set(draft.due);
-                                                                                                card_edit_scope.set(CardEditScope::Synthesis);
-                                                                                                editing_card_detail.set(true);
-                                                                                                card_synthesis_history_open_id.set(None);
-                                                                                                card_synthesis_selected_revision_id.set(None);
-                                                                                            }
-                                                                                        },
-                                                                                        UiIcon { name: "settings" }
-                                                                                        span { {crate::i18n::tr("common.edit")} }
+                                                                                    if !editing_card_detail() {
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "secondary card-detail-mini-action card-synthesis-entry-edit",
+                                                                                            "data-testid": "card-detail-edit-synthesis-button",
+                                                                                            onclick: {
+                                                                                                let current = card.clone();
+                                                                                                let entry_id = entry.id.clone();
+                                                                                                let entry_body = entry.body.clone();
+                                                                                                move |_| {
+                                                                                                    let draft = card_detail_draft_from_card(&current);
+                                                                                                    card_edit_title.set(draft.title);
+                                                                                                    card_edit_description.set(draft.description);
+                                                                                                    card_edit_body.set(draft.body);
+                                                                                                    card_edit_synthesis.set(entry_body.clone());
+                                                                                                    card_edit_synthesis_target_id.set(Some(entry_id.clone()));
+                                                                                                    card_edit_labels.set(draft.labels.join(", "));
+                                                                                                    card_edit_assignee.set(draft.assignee);
+                                                                                                    card_edit_due.set(draft.due);
+                                                                                                    card_edit_scope.set(CardEditScope::Synthesis);
+                                                                                                    card_detail_edit_status.set(String::new());
+                                                                                                    editing_card_detail.set(true);
+                                                                                                    card_synthesis_history_open_id.set(None);
+                                                                                                    card_synthesis_selected_revision_id.set(None);
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: "settings" }
+                                                                                            span { {crate::i18n::tr("common.edit")} }
+                                                                                        }
                                                                                     }
                                                                                 }
-                                                                                div { class: "card-detail-description card-synthesis-body",
-                                                                                    {crate::content::render_blocks(
-                                                                                        &crate::content::parse_message_body(&display_revision.body),
-                                                                                    )}
+                                                                                if editing_card_detail()
+                                                                                    && card_edit_scope() == CardEditScope::Synthesis
+                                                                                    && card_edit_synthesis_target_id().as_deref() == Some(entry.id.as_str()) {
+                                                                                    div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
+                                                                                        div { class: "field",
+                                                                                            label { "Synthesis" }
+                                                                                            CardMarkdownEditor {
+                                                                                                value: card_edit_synthesis(),
+                                                                                                base_url: base_url.clone(),
+                                                                                                token: token(),
+                                                                                                space_id: selected_space.clone(),
+                                                                                                on_change: move |value| card_edit_synthesis.set(value),
+                                                                                                slot: "synthesis".to_owned(),
+                                                                                            }
+                                                                                        }
+                                                                                        CardDetailEditActions {
+                                                                                            status: card_detail_edit_status(),
+                                                                                            on_save: {
+                                                                                                let base = base_url.clone();
+                                                                                                let space = selected_space.clone();
+                                                                                                let actor = account_did.clone();
+                                                                                                let current = card.clone();
+                                                                                                let entries = synthesis_entries.clone();
+                                                                                                move |_| {
+                                                                                                    save_card_detail_edit(
+                                                                                                        base.clone(),
+                                                                                                        token,
+                                                                                                        space.clone(),
+                                                                                                        actor.clone(),
+                                                                                                        current.clone(),
+                                                                                                        entries.clone(),
+                                                                                                        selected_scope_security_encrypted,
+                                                                                                        card_edit_scope,
+                                                                                                        card_edit_title,
+                                                                                                        card_edit_description,
+                                                                                                        card_edit_body,
+                                                                                                        card_edit_synthesis,
+                                                                                                        card_edit_synthesis_target_id,
+                                                                                                        card_edit_labels,
+                                                                                                        card_edit_assignee,
+                                                                                                        card_edit_due,
+                                                                                                        editing_card_detail,
+                                                                                                        card_detail_actions_open,
+                                                                                                        card_detail_edit_status,
+                                                                                                        columns,
+                                                                                                        selected_card,
+                                                                                                        state_store,
+                                                                                                        mls_passphrase_store,
+                                                                                                        board_status,
+                                                                                                    );
+                                                                                                }
+                                                                                            },
+                                                                                            on_cancel: {
+                                                                                                let current = card.clone();
+                                                                                                move |_| {
+                                                                                                    reset_card_detail_edit(
+                                                                                                        &current,
+                                                                                                        card_edit_title,
+                                                                                                        card_edit_description,
+                                                                                                        card_edit_body,
+                                                                                                        card_edit_synthesis,
+                                                                                                        card_edit_synthesis_target_id,
+                                                                                                        card_edit_labels,
+                                                                                                        card_edit_assignee,
+                                                                                                        card_edit_due,
+                                                                                                        editing_card_detail,
+                                                                                                        card_detail_actions_open,
+                                                                                                        card_synthesis_history_open_id,
+                                                                                                        card_synthesis_selected_revision_id,
+                                                                                                        card_detail_edit_status,
+                                                                                                    );
+                                                                                                }
+                                                                                            },
+                                                                                        }
+                                                                                    }
+                                                                                } else {
+                                                                                    div { class: "card-detail-description card-synthesis-body",
+                                                                                        {crate::content::render_blocks(
+                                                                                            &crate::content::parse_message_body(&display_revision.body),
+                                                                                        )}
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -4715,30 +4880,109 @@ pub fn KanbanPanel(
                                                                 }
                                                             }
                                                         }
-                                                        div { class: "card-synthesis-footer-action",
-                                                            button {
-                                                                class: "secondary card-detail-mini-action",
-                                                                "data-testid": "card-detail-new-synthesis-button",
-                                                                onclick: {
-                                                                    let current = card.clone();
-                                                                    move |_| {
-                                                                        let draft = card_detail_draft_from_card(&current);
-                                                                        card_edit_title.set(draft.title);
-                                                                        card_edit_description.set(draft.description);
-                                                                        card_edit_body.set(draft.body);
-                                                                        card_edit_synthesis.set(String::new());
-                                                                        card_edit_synthesis_target_id.set(None);
-                                                                        card_edit_labels.set(draft.labels.join(", "));
-                                                                        card_edit_assignee.set(draft.assignee);
-                                                                        card_edit_due.set(draft.due);
-                                                                        card_edit_scope.set(CardEditScope::Synthesis);
-                                                                        editing_card_detail.set(true);
-                                                                        card_synthesis_history_open_id.set(None);
-                                                                        card_synthesis_selected_revision_id.set(None);
+                                                        if editing_card_detail()
+                                                            && card_edit_scope() == CardEditScope::Synthesis
+                                                            && card_edit_synthesis_target_id().is_none() {
+                                                            div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
+                                                                div { class: "field",
+                                                                    label { "Synthesis" }
+                                                                    CardMarkdownEditor {
+                                                                        value: card_edit_synthesis(),
+                                                                        base_url: base_url.clone(),
+                                                                        token: token(),
+                                                                        space_id: selected_space.clone(),
+                                                                        on_change: move |value| card_edit_synthesis.set(value),
+                                                                        slot: "synthesis".to_owned(),
                                                                     }
-                                                                },
-                                                                UiIcon { name: "plus" }
-                                                                span { "New" }
+                                                                }
+                                                                CardDetailEditActions {
+                                                                    status: card_detail_edit_status(),
+                                                                    on_save: {
+                                                                        let base = base_url.clone();
+                                                                        let space = selected_space.clone();
+                                                                        let actor = account_did.clone();
+                                                                        let current = card.clone();
+                                                                        let entries = synthesis_entries.clone();
+                                                                        move |_| {
+                                                                            save_card_detail_edit(
+                                                                                base.clone(),
+                                                                                token,
+                                                                                space.clone(),
+                                                                                actor.clone(),
+                                                                                current.clone(),
+                                                                                entries.clone(),
+                                                                                selected_scope_security_encrypted,
+                                                                                card_edit_scope,
+                                                                                card_edit_title,
+                                                                                card_edit_description,
+                                                                                card_edit_body,
+                                                                                card_edit_synthesis,
+                                                                                card_edit_synthesis_target_id,
+                                                                                card_edit_labels,
+                                                                                card_edit_assignee,
+                                                                                card_edit_due,
+                                                                                editing_card_detail,
+                                                                                card_detail_actions_open,
+                                                                                card_detail_edit_status,
+                                                                                columns,
+                                                                                selected_card,
+                                                                                state_store,
+                                                                                mls_passphrase_store,
+                                                                                board_status,
+                                                                            );
+                                                                        }
+                                                                    },
+                                                                    on_cancel: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            reset_card_detail_edit(
+                                                                                &current,
+                                                                                card_edit_title,
+                                                                                card_edit_description,
+                                                                                card_edit_body,
+                                                                                card_edit_synthesis,
+                                                                                card_edit_synthesis_target_id,
+                                                                                card_edit_labels,
+                                                                                card_edit_assignee,
+                                                                                card_edit_due,
+                                                                                editing_card_detail,
+                                                                                card_detail_actions_open,
+                                                                                card_synthesis_history_open_id,
+                                                                                card_synthesis_selected_revision_id,
+                                                                                card_detail_edit_status,
+                                                                            );
+                                                                        }
+                                                                    },
+                                                                }
+                                                            }
+                                                        }
+                                                        if !editing_card_detail() {
+                                                            div { class: "card-synthesis-footer-action",
+                                                                button {
+                                                                    class: "secondary card-detail-mini-action",
+                                                                    "data-testid": "card-detail-new-synthesis-button",
+                                                                    onclick: {
+                                                                        let current = card.clone();
+                                                                        move |_| {
+                                                                            let draft = card_detail_draft_from_card(&current);
+                                                                            card_edit_title.set(draft.title);
+                                                                            card_edit_description.set(draft.description);
+                                                                            card_edit_body.set(draft.body);
+                                                                            card_edit_synthesis.set(String::new());
+                                                                            card_edit_synthesis_target_id.set(None);
+                                                                            card_edit_labels.set(draft.labels.join(", "));
+                                                                            card_edit_assignee.set(draft.assignee);
+                                                                            card_edit_due.set(draft.due);
+                                                                            card_edit_scope.set(CardEditScope::Synthesis);
+                                                                            card_detail_edit_status.set(String::new());
+                                                                            editing_card_detail.set(true);
+                                                                            card_synthesis_history_open_id.set(None);
+                                                                            card_synthesis_selected_revision_id.set(None);
+                                                                        }
+                                                                    },
+                                                                    UiIcon { name: "plus" }
+                                                                    span { "New" }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -4945,7 +5189,6 @@ pub fn KanbanPanel(
                                         }
                                         }
                                     }
-                                }
                             }
                         }
                     }
@@ -5490,6 +5733,119 @@ fn synthesis_body_after_entry_edit(
     join_synthesis_entry_bodies(bodies)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn reset_card_detail_edit(
+    current: &KanbanCard,
+    mut card_edit_title: Signal<String>,
+    mut card_edit_description: Signal<String>,
+    mut card_edit_body: Signal<String>,
+    mut card_edit_synthesis: Signal<String>,
+    mut card_edit_synthesis_target_id: Signal<Option<String>>,
+    mut card_edit_labels: Signal<String>,
+    mut card_edit_assignee: Signal<String>,
+    mut card_edit_due: Signal<String>,
+    mut editing_card_detail: Signal<bool>,
+    mut card_detail_actions_open: Signal<bool>,
+    mut card_synthesis_history_open_id: Signal<Option<String>>,
+    mut card_synthesis_selected_revision_id: Signal<Option<String>>,
+    mut card_detail_edit_status: Signal<String>,
+) {
+    let draft = card_detail_draft_from_card(current);
+    card_edit_title.set(draft.title);
+    card_edit_description.set(draft.description);
+    card_edit_body.set(draft.body);
+    card_edit_synthesis.set(draft.synthesis);
+    card_edit_synthesis_target_id.set(None);
+    card_edit_labels.set(draft.labels.join(", "));
+    card_edit_assignee.set(draft.assignee);
+    card_edit_due.set(draft.due);
+    editing_card_detail.set(false);
+    card_detail_actions_open.set(false);
+    card_synthesis_history_open_id.set(None);
+    card_synthesis_selected_revision_id.set(None);
+    card_detail_edit_status.set(String::new());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn save_card_detail_edit(
+    base_url: String,
+    token: Signal<String>,
+    space_id: String,
+    actor_did: String,
+    current: KanbanCard,
+    synthesis_entries: Vec<CardSynthesisTrackEntry>,
+    scope_security_encrypted: bool,
+    card_edit_scope: Signal<CardEditScope>,
+    card_edit_title: Signal<String>,
+    card_edit_description: Signal<String>,
+    card_edit_body: Signal<String>,
+    card_edit_synthesis: Signal<String>,
+    card_edit_synthesis_target_id: Signal<Option<String>>,
+    card_edit_labels: Signal<String>,
+    card_edit_assignee: Signal<String>,
+    card_edit_due: Signal<String>,
+    mut editing_card_detail: Signal<bool>,
+    mut card_detail_actions_open: Signal<bool>,
+    mut card_detail_edit_status: Signal<String>,
+    columns: Signal<Vec<KanbanColumn>>,
+    selected_card: Signal<Option<KanbanCard>>,
+    state_store: Signal<LocalStateStore>,
+    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
+    board_status: Signal<String>,
+) {
+    card_detail_edit_status.set("Saving...".to_owned());
+    let edit_scope = card_edit_scope();
+    let synthesis_target_id = card_edit_synthesis_target_id();
+    let synthesis_revision_body = card_edit_synthesis().trim().to_owned();
+    let synthesis_for_save = if edit_scope == CardEditScope::Synthesis {
+        synthesis_body_after_entry_edit(
+            &synthesis_entries,
+            synthesis_target_id.as_deref(),
+            &synthesis_revision_body,
+        )
+    } else {
+        synthesis_revision_body.clone()
+    };
+    let draft = CardDetailDraft {
+        title: card_edit_title().trim().to_owned(),
+        description: card_edit_description().trim().to_owned(),
+        body: card_edit_body().trim().to_owned(),
+        synthesis: synthesis_for_save,
+        labels: parse_card_labels(&card_edit_labels()),
+        assignee: card_edit_assignee().trim().to_owned(),
+        due: card_edit_due().trim().to_owned(),
+    };
+    let synthesis_revision =
+        (edit_scope == CardEditScope::Synthesis).then_some(synthesis_revision_body);
+    if dispatch_card_detail_update(
+        base_url,
+        token,
+        space_id,
+        actor_did,
+        current,
+        draft,
+        scope_security_encrypted,
+        synthesis_target_id,
+        synthesis_revision,
+        columns,
+        selected_card,
+        state_store,
+        mls_passphrase_store,
+        board_status,
+    ) {
+        card_detail_edit_status.set(String::new());
+        editing_card_detail.set(false);
+        card_detail_actions_open.set(false);
+    } else {
+        let status = board_status();
+        card_detail_edit_status.set(if status.trim().is_empty() {
+            "Unable to save changes.".to_owned()
+        } else {
+            status
+        });
+    }
+}
+
 fn projection_synthesis_revision(
     card: &KanbanCard,
     index: usize,
@@ -5978,6 +6334,296 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.audit_hint = "Card detail edit submitted as cx.flow.update payload.patch.".to_owned();
 }
 
+fn kanban_private_patch_path(path: &str) -> bool {
+    KANBAN_PRIVATE_FLOW_PATCH_PATHS
+        .iter()
+        .any(|private_path| path == *private_path || path.starts_with(&format!("{private_path}.")))
+}
+
+fn patch_plaintext_value_bytes(value: &Value) -> Result<Option<Vec<u8>>, String> {
+    if let Some(object) = value.as_object()
+        && object.get("$op").and_then(Value::as_str) == Some("unset")
+    {
+        return Ok(None);
+    }
+    let candidate = value.get("value").unwrap_or(value);
+    if !value_is_plaintext_private_content(candidate) {
+        return Ok(None);
+    }
+    serde_json::to_vec(candidate)
+        .map(Some)
+        .map_err(|err| format!("cannot serialize private patch value for encryption: {err}"))
+}
+
+fn collect_encryptable_private_patch_values(
+    patch: &Value,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let Some(object) = patch.as_object() else {
+        return Ok(Vec::new());
+    };
+    let mut values = Vec::new();
+    for (path, patch_value) in object {
+        if !kanban_private_patch_path(path) {
+            continue;
+        }
+        if let Some(bytes) = patch_plaintext_value_bytes(patch_value)? {
+            values.push((path.clone(), bytes));
+        }
+    }
+    Ok(values)
+}
+
+fn replace_private_patch_values(
+    patch: &mut Value,
+    paths: &[String],
+    encrypted_values: Vec<Value>,
+) -> Result<(), String> {
+    if paths.len() != encrypted_values.len() {
+        return Err("internal: encrypted patch value count mismatch".to_owned());
+    }
+    let Some(object) = patch.as_object_mut() else {
+        return Ok(());
+    };
+    for (path, encrypted_value) in paths.iter().zip(encrypted_values) {
+        let Some(patch_value) = object.get_mut(path) else {
+            return Err(format!("internal: missing private patch path {path}"));
+        };
+        if let Some(value) = patch_value.get_mut("value") {
+            *value = encrypted_value;
+        } else {
+            *patch_value = encrypted_value;
+        }
+    }
+    Ok(())
+}
+
+fn bootstrap_kanban_mls_group(
+    space_id: &str,
+    principal_id: &str,
+    device_id: &str,
+) -> Result<contrix_sdk::ContrixMlsGroup, String> {
+    let principal = contrix_sdk::Did::new(principal_id.to_owned())
+        .map_err(|err| format!("invalid MLS principal DID: {err:?}"))?;
+    let device = contrix_sdk::DeviceId::new(device_id.to_owned())
+        .map_err(|err| format!("invalid MLS device DID: {err:?}"))?;
+    let identity = contrix_sdk::ContrixMlsIdentity::new_basic(principal, device)
+        .map_err(|err| format!("MLS identity init failed: {err:?}"))?;
+    identity
+        .create_group(space_id.as_bytes())
+        .map_err(|err| format!("MLS group bootstrap failed: {err}"))
+}
+
+fn run_kanban_local_mls_encrypt_values(
+    mut state_store: Signal<LocalStateStore>,
+    space_id: &str,
+    principal_id: &str,
+    device_id: &str,
+    passphrase: &str,
+    plaintext_values: &[Vec<u8>],
+) -> Result<
+    (
+        contrix_sdk::Hash,
+        Vec<serde_json::Value>,
+        contrix_sdk::MlsCommitEnvelope,
+    ),
+    String,
+> {
+    if passphrase.is_empty() {
+        return Err("Encrypted Kanban writes require an MLS passphrase for this Realm.".to_owned());
+    }
+    if plaintext_values.is_empty() {
+        return Err("internal: no private patch values to encrypt".to_owned());
+    }
+
+    let snapshot = state_store.read().mls_snapshot_for(space_id);
+    let mut group = if let Some(env) = snapshot {
+        crate::mls::persistence::restore_envelope(&env, passphrase, 0)
+            .map_err(|err| format!("MLS snapshot restore failed: {err}"))?
+    } else {
+        bootstrap_kanban_mls_group(space_id, principal_id, device_id)?
+    };
+
+    let commit_envelope = group
+        .self_update_commit()
+        .map_err(|err| format!("MLS self-update commit failed: {err}"))?;
+    let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
+    for plaintext in plaintext_values {
+        let encrypted = group
+            .encrypt_payload(KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE, plaintext)
+            .map_err(|err| format!("MLS patch encryption failed: {err}"))?;
+        encrypted_values.push(
+            serde_json::to_value(&encrypted)
+                .map_err(|err| format!("encrypted patch payload serialization failed: {err}"))?,
+        );
+    }
+    let schedule_hash = group.schedule_hash();
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| format!("MLS state export failed: {err}"))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| format!("MLS state salt generation failed: {err}"))?;
+    let new_envelope = crate::mls::persistence::encrypt_state(
+        space_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &post_state.serialized_state,
+        passphrase,
+        &salt,
+    );
+    state_store
+        .write()
+        .save_mls_snapshot(space_id.to_owned(), new_envelope);
+    Ok((schedule_hash, encrypted_values, commit_envelope))
+}
+
+fn kanban_scope_space_id(scope_id: &str) -> String {
+    scope_id
+        .strip_prefix("cx:realm:")
+        .map(|suffix| format!("cx:space:{suffix}"))
+        .unwrap_or_else(|| scope_id.to_owned())
+}
+
+fn kanban_mls_commit_event(
+    state_store: Signal<LocalStateStore>,
+    space_id: &str,
+    actor_did: &str,
+    schedule_hash: &contrix_sdk::Hash,
+    commit_envelope: &contrix_sdk::MlsCommitEnvelope,
+) -> Result<crate::operation::EventEnvelope, String> {
+    let anchor_view = state_store.read().anchor_view_for(space_id);
+    let anchor_ref = anchor_view.move_anchor_ref();
+    let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
+    let governance_space_id = kanban_scope_space_id(space_id);
+    let typed_space_id = contrix_sdk::SpaceId::new(governance_space_id.clone())
+        .map_err(|err| format!("invalid MLS Space id: {err:?}"))?;
+    let anchor_id = contrix_sdk::AnchorId::new(anchor_ref.clone())
+        .map_err(|err| format!("invalid MLS anchor ref: {err:?}"))?;
+    let binding = crate::mls::governance::GovernanceBindingPayload::from_anchor(
+        commit_envelope.group_id.clone(),
+        &typed_space_id,
+        prev_epoch,
+        commit_envelope.epoch,
+        schedule_hash,
+        &anchor_id,
+    )
+    .map_err(|err| format!("MLS governance binding failed: {err}"))?;
+    let preconditions = binding
+        .preconditions
+        .iter()
+        .filter_map(|precondition| serde_json::to_value(precondition).ok())
+        .collect::<Vec<_>>();
+    let effects = binding
+        .effects
+        .iter()
+        .filter_map(|effect| serde_json::to_value(effect).ok())
+        .collect::<Vec<_>>();
+    let binding_hash = binding
+        .canonical_hash()
+        .map_err(|err| format!("MLS governance binding hash failed: {err}"))?;
+    let mut governance_binding = binding.to_commit_body();
+    if let Some(object) = governance_binding.as_object_mut() {
+        object.insert("binding_version".to_owned(), json!(1));
+        object.insert(
+            "encoding_profile".to_owned(),
+            json!("cbor-deterministic-rfc8949-v1"),
+        );
+        object.insert("realm_id".to_owned(), json!(scope_id_as_realm_id(space_id)));
+        object.insert(
+            "mls_group_id".to_owned(),
+            json!(commit_envelope.group_id.clone()),
+        );
+        object.insert("previous_epoch".to_owned(), json!(prev_epoch));
+        object.insert("next_epoch".to_owned(), json!(commit_envelope.epoch));
+        object.insert(
+            "membership_frontier".to_owned(),
+            json!([anchor_ref.clone()]),
+        );
+        object.insert(
+            "threshold".to_owned(),
+            json!({
+                "k": 1,
+                "n": 1,
+                "signers": [actor_did],
+            }),
+        );
+        object.insert(
+            "signatures".to_owned(),
+            json!([{
+                "signer_did": actor_did,
+                "signature_b64": "eW91Z2VuLW1scy1iaW5kaW5n",
+            }]),
+        );
+        object.insert("binding_hash".to_owned(), json!(binding_hash.clone()));
+    }
+    Ok(
+        crate::operation::OperationBuilder::new(space_id, actor_did, "cx.mls.commit")
+            .target_ref(&commit_envelope.group_id)
+            .body(json!({
+                "group_id": commit_envelope.group_id,
+                "mls_group_id": commit_envelope.group_id,
+                "expected_prev_epoch": prev_epoch,
+                "base_epoch": prev_epoch,
+                "base_epoch_ref": anchor_ref,
+                "proposal_refs": [],
+                "next_epoch": commit_envelope.epoch,
+                "leader_actor_did": actor_did,
+                "commit_bytes_b64": commit_envelope.commit,
+                "commit_digest": commit_envelope.commit_digest.as_str(),
+                "ratchet_tree": commit_envelope.ratchet_tree,
+                "governance_binding": governance_binding,
+                "preconditions": preconditions,
+                "effects": effects,
+                "binding_hash": binding_hash,
+            }))
+            .build("yougen"),
+    )
+}
+
+fn encrypt_private_card_detail_patch_values(
+    patch: Value,
+    space_id: &str,
+    actor_did: &str,
+    mut state_store: Signal<LocalStateStore>,
+    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
+) -> Result<(Value, Option<crate::operation::EventEnvelope>), String> {
+    let values = collect_encryptable_private_patch_values(&patch)?;
+    if values.is_empty() {
+        return Ok((patch, None));
+    }
+    let passphrase = mls_passphrase_store
+        .read()
+        .get(space_id)
+        .map(str::to_owned)
+        .unwrap_or_default();
+    let identity = state_store
+        .write()
+        .ensure_local_identity()
+        .map_err(|err| format!("identity unavailable for encrypted Kanban write: {err}"))?;
+    let plaintext_values = values
+        .iter()
+        .map(|(_, bytes)| bytes.clone())
+        .collect::<Vec<_>>();
+    let (schedule_hash, encrypted_values, commit_envelope) = run_kanban_local_mls_encrypt_values(
+        state_store,
+        space_id,
+        actor_did,
+        &identity.device_did,
+        &passphrase,
+        &plaintext_values,
+    )?;
+    let commit_event = kanban_mls_commit_event(
+        state_store,
+        space_id,
+        actor_did,
+        &schedule_hash,
+        &commit_envelope,
+    )?;
+    let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
+    let mut encrypted_patch = patch;
+    replace_private_patch_values(&mut encrypted_patch, &paths, encrypted_values)?;
+    Ok((encrypted_patch, Some(commit_event)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_card_detail_update(
     base_url: String,
@@ -5992,6 +6638,7 @@ fn dispatch_card_detail_update(
     mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: Signal<LocalStateStore>,
+    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
     mut board_status: Signal<String>,
 ) -> bool {
     let patch = match card_detail_update_patch(&current, &draft) {
@@ -6001,12 +6648,29 @@ fn dispatch_card_detail_update(
             return false;
         }
     };
-
-    let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
-        .build("yougen");
     let effective_security_encrypted = current
         .security_encrypted
         .unwrap_or(scope_security_encrypted);
+    let (patch, mls_commit_op) = if effective_security_encrypted {
+        match encrypt_private_card_detail_patch_values(
+            patch,
+            &space_id,
+            &actor_did,
+            state_store,
+            mls_passphrase_store,
+        ) {
+            Ok(result) => result,
+            Err(msg) => {
+                board_status.set(msg);
+                return false;
+            }
+        }
+    } else {
+        (patch, None)
+    };
+
+    let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
+        .build("yougen");
     if let Some(reason) = kanban_plaintext_block_reason(effective_security_encrypted, &op) {
         board_status.set(reason);
         return false;
@@ -6038,6 +6702,9 @@ fn dispatch_card_detail_update(
     let synthesis_entry_id = synthesis_revision_body
         .as_ref()
         .map(|_| synthesis_entry_id.unwrap_or_else(|| operation_id.clone()));
+    let local_synthesis_revision_body = synthesis_revision_body
+        .clone()
+        .filter(|_| !effective_security_encrypted);
     state_store.write().append_raw_operation(
         operation_id.clone(),
         Some(space_id.clone()),
@@ -6049,7 +6716,8 @@ fn dispatch_card_detail_update(
             "write_state": "queued",
             "body": op.payload.clone(),
             "synthesis_entry_id": synthesis_entry_id,
-            "synthesis_revision_body": synthesis_revision_body,
+            "synthesis_revision_body": local_synthesis_revision_body,
+            "encrypted_payload_local": effective_security_encrypted,
         }),
     );
     board_status.set(format!(
@@ -6060,7 +6728,50 @@ fn dispatch_card_detail_update(
     let api_token = token();
     let flow_id = current.id.clone();
     let kind = op.kind.clone();
+    let mls_commit_operation_id = mls_commit_op
+        .as_ref()
+        .map(|op| op.local_operation_id().to_owned());
     spawn(async move {
+        if let Some(commit_op) = mls_commit_op {
+            let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.submit_event_envelope(&commit_op).await
+            })
+            .await;
+            match commit_result {
+                Ok(resp) => {
+                    if let Some(commit_operation_id) = mls_commit_operation_id {
+                        state_store.write().record_move_submission_with_event_id(
+                            commit_operation_id,
+                            Some(resp.event_id),
+                            space_id.clone(),
+                            "mls_commit".to_owned(),
+                            MoveSubmissionState::from_submit_state("accepted", None),
+                            None,
+                            None,
+                        );
+                    }
+                }
+                Err(err) => {
+                    let err_text = err.display().to_string();
+                    state_store.write().update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(err_text.clone()),
+                    );
+                    set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                    let selected = selected_card.read().clone();
+                    if let Some(mut card) = selected
+                        && card.id == flow_id
+                    {
+                        card.state = CardState::SoftFailed;
+                        selected_card.set(Some(card));
+                    }
+                    board_status.set(format!("MLS commit event failed: {err_text}"));
+                    return;
+                }
+            }
+        }
         match with_authed_api(&base_url, api_token, |api| async move {
             api.submit_event_envelope(&op).await
         })
@@ -8634,6 +9345,49 @@ mod tests {
         let reason = kanban_plaintext_block_reason(true, &event).unwrap();
         assert!(reason.contains("Encrypted Realm blocks plaintext cx.flow.update"));
         assert!(kanban_plaintext_block_reason(false, &event).is_none());
+    }
+
+    #[test]
+    fn encrypted_scope_allows_encrypted_flow_update_patch_value() {
+        let encrypted_payload = crate::crypto::compose_local_encrypted_message(
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "cx:message:kanban-patch-test",
+            "private synthesis",
+        )
+        .expect("test encryption should produce payload")
+        .payload;
+        let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
+        let event = crate::operation::cx_ops::flow_update_patch(
+            "cx:realm:test",
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "synthesis": {"$op": "set", "value": encrypted_payload},
+            }),
+        )
+        .build("yougen");
+
+        assert!(!kanban_event_carries_plaintext_private_content(&event));
+        assert!(kanban_plaintext_block_reason(true, &event).is_none());
+    }
+
+    #[test]
+    fn private_patch_value_collection_targets_only_content_fields() {
+        let patch = json!({
+            "summary": {"$op": "set", "value": "metadata is allowed"},
+            "body": {"$op": "set", "value": "private body"},
+            "synthesis": {"$op": "unset"},
+        });
+
+        let values = collect_encryptable_private_patch_values(&patch).unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].0, "body");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&values[0].1).unwrap(),
+            json!("private body")
+        );
     }
 
     #[test]
