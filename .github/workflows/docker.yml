@@ -26,12 +26,14 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/contrix-rust-sdk
           path: contrix-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
