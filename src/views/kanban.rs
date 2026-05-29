@@ -44,6 +44,16 @@ const DEMO_FLOW_SECURITY_SIGNOFF_ID: &str = "cx:flow:0196419b-0000-7000-8000-000
 const DEMO_FLOW_REVIEW_DISCUSSION_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000201";
 const DEMO_FLOW_SUPPORT_DISCUSSION_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000202";
 const DEMO_FLOW_SECURITY_REVIEW_ID: &str = "cx:flow:0196419b-0000-7000-8000-000000000203";
+const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
+    "body",
+    "synthesis",
+    "content",
+    "attachments",
+    "fields.body",
+    "fields.synthesis",
+    "tracks.synthesis.body",
+    "tracks.discussion.body",
+];
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
@@ -2778,13 +2788,6 @@ pub fn KanbanPanel(
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
                                             let list_space_id = format!("cx:space:{}", uuid_v7());
-                                            columns.write().push(KanbanColumn {
-                                                id: list_space_id.clone(),
-                                                title: title.clone(),
-                                                rank: rank.clone(),
-                                                cards: Vec::new(),
-                                                state: SpaceContainerLifecycleState::Active,
-                                            });
                                             let op = crate::operation::cx_ops::space_create(
                                                 &space,
                                                 &actor,
@@ -2795,11 +2798,26 @@ pub fn KanbanPanel(
                                                 Some(&rank),
                                             )
                                             .build("yougen");
+                                            if let Some(reason) = kanban_plaintext_block_reason(
+                                                selected_scope_security_encrypted,
+                                                &op,
+                                            ) {
+                                                board_status.set(reason);
+                                                return;
+                                            }
+                                            columns.write().push(KanbanColumn {
+                                                id: list_space_id.clone(),
+                                                title: title.clone(),
+                                                rank: rank.clone(),
+                                                cards: Vec::new(),
+                                                state: SpaceContainerLifecycleState::Active,
+                                            });
                                             submit_kanban_operation_event(
                                                 base.clone(),
                                                 token,
                                                 space.clone(),
                                                 op,
+                                                selected_scope_security_encrypted,
                                                 state_store,
                                                 board_status,
                                             );
@@ -2853,14 +2871,6 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                                 let board_space_id = format!("cx:space:{}", uuid_v7());
-                                                board_space_options.write().push(BoardSpaceOption {
-                                                    id: board_space_id.clone(),
-                                                    title: title.clone(),
-                                                    state: SpaceContainerLifecycleState::Active,
-                                                });
-                                                selected_board_space_id.set(board_space_id.clone());
-                                                columns.set(Vec::new());
-                                                adding_card_to.set(None);
                                                 let op = crate::operation::cx_ops::space_create(
                                                     &space,
                                                     &actor,
@@ -2871,11 +2881,27 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .build("yougen");
+                                                if let Some(reason) = kanban_plaintext_block_reason(
+                                                    selected_scope_security_encrypted,
+                                                    &op,
+                                                ) {
+                                                    board_status.set(reason);
+                                                    return;
+                                                }
+                                                board_space_options.write().push(BoardSpaceOption {
+                                                    id: board_space_id.clone(),
+                                                    title: title.clone(),
+                                                    state: SpaceContainerLifecycleState::Active,
+                                                });
+                                                selected_board_space_id.set(board_space_id.clone());
+                                                columns.set(Vec::new());
+                                                adding_card_to.set(None);
                                                 submit_kanban_operation_event(
                                                     base.clone(),
                                                     token,
                                                     space.clone(),
                                                     op,
+                                                    selected_scope_security_encrypted,
                                                     state_store,
                                                     board_status,
                                                 );
@@ -3235,6 +3261,7 @@ pub fn KanbanPanel(
                                             space.clone(),
                                             actor.clone(),
                                             reordered_columns,
+                                            selected_scope_security_encrypted,
                                             state_store,
                                             board_status,
                                         );
@@ -3547,6 +3574,7 @@ pub fn KanbanPanel(
                                                     flow_id.clone(),
                                                     "cx.flow.create",
                                                     value,
+                                                    selected_scope_security_encrypted,
                                                     columns,
                                                     state_store,
                                                     write_records,
@@ -4290,6 +4318,7 @@ pub fn KanbanPanel(
                                                             actor.clone(),
                                                             current.clone(),
                                                             draft,
+                                                            selected_scope_security_encrypted,
                                                             synthesis_target_id,
                                                             synthesis_revision,
                                                             columns,
@@ -5717,6 +5746,123 @@ fn display_optional_card_field(value: &str) -> String {
     }
 }
 
+fn value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
+}
+
+fn value_is_plaintext_private_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(values) => !values.is_empty(),
+        Value::Object(object) => {
+            let encrypted_profile = object
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(|profile| profile == "cx.profile.encrypted_payload.v1");
+            !(encrypted_profile
+                || object.contains_key("encrypted_payload")
+                || object.contains_key("ciphertext"))
+        }
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
+
+fn patch_op_plaintext_value(value: &Value) -> bool {
+    if let Some(object) = value.as_object()
+        && object.get("$op").and_then(Value::as_str) == Some("unset")
+    {
+        return false;
+    }
+    value.get("value").map_or_else(
+        || value_is_plaintext_private_content(value),
+        value_is_plaintext_private_content,
+    )
+}
+
+fn patch_value_contains_private_path(value: &Value, path: &str) -> bool {
+    let Some(candidate) = value.get("value").unwrap_or(value).pointer(&format!(
+        "/{}",
+        path.split('.').collect::<Vec<_>>().join("/")
+    )) else {
+        return false;
+    };
+    value_is_plaintext_private_content(candidate)
+}
+
+fn patch_touches_private_paths(payload: &Value, private_paths: &[&str]) -> bool {
+    payload
+        .get("patch")
+        .and_then(Value::as_object)
+        .is_some_and(|patch| {
+            patch.iter().any(|(key, value)| {
+                private_paths.iter().any(|private_path| {
+                    if key == private_path || key.starts_with(&format!("{private_path}.")) {
+                        patch_op_plaintext_value(value)
+                    } else if let Some(suffix) = private_path.strip_prefix(&format!("{key}.")) {
+                        patch_value_contains_private_path(value, suffix)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+}
+
+fn kanban_event_carries_plaintext_private_content(event: &crate::operation::EventEnvelope) -> bool {
+    match event.kind.as_str() {
+        "cx.flow.create" => [
+            &["body"][..],
+            &["object", "body"][..],
+            &["synthesis"][..],
+            &["object", "synthesis"][..],
+            &["content"][..],
+            &["object", "content"][..],
+            &["attachments"][..],
+            &["object", "attachments"][..],
+            &["fields", "body"][..],
+            &["object", "fields", "body"][..],
+            &["fields", "synthesis"][..],
+            &["object", "fields", "synthesis"][..],
+        ]
+        .iter()
+        .any(|path| {
+            value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
+        }),
+        "cx.flow.update" => {
+            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_FLOW_PATCH_PATHS)
+        }
+        _ => false,
+    }
+}
+
+fn kanban_plaintext_block_reason(
+    scope_security_encrypted: bool,
+    event: &crate::operation::EventEnvelope,
+) -> Option<String> {
+    if !scope_security_encrypted || !kanban_event_carries_plaintext_private_content(event) {
+        return None;
+    }
+    kanban_plaintext_block_reason_for_kind(scope_security_encrypted, &event.kind)
+}
+
+fn kanban_plaintext_block_reason_for_kind(
+    scope_security_encrypted: bool,
+    kind: &str,
+) -> Option<String> {
+    if !scope_security_encrypted {
+        return None;
+    }
+    Some(format!(
+        "Encrypted Realm blocks plaintext {} payload; Kanban encrypted write support is required before this event can leave the client.",
+        kind
+    ))
+}
+
 fn card_detail_update_patch(
     current: &KanbanCard,
     draft: &CardDetailDraft,
@@ -5816,6 +5962,7 @@ fn dispatch_card_detail_update(
     actor_did: String,
     current: KanbanCard,
     draft: CardDetailDraft,
+    scope_security_encrypted: bool,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -5830,6 +5977,16 @@ fn dispatch_card_detail_update(
             return false;
         }
     };
+
+    let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
+        .build("yougen");
+    let effective_security_encrypted = current
+        .security_encrypted
+        .unwrap_or(scope_security_encrypted);
+    if let Some(reason) = kanban_plaintext_block_reason(effective_security_encrypted, &op) {
+        board_status.set(reason);
+        return false;
+    }
 
     let mut updated_card = current.clone();
     let mut found = false;
@@ -5853,8 +6010,6 @@ fn dispatch_card_detail_update(
     }
     selected_card.set(Some(updated_card));
 
-    let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
-        .build("yougen");
     let operation_id = op.local_operation_id().to_owned();
     let synthesis_entry_id = synthesis_revision_body
         .as_ref()
@@ -6057,9 +6212,14 @@ fn submit_kanban_operation_event(
     token: Signal<String>,
     space_id: String,
     operation: crate::operation::EventEnvelope,
+    scope_security_encrypted: bool,
     mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &operation) {
+        board_status.set(reason);
+        return;
+    }
     let operation_id = operation.local_operation_id().to_owned();
     let kind = operation.kind.clone();
     let actor_id = operation.actor_id.clone();
@@ -6120,6 +6280,7 @@ fn submit_column_order_updates(
     space_id: String,
     actor_did: String,
     ordered_columns: Vec<KanbanColumn>,
+    scope_security_encrypted: bool,
     state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
@@ -6155,6 +6316,7 @@ fn submit_column_order_updates(
             token,
             space_id.clone(),
             op,
+            scope_security_encrypted,
             state_store,
             board_status,
         );
@@ -6173,6 +6335,7 @@ fn submit_kanban_move(
     subject: String,
     kind: &'static str,
     value: serde_json::Value,
+    scope_security_encrypted: bool,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
@@ -6220,6 +6383,10 @@ fn submit_kanban_move(
         )
         .build("yougen")
     };
+    if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &envelope) {
+        board_status.set(reason);
+        return;
+    }
     let wire_kind = envelope.kind.clone();
     let op_id = envelope.local_operation_id().to_owned();
     let cell_id = value
@@ -8425,6 +8592,86 @@ mod tests {
         );
         assert_eq!(patch["fields"]["value"]["due_at"], "2026-05-20");
         assert!(patch["fields"]["value"].get("due").is_none());
+    }
+
+    #[test]
+    fn encrypted_scope_blocks_plaintext_flow_update_payload() {
+        let event = crate::operation::cx_ops::flow_update_patch(
+            "cx:realm:test",
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "body": {"$op": "set", "value": "private description"},
+            }),
+        )
+        .build("yougen");
+
+        assert!(kanban_event_carries_plaintext_private_content(&event));
+        let reason = kanban_plaintext_block_reason(true, &event).unwrap();
+        assert!(reason.contains("Encrypted Realm blocks plaintext cx.flow.update"));
+        assert!(kanban_plaintext_block_reason(false, &event).is_none());
+    }
+
+    #[test]
+    fn encrypted_scope_allows_structural_flow_position_update() {
+        let event = crate::operation::cx_ops::flow_position_update(
+            "cx:realm:test",
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "board_space_id": "cx:space:0196419b-0000-7000-8000-000000000001",
+                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000002",
+                "rank": "U",
+            }),
+        )
+        .build("yougen");
+
+        assert_eq!(event.kind, "cx.flow.update");
+        assert!(!kanban_event_carries_plaintext_private_content(&event));
+        assert!(kanban_plaintext_block_reason(true, &event).is_none());
+    }
+
+    #[test]
+    fn encrypted_scope_allows_content_only_metadata_create_payloads() {
+        let flow = crate::operation::cx_ops::kanban_card_flow_create(
+            "cx:realm:test",
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "cx:space:0196419b-0000-7000-8000-000000000002",
+            "private card title",
+            "U",
+        )
+        .build("yougen");
+        let space = crate::operation::cx_ops::space_create(
+            "cx:realm:test",
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-000000000002",
+            "list",
+            "private list title",
+            Some("cx:space:0196419b-0000-7000-8000-000000000001"),
+            Some("U"),
+        )
+        .build("yougen");
+
+        assert!(kanban_plaintext_block_reason(true, &flow).is_none());
+        assert!(kanban_plaintext_block_reason(true, &space).is_none());
+    }
+
+    #[test]
+    fn encrypted_scope_allows_flow_summary_metadata_update() {
+        let event = crate::operation::cx_ops::flow_update_patch(
+            "cx:realm:test",
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "summary": {"$op": "set", "value": "metadata summary"},
+            }),
+        )
+        .build("yougen");
+
+        assert!(!kanban_event_carries_plaintext_private_content(&event));
+        assert!(kanban_plaintext_block_reason(true, &event).is_none());
     }
 
     #[test]
