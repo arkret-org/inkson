@@ -74,6 +74,7 @@ pub fn NotificationsPanel(
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
+    let refresh_completed = use_signal(|| false);
     let server_unread = use_signal(|| 0usize);
 
     if !did_bootstrap() {
@@ -84,6 +85,7 @@ pub fn NotificationsPanel(
             state_store,
             notifications,
             status_msg,
+            refresh_completed,
             server_unread,
         );
     }
@@ -139,6 +141,18 @@ pub fn NotificationsPanel(
         .take(visible_window)
         .collect();
     let has_more_to_load = visible_total > visible_window;
+    let status_text = {
+        let current_status = status_msg();
+        if current_status.is_empty() {
+            if refresh_completed() {
+                notification_refresh_status(total_notifications, visible_total)
+            } else {
+                String::new()
+            }
+        } else {
+            current_status
+        }
+    };
 
     rsx! {
         div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
@@ -219,6 +233,7 @@ pub fn NotificationsPanel(
                                     state_store,
                                     notifications,
                                     status_msg,
+                                    refresh_completed,
                                     server_unread,
                                 );
                             }
@@ -227,8 +242,8 @@ pub fn NotificationsPanel(
                     }
                     }
                 }
-                if !status_msg().is_empty() {
-                    div { class: "muted", "data-testid": "notifications-status", "{status_msg}" }
+                if !status_text.is_empty() {
+                    div { class: "muted", "data-testid": "notifications-status", "{status_text}" }
                 }
             }
 
@@ -445,15 +460,13 @@ fn refresh_notifications(
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
+    mut refresh_completed: Signal<bool>,
     mut server_unread: Signal<usize>,
 ) {
     spawn(async move {
         match with_authed_api(&base_url, access_token, |api| async move {
             let response = api.account_subscribe_snapshot(None).await?;
-            let notification_response = api
-                .list_notifications()
-                .await
-                .unwrap_or_else(|_| json!({ "items": [] }));
+            let notification_response = api.list_notifications().await.ok();
             let invite_notifications = api
                 .invites()
                 .await
@@ -466,18 +479,10 @@ fn refresh_notifications(
             Ok((response, notification_response, invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&response.account_data);
                 let dnd = dnd_settings_from_account_data(&response.account_data);
-                let server_items = notification_response
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .cloned();
-                let mut raw_notifications = server_items.unwrap_or_else(|| {
-                    response
-                        .account_data
-                        .iter()
-                        .filter(|value| is_notification_account_data(value))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                });
+                let mut raw_notifications = raw_notifications_from_sources(
+                    notification_response.as_ref(),
+                    &response.account_data,
+                );
                 let joined_realms = joined_realm_ids(&response);
                 drop_joined_invite_notifications(&mut raw_notifications, &joined_realms);
                 append_invite_notifications(
@@ -485,18 +490,8 @@ fn refresh_notifications(
                     invite_notifications,
                     &joined_realms,
                 );
-                let unread_count = notification_response
-                    .get("unread_count")
-                    .and_then(Value::as_u64)
-                    .and_then(|count| usize::try_from(count).ok())
-                    .unwrap_or_else(|| {
-                        raw_notifications
-                            .iter()
-                            .filter(|value| {
-                                !value.get("read").and_then(Value::as_bool).unwrap_or(false)
-                            })
-                            .count()
-                    });
+                let unread_count =
+                    notification_unread_count(notification_response.as_ref(), &raw_notifications);
                 server_unread.set(unread_count);
                 let hydrated = {
                     let mut store = state_store.write();
@@ -509,11 +504,12 @@ fn refresh_notifications(
                         dnd.as_ref(),
                     )
                 };
-                let loaded_count = hydrated.len();
                 notifications.set(hydrated);
-                status_msg.set(format!("Loaded {loaded_count} notification(s)."));
+                refresh_completed.set(true);
+                status_msg.set(String::new());
             }
             Err(err) => {
+                refresh_completed.set(false);
                 status_msg.set(format!("Notification refresh: {}", err.display()));
             }
         }
@@ -615,10 +611,7 @@ fn accept_invite_notification(
                 Ok(sync) => sync,
                 Err(_) => api.account_subscribe_snapshot(None).await?,
             };
-            let notification_response = api
-                .list_notifications()
-                .await
-                .unwrap_or_else(|_| json!({ "items": [] }));
+            let notification_response = api.list_notifications().await.ok();
             let invite_notifications = api
                 .invites()
                 .await
@@ -634,17 +627,10 @@ fn accept_invite_notification(
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
 
-                let server_items = notification_response
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .cloned();
-                let mut raw_notifications = server_items.unwrap_or_else(|| {
-                    sync.account_data
-                        .iter()
-                        .filter(|value| is_notification_account_data(value))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                });
+                let mut raw_notifications = raw_notifications_from_sources(
+                    notification_response.as_ref(),
+                    &sync.account_data,
+                );
                 drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
                 append_invite_notifications(
                     &mut raw_notifications,
@@ -658,18 +644,8 @@ fn accept_invite_notification(
                         .write()
                         .set_notification_archived(notification_id.clone(), true);
                 }
-                let unread_count = notification_response
-                    .get("unread_count")
-                    .and_then(Value::as_u64)
-                    .and_then(|count| usize::try_from(count).ok())
-                    .unwrap_or_else(|| {
-                        raw_notifications
-                            .iter()
-                            .filter(|value| {
-                                !value.get("read").and_then(Value::as_bool).unwrap_or(false)
-                            })
-                            .count()
-                    });
+                let unread_count =
+                    notification_unread_count(notification_response.as_ref(), &raw_notifications);
                 server_unread.set(unread_count);
 
                 let hydrated = {
@@ -708,6 +684,37 @@ pub(crate) fn is_notification_account_data(value: &Value) -> bool {
             | Some("cx.account.notification")
             | Some("notification")
     )
+}
+
+fn raw_notifications_from_sources(
+    notification_response: Option<&Value>,
+    account_data: &[Value],
+) -> Vec<Value> {
+    notification_response
+        .and_then(|response| response.get("items").and_then(Value::as_array).cloned())
+        .unwrap_or_else(|| {
+            account_data
+                .iter()
+                .filter(|value| is_notification_account_data(value))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+}
+
+fn notification_unread_count(
+    notification_response: Option<&Value>,
+    raw_notifications: &[Value],
+) -> usize {
+    notification_response
+        .and_then(|response| response.get("unread_count"))
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or_else(|| {
+            raw_notifications
+                .iter()
+                .filter(|value| !value.get("read").and_then(Value::as_bool).unwrap_or(false))
+                .count()
+        })
 }
 
 fn append_invite_notifications(
@@ -1090,6 +1097,21 @@ fn notification_overrides_space_mute(notification: &Notification) -> bool {
     )
 }
 
+fn notification_refresh_status(loaded_count: usize, visible_count: usize) -> String {
+    if loaded_count == 0 || visible_count >= loaded_count {
+        format!("Loaded {loaded_count} notification(s).")
+    } else if visible_count == 0 {
+        format!(
+            "Loaded {loaded_count} notification(s); 0 visible after archive/type/space filters."
+        )
+    } else {
+        let hidden_count = loaded_count - visible_count;
+        format!(
+            "Loaded {loaded_count} notification(s); {visible_count} visible after filters, {hidden_count} hidden."
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1184,5 +1206,44 @@ mod tests {
         assert!(ctx.is_e2ee);
         assert!(!ctx.local_decrypted);
         assert_eq!(ctx.mentions_actor, Some(true));
+    }
+
+    #[test]
+    fn notification_refresh_status_reports_filtered_notifications() {
+        assert_eq!(
+            notification_refresh_status(1, 0),
+            "Loaded 1 notification(s); 0 visible after archive/type/space filters."
+        );
+        assert_eq!(
+            notification_refresh_status(3, 1),
+            "Loaded 3 notification(s); 1 visible after filters, 2 hidden."
+        );
+        assert_eq!(
+            notification_refresh_status(2, 2),
+            "Loaded 2 notification(s)."
+        );
+    }
+
+    #[test]
+    fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
+        let account_data = vec![
+            json!({
+                "kind": "cx.notification",
+                "notification_id": "n1",
+                "read": false
+            }),
+            json!({
+                "kind": "cx.profile",
+                "id": "profile"
+            }),
+        ];
+
+        let fallback = raw_notifications_from_sources(None, &account_data);
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(notification_unread_count(None, &fallback), 1);
+
+        let server_empty = json!({ "items": [], "unread_count": 0 });
+        assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
+        assert_eq!(notification_unread_count(Some(&server_empty), &fallback), 0);
     }
 }

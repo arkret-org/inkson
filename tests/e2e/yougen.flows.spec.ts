@@ -737,14 +737,18 @@ test("notifications are derived from index projections and respect per-space mut
 
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
-  await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification projection");
+  await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification(s).");
 
-  await page.getByTestId("mute-space-button").first().click();
-  await expect(page.getByTestId("notifications-muted-empty")).toContainText("hidden by archive, type, or per-space mute rules");
+  await page
+    .getByTestId("notification-item")
+    .filter({ hasText: "Alice sent a message in Demo Space" })
+    .getByTestId("mute-space-button")
+    .click();
+  await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Space");
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
-  await expect(page.getByTestId("notifications-mute-summary")).toContainText("cx:space:0196419b-0000-7000-8000-000000000000");
+  await expect(page.getByTestId("settings-muted-space-row").locator("span")).toHaveAttribute("title", DEMO_SPACE);
   await page.getByTestId("notifications-settings-unmute-space").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
