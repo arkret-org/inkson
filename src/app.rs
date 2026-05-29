@@ -9414,6 +9414,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 let view =
                                     crate::local_state::LocalAnchorView::from_sync_body(body);
                                 store.set_anchor_view(id.clone(), view);
+                                store.ingest_move_event_states(id, body);
                             }
                             // Hydrate Space remarks from the actor-private
                             // account_data projection (spec

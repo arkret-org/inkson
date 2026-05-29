@@ -338,6 +338,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
             store.save_space_projection(id.clone(), body.clone());
             let view = LocalAnchorView::from_sync_body(body);
             store.set_anchor_view(id.clone(), view);
+            store.ingest_move_event_states(id, body);
             // R3.1 MID-2 — harvest inlined `cx.member.identity.update`
             // event envelopes off the `members[]` roster entries. The
             // SDK's effective-set filter is applied lazily when a UI

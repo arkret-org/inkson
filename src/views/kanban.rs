@@ -520,7 +520,7 @@ impl CardState {
             CardState::Optimistic => "optimistic",
             CardState::Queued => "queued",
             CardState::Submitted => "submitted",
-            CardState::Accepted => "accepted",
+            CardState::Accepted => "pending anchor",
             CardState::SoftFailed => "soft failed",
             CardState::Quarantined => "quarantined",
             CardState::Conflict => "CAS conflict",
@@ -529,7 +529,8 @@ impl CardState {
 
     fn class_name(&self) -> &'static str {
         match self {
-            CardState::Synced | CardState::Accepted => "badge green",
+            CardState::Synced => "badge green",
+            CardState::Accepted => "badge amber",
             CardState::Optimistic | CardState::Queued | CardState::Submitted => "badge blue",
             CardState::SoftFailed | CardState::Conflict => "badge red",
             CardState::Quarantined => "badge amber",
@@ -689,9 +690,12 @@ fn local_projection_realm_id(selected_space: &str, projection_realm_id: &str) ->
 fn local_space_create_matches_realm(local_create: &LocalSpaceCreate, realm_id: &str) -> bool {
     let realm_id = realm_id.trim();
     realm_id.is_empty()
-        || local_create.realm_id.as_deref().is_none_or(|local_realm_id| {
-            scope_id_as_realm_id(local_realm_id) == scope_id_as_realm_id(realm_id)
-        })
+        || local_create
+            .realm_id
+            .as_deref()
+            .is_none_or(|local_realm_id| {
+                scope_id_as_realm_id(local_realm_id) == scope_id_as_realm_id(realm_id)
+            })
 }
 
 fn local_space_create_records(
@@ -714,7 +718,10 @@ fn overlay_local_board_space_options(
         .into_iter()
         .filter(|local_create| local_create.kind == "board")
     {
-        if let Some(existing) = options.iter_mut().find(|option| option.id == local_create.id) {
+        if let Some(existing) = options
+            .iter_mut()
+            .find(|option| option.id == local_create.id)
+        {
             if existing.title.trim().is_empty() || existing.title == existing.id {
                 existing.title = local_create.title;
             }
@@ -1008,7 +1015,8 @@ fn columns_from_lifecycle_projection_with_local(
     raw_operations: &[RawOperationRecord],
     realm_id: &str,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
-    let merged_containers = containers_with_local_space_creates(containers, raw_operations, realm_id);
+    let merged_containers =
+        containers_with_local_space_creates(containers, raw_operations, realm_id);
     columns_from_lifecycle_projection(&merged_containers, flows, preferred_board_id)
 }
 
@@ -1500,8 +1508,12 @@ fn local_space_create_from_raw_operation(record: &RawOperationRecord) -> Option<
     if space_kind != "board" && space_kind != "list" {
         return None;
     }
-    let realm_id = json_path_string(Some(object), &["realm_id"])
-        .or_else(|| record.space_id.as_ref().map(|space_id| scope_id_as_realm_id(space_id)));
+    let realm_id = json_path_string(Some(object), &["realm_id"]).or_else(|| {
+        record
+            .space_id
+            .as_ref()
+            .map(|space_id| scope_id_as_realm_id(space_id))
+    });
     let title = json_path_string(Some(object), &["title"])
         .or_else(|| json_path_string(Some(body), &["title"]))
         .unwrap_or_else(|| id.clone());
@@ -1596,20 +1608,19 @@ pub fn KanbanPanel(
     });
     let initial_columns = {
         let state = state_store.read().load();
-        let initial_columns = if initial_columns.is_empty()
-            && !initial_board_space_id.trim().is_empty()
-        {
-            let (local_columns, _, _) = columns_from_lifecycle_projection_with_local(
-                &[],
-                &[],
-                &initial_board_space_id,
-                &state.raw_operations,
-                &local_realm_id,
-            );
-            local_columns
-        } else {
-            initial_columns
-        };
+        let initial_columns =
+            if initial_columns.is_empty() && !initial_board_space_id.trim().is_empty() {
+                let (local_columns, _, _) = columns_from_lifecycle_projection_with_local(
+                    &[],
+                    &[],
+                    &initial_board_space_id,
+                    &state.raw_operations,
+                    &local_realm_id,
+                );
+                local_columns
+            } else {
+                initial_columns
+            };
         let initial_columns = overlay_local_card_create_records(
             initial_columns,
             &state.raw_operations,
@@ -5272,6 +5283,13 @@ fn select_kanban_board(
             columns.set(projected_columns);
             projection_source.set(BoardProjectionSource::ApiDerived);
             board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+        } else {
+            columns.set(Vec::new());
+            adding_card_to.set(None);
+            board_status.set(format!(
+                "No list projection available for selected Board · {}",
+                short_protocol_id(&board_id)
+            ));
         }
         replace_kanban_board_url(&board_route_space_id, &board_id);
         return;
@@ -5539,8 +5557,9 @@ fn submit_kanban_move(
         {
             Ok(resp) => {
                 let state = MoveSubmissionState::from_submit_state("accepted", None);
-                state_store.write().record_move_submission(
+                state_store.write().record_move_submission_with_event_id(
                     op_for_track.clone(),
+                    Some(resp.event_id.clone()),
                     space_for_record,
                     kind_for_record.clone(),
                     state,
@@ -5554,12 +5573,12 @@ fn submit_kanban_move(
                 {
                     record.state = CardState::Accepted;
                     record.note = format!(
-                        "event accepted event_id={}",
+                        "event accepted; pending anchor event_id={}",
                         short_protocol_id(&resp.event_id)
                     );
                 }
                 board_status.set(format!(
-                    "{kind_for_record} event {} accepted (event_id={})",
+                    "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
                     short_protocol_id(&op_for_track),
                     short_protocol_id(&resp.event_id)
                 ));
@@ -6196,8 +6215,9 @@ fn submit_flow_position_cas_move_with_attempt(
                 // Err arm because the envelope was rejected with a
                 // non-200 status — that branch is handled below.
                 let submission_state = MoveSubmissionState::from_submit_state("accepted", None);
-                state_store.write().record_move_submission(
+                state_store.write().record_move_submission_with_event_id(
                     move_for_track.clone(),
+                    Some(resp.event_id.clone()),
                     space_for_record,
                     kind_for_record.clone(),
                     submission_state,
@@ -6211,12 +6231,12 @@ fn submit_flow_position_cas_move_with_attempt(
                 {
                     record.state = CardState::Accepted;
                     record.note = format!(
-                        "event accepted event_id={}",
+                        "event accepted; pending anchor event_id={}",
                         short_protocol_id(&resp.event_id)
                     );
                 }
                 board_status.set(format!(
-                    "{kind_for_record} event {} accepted (event_id={})",
+                    "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
                     short_protocol_id(&move_for_track),
                     short_protocol_id(&resp.event_id)
                 ));
@@ -7270,6 +7290,71 @@ mod tests {
             "cx:space:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(options[0].title, "Release");
+    }
+
+    #[test]
+    fn local_space_create_overlay_restores_board_and_list_until_projection_catches_up() {
+        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000000";
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let list_id = "cx:space:0196419b-0000-7000-8000-000000000002";
+        let raw_operations = vec![
+            RawOperationRecord {
+                operation_id: "sha256:local-board-create".to_owned(),
+                space_id: Some(realm_id.to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "cx.space.create",
+                    "operation_id": "sha256:local-board-create",
+                    "body": {
+                        "object": {
+                            "id": board_id,
+                            "schema": "cx.schema.space.v1",
+                            "realm_id": realm_id,
+                            "kind": "board",
+                            "title": "Design board"
+                        }
+                    },
+                    "write_state": "queued"
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "sha256:local-list-create".to_owned(),
+                space_id: Some(realm_id.to_owned()),
+                received_at: chrono::Utc::now(),
+                payload: json!({
+                    "kind": "cx.space.create",
+                    "operation_id": "sha256:local-list-create",
+                    "body": {
+                        "object": {
+                            "id": list_id,
+                            "schema": "cx.schema.space.v1",
+                            "realm_id": realm_id,
+                            "kind": "list",
+                            "title": "Todo",
+                            "parent_space_id": board_id,
+                            "rank": "U"
+                        }
+                    },
+                    "write_state": "queued"
+                }),
+            },
+        ];
+
+        let (columns, options, selected_board) = columns_from_lifecycle_projection_with_local(
+            &[],
+            &[],
+            board_id,
+            &raw_operations,
+            realm_id,
+        );
+
+        assert_eq!(selected_board.as_deref(), Some(board_id));
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id, board_id);
+        assert_eq!(options[0].title, "Design board");
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].id, list_id);
+        assert_eq!(columns[0].title, "Todo");
     }
 
     #[test]

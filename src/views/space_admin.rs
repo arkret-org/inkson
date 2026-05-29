@@ -576,6 +576,17 @@ pub fn SpaceAdminPanel(
                                         title: "{record.move_id}",
                                         "move {move_id_label}"
                                     }
+                                    if let Some(event_id) = &record.event_id {
+                                        {
+                                            let event_id_label = short_protocol_id(event_id);
+                                            rsx! {
+                                                div { class: "muted", "data-testid": "move-submission-event-id",
+                                                    title: "{event_id}",
+                                                    "event {event_id_label}"
+                                                }
+                                            }
+                                        }
+                                    }
                                     if record.state.is_failed() {
                                         button {
                                             class: "secondary",
@@ -622,17 +633,16 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            // Bottom=expose conflict banner — only rendered when at least
-            // one cell in the projection has unresolved concurrent
-            // candidates. P0 M5.
+            // Bottom/conflict banner — rendered when the projection
+            // exposes unresolved concurrent candidates. P0 M5.
             if active_section == SpaceAdminSection::Repair && !bottom_cells.is_empty() {
                 div { class: "event", "data-testid": "bottom-cells-banner",
                     div { class: "event-head",
                         span { "Concurrent candidates unresolved" }
-                        span { class: "badge red", "bottom=expose" }
+                        span { class: "badge red", "bottom/conflict" }
                     }
                     div { class: "muted",
-                        "One or more cells in this Space's projection are in the bottom-expose state — soland received concurrent Moves it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a head_in repair Move before downstream queries return a definitive value."
+                        "One or more cells in this Space's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a recovery repair Event before downstream queries return a definitive value."
                     }
                     for (cell_ref, info) in &bottom_cells {
                         {
@@ -693,19 +703,19 @@ pub fn SpaceAdminPanel(
                         }
                     }
                 }
-                // Conflict-repair Move dialog - only rendered when
+                // Conflict-repair Event dialog - only rendered when
                 // bottom_cells is non-empty (i.e. there is something to
                 // repair). Admin / moderator only; soland's authz reducer
                 // rejects unsigned-by-recovery capability submissions.
                 div { class: "event", "data-testid": "conflict-repair-dialog",
                     div { class: "event-head",
-                        span { "Conflict repair (head_in Move)" }
+                        span { "Conflict repair" }
                         span { class: "badge amber", "admin / moderator" }
                     }
                     div { class: "muted",
-                        "Build a `head_in [conflict_head_A, conflict_head_B]` repair Move + recovery_capability ref to merge the two concurrent histories. Soland's authz reducer requires the repair Move be signed by a holder of the named recovery capability."
+                        "Build a repair Event with the competing heads and recovery capability ref to merge the two concurrent histories. Soland's authz reducer requires the repair to be signed by a holder of the named recovery capability."
                     }
-                    label { "Target cell (id of bottom=expose cell)" }
+                    label { "Target cell (id of unresolved bottom/conflict cell)" }
                     input {
                         "data-testid": "repair-target-cell-input",
                         value: "{repair_target_cell}",
@@ -1459,8 +1469,9 @@ pub fn SpaceAdminPanel(
                                                         .read()
                                                         .space_projection_is_mls_encrypted(&space);
                                                     if mls_encrypted {
-                                                        state_store.write().record_move_submission(
+                                                        state_store.write().record_move_submission_with_event_id(
                                                             resp.event_id.clone(),
+                                                            Some(resp.event_id.clone()),
                                                             space.clone(),
                                                             "mls_member_remove",
                                                             MoveSubmissionState::PendingMlsBinding,
@@ -1519,8 +1530,9 @@ pub fn SpaceAdminPanel(
                                                         .read()
                                                         .space_projection_is_mls_encrypted(&space);
                                                     if mls_encrypted {
-                                                        state_store.write().record_move_submission(
+                                                        state_store.write().record_move_submission_with_event_id(
                                                             resp.event_id.clone(),
+                                                            Some(resp.event_id.clone()),
                                                             space.clone(),
                                                             "mls_member_remove",
                                                             MoveSubmissionState::PendingMlsBinding,

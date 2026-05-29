@@ -448,6 +448,13 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
   await page.getByTestId("new-board-title-input").fill("Design board");
   await page.getByTestId("create-board-space-button").click();
   await expect(page.getByTestId("add-column-button")).toBeVisible();
+  await expect(page.getByTestId("board-space-selector")).toContainText("Design board");
+  await expect(page.getByTestId("kanban-empty-board")).toContainText("No lists yet");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.getByTestId("add-column-button")).toBeVisible();
+  await expect(page.getByTestId("board-space-selector")).toContainText("Design board");
   await expect(page.getByTestId("kanban-empty-board")).toContainText("No lists yet");
 });
 

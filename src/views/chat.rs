@@ -5785,9 +5785,10 @@ pub fn ChatPanel(
                                         // Submit MLS commit event first; if it fails,
                                         // abort message send (covered_frontier won't bind).
                                         match api.submit_event_envelope(&commit_envelope).await {
-                                            Ok(_resp) => {
-                                                state_store.write().record_move_submission(
+                                            Ok(resp) => {
+                                                state_store.write().record_move_submission_with_event_id(
                                                     commit_op_id.clone(),
+                                                    Some(resp.event_id.clone()),
                                                     space_for_record.clone(),
                                                     "mls_commit".to_owned(),
                                                     MoveSubmissionState::from_submit_state(

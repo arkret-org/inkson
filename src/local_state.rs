@@ -343,7 +343,7 @@ impl MoveSubmissionState {
     /// failures.
     pub fn from_submit_state(state: &str, reason: Option<&str>) -> Self {
         match state {
-            "pending" | "pending_anchor" => Self::PendingAnchor,
+            "accepted" | "pending" | "pending_anchor" => Self::PendingAnchor,
             "effective" | "anchored" => Self::Effective,
             "rejected" => match reason.unwrap_or("") {
                 r if r.contains("anchorer_paused") => Self::AnchorerPaused,
@@ -428,6 +428,11 @@ impl MoveSubmissionState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
+    /// Server-assigned Event id returned by `cx.events.submit`. Older
+    /// records may only have `move_id` (the local idempotency alias);
+    /// sync `event_states[]` uses this id, so new records persist it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     pub space_id: String,
     pub kind: String,
     pub state: MoveSubmissionState,
@@ -677,6 +682,7 @@ impl LocalAnchorView {
         let anchor = body.get("anchor_view");
         let mut view = Self::default();
         let Some(anchor) = anchor else {
+            view.ingest_structured_bottoms(body);
             view.ingest_legacy_bottom_cells(body);
             return view;
         };
@@ -772,8 +778,82 @@ impl LocalAnchorView {
                 }
             }
         }
+        view.ingest_structured_bottoms(body);
         view.ingest_legacy_bottom_cells(body);
         view
+    }
+
+    fn ingest_structured_bottoms(&mut self, body: &Value) {
+        let Some(entries) = body.get("bottoms").and_then(|v| v.as_array()) else {
+            return;
+        };
+        for entry in entries {
+            let Some(bottom) = entry.get("bottom") else {
+                continue;
+            };
+            let cell_ref = entry
+                .get("cell")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    bottom
+                        .get("cells")
+                        .and_then(|v| v.as_array())
+                        .and_then(|cells| cells.first())
+                        .and_then(|v| v.as_str())
+                });
+            let Some(cell_ref) = cell_ref else {
+                continue;
+            };
+            if self.bottom_cells.contains_key(cell_ref) {
+                continue;
+            }
+            let status = entry
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("bottom");
+            let kind = bottom.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            if status != "conflict" && kind != "conflict" {
+                continue;
+            }
+            let event_ids: Vec<String> = bottom
+                .get("event_ids")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut heads = Vec::new();
+            if let Some(arr) = bottom.get("heads").and_then(|v| v.as_array()) {
+                for (idx, value) in arr.iter().enumerate() {
+                    let move_id = value
+                        .get("move_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| value.get("event_id").and_then(|v| v.as_str()))
+                        .map(str::to_owned)
+                        .or_else(|| event_ids.get(idx).cloned())
+                        .unwrap_or_default();
+                    let candidate = value.get("value").cloned().unwrap_or_else(|| value.clone());
+                    heads.push(BottomCellHead {
+                        move_id,
+                        value: candidate,
+                    });
+                }
+            } else {
+                heads.extend(event_ids.into_iter().map(|move_id| BottomCellHead {
+                    move_id,
+                    value: Value::Null,
+                }));
+            }
+            self.bottom_cells.insert(
+                cell_ref.to_owned(),
+                BottomCellInfo {
+                    status: status.to_owned(),
+                    heads,
+                },
+            );
+        }
     }
 
     fn ingest_legacy_bottom_cells(&mut self, body: &Value) {
@@ -2237,10 +2317,29 @@ impl LocalStateStore {
         reason: Option<String>,
         anchor_ref: Option<String>,
     ) -> MoveSubmissionRecord {
+        self.record_move_submission_with_event_id(
+            move_id, None::<String>, space_id, kind, state, reason, anchor_ref,
+        )
+    }
+
+    /// Record a freshly-submitted Move/Event and remember the server Event id
+    /// when available. Sync `event_states[]` is keyed by server `event_id`,
+    /// while older local queues used `move_id` / idempotency aliases.
+    pub fn record_move_submission_with_event_id(
+        &mut self,
+        move_id: impl Into<String>,
+        event_id: Option<impl Into<String>>,
+        space_id: impl Into<String>,
+        kind: impl Into<String>,
+        state: MoveSubmissionState,
+        reason: Option<String>,
+        anchor_ref: Option<String>,
+    ) -> MoveSubmissionRecord {
         self.ensure_cached_loaded();
         let move_id = move_id.into();
         let record = MoveSubmissionRecord {
             move_id: move_id.clone(),
+            event_id: event_id.map(Into::into),
             space_id: space_id.into(),
             kind: kind.into(),
             state,
@@ -2263,7 +2362,7 @@ impl LocalStateStore {
         reason: Option<String>,
     ) -> bool {
         self.ensure_cached_loaded();
-        let Some(record) = self.cached.move_submissions.get_mut(move_id) else {
+        let Some(record) = self.move_submission_record_mut(move_id) else {
             return false;
         };
         record.state = state;
@@ -2272,6 +2371,62 @@ impl LocalStateStore {
         }
         let _ = self.flush();
         true
+    }
+
+    fn move_submission_record_mut(&mut self, id: &str) -> Option<&mut MoveSubmissionRecord> {
+        if self.cached.move_submissions.contains_key(id) {
+            return self.cached.move_submissions.get_mut(id);
+        }
+        self.cached
+            .move_submissions
+            .values_mut()
+            .find(|record| record.event_id.as_deref() == Some(id))
+    }
+
+    /// Apply per-event protocol states from a per-Space sync projection.
+    /// Spec source: `service-surface.md §5.3`, where each reducer-input
+    /// Event may carry `event_id`, `event_state`, and an optional reason code.
+    pub fn ingest_move_event_states(&mut self, space_id: &str, body: &Value) -> usize {
+        let Some(entries) = body.get("event_states").and_then(|v| v.as_array()) else {
+            return 0;
+        };
+        self.ensure_cached_loaded();
+        let mut updated = 0usize;
+        for entry in entries {
+            let Some(event_id) = entry.get("event_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(state_label) = entry
+                .get("event_state")
+                .or_else(|| entry.get("state"))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            let reason = entry
+                .get("event_state_reason_code")
+                .or_else(|| entry.get("reason_code"))
+                .or_else(|| entry.get("reason"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+            let state = MoveSubmissionState::from_submit_state(state_label, reason.as_deref());
+            let Some(record) = self.move_submission_record_mut(event_id) else {
+                continue;
+            };
+            if record.space_id != space_id {
+                continue;
+            }
+            record.event_id.get_or_insert_with(|| event_id.to_owned());
+            record.state = state;
+            if reason.is_some() {
+                record.reason = reason;
+            }
+            updated += 1;
+        }
+        if updated > 0 {
+            let _ = self.flush();
+        }
+        updated
     }
 
     /// Read all tracked Moves for a specific Space, sorted by submit
@@ -3022,6 +3177,10 @@ mod tests {
             MoveSubmissionState::PendingAnchor
         );
         assert_eq!(
+            MoveSubmissionState::from_submit_state("accepted", None),
+            MoveSubmissionState::PendingAnchor
+        );
+        assert_eq!(
             MoveSubmissionState::from_submit_state("effective", None),
             MoveSubmissionState::Effective
         );
@@ -3106,6 +3265,77 @@ mod tests {
         let mut store = LocalStateStore::with_path(reader.path.clone());
         store.drop_move_submission(mid);
         assert!(!store.space_has_paused_anchorer(space));
+    }
+
+    #[test]
+    fn sync_event_states_update_submission_by_event_id() {
+        let path = temp_state_path("move-event-state");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let local_id = "sha256:local-submit";
+        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000aa";
+        store.record_move_submission_with_event_id(
+            local_id,
+            Some(event_id),
+            space,
+            "cx.flow.move",
+            MoveSubmissionState::PendingAnchor,
+            None,
+            Some("cx:anchor:sha256:abc".to_owned()),
+        );
+
+        let updated = store.ingest_move_event_states(
+            space,
+            &serde_json::json!({
+                "event_states": [{
+                    "event_id": event_id,
+                    "event_state": "effective"
+                }]
+            }),
+        );
+
+        assert_eq!(updated, 1);
+        let listed = store.move_submissions_for_space(space);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].move_id, local_id);
+        assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
+        assert_eq!(listed[0].state, MoveSubmissionState::Effective);
+    }
+
+    #[test]
+    fn sync_event_states_update_legacy_submission_keyed_by_event_id() {
+        let path = temp_state_path("legacy-move-event-state");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000bb";
+        store.record_move_submission(
+            event_id,
+            space,
+            "mls_member_remove",
+            MoveSubmissionState::PendingMlsBinding,
+            None,
+            None,
+        );
+
+        let updated = store.ingest_move_event_states(
+            space,
+            &serde_json::json!({
+                "event_states": [{
+                    "event_id": event_id,
+                    "event_state": "failed_bottom",
+                    "event_state_reason_code": "cell_in_bottom_state"
+                }]
+            }),
+        );
+
+        assert_eq!(updated, 1);
+        let listed = store.move_submissions_for_space(space);
+        assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
+        assert_eq!(listed[0].state, MoveSubmissionState::FailedBottom);
+        assert_eq!(
+            listed[0].reason.as_deref(),
+            Some("cell_in_bottom_state")
+        );
     }
 
     #[test]
@@ -4099,6 +4329,49 @@ mod tests {
                 .get("membership")
                 .and_then(|v| v.as_str()),
             Some("ban")
+        );
+    }
+
+    #[test]
+    fn anchor_view_from_sync_body_parses_structured_bottoms() {
+        let body = serde_json::json!({
+            "bottoms": [{
+                "cell": "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card",
+                "status": "conflict",
+                "bottom": {
+                    "kind": "conflict",
+                    "cells": [
+                        "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card"
+                    ],
+                    "event_ids": [
+                        "cx:event:0196419b-0000-7000-8000-000000000001",
+                        "cx:event:0196419b-0000-7000-8000-000000000002"
+                    ],
+                    "heads": [
+                        {"list_space_id": "cx:space:list-a", "rank": "U"},
+                        {"list_space_id": "cx:space:list-b", "rank": "U"}
+                    ]
+                }
+            }]
+        });
+
+        let view = LocalAnchorView::from_sync_body(&body);
+        let info = view
+            .bottom_cells
+            .get("cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card")
+            .expect("structured bottom conflict surfaced");
+        assert_eq!(info.status, "conflict");
+        assert_eq!(info.heads.len(), 2);
+        assert_eq!(
+            info.heads[0].move_id,
+            "cx:event:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(
+            info.heads[1]
+                .value
+                .get("list_space_id")
+                .and_then(|v| v.as_str()),
+            Some("cx:space:list-b")
         );
     }
 
