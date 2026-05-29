@@ -25,14 +25,16 @@ jobs:
       - name: Checkout contrix-rust-sdk
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/contrix-rust-sdk
+          repository: ${{ gitea.repository_owner }}/contrix-rust-sdk
           path: contrix-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Checkout chime
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/chime
+          repository: ${{ gitea.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Linux desktop dependencies
         run: |
