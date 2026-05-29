@@ -3111,7 +3111,9 @@ pub fn ChatPanel(
                                                             sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
-                                                                store.save_sync_cursor(submitted.sync_token.clone());
+                                                                // Keep POST /events sync_token out of the persisted
+                                                                // account-subscribe cursor; the background sync loop
+                                                                // must resume only from /account/subscribe cursors.
                                                                 store.append_raw_operation(
                                                                     op.local_operation_id().to_owned(),
                                                                     Some(space.clone()),
@@ -3743,7 +3745,6 @@ pub fn ChatPanel(
                                                                 Ok(resp) => {
                                                                     {
                                                                         let mut store = state_store.write();
-                                                                        store.save_sync_cursor(resp.sync_token.clone());
                                                                         store.append_raw_operation(
                                                                             op.local_operation_id().to_owned(),
                                                                             Some(space_for_record),
@@ -5560,7 +5561,6 @@ pub fn ChatPanel(
                                             Ok(resp) => {
                                                 {
                                                     let mut store = state_store.write();
-                                                    store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
                                                         op.local_operation_id().to_owned(),
                                                         Some(space_for_record),
@@ -5921,7 +5921,6 @@ pub fn ChatPanel(
                                             Ok(resp) => {
                                                 {
                                                     let mut store = state_store.write();
-                                                    store.save_sync_cursor(resp.sync_token.clone());
                                                     store.append_raw_operation(
                                                         msg_op.local_operation_id().to_owned(),
                                                         Some(space_for_record.clone()),

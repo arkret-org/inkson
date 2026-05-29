@@ -64,6 +64,16 @@ pub fn LoginPanel(
         match result {
             Ok(completed) => {
                 let principal_server_url = normalize_server_url(&completed.principal_server_url);
+                let previous_principal_server_url = normalize_server_url(&base_url());
+                let previous_actor = account_did();
+                if login_replaces_account_scope(
+                    &previous_principal_server_url,
+                    &previous_actor,
+                    &principal_server_url,
+                    &completed.actor,
+                ) {
+                    state_store_write.write().clear_account_scoped();
+                }
                 base_url.set(principal_server_url.clone());
                 account_did.set(completed.actor.clone());
                 device_id.set(completed.device_id.clone());
@@ -271,6 +281,20 @@ pub fn LoginPanel(
             }
         }
     }
+}
+
+fn login_replaces_account_scope(
+    previous_server_url: &str,
+    previous_actor: &str,
+    next_server_url: &str,
+    next_actor: &str,
+) -> bool {
+    let previous_actor = previous_actor.trim();
+    if previous_actor.is_empty() {
+        return false;
+    }
+    previous_actor != next_actor.trim()
+        || normalize_server_url(previous_server_url) != normalize_server_url(next_server_url)
 }
 
 fn persist_completed_login_state(
@@ -658,5 +682,33 @@ mod tests {
         );
         // Token without grant (dev-login style) is also signed-in.
         assert_eq!(compute_session_status("dev.token", None), "signed-in");
+    }
+
+    #[test]
+    fn login_replaces_account_scope_only_for_account_or_server_change() {
+        assert!(!login_replaces_account_scope(
+            "https://local.host",
+            "",
+            "https://local.host",
+            "did:web:alice.example"
+        ));
+        assert!(!login_replaces_account_scope(
+            "https://local.host",
+            "did:web:alice.example",
+            "https://local.host/",
+            "did:web:alice.example"
+        ));
+        assert!(login_replaces_account_scope(
+            "https://local.host",
+            "did:web:alice.example",
+            "https://local.host",
+            "did:web:bob.example"
+        ));
+        assert!(login_replaces_account_scope(
+            "https://one.example",
+            "did:web:alice.example",
+            "https://two.example",
+            "did:web:alice.example"
+        ));
     }
 }

@@ -1292,7 +1292,9 @@ pub fn SpaceAdminPanel(
                                                         sync_cursor.set(submitted.sync_token.clone());
                                                         {
                                                             let mut store = state_store.write();
-                                                            store.save_sync_cursor(submitted.sync_token.clone());
+                                                            // POST /events returns a write barrier, not an
+                                                            // account-subscribe resume cursor. Persisting it
+                                                            // poisons the next /account/subscribe after= call.
                                                             store.append_raw_operation(
                                                                 op_id.clone(),
                                                                 Some(space.clone()),
@@ -1752,7 +1754,6 @@ pub fn SpaceAdminPanel(
                                                             sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
-                                                                store.save_sync_cursor(submitted.sync_token.clone());
                                                                 store.append_raw_operation(
                                                                     op_id.clone(),
                                                                     Some(space.clone()),
@@ -1818,7 +1819,6 @@ pub fn SpaceAdminPanel(
                                                             sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
-                                                                store.save_sync_cursor(submitted.sync_token.clone());
                                                                 store.append_raw_operation(
                                                                     op_id.clone(),
                                                                     Some(space.clone()),

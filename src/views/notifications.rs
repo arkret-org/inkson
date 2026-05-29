@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::{Value, json};
@@ -419,24 +421,30 @@ fn refresh_notifications(
                 .list_notifications()
                 .await
                 .unwrap_or_else(|_| json!({ "items": [] }));
-            Ok::<_, anyhow::Error>((response, notification_response))
+            let invite_notifications = api
+                .invites()
+                .await
+                .map(|response| response.invites)
+                .unwrap_or_default();
+            Ok::<_, anyhow::Error>((response, notification_response, invite_notifications))
         })
         .await
         {
-            Ok((response, notification_response)) => {
+            Ok((response, notification_response, invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&response.account_data);
                 let dnd = dnd_settings_from_account_data(&response.account_data);
                 let server_items = notification_response
                     .get("items")
                     .and_then(Value::as_array)
                     .cloned();
-                let raw_notifications = server_items.unwrap_or_else(|| {
+                let mut raw_notifications = server_items.unwrap_or_else(|| {
                     response
                         .account_data
                         .into_iter()
                         .filter(is_notification_account_data)
                         .collect::<Vec<_>>()
                 });
+                append_invite_notifications(&mut raw_notifications, invite_notifications);
                 let unread_count = notification_response
                     .get("unread_count")
                     .and_then(Value::as_u64)
@@ -519,6 +527,54 @@ pub(crate) fn is_notification_account_data(value: &Value) -> bool {
             | Some("cx.account.notification")
             | Some("notification")
     )
+}
+
+fn append_invite_notifications(raw_notifications: &mut Vec<Value>, invites: Vec<Value>) {
+    let mut existing_ids = raw_notifications
+        .iter()
+        .filter_map(notification_id_for_dedupe)
+        .collect::<BTreeSet<_>>();
+    for invite in invites {
+        let Some(notification) = invite_notification_from_value(&invite) else {
+            continue;
+        };
+        let Some(id) = notification_id_for_dedupe(&notification) else {
+            continue;
+        };
+        if !existing_ids.contains(&id) {
+            existing_ids.insert(id);
+            raw_notifications.push(notification);
+        }
+    }
+}
+
+fn invite_notification_from_value(invite: &Value) -> Option<Value> {
+    let invite_id = value_string(invite, &["invite_id"])?;
+    let space_id = value_string(invite, &["space_id"]).unwrap_or_default();
+    let inviter = value_string(invite, &["inviter"]).unwrap_or_default();
+    let created_at = value_string(invite, &["created_at"])
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    let body = if inviter.is_empty() {
+        format!("You were invited to {space_id}")
+    } else {
+        format!("{} invited you to {space_id}", short_protocol_id(&inviter))
+    };
+
+    Some(json!({
+        "notification_id": format!("invite:{invite_id}"),
+        "notification_kind": "invite",
+        "notification_type": "invite",
+        "kind": "invite",
+        "title": "Space invite",
+        "body": body,
+        "space_id": space_id,
+        "timestamp": created_at,
+        "read": false,
+    }))
+}
+
+fn notification_id_for_dedupe(value: &Value) -> Option<String> {
+    value_string(value, &["notification_id", "id"])
 }
 
 fn hydrate_notifications(
@@ -761,6 +817,30 @@ mod tests {
         let notifications =
             hydrate_notifications(raw, &ClientLocalState::default(), Some(&rules), None);
         assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn pending_invites_are_hydrated_as_notifications() {
+        let invite = json!({
+            "invite_id": "cx:invite:01904100-0000-7000-8000-000000000001",
+            "space_id": "cx:realm:01904100-0000-7000-8000-000000000002",
+            "inviter": "did:web:alice.example",
+            "created_at": "2026-05-29T00:00:00Z",
+        });
+        let mut raw = Vec::new();
+        append_invite_notifications(&mut raw, vec![invite.clone()]);
+        append_invite_notifications(&mut raw, vec![invite]);
+        assert_eq!(raw.len(), 1, "same invite should not duplicate");
+
+        let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].kind, "invite");
+        assert_eq!(notifications[0].title, "Space invite");
+        assert_eq!(
+            notifications[0].space_id,
+            "cx:realm:01904100-0000-7000-8000-000000000002"
+        );
+        assert!(notifications[0].body.contains("cx:realm:01904100"));
     }
 
     #[test]

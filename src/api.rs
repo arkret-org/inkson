@@ -478,15 +478,22 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
     if sync_token.is_empty() || sync_token == "-" {
         return None;
     }
-    sync_token
+    let tokens = sync_token
         .split(',')
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+    tokens
+        .iter()
         .all(|candidate| {
-            let Some(timestamp_ms) = candidate.trim().strip_prefix("sx:") else {
-                return false;
-            };
-            !timestamp_ms.is_empty() && timestamp_ms.chars().all(|ch| ch.is_ascii_digit())
+            candidate
+                .strip_prefix("cx:cursor:")
+                .is_some_and(|payload| !payload.is_empty())
         })
-        .then(|| sync_token.to_owned())
+        .then(|| tokens.join(","))
 }
 
 /// Typed error class for the `post_audit_user_action` path.
@@ -4969,10 +4976,10 @@ mod tests {
         assert_eq!(backfill, "api/v1/events?realms=cx%3Aspace%3Ademo");
         assert!(!backfill.contains("direction="));
 
-        let subscribe = events_subscribe_path("cx:space:demo", Some("sx:1"), Some(true));
+        let subscribe = events_subscribe_path("cx:space:demo", Some("cx:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
-            "api/v1/events/subscribe?realms=cx%3Aspace%3Ademo&after=sx%3A1&include_history=true"
+            "api/v1/events/subscribe?realms=cx%3Aspace%3Ademo&after=cx%3Acursor%3Ademo&include_history=true"
         );
         assert!(!subscribe.contains("&from="));
     }
@@ -5536,10 +5543,11 @@ mod tests {
 
     #[test]
     fn write_requests_include_request_identity_and_wait_for_headers() {
+        const WAIT_CURSOR: &str = "cx:cursor:eyJoIjoiMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMiIsInB1cnBvc2UiOiJzdHJlYW0iLCJ0IjoiMjAyNi0wNS0yOVQwMDowMDowMC4wMDBaIiwidiI6IjEiLCJ4IjoxNzgwMDAwMDAwMDAwfQ";
         let api = ContrixApi::new("http://127.0.0.1:8787/")
             .unwrap()
             .with_bearer("sx_token")
-            .with_wait_for("sx:123");
+            .with_wait_for(WAIT_CURSOR);
         let request = api
             .prepare_request(
                 api.with_write_request_headers(
@@ -5571,12 +5579,12 @@ mod tests {
                 .headers()
                 .get("x-contrix-wait-for")
                 .and_then(|value| value.to_str().ok()),
-            Some("sx:123")
+            Some(WAIT_CURSOR)
         );
     }
 
     #[test]
-    fn wait_for_header_rejects_non_timestamp_sync_tokens() {
+    fn wait_for_header_rejects_legacy_or_malformed_sync_tokens() {
         let api = ContrixApi::new("http://127.0.0.1:8787/")
             .unwrap()
             .with_wait_for("sx:e2e:2");
@@ -5592,6 +5600,23 @@ mod tests {
             .build()
             .unwrap();
 
+        assert!(request.headers().get("x-contrix-wait-for").is_none());
+
+        let malformed = ContrixApi::new("http://127.0.0.1:8787/")
+            .unwrap()
+            .with_wait_for("cx:cursor:");
+        let request = malformed
+            .prepare_request(
+                malformed.with_write_request_headers(
+                    malformed
+                        .http
+                        .post(malformed.endpoint("api/v1/events").unwrap())
+                        .json(&json!({"body": "hello"})),
+                    "req-456",
+                ),
+            )
+            .build()
+            .unwrap();
         assert!(request.headers().get("x-contrix-wait-for").is_none());
     }
 

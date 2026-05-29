@@ -1960,7 +1960,8 @@ pub fn TimelinePanel(
                                                         frontier_state.set(sent.event_id.clone());
                                                         {
                                                             let mut store = state_store.write();
-                                                            store.save_sync_cursor(sent.sync_token.clone());
+                                                            // This sync_token is a write barrier from POST /events;
+                                                            // only /account/subscribe cursors are persisted.
                                                             store.append_raw_operation(
                                                                 op_id.clone(),
                                                                 Some(space.clone()),
