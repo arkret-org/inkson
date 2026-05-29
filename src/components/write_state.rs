@@ -23,6 +23,12 @@
 use dioxus::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteStateIconSpec {
+    pub class_suffix: &'static str,
+    pub aria_label: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteState {
     /// Aligned with the sync frontier — accepted by the server reducer.
     Synced,
@@ -68,6 +74,61 @@ impl WriteState {
         }
     }
 
+    pub fn data_state(self) -> &'static str {
+        match self {
+            Self::Synced => "synced",
+            Self::Optimistic => "optimistic",
+            Self::Queued => "queued",
+            Self::Submitted => "submitted",
+            Self::Accepted => "accepted",
+            Self::SoftFailed => "soft_failed",
+            Self::CasConflict => "cas_conflict",
+            Self::Quarantined => "quarantined",
+        }
+    }
+
+    pub fn icon(self) -> WriteStateIconSpec {
+        match self {
+            Self::Synced => WriteStateIconSpec {
+                class_suffix: "is-synced",
+                aria_label: "Synced",
+            },
+            Self::Optimistic => WriteStateIconSpec {
+                class_suffix: "is-optimistic",
+                aria_label: "Optimistic local write",
+            },
+            Self::Queued => WriteStateIconSpec {
+                class_suffix: "is-queued",
+                aria_label: "Queued local write",
+            },
+            Self::Submitted => WriteStateIconSpec {
+                class_suffix: "is-submitted",
+                aria_label: "Submitted write",
+            },
+            Self::Accepted => WriteStateIconSpec {
+                class_suffix: "is-accepted",
+                aria_label: "Accepted by server",
+            },
+            Self::SoftFailed => WriteStateIconSpec {
+                class_suffix: "is-soft-failed",
+                aria_label: "Write failed",
+            },
+            Self::CasConflict => WriteStateIconSpec {
+                class_suffix: "is-conflict",
+                aria_label: "CAS conflict",
+            },
+            Self::Quarantined => WriteStateIconSpec {
+                class_suffix: "is-quarantined",
+                aria_label: "Quarantined write",
+            },
+        }
+    }
+
+    pub fn icon_class(self) -> String {
+        let icon = self.icon();
+        format!("write-state-icon {}", icon.class_suffix)
+    }
+
     /// One-line explanation of the state, suitable for tooltips / inbox
     /// summaries.
     pub fn explanation(self) -> &'static str {
@@ -89,6 +150,20 @@ impl WriteState {
         }
     }
 
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "synced" | "effective" => Some(Self::Synced),
+            "optimistic" => Some(Self::Optimistic),
+            "queued" => Some(Self::Queued),
+            "submitted" => Some(Self::Submitted),
+            "accepted" | "pending" | "pending_anchor" => Some(Self::Accepted),
+            "failed" | "rejected" | "soft_failed" | "soft failed" => Some(Self::SoftFailed),
+            "conflict" | "cas_conflict" | "CAS conflict" => Some(Self::CasConflict),
+            "quarantined" => Some(Self::Quarantined),
+            _ => None,
+        }
+    }
+
     /// All variants, ordered the way the UI prefers to display them.
     pub fn all() -> [Self; 8] {
         [
@@ -104,19 +179,46 @@ impl WriteState {
     }
 }
 
+#[component]
+pub fn WriteStateIcon(state: WriteState) -> Element {
+    let icon_class = state.icon_class();
+    let icon = state.icon();
+    rsx! {
+        span {
+            class: "{icon_class}",
+            role: "img",
+            "aria-label": "{icon.aria_label}",
+        }
+    }
+}
+
 /// A single pill-shaped write-state marker, suitable for KanbanCard,
 /// Message, or Flow row decorations.
 #[component]
-pub fn WriteStatePill(state: String) -> Element {
+pub fn WriteStatePill(state: String, icon_only: Option<bool>) -> Element {
     let parsed = parse_write_state(&state);
-    let class = parsed.map(WriteState::class_name).unwrap_or("badge");
+    let icon_only = icon_only.unwrap_or(false);
+    let base_class = parsed.map(WriteState::class_name).unwrap_or("badge");
+    let class = if icon_only {
+        format!("{base_class} write-state-badge is-icon-only")
+    } else {
+        format!("{base_class} write-state-badge")
+    };
     let label = parsed.map(WriteState::label).unwrap_or(state.as_str());
+    let data_state = parsed.map(WriteState::data_state).unwrap_or("unknown");
+    let title = parsed
+        .map(|state| format!("{} - {}", state.label(), state.explanation()))
+        .unwrap_or_else(|| "Unknown write state".to_owned());
     rsx! {
         span {
             class: "{class}",
             "data-testid": "write-state-pill",
-            "title": "sync/operations-sync.md — write-plane state machine",
-            "{label}"
+            "data-write-state": "{data_state}",
+            title: "{title}",
+            if let Some(parsed) = parsed {
+                WriteStateIcon { state: parsed }
+            }
+            span { class: "write-state-label", "{label}" }
         }
     }
 }
@@ -141,17 +243,7 @@ pub fn WriteStateExplainer(state: String) -> Element {
 }
 
 fn parse_write_state(s: &str) -> Option<WriteState> {
-    match s {
-        "synced" => Some(WriteState::Synced),
-        "optimistic" => Some(WriteState::Optimistic),
-        "queued" => Some(WriteState::Queued),
-        "submitted" => Some(WriteState::Submitted),
-        "accepted" => Some(WriteState::Accepted),
-        "soft failed" => Some(WriteState::SoftFailed),
-        "CAS conflict" => Some(WriteState::CasConflict),
-        "quarantined" => Some(WriteState::Quarantined),
-        _ => None,
-    }
+    WriteState::from_wire(s)
 }
 
 #[cfg(test)]
@@ -184,6 +276,17 @@ mod tests {
         assert_eq!(WriteState::CasConflict.class_name(), "badge red");
         // amber = soft / requires moderation review
         assert_eq!(WriteState::Quarantined.class_name(), "badge amber");
+    }
+
+    #[test]
+    fn write_state_icon_mapping_covers_every_variant() {
+        let mut suffixes: Vec<&str> = WriteState::all()
+            .iter()
+            .map(|state| state.icon().class_suffix)
+            .collect();
+        suffixes.sort();
+        suffixes.dedup();
+        assert_eq!(suffixes.len(), 8);
     }
 
     #[test]

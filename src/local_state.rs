@@ -791,16 +791,13 @@ impl LocalAnchorView {
             let Some(bottom) = entry.get("bottom") else {
                 continue;
             };
-            let cell_ref = entry
-                .get("cell")
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    bottom
-                        .get("cells")
-                        .and_then(|v| v.as_array())
-                        .and_then(|cells| cells.first())
-                        .and_then(|v| v.as_str())
-                });
+            let cell_ref = entry.get("cell").and_then(|v| v.as_str()).or_else(|| {
+                bottom
+                    .get("cells")
+                    .and_then(|v| v.as_array())
+                    .and_then(|cells| cells.first())
+                    .and_then(|v| v.as_str())
+            });
             let Some(cell_ref) = cell_ref else {
                 continue;
             };
@@ -817,6 +814,7 @@ impl LocalAnchorView {
             }
             let event_ids: Vec<String> = bottom
                 .get("event_ids")
+                .or_else(|| bottom.get("move_ids"))
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
@@ -1361,6 +1359,49 @@ impl LocalStateStore {
             payload,
         });
         let _ = self.flush();
+    }
+
+    pub fn update_raw_operation_write_state(
+        &mut self,
+        operation_id: &str,
+        write_state: &str,
+        event_id: Option<String>,
+        error: Option<String>,
+    ) -> bool {
+        self.ensure_cached_loaded();
+        let Some(record) = self
+            .cached
+            .raw_operations
+            .iter_mut()
+            .find(|record| record.operation_id == operation_id)
+        else {
+            return false;
+        };
+        let Some(payload) = record.payload.as_object_mut() else {
+            return false;
+        };
+        payload.insert(
+            "write_state".to_owned(),
+            Value::String(write_state.to_owned()),
+        );
+        match event_id {
+            Some(event_id) => {
+                payload.insert("event_id".to_owned(), Value::String(event_id));
+            }
+            None => {
+                payload.remove("event_id");
+            }
+        }
+        match error {
+            Some(error) => {
+                payload.insert("error".to_owned(), Value::String(error));
+            }
+            None => {
+                payload.remove("error");
+            }
+        }
+        let _ = self.flush();
+        true
     }
 
     /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
@@ -2318,7 +2359,7 @@ impl LocalStateStore {
         anchor_ref: Option<String>,
     ) -> MoveSubmissionRecord {
         self.record_move_submission_with_event_id(
-            move_id, None::<String>, space_id, kind, state, reason, anchor_ref,
+            move_id, None, space_id, kind, state, reason, anchor_ref,
         )
     }
 
@@ -2328,7 +2369,7 @@ impl LocalStateStore {
     pub fn record_move_submission_with_event_id(
         &mut self,
         move_id: impl Into<String>,
-        event_id: Option<impl Into<String>>,
+        event_id: Option<String>,
         space_id: impl Into<String>,
         kind: impl Into<String>,
         state: MoveSubmissionState,
@@ -2339,7 +2380,7 @@ impl LocalStateStore {
         let move_id = move_id.into();
         let record = MoveSubmissionRecord {
             move_id: move_id.clone(),
-            event_id: event_id.map(Into::into),
+            event_id,
             space_id: space_id.into(),
             kind: kind.into(),
             state,
@@ -2383,6 +2424,26 @@ impl LocalStateStore {
             .find(|record| record.event_id.as_deref() == Some(id))
     }
 
+    fn move_submission_lookup_key(
+        &self,
+        event_id: Option<&str>,
+        move_id: Option<&str>,
+    ) -> Option<String> {
+        for id in [move_id, event_id].into_iter().flatten() {
+            if self.cached.move_submissions.contains_key(id) {
+                return Some(id.to_owned());
+            }
+        }
+        self.cached
+            .move_submissions
+            .iter()
+            .find(|(_, record)| {
+                event_id.is_some_and(|id| record.event_id.as_deref() == Some(id))
+                    || move_id.is_some_and(|id| record.move_id == id)
+            })
+            .map(|(key, _)| key.clone())
+    }
+
     /// Apply per-event protocol states from a per-Space sync projection.
     /// Spec source: `service-surface.md §5.3`, where each reducer-input
     /// Event may carry `event_id`, `event_state`, and an optional reason code.
@@ -2393,9 +2454,11 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let mut updated = 0usize;
         for entry in entries {
-            let Some(event_id) = entry.get("event_id").and_then(|v| v.as_str()) else {
+            let event_id = entry.get("event_id").and_then(|v| v.as_str());
+            let move_id = entry.get("move_id").and_then(|v| v.as_str());
+            if event_id.is_none() && move_id.is_none() {
                 continue;
-            };
+            }
             let Some(state_label) = entry
                 .get("event_state")
                 .or_else(|| entry.get("state"))
@@ -2410,13 +2473,18 @@ impl LocalStateStore {
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
             let state = MoveSubmissionState::from_submit_state(state_label, reason.as_deref());
-            let Some(record) = self.move_submission_record_mut(event_id) else {
+            let Some(record_key) = self.move_submission_lookup_key(event_id, move_id) else {
+                continue;
+            };
+            let Some(record) = self.cached.move_submissions.get_mut(&record_key) else {
                 continue;
             };
             if record.space_id != space_id {
                 continue;
             }
-            record.event_id.get_or_insert_with(|| event_id.to_owned());
+            if let Some(event_id) = event_id {
+                record.event_id.get_or_insert_with(|| event_id.to_owned());
+            }
             record.state = state;
             if reason.is_some() {
                 record.reason = reason;
@@ -3276,7 +3344,7 @@ mod tests {
         let event_id = "cx:event:0196419b-0000-7000-8000-0000000000aa";
         store.record_move_submission_with_event_id(
             local_id,
-            Some(event_id),
+            Some(event_id.to_owned()),
             space,
             "cx.flow.move",
             MoveSubmissionState::PendingAnchor,
@@ -3332,10 +3400,41 @@ mod tests {
         let listed = store.move_submissions_for_space(space);
         assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
         assert_eq!(listed[0].state, MoveSubmissionState::FailedBottom);
-        assert_eq!(
-            listed[0].reason.as_deref(),
-            Some("cell_in_bottom_state")
+        assert_eq!(listed[0].reason.as_deref(), Some("cell_in_bottom_state"));
+    }
+
+    #[test]
+    fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
+        let path = temp_state_path("move-event-and-move-id-state");
+        let mut store = LocalStateStore::with_path(path);
+        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let move_id = "sha256:local-submit-with-server-event";
+        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000cc";
+        store.record_move_submission(
+            move_id,
+            space,
+            "cx.flow.move",
+            MoveSubmissionState::PendingAnchor,
+            None,
+            None,
         );
+
+        let updated = store.ingest_move_event_states(
+            space,
+            &serde_json::json!({
+                "event_states": [{
+                    "event_id": event_id,
+                    "move_id": move_id,
+                    "event_state": "effective"
+                }]
+            }),
+        );
+
+        assert_eq!(updated, 1);
+        let listed = store.move_submissions_for_space(space);
+        assert_eq!(listed[0].move_id, move_id);
+        assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
+        assert_eq!(listed[0].state, MoveSubmissionState::Effective);
     }
 
     #[test]

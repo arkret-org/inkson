@@ -496,7 +496,10 @@ fn rand_u64() -> u64 {
 
 /// Canonical helper constructors used by the current UI.
 pub mod cx_ops {
-    use super::{OperationBuilder, scope_id_as_realm_id, uuid_v7};
+    use super::{
+        Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef,
+        scope_id_as_realm_id, uuid_v7,
+    };
     use serde_json::{Value, json};
 
     fn object_patch_payload_value(
@@ -1406,16 +1409,66 @@ pub mod cx_ops {
         cell_id: &str,
         conflict_heads: &[String],
         recovery_capability_ref: &str,
+        state_witness_ref: &str,
+        inclusion_proof_ref: &str,
         winner_value: Value,
     ) -> OperationBuilder {
+        let preconditions = vec![Precondition {
+            cell: cell_id.to_owned(),
+            predicate: Predicate {
+                op: "head_in".to_owned(),
+                value: None,
+                values: Some(conflict_heads.iter().cloned().map(Value::String).collect()),
+                predicate_id: None,
+            },
+        }];
+        let effects = vec![Effect {
+            cell: cell_id.to_owned(),
+            op: LatticeOp {
+                kind: "set".to_owned(),
+                tag: None,
+                value: Some(winner_value.clone()),
+                from: None,
+                to: None,
+                reason: None,
+                issuer_seq: None,
+                element_id: None,
+                predecessor: None,
+            },
+        }];
+        let refs = vec![
+            SemanticRef {
+                id: recovery_capability_ref.to_owned(),
+                role: "authorized_by".to_owned(),
+                critical: true,
+                proof: None,
+            },
+            SemanticRef {
+                id: state_witness_ref.to_owned(),
+                role: "state_witness".to_owned(),
+                critical: true,
+                proof: None,
+            },
+            SemanticRef {
+                id: inclusion_proof_ref.to_owned(),
+                role: "inclusion_proof".to_owned(),
+                critical: true,
+                proof: None,
+            },
+        ];
         OperationBuilder::new(realm_id, actor, "cx.conflict.repair")
             .target_ref(cell_id)
             .body(json!({
                 "cell_id": cell_id,
                 "conflict_heads": conflict_heads,
                 "recovery_capability_ref": recovery_capability_ref,
+                "state_witness_ref": state_witness_ref,
+                "inclusion_proof_ref": inclusion_proof_ref,
                 "winner_value": winner_value,
             }))
+            .preconditions(preconditions)
+            .effects(effects)
+            .refs(refs)
     }
 
     /// `cx.realm.update` patch event on the organization cell. Mirrors the
@@ -2278,6 +2331,41 @@ mod tests {
         assert!(op.payload["expected_position"].get("space_id").is_none());
         assert!(op.payload.get("target_space_id").is_none());
         assert!(op.payload.get("position").is_none());
+    }
+
+    #[test]
+    fn conflict_repair_emits_recovery_preconditions_effects_and_refs() {
+        let heads = vec![
+            "cx:event:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "cx:event:0196419b-0000-7000-8000-000000000002".to_owned(),
+        ];
+        let event = cx_ops::conflict_repair(
+            "cx:space:test",
+            "did:web:alice.example",
+            "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card",
+            &heads,
+            "cx:capability:recovery",
+            "cx:snapshot:sha256:witness",
+            "cx:proof:sha256:proof",
+            json!({"list_space_id": "cx:space:list", "rank": "U"}),
+        )
+        .build("node");
+
+        assert_eq!(event.preconditions.len(), 1);
+        assert_eq!(event.preconditions[0].predicate.op, "head_in");
+        assert_eq!(
+            event.preconditions[0].predicate.values.as_ref().unwrap(),
+            &vec![
+                Value::String(heads[0].clone()),
+                Value::String(heads[1].clone())
+            ]
+        );
+        assert_eq!(event.effects.len(), 1);
+        assert_eq!(event.effects[0].op.kind, "set");
+        assert_eq!(event.refs.len(), 3);
+        assert!(event.refs.iter().any(|r| r.role == "authorized_by"));
+        assert!(event.refs.iter().any(|r| r.role == "state_witness"));
+        assert!(event.refs.iter().any(|r| r.role == "inclusion_proof"));
     }
 
     #[test]

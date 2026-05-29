@@ -4,7 +4,9 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    components::{EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon},
+    components::{
+        EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
+    },
     hlc::Hlc,
     local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord},
     move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
@@ -195,6 +197,16 @@ struct CardDetailDraft {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct CardSynthesisRevision {
+    id: String,
+    body: String,
+    actor_did: String,
+    author_label: String,
+    timestamp_label: String,
+    sort_key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct CardSynthesisTrackEntry {
     id: String,
     body: String,
@@ -203,6 +215,7 @@ struct CardSynthesisTrackEntry {
     timestamp_label: String,
     sort_key: String,
     edited: bool,
+    revisions: Vec<CardSynthesisRevision>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -501,7 +514,7 @@ fn toast_editor_bootstrap_script(
     ))
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CardState {
     Synced,
     Optimistic,
@@ -514,12 +527,23 @@ enum CardState {
 }
 
 impl CardState {
+    fn write_state(self) -> WriteState {
+        match self {
+            CardState::Synced => WriteState::Synced,
+            CardState::Optimistic => WriteState::Optimistic,
+            CardState::Queued => WriteState::Queued,
+            CardState::Submitted => WriteState::Submitted,
+            CardState::Accepted => WriteState::Accepted,
+            CardState::SoftFailed => WriteState::SoftFailed,
+            CardState::Quarantined => WriteState::Quarantined,
+            CardState::Conflict => WriteState::CasConflict,
+        }
+    }
+
     fn label(&self) -> &'static str {
         match self {
             CardState::Synced => "synced",
-            CardState::Optimistic => "optimistic",
-            CardState::Queued => "queued",
-            CardState::Submitted => "submitted",
+            CardState::Optimistic | CardState::Queued | CardState::Submitted => "sending...",
             CardState::Accepted => "pending anchor",
             CardState::SoftFailed => "soft failed",
             CardState::Quarantined => "quarantined",
@@ -535,6 +559,69 @@ impl CardState {
             CardState::SoftFailed | CardState::Conflict => "badge red",
             CardState::Quarantined => "badge amber",
         }
+    }
+
+    fn data_state(self) -> &'static str {
+        match self {
+            CardState::Synced => "synced",
+            CardState::Optimistic => "optimistic",
+            CardState::Queued => "queued",
+            CardState::Submitted => "submitted",
+            CardState::Accepted => "accepted",
+            CardState::SoftFailed => "soft_failed",
+            CardState::Quarantined => "quarantined",
+            CardState::Conflict => "conflict",
+        }
+    }
+
+    fn status_title(self) -> &'static str {
+        match self {
+            CardState::Synced => "Server projection is current",
+            CardState::Optimistic | CardState::Queued | CardState::Submitted => {
+                "Sending; waiting for server confirmation"
+            }
+            CardState::Accepted => "Server accepted the event; waiting for projection/anchor",
+            CardState::SoftFailed => "Server did not accept this event",
+            CardState::Quarantined => "Write failed and needs manual review",
+            CardState::Conflict => "Server reported a CAS conflict",
+        }
+    }
+}
+
+#[component]
+fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
+    let icon_only = icon_only.unwrap_or(false);
+    let class_name = if icon_only {
+        format!("{} write-state-badge is-icon-only", state.class_name())
+    } else {
+        format!("{} write-state-badge", state.class_name())
+    };
+    let data_state = state.data_state();
+    let title = format!("{} - {}", state.label(), state.status_title());
+    let write_state = state.write_state();
+    rsx! {
+        span {
+            class: "{class_name}",
+            "data-testid": "write-state-badge",
+            "data-write-state": "{data_state}",
+            title: "{title}",
+            WriteStateIcon { state: write_state }
+            span { class: "write-state-label", "{state.label()}" }
+        }
+    }
+}
+
+fn card_state_from_write_state(write_state: &str) -> CardState {
+    match WriteState::from_wire(write_state) {
+        Some(WriteState::Synced) => CardState::Synced,
+        Some(WriteState::Optimistic) => CardState::Optimistic,
+        Some(WriteState::Queued) => CardState::Queued,
+        Some(WriteState::Submitted) => CardState::Submitted,
+        Some(WriteState::Accepted) => CardState::Accepted,
+        Some(WriteState::SoftFailed) => CardState::SoftFailed,
+        Some(WriteState::Quarantined) => CardState::Quarantined,
+        Some(WriteState::CasConflict) => CardState::Conflict,
+        None => CardState::Queued,
     }
 }
 
@@ -1234,6 +1321,7 @@ fn local_created_card(
     title: String,
     rank: String,
     description: String,
+    state: CardState,
 ) -> KanbanCard {
     KanbanCard {
         id: flow_id.clone(),
@@ -1255,7 +1343,7 @@ fn local_created_card(
         activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
         audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
         security_encrypted: None,
-        state: CardState::Queued,
+        state,
         lifecycle: FlowLifecycleState::Active,
     }
 }
@@ -1273,10 +1361,64 @@ fn overlay_local_card_creates(
 fn raw_operation_allows_overlay(payload: &Value) -> bool {
     let write_state =
         json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
-    !matches!(
-        write_state.as_str(),
-        "failed" | "rejected" | "quarantined" | "cancelled" | "canceled" | "dropped"
-    )
+    !matches!(write_state.as_str(), "cancelled" | "canceled" | "dropped")
+}
+
+fn raw_operation_card_state(payload: &Value) -> CardState {
+    let write_state =
+        json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
+    card_state_from_write_state(&write_state)
+}
+
+fn raw_operation_kind_matches(payload: &Value, expected: &str) -> bool {
+    json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))
+        .as_deref()
+        == Some(expected)
+}
+
+fn local_operation_state_for_target(
+    raw_operations: &[RawOperationRecord],
+    kind: &str,
+    target_id: &str,
+) -> Option<CardState> {
+    raw_operations.iter().rev().find_map(|record| {
+        if !raw_operation_kind_matches(&record.payload, kind) {
+            return None;
+        }
+        let payload = &record.payload;
+        let body = payload.get("body").or_else(|| payload.get("payload"));
+        let effect = payload.get("effect");
+        let matches_target = json_path_string(body, &["object", "id"])
+            .or_else(|| json_path_string(body, &["flow_id"]))
+            .or_else(|| json_path_string(body, &["target_ref"]))
+            .or_else(|| json_path_string(effect, &["flow_id"]))
+            .or_else(|| json_path_string(Some(payload), &["flow_id"]))
+            .as_deref()
+            == Some(target_id);
+        matches_target.then(|| raw_operation_card_state(payload))
+    })
+}
+
+fn local_space_create_state_for_target(
+    raw_operations: &[RawOperationRecord],
+    projected_space_container_ids: &BTreeSet<String>,
+    target_id: &str,
+) -> Option<CardState> {
+    let state = local_operation_state_for_target(raw_operations, "cx.space.create", target_id)?;
+    if projected_space_container_ids.contains(target_id) {
+        Some(CardState::Synced)
+    } else {
+        Some(state)
+    }
+}
+
+fn displayed_card_state(card: &KanbanCard, projected_flow_ids: &BTreeSet<String>) -> CardState {
+    if projected_flow_ids.contains(&card.id) || projected_flow_ids.contains(&card.primary_flow_id) {
+        CardState::Synced
+    } else {
+        card.state
+    }
 }
 
 /// Re-apply locally-queued `cx.flow.update` patches on top of the
@@ -1317,6 +1459,7 @@ struct LocalCardUpdate {
     body: Option<Option<String>>,
     synthesis: Option<Option<String>>,
     fields: Option<Value>,
+    state: CardState,
 }
 
 fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<LocalCardUpdate> {
@@ -1365,6 +1508,7 @@ fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<L
         body: body_op,
         synthesis,
         fields,
+        state: raw_operation_card_state(payload),
     })
 }
 
@@ -1399,7 +1543,7 @@ fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCardUpdate) {
             card.due = display_optional_card_field(due);
         }
     }
-    card.state = CardState::Queued;
+    card.state = update.state;
 }
 
 fn overlay_local_card_create_records(
@@ -1483,7 +1627,13 @@ fn local_card_create_from_raw_operation(record: &RawOperationRecord) -> Option<L
     Some(LocalCardCreate {
         board_space_id,
         list_space_id,
-        card: local_created_card(flow_id, title, rank, description),
+        card: local_created_card(
+            flow_id,
+            title,
+            rank,
+            description,
+            raw_operation_card_state(payload),
+        ),
     })
 }
 
@@ -1667,6 +1817,9 @@ pub fn KanbanPanel(
     let mut card_edit_description = use_signal(String::new);
     let mut card_edit_body = use_signal(String::new);
     let mut card_edit_synthesis = use_signal(String::new);
+    let mut card_edit_synthesis_target_id = use_signal(|| Option::<String>::None);
+    let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
+    let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
     let mut card_edit_assignee = use_signal(String::new);
     let mut card_edit_due = use_signal(String::new);
@@ -1715,6 +1868,7 @@ pub fn KanbanPanel(
                 card_edit_description.set(draft.description);
                 card_edit_body.set(draft.body);
                 card_edit_synthesis.set(draft.synthesis);
+                card_edit_synthesis_target_id.set(None);
                 card_edit_labels.set(draft.labels.join(", "));
                 card_edit_assignee.set(draft.assignee);
                 card_edit_due.set(draft.due);
@@ -1722,6 +1876,8 @@ pub fn KanbanPanel(
                 card_detail_actions_open.set(false);
                 card_detail_description_expanded.set(false);
                 card_detail_tab.set(CardDetailContentTab::Description);
+                card_synthesis_history_open_id.set(None);
+                card_synthesis_selected_revision_id.set(None);
                 card_detail_overlay_press_started.set(false);
                 card_detail_overlay_press_ended.set(false);
                 selected_card.set(Some(card));
@@ -2248,6 +2404,14 @@ pub fn KanbanPanel(
             .map(crate::security_state::realm_projection_is_encrypted)
             .unwrap_or(false)
     };
+    let projected_space_container_ids = lifecycle_container_projection()
+        .into_iter()
+        .map(|view| view.container_space_id)
+        .collect::<BTreeSet<_>>();
+    let projected_flow_ids = lifecycle_flow_projection()
+        .into_iter()
+        .map(|view| view.flow_id)
+        .collect::<BTreeSet<_>>();
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             div { class: "event board-header board-toolbar",
@@ -2393,6 +2557,19 @@ pub fn KanbanPanel(
                                                     },
                                                     UiIcon { name: "board" }
                                                     span { "{option_title}" }
+                                                    {
+                                                        let local_state = state_store.read().load();
+                                                        let board_write_state = local_space_create_state_for_target(
+                                                            &local_state.raw_operations,
+                                                            &projected_space_container_ids,
+                                                            &option_id,
+                                                        );
+                                                        rsx! {
+                                                            if let Some(state) = board_write_state {
+                                                                WriteStateBadge { state, icon_only: true }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2412,9 +2589,9 @@ pub fn KanbanPanel(
                                     class: "btn sm secondary",
                                     "data-testid": "add-column-button",
                                     onclick: {
-                                        // Lists are Space containers in v1. The optimistic
-                                        // local column uses the new Space-container id while
-                                        // the write submits `cx.space.create`.
+                                        // Lists are Space containers in v1. The local column is
+                                        // visible immediately but remains in sending/failed state
+                                        // until `cx.events.submit` returns.
                                         let base = base_url.clone();
                                         let space = selected_space.clone();
                                         let actor = account_did.clone();
@@ -2538,7 +2715,7 @@ pub fn KanbanPanel(
                                                     state_store,
                                                     board_status,
                                                 );
-                                                board_status.set("Board created. Add a list before adding cards.".to_owned());
+                                            board_status.set("Creating Board; waiting for server confirmation.".to_owned());
                                                 new_board_title.set("Board".to_owned());
                                                 board_popover.set(BoardToolbarPopover::None);
                                             }
@@ -2650,7 +2827,7 @@ pub fn KanbanPanel(
                                         summary { "Diagnostics" }
                                         div { class: "actions", "data-testid": "board-write-states",
                                             for state in write_state_samples() {
-                                                span { class: state.class_name(), "{state.label()}" }
+                                                WriteStateBadge { state }
                                             }
                                         }
                                         div { class: "metric-grid", "data-testid": "board-projection-model",
@@ -2718,7 +2895,7 @@ pub fn KanbanPanel(
                                                 div { class: "event", "data-testid": "board-event-record",
                                                     div { class: "event-head",
                                                         span { "{record.kind}" }
-                                                        span { class: record.state.class_name(), "{record.state.label()}" }
+                                                        WriteStateBadge { state: record.state }
                                                     }
                                                     div { class: "muted", title: "{record.move_id}", "move_id {move_id_label}" }
                                                     div { class: "muted", title: "{record.cell_id}", "cell {cell_id_label} / hlc {record.hlc}" }
@@ -2923,6 +3100,19 @@ pub fn KanbanPanel(
                                     "data-testid": "kanban-column-title",
                                     "{column.title}"
                                 }
+                                {
+                                    let local_state = state_store.read().load();
+                                    let column_write_state = local_space_create_state_for_target(
+                                        &local_state.raw_operations,
+                                        &projected_space_container_ids,
+                                        &column.id,
+                                    );
+                                    rsx! {
+                                        if let Some(state) = column_write_state {
+                                            WriteStateBadge { state, icon_only: true }
+                                        }
+                                    }
+                                }
                             }
                             div { class: "board-column-actions",
                             {
@@ -3067,6 +3257,7 @@ pub fn KanbanPanel(
                                         card_edit_description.set(draft.description);
                                         card_edit_body.set(draft.body);
                                         card_edit_synthesis.set(draft.synthesis);
+                                        card_edit_synthesis_target_id.set(None);
                                         card_edit_labels.set(draft.labels.join(", "));
                                         card_edit_assignee.set(draft.assignee);
                                         card_edit_due.set(draft.due);
@@ -3074,6 +3265,8 @@ pub fn KanbanPanel(
                                         card_detail_actions_open.set(false);
                                         card_detail_description_expanded.set(false);
                                         card_detail_tab.set(CardDetailContentTab::Description);
+                                        card_synthesis_history_open_id.set(None);
+                                        card_synthesis_selected_revision_id.set(None);
                                         card_detail_overlay_press_started.set(false);
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
@@ -3093,7 +3286,7 @@ pub fn KanbanPanel(
                                         }
                                         span { class: "flow-title-text", "{card.title}" }
                                     }
-                                    span { class: card.state.class_name(), "{card.state.label()}" }
+                                    WriteStateBadge { state: displayed_card_state(card, &projected_flow_ids) }
                                 }
                                 div { class: "actions",
                                     for label in &card.labels {
@@ -3153,17 +3346,25 @@ pub fn KanbanPanel(
                         }
 
                         if adding_card_to() == Some(column.id.clone()) {
-                            div { class: "workflow-form",
-                                input {
+                            div { class: "board-card-composer",
+                                div { class: "board-card-composer-card",
+                                textarea {
+                                    class: "board-card-composer-input",
                                     "data-testid": "new-card-title-input",
                                     value: "{new_card_title}",
                                     placeholder: "Card title",
+                                    rows: "3",
+                                    wrap: "soft",
+                                    maxlength: "512",
                                     oninput: move |evt| new_card_title.set(evt.value()),
                                 }
-                                div { class: "actions",
+                                }
+                                div { class: "board-card-composer-actions",
                                     button {
-                                        class: "primary",
+                                        class: "primary board-card-composer-save",
                                         "data-testid": "save-card-button",
+                                        title: "Save card",
+                                        "aria-label": "Save card",
                                         onclick: {
                                             // Card create submits a real
                                             // cx.flow.create envelope. The
@@ -3206,6 +3407,7 @@ pub fn KanbanPanel(
                                                     title.clone(),
                                                     rank.clone(),
                                                     LOCAL_PENDING_CARD_DESCRIPTION.to_owned(),
+                                                    CardState::Queued,
                                                 );
                                                 if let Some(col) = columns.write().iter_mut().find(|c| c.id == col_id) {
                                                     col.cards.push(card);
@@ -3226,6 +3428,7 @@ pub fn KanbanPanel(
                                                     flow_id.clone(),
                                                     "cx.flow.create",
                                                     value,
+                                                    columns,
                                                     state_store,
                                                     write_records,
                                                     board_status,
@@ -3234,12 +3437,16 @@ pub fn KanbanPanel(
                                                 adding_card_to.set(None);
                                             }
                                         },
-                                        {crate::i18n::tr("kanban.save_card")}
+                                        UiIcon { name: "check" }
+                                        span { {crate::i18n::tr("kanban.save_card")} }
                                     }
                                     button {
-                                        class: "secondary",
+                                        class: "secondary board-card-composer-cancel",
+                                        title: "Cancel card",
+                                        "aria-label": "Cancel card",
                                         onclick: move |_| adding_card_to.set(None),
-                                        {crate::i18n::tr("kanban.cancel_card")}
+                                        UiIcon { name: "x" }
+                                        span { {crate::i18n::tr("kanban.cancel_card")} }
                                     }
                                 }
                             }
@@ -3631,7 +3838,7 @@ pub fn KanbanPanel(
                                             }
                                             h2 { "{card.title}" }
                                             div { class: "card-detail-title-meta",
-                                                span { class: card.state.class_name(), "{card.state.label()}" }
+                                                WriteStateBadge { state: displayed_card_state(&card, &projected_flow_ids) }
                                                 for label in &card.labels {
                                                     span { class: "badge", "{label}" }
                                                 }
@@ -3898,15 +4105,31 @@ pub fn KanbanPanel(
                                                     let actor = account_did.clone();
                                                     let current = card.clone();
                                                     move |_| {
+                                                        let edit_scope = card_edit_scope();
+                                                        let synthesis_target_id = card_edit_synthesis_target_id();
+                                                        let synthesis_revision_body =
+                                                            card_edit_synthesis().trim().to_owned();
+                                                        let synthesis_for_save =
+                                                            if edit_scope == CardEditScope::Synthesis {
+                                                                synthesis_body_after_entry_edit(
+                                                                    &synthesis_entries,
+                                                                    synthesis_target_id.as_deref(),
+                                                                    &synthesis_revision_body,
+                                                                )
+                                                            } else {
+                                                                synthesis_revision_body.clone()
+                                                            };
                                                         let draft = CardDetailDraft {
                                                             title: card_edit_title().trim().to_owned(),
                                                             description: card_edit_description().trim().to_owned(),
                                                             body: card_edit_body().trim().to_owned(),
-                                                            synthesis: card_edit_synthesis().trim().to_owned(),
+                                                            synthesis: synthesis_for_save,
                                                             labels: parse_card_labels(&card_edit_labels()),
                                                             assignee: card_edit_assignee().trim().to_owned(),
                                                             due: card_edit_due().trim().to_owned(),
                                                         };
+                                                        let synthesis_revision = (edit_scope == CardEditScope::Synthesis)
+                                                            .then_some(synthesis_revision_body);
                                                         if dispatch_card_detail_update(
                                                             base.clone(),
                                                             token,
@@ -3914,6 +4137,8 @@ pub fn KanbanPanel(
                                                             actor.clone(),
                                                             current.clone(),
                                                             draft,
+                                                            synthesis_target_id,
+                                                            synthesis_revision,
                                                             columns,
                                                             selected_card,
                                                             state_store,
@@ -3937,11 +4162,14 @@ pub fn KanbanPanel(
                                                         card_edit_description.set(draft.description);
                                                         card_edit_body.set(draft.body);
                                                         card_edit_synthesis.set(draft.synthesis);
+                                                        card_edit_synthesis_target_id.set(None);
                                                         card_edit_labels.set(draft.labels.join(", "));
                                                         card_edit_assignee.set(draft.assignee);
                                                         card_edit_due.set(draft.due);
                                                         editing_card_detail.set(false);
                                                         card_detail_actions_open.set(false);
+                                                        card_synthesis_history_open_id.set(None);
+                                                        card_synthesis_selected_revision_id.set(None);
                                                     }
                                                 },
                                                 {crate::i18n::tr("common.cancel")}
@@ -3968,6 +4196,7 @@ pub fn KanbanPanel(
                                                                 card_edit_description.set(draft.description);
                                                                 card_edit_body.set(draft.body);
                                                                 card_edit_synthesis.set(draft.synthesis);
+                                                                card_edit_synthesis_target_id.set(None);
                                                                 card_edit_labels.set(draft.labels.join(", "));
                                                                 card_edit_assignee.set(draft.assignee);
                                                                 card_edit_due.set(draft.due);
@@ -4043,6 +4272,7 @@ pub fn KanbanPanel(
                                                                             card_edit_description.set(draft.description);
                                                                             card_edit_body.set(draft.body);
                                                                             card_edit_synthesis.set(draft.synthesis);
+                                                                            card_edit_synthesis_target_id.set(None);
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
@@ -4067,6 +4297,7 @@ pub fn KanbanPanel(
                                                                             card_edit_description.set(draft.description);
                                                                             card_edit_body.set(draft.body);
                                                                             card_edit_synthesis.set(draft.synthesis);
+                                                                            card_edit_synthesis_target_id.set(None);
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);
                                                                             card_edit_due.set(draft.due);
@@ -4105,83 +4336,215 @@ pub fn KanbanPanel(
                                                         if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
                                                                 div { "No synthesis yet." }
-                                                                button {
-                                                                    class: "secondary card-detail-mini-action",
-                                                                    "data-testid": "card-detail-add-synthesis-button",
-                                                                    onclick: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            let draft = card_detail_draft_from_card(&current);
-                                                                            card_edit_title.set(draft.title);
-                                                                            card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.body);
-                                                                            card_edit_synthesis.set(draft.synthesis);
-                                                                            card_edit_labels.set(draft.labels.join(", "));
-                                                                            card_edit_assignee.set(draft.assignee);
-                                                                            card_edit_due.set(draft.due);
-                                                                            card_edit_scope.set(CardEditScope::Synthesis);
-                                                                            editing_card_detail.set(true);
-                                                                        }
-                                                                    },
-                                                                    UiIcon { name: "plus" }
-                                                                    span { "Add synthesis" }
-                                                                }
                                                             }
                                                         } else {
-                                                            div { class: "card-detail-tab-actions",
-                                                                button {
-                                                                    class: "secondary card-detail-mini-action card-detail-edit-action",
-                                                                    "data-testid": "card-detail-edit-synthesis-button",
-                                                                    onclick: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            let draft = card_detail_draft_from_card(&current);
-                                                                            card_edit_title.set(draft.title);
-                                                                            card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.body);
-                                                                            card_edit_synthesis.set(draft.synthesis);
-                                                                            card_edit_labels.set(draft.labels.join(", "));
-                                                                            card_edit_assignee.set(draft.assignee);
-                                                                            card_edit_due.set(draft.due);
-                                                                            card_edit_scope.set(CardEditScope::Synthesis);
-                                                                            editing_card_detail.set(true);
-                                                                        }
-                                                                    },
-                                                                    UiIcon { name: "settings" }
-                                                                    span { {crate::i18n::tr("common.edit")} }
-                                                                }
-                                                            }
                                                             div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
-                                                                for (index, entry) in synthesis_entries.iter().enumerate() {
+                                                                for entry in synthesis_entries.iter() {
                                                                     {
-                                                                        let version_label = format!("v{}", index + 1);
-                                                                        let actor_title = if entry.actor_did.trim().is_empty() {
+                                                                        let latest_revision = entry.revisions.last().cloned().unwrap_or_else(|| {
+                                                                            CardSynthesisRevision {
+                                                                                id: entry.id.clone(),
+                                                                                body: entry.body.clone(),
+                                                                                actor_did: entry.actor_did.clone(),
+                                                                                author_label: entry.author_label.clone(),
+                                                                                timestamp_label: entry.timestamp_label.clone(),
+                                                                                sort_key: entry.sort_key.clone(),
+                                                                            }
+                                                                        });
+                                                                        let selected_revision_id = card_synthesis_selected_revision_id();
+                                                                        let selected_revision = selected_revision_id
+                                                                            .as_deref()
+                                                                            .and_then(|id| entry.revisions.iter().find(|revision| revision.id == id))
+                                                                            .cloned();
+                                                                        let display_revision = selected_revision.unwrap_or_else(|| latest_revision.clone());
+                                                                        let display_revision_index = entry
+                                                                            .revisions
+                                                                            .iter()
+                                                                            .position(|revision| revision.id == display_revision.id)
+                                                                            .unwrap_or_else(|| entry.revisions.len().saturating_sub(1));
+                                                                        let version_label = format!("v{}", display_revision_index + 1);
+                                                                        let selected_synthesis_is_latest = display_revision.id == latest_revision.id;
+                                                                        let version_state = if selected_synthesis_is_latest {
+                                                                            "latest"
+                                                                        } else {
+                                                                            "history"
+                                                                        };
+                                                                        let entry_class = if selected_synthesis_is_latest {
+                                                                            "card-synthesis-entry is-latest"
+                                                                        } else {
+                                                                            "card-synthesis-entry is-history"
+                                                                        };
+                                                                        let history_open = card_synthesis_history_open_id()
+                                                                            .as_deref()
+                                                                            == Some(entry.id.as_str());
+                                                                        let actor_title = if display_revision.actor_did.trim().is_empty() {
                                                                             "Unknown author".to_owned()
                                                                         } else {
-                                                                            entry.actor_did.clone()
+                                                                            display_revision.actor_did.clone()
                                                                         };
                                                                         rsx! {
                                                                             article {
                                                                                 key: "{entry.id}",
-                                                                                class: "card-synthesis-entry",
+                                                                                class: "{entry_class}",
                                                                                 "data-testid": "card-synthesis-entry",
+                                                                                "data-synthesis-version-state": "{version_state}",
                                                                                 header { class: "card-synthesis-entry-head",
-                                                                                    span { class: "card-synthesis-author", title: "{actor_title}", "{entry.author_label}" }
-                                                                                    time { class: "card-synthesis-time", "{entry.timestamp_label}" }
+                                                                                    span { class: "card-synthesis-author", title: "{actor_title}", "{display_revision.author_label}" }
+                                                                                    time { class: "card-synthesis-time", "{display_revision.timestamp_label}" }
                                                                                     span { class: "badge", "{version_label}" }
-                                                                                    if entry.edited {
-                                                                                        span { class: "badge", "edited" }
+                                                                                    if selected_synthesis_is_latest {
+                                                                                        span { class: "badge badge-success", "latest" }
+                                                                                    } else {
+                                                                                        span { class: "badge badge-warning", "historical version" }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "badge card-synthesis-latest-button",
+                                                                                            "data-testid": "card-synthesis-latest-button",
+                                                                                            onclick: move |_| {
+                                                                                                card_synthesis_selected_revision_id.set(None);
+                                                                                                card_synthesis_history_open_id.set(None);
+                                                                                            },
+                                                                                            "Latest"
+                                                                                        }
+                                                                                    }
+                                                                                    if entry.revisions.len() > 1 {
+                                                                                        div { class: "card-synthesis-history-wrap",
+                                                                                            button {
+                                                                                                r#type: "button",
+                                                                                                class: "badge card-synthesis-history-trigger",
+                                                                                                "data-testid": "card-synthesis-history-trigger",
+                                                                                                "aria-expanded": "{history_open}",
+                                                                                                onclick: {
+                                                                                                    let entry_id = entry.id.clone();
+                                                                                                    move |_| {
+                                                                                                        if card_synthesis_history_open_id().as_deref() == Some(entry_id.as_str()) {
+                                                                                                            card_synthesis_history_open_id.set(None);
+                                                                                                        } else {
+                                                                                                            card_synthesis_history_open_id.set(Some(entry_id.clone()));
+                                                                                                        }
+                                                                                                    }
+                                                                                                },
+                                                                                                "edited"
+                                                                                            }
+                                                                                            if history_open {
+                                                                                                div { class: "card-synthesis-history-menu", "data-testid": "card-synthesis-history-menu",
+                                                                                                    div { class: "card-synthesis-history-title", "History" }
+                                                                                                    for (history_index, history_entry) in entry.revisions.iter().enumerate().rev() {
+                                                                                                        {
+                                                                                                            let history_entry_id = history_entry.id.clone();
+                                                                                                            let history_version_label = format!("v{}", history_index + 1);
+                                                                                                            let history_is_latest = history_entry.id == latest_revision.id;
+                                                                                                            let history_item_class = if history_entry.id == display_revision.id {
+                                                                                                                "card-synthesis-history-item active"
+                                                                                                            } else {
+                                                                                                                "card-synthesis-history-item"
+                                                                                                            };
+                                                                                                            let history_author_title = if history_entry.actor_did.trim().is_empty() {
+                                                                                                                "Unknown author".to_owned()
+                                                                                                            } else {
+                                                                                                                history_entry.actor_did.clone()
+                                                                                                            };
+                                                                                                            let preview = card_summary_text(&history_entry.body);
+                                                                                                            let preview = if preview.chars().count() > 72 {
+                                                                                                                let shortened = preview.chars().take(72).collect::<String>();
+                                                                                                                format!("{shortened}...")
+                                                                                                            } else {
+                                                                                                                preview
+                                                                                                            };
+                                                                                                            rsx! {
+                                                                                                                button {
+                                                                                                                    key: "{history_entry.id}",
+                                                                                                                    r#type: "button",
+                                                                                                                    class: "{history_item_class}",
+                                                                                                                    "data-testid": "card-synthesis-history-item",
+                                                                                                                    onclick: move |_| {
+                                                                                                                        if history_is_latest {
+                                                                                                                            card_synthesis_selected_revision_id.set(None);
+                                                                                                                        } else {
+                                                                                                                            card_synthesis_selected_revision_id.set(Some(history_entry_id.clone()));
+                                                                                                                        }
+                                                                                                                        card_synthesis_history_open_id.set(None);
+                                                                                                                    },
+                                                                                                                    span { class: "card-synthesis-history-meta",
+                                                                                                                        span { class: "badge", "{history_version_label}" }
+                                                                                                                        if history_is_latest {
+                                                                                                                            span { class: "badge badge-success", "latest" }
+                                                                                                                        }
+                                                                                                                        span { title: "{history_author_title}", "{history_entry.author_label}" }
+                                                                                                                        time { "{history_entry.timestamp_label}" }
+                                                                                                                    }
+                                                                                                                    span { class: "card-synthesis-history-preview", "{preview}" }
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "secondary card-detail-mini-action card-synthesis-entry-edit",
+                                                                                        "data-testid": "card-detail-edit-synthesis-button",
+                                                                                        onclick: {
+                                                                                            let current = card.clone();
+                                                                                            let entry_id = entry.id.clone();
+                                                                                            let entry_body = entry.body.clone();
+                                                                                            move |_| {
+                                                                                                let draft = card_detail_draft_from_card(&current);
+                                                                                                card_edit_title.set(draft.title);
+                                                                                                card_edit_description.set(draft.description);
+                                                                                                card_edit_body.set(draft.body);
+                                                                                                card_edit_synthesis.set(entry_body.clone());
+                                                                                                card_edit_synthesis_target_id.set(Some(entry_id.clone()));
+                                                                                                card_edit_labels.set(draft.labels.join(", "));
+                                                                                                card_edit_assignee.set(draft.assignee);
+                                                                                                card_edit_due.set(draft.due);
+                                                                                                card_edit_scope.set(CardEditScope::Synthesis);
+                                                                                                editing_card_detail.set(true);
+                                                                                                card_synthesis_history_open_id.set(None);
+                                                                                                card_synthesis_selected_revision_id.set(None);
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "settings" }
+                                                                                        span { {crate::i18n::tr("common.edit")} }
                                                                                     }
                                                                                 }
                                                                                 div { class: "card-detail-description card-synthesis-body",
                                                                                     {crate::content::render_blocks(
-                                                                                        &crate::content::parse_message_body(&entry.body),
+                                                                                        &crate::content::parse_message_body(&display_revision.body),
                                                                                     )}
                                                                                 }
                                                                             }
                                                                         }
                                                                     }
                                                                 }
+                                                            }
+                                                        }
+                                                        div { class: "card-synthesis-footer-action",
+                                                            button {
+                                                                class: "secondary card-detail-mini-action",
+                                                                "data-testid": "card-detail-new-synthesis-button",
+                                                                onclick: {
+                                                                    let current = card.clone();
+                                                                    move |_| {
+                                                                        let draft = card_detail_draft_from_card(&current);
+                                                                        card_edit_title.set(draft.title);
+                                                                        card_edit_description.set(draft.description);
+                                                                        card_edit_body.set(draft.body);
+                                                                        card_edit_synthesis.set(String::new());
+                                                                        card_edit_synthesis_target_id.set(None);
+                                                                        card_edit_labels.set(draft.labels.join(", "));
+                                                                        card_edit_assignee.set(draft.assignee);
+                                                                        card_edit_due.set(draft.due);
+                                                                        card_edit_scope.set(CardEditScope::Synthesis);
+                                                                        editing_card_detail.set(true);
+                                                                        card_synthesis_history_open_id.set(None);
+                                                                        card_synthesis_selected_revision_id.set(None);
+                                                                    }
+                                                                },
+                                                                UiIcon { name: "plus" }
+                                                                span { "New" }
                                                             }
                                                         }
                                                     }
@@ -4874,16 +5237,104 @@ fn compact_timestamp_label(value: &str) -> String {
     trimmed.to_owned()
 }
 
-fn synthesis_track_entry_from_raw_operation(
+const SYNTHESIS_ENTRY_SEPARATOR: &str = "\n\n---\n\n";
+
+fn split_synthesis_entry_bodies(value: &str) -> Vec<String> {
+    let mut entries = Vec::<String>::new();
+    let mut current = Vec::<String>::new();
+    for line in value.lines() {
+        if line.trim() == "---" {
+            let body = current.join("\n").trim().to_owned();
+            if !body.is_empty() {
+                entries.push(body);
+            }
+            current.clear();
+        } else {
+            current.push(line.to_owned());
+        }
+    }
+    let body = current.join("\n").trim().to_owned();
+    if !body.is_empty() {
+        entries.push(body);
+    }
+    entries
+}
+
+fn join_synthesis_entry_bodies(entries: Vec<String>) -> String {
+    entries
+        .into_iter()
+        .map(|entry| entry.trim().to_owned())
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>()
+        .join(SYNTHESIS_ENTRY_SEPARATOR)
+}
+
+fn synthesis_body_after_entry_edit(
+    entries: &[CardSynthesisTrackEntry],
+    target_entry_id: Option<&str>,
+    replacement_body: &str,
+) -> String {
+    let replacement = replacement_body.trim();
+    let mut found_target = false;
+    let mut bodies = entries
+        .iter()
+        .filter_map(|entry| {
+            if target_entry_id == Some(entry.id.as_str()) {
+                found_target = true;
+                (!replacement.is_empty()).then(|| replacement.to_owned())
+            } else {
+                let body = entry.body.trim();
+                (!body.is_empty()).then(|| body.to_owned())
+            }
+        })
+        .collect::<Vec<_>>();
+    if target_entry_id.is_none() && !replacement.is_empty() {
+        bodies.push(replacement.to_owned());
+    } else if target_entry_id.is_some() && !found_target && !replacement.is_empty() {
+        bodies.push(replacement.to_owned());
+    }
+    join_synthesis_entry_bodies(bodies)
+}
+
+fn projection_synthesis_revision(
+    card: &KanbanCard,
+    index: usize,
+    body: String,
+    state_store: &LocalStateStore,
+) -> CardSynthesisRevision {
+    let actor_did = card.created_by.trim().to_owned();
+    let timestamp = if !card.updated_at.trim().is_empty() {
+        card.updated_at.clone()
+    } else {
+        card.created_at.clone()
+    };
+    let author_label = if actor_did.is_empty() {
+        "Unknown author".to_owned()
+    } else {
+        display_name_for_did(state_store, &actor_did)
+    };
+    CardSynthesisRevision {
+        id: format!("{}:projection-synthesis:{index}", card.id),
+        body,
+        actor_did,
+        author_label,
+        timestamp_label: compact_timestamp_label(&timestamp),
+        sort_key: timestamp,
+    }
+}
+
+fn synthesis_revision_from_raw_operation(
     record: &RawOperationRecord,
     state_store: &LocalStateStore,
-) -> Option<(String, CardSynthesisTrackEntry)> {
+) -> Option<(String, String, CardSynthesisRevision)> {
     let update = local_card_update_from_raw_operation(record)?;
-    let body = update.synthesis.clone()?.unwrap_or_default();
+    let payload = &record.payload;
+    let body = json_path_string(Some(payload), &["synthesis_revision_body"])
+        .or_else(|| update.synthesis.clone().flatten())
+        .unwrap_or_default();
     if body.trim().is_empty() {
         return None;
     }
-    let payload = &record.payload;
     let actor_did = json_path_string(Some(payload), &["actor_id"])
         .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
         .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
@@ -4901,18 +5352,43 @@ fn synthesis_track_entry_from_raw_operation(
     } else {
         display_name_for_did(state_store, &actor_did)
     };
+    let entry_id = json_path_string(Some(payload), &["synthesis_entry_id"])
+        .unwrap_or_else(|| format!("{}:synthesis", update.flow_id));
     Some((
         update.flow_id,
-        CardSynthesisTrackEntry {
+        entry_id,
+        CardSynthesisRevision {
             id: record.operation_id.clone(),
             body,
             actor_did,
             author_label,
             timestamp_label: compact_timestamp_label(&timestamp),
             sort_key: timestamp,
-            edited: false,
         },
     ))
+}
+
+fn synthesis_entry_from_revisions(
+    entry_id: String,
+    mut revisions: Vec<CardSynthesisRevision>,
+) -> Option<CardSynthesisTrackEntry> {
+    revisions.sort_by(|left, right| {
+        left.sort_key
+            .cmp(&right.sort_key)
+            .then(left.id.cmp(&right.id))
+    });
+    revisions.dedup_by(|left, right| left.id == right.id);
+    let latest = revisions.last()?.clone();
+    Some(CardSynthesisTrackEntry {
+        id: entry_id,
+        body: latest.body.clone(),
+        actor_did: latest.actor_did.clone(),
+        author_label: latest.author_label.clone(),
+        timestamp_label: latest.timestamp_label.clone(),
+        sort_key: latest.sort_key.clone(),
+        edited: revisions.len() > 1,
+        revisions,
+    })
 }
 
 fn card_synthesis_track_entries(
@@ -4920,50 +5396,68 @@ fn card_synthesis_track_entries(
     raw_operations: &[RawOperationRecord],
     state_store: &LocalStateStore,
 ) -> Vec<CardSynthesisTrackEntry> {
-    let mut entries = raw_operations
+    let mut grouped = BTreeMap::<String, Vec<CardSynthesisRevision>>::new();
+    for (_, entry_id, revision) in raw_operations
         .iter()
-        .filter_map(|record| synthesis_track_entry_from_raw_operation(record, state_store))
-        .filter_map(|(flow_id, entry)| (flow_id == card.id).then_some(entry))
+        .filter_map(|record| synthesis_revision_from_raw_operation(record, state_store))
+        .filter(|(flow_id, _, _)| flow_id == &card.id)
+    {
+        grouped.entry(entry_id).or_default().push(revision);
+    }
+    let mut raw_entries = grouped
+        .into_iter()
+        .filter_map(|(entry_id, revisions)| synthesis_entry_from_revisions(entry_id, revisions))
         .collect::<Vec<_>>();
-    entries.sort_by(|left, right| {
+    raw_entries.sort_by(|left, right| {
         left.sort_key
             .cmp(&right.sort_key)
             .then(left.id.cmp(&right.id))
     });
-    entries.dedup_by(|left, right| left.id == right.id);
 
-    let current_body = card.synthesis.trim();
-    if !current_body.is_empty() {
-        let latest_body = entries.last().map(|entry| entry.body.trim());
-        if latest_body != Some(current_body) {
-            let actor_did = card.created_by.trim().to_owned();
-            let timestamp = if !card.updated_at.trim().is_empty() {
-                card.updated_at.clone()
-            } else {
-                card.created_at.clone()
-            };
-            let author_label = if actor_did.is_empty() {
-                "Unknown author".to_owned()
-            } else {
-                display_name_for_did(state_store, &actor_did)
-            };
-            entries.push(CardSynthesisTrackEntry {
-                id: format!("{}:projection-synthesis", card.id),
-                body: current_body.to_owned(),
-                actor_did,
-                author_label,
-                timestamp_label: compact_timestamp_label(&timestamp),
-                sort_key: timestamp,
-                edited: !card.updated_at.trim().is_empty()
-                    && card.updated_at.trim() != card.created_at.trim(),
-            });
-        }
+    let current_bodies = split_synthesis_entry_bodies(&card.synthesis);
+    if current_bodies.is_empty() {
+        return raw_entries;
     }
 
-    if entries.len() > 1
-        && let Some(last) = entries.last_mut()
-    {
-        last.edited = true;
+    let mut raw_used = vec![false; raw_entries.len()];
+    let mut entries = Vec::<CardSynthesisTrackEntry>::new();
+    let single_entry_history = current_bodies.len() == 1 && raw_entries.len() == 1;
+    for (index, current_body) in current_bodies.into_iter().enumerate() {
+        let current_trimmed = current_body.trim().to_owned();
+        let matched_index = raw_entries
+            .iter()
+            .enumerate()
+            .find_map(|(raw_index, entry)| {
+                (!raw_used[raw_index] && entry.body.trim() == current_trimmed).then_some(raw_index)
+            })
+            .or_else(|| single_entry_history.then_some(0));
+
+        if let Some(raw_index) = matched_index {
+            raw_used[raw_index] = true;
+            let mut entry = raw_entries[raw_index].clone();
+            if entry.body.trim() != current_trimmed {
+                entry.revisions.push(projection_synthesis_revision(
+                    card,
+                    index,
+                    current_body,
+                    state_store,
+                ));
+                if let Some(rebuilt) =
+                    synthesis_entry_from_revisions(entry.id.clone(), entry.revisions.clone())
+                {
+                    entry = rebuilt;
+                }
+            }
+            entries.push(entry);
+        } else {
+            let revision = projection_synthesis_revision(card, index, current_body, state_store);
+            if let Some(entry) = synthesis_entry_from_revisions(
+                format!("{}:synthesis:{index}", card.id),
+                vec![revision],
+            ) {
+                entries.push(entry);
+            }
+        }
     }
     entries
 }
@@ -5187,9 +5681,11 @@ fn dispatch_card_detail_update(
     actor_did: String,
     current: KanbanCard,
     draft: CardDetailDraft,
+    synthesis_entry_id: Option<String>,
+    synthesis_revision_body: Option<String>,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
-    state_store: Signal<LocalStateStore>,
+    mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) -> bool {
     let patch = match card_detail_update_patch(&current, &draft) {
@@ -5224,7 +5720,77 @@ fn dispatch_card_detail_update(
 
     let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
         .build("yougen");
-    submit_kanban_operation_event(base_url, token, space_id, op, state_store, board_status);
+    let operation_id = op.local_operation_id().to_owned();
+    let synthesis_entry_id = synthesis_revision_body
+        .as_ref()
+        .map(|_| synthesis_entry_id.unwrap_or_else(|| operation_id.clone()));
+    state_store.write().append_raw_operation(
+        operation_id.clone(),
+        Some(space_id.clone()),
+        json!({
+            "kind": op.kind.clone(),
+            "operation_id": operation_id.clone(),
+            "actor_id": op.actor_id.clone(),
+            "created_at": op.created_at.clone(),
+            "write_state": "queued",
+            "body": op.payload.clone(),
+            "synthesis_entry_id": synthesis_entry_id,
+            "synthesis_revision_body": synthesis_revision_body,
+        }),
+    );
+    board_status.set(format!(
+        "submitting {} operation {}",
+        op.kind,
+        short_protocol_id(&operation_id)
+    ));
+    let api_token = token();
+    let flow_id = current.id.clone();
+    let kind = op.kind.clone();
+    spawn(async move {
+        match with_authed_api(&base_url, api_token, |api| async move {
+            api.submit_event_envelope(&op).await
+        })
+        .await
+        {
+            Ok(resp) => {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id,
+                    "accepted",
+                    Some(resp.event_id.clone()),
+                    None,
+                );
+                set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
+                let selected = selected_card.read().clone();
+                if let Some(mut card) = selected
+                    && card.id == flow_id
+                {
+                    card.state = CardState::Accepted;
+                    selected_card.set(Some(card));
+                }
+                board_status.set(format!(
+                    "{kind} operation accepted by server (event_id={})",
+                    short_protocol_id(&resp.event_id)
+                ));
+            }
+            Err(err) => {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id,
+                    "failed",
+                    None,
+                    Some(err.display().to_string()),
+                );
+                set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                let selected = selected_card.read().clone();
+                if let Some(mut card) = selected
+                    && card.id == flow_id
+                {
+                    card.state = CardState::SoftFailed;
+                    selected_card.set(Some(card));
+                }
+                board_status.set(format!("{kind} operation failed: {}", err.display()));
+            }
+        }
+    });
     true
 }
 
@@ -5380,6 +5946,7 @@ fn submit_kanban_operation_event(
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
+    let operation_id_for_status = operation_id.clone();
     spawn(async move {
         let operation_for_submit = operation.clone();
         match with_authed_api(&base_url, api_token, |api| async move {
@@ -5387,10 +5954,25 @@ fn submit_kanban_operation_event(
         })
         .await
         {
-            Ok(_) => {
-                board_status.set(format!("{kind} operation accepted"));
+            Ok(resp) => {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id_for_status,
+                    "accepted",
+                    Some(resp.event_id.clone()),
+                    None,
+                );
+                board_status.set(format!(
+                    "{kind} operation accepted by server (event_id={})",
+                    short_protocol_id(&resp.event_id)
+                ));
             }
             Err(err) => {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id_for_status,
+                    "failed",
+                    None,
+                    Some(err.display().to_string()),
+                );
                 board_status.set(format!("{kind} operation failed: {}", err.display()));
             }
         }
@@ -5422,7 +6004,9 @@ fn submit_column_order_updates(
         return;
     }
     let update_count = updates.len();
-    board_status.set(format!("Column order queued ({update_count} rank updates)"));
+    board_status.set(format!(
+        "Column order sending... ({update_count} rank updates)"
+    ));
     for (column_id, rank) in updates {
         let op = crate::operation::cx_ops::space_update_patch(
             &space_id,
@@ -5454,6 +6038,7 @@ fn submit_kanban_move(
     subject: String,
     kind: &'static str,
     value: serde_json::Value,
+    mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -5556,6 +6141,12 @@ fn submit_kanban_move(
         .await
         {
             Ok(resp) => {
+                state_store.write().update_raw_operation_write_state(
+                    &op_for_track,
+                    "accepted",
+                    Some(resp.event_id.clone()),
+                    None,
+                );
                 let state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission_with_event_id(
                     op_for_track.clone(),
@@ -5577,6 +6168,7 @@ fn submit_kanban_move(
                         short_protocol_id(&resp.event_id)
                     );
                 }
+                set_card_state_in_columns(&mut columns, &subject, CardState::Accepted);
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
                     short_protocol_id(&op_for_track),
@@ -5584,6 +6176,12 @@ fn submit_kanban_move(
                 ));
             }
             Err(err) => {
+                state_store.write().update_raw_operation_write_state(
+                    &op_for_track,
+                    "quarantined",
+                    None,
+                    Some(err.display().to_string()),
+                );
                 if let Some(record) = write_records
                     .write()
                     .iter_mut()
@@ -5592,6 +6190,7 @@ fn submit_kanban_move(
                     record.state = CardState::Quarantined;
                     record.note = format!("submit failed: {}", err.display());
                 }
+                set_card_state_in_columns(&mut columns, &subject, CardState::Quarantined);
                 board_status.set(format!("quarantined event: {}", err.display()));
             }
         }
@@ -5608,7 +6207,7 @@ struct ColumnNeighbours {
 
 /// End-to-end handler for a drag-drop landing. Computes the new rank,
 /// decides cross-list move vs in-list reorder, updates the local
-/// optimistic state, and submits the spec-compliant CAS Move.
+/// pending state, and submits the spec-compliant CAS Move.
 ///
 /// Spec mapping ([views.md §2.6](../../contrix-spec/spec/v1/zh/models/views.md)):
 ///
@@ -5662,9 +6261,8 @@ fn dispatch_flow_position_move(
             return;
         }
     };
-    // Local optimistic update first so the user sees the card move
-    // immediately. The Move submission then catches up; CAS conflicts
-    // re-pull projection and re-apply.
+    // Show the move immediately as `sending...`; it is not marked
+    // accepted until the server returns from cx.events.submit.
     let card_opt = {
         let mut cols = columns.write();
         relocate_card(
@@ -5703,6 +6301,7 @@ fn dispatch_flow_position_move(
         kind,
         expected,
         effect,
+        columns,
         state_store,
         write_records,
         board_status,
@@ -5804,12 +6403,12 @@ fn capability_gate_for_flow(
 }
 
 /// Dispatch a `cx.space.archive` or `cx.space.restore` operation against
-/// the given list (container Space) and optimistically update
+/// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
 /// `models/realm-and-space.md §4.4` (post-R1.7 rename). Soland's lifecycle
 /// envelope validator and the SDK reducer's lifecycle guard
 /// both enforce wire / state shape; this helper only handles the
-/// submit + local optimistic projection. If the submit fails the local
+/// submit + local pending projection. If the submit fails the local
 /// state is rolled back to the prior value.
 fn dispatch_space_container_lifecycle(
     base_url: String,
@@ -5821,7 +6420,7 @@ fn dispatch_space_container_lifecycle(
     mut columns: Signal<Vec<KanbanColumn>>,
     mut board_status: Signal<String>,
 ) {
-    // Optimistic state update. Capture prior state for rollback on error
+    // Pending state update. Capture prior state for rollback on error
     // and apply the same-state / Tombstone guard inside the write
     // critical section so prior is observed atomically.
     let prior_state = {
@@ -5915,7 +6514,7 @@ fn validate_flow_lifecycle_transition(
 }
 
 /// Dispatch `cx.flow.archive` or `cx.flow.restore` for a card and
-/// optimistically update its `FlowLifecycleState`. Mirrors
+/// mark its `FlowLifecycleState` pending locally. Mirrors
 /// `dispatch_space_container_lifecycle` but at the Flow object layer. Spec:
 /// `flow-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
 /// enforces `state == archived` for restore (`flow_not_archived`) and
@@ -6042,6 +6641,19 @@ fn relocate_card(
     Some(card)
 }
 
+fn set_card_state_in_columns(
+    columns: &mut Signal<Vec<KanbanColumn>>,
+    card_id: &str,
+    state: CardState,
+) {
+    for column in columns.write().iter_mut() {
+        if let Some(card) = column.cards.iter_mut().find(|card| card.id == card_id) {
+            card.state = state;
+            break;
+        }
+    }
+}
+
 /// Build, sign, and submit a `cx.flow.move` / `cx.flow.reorder` CAS
 /// Move via the new spec-compliant builder. Tracks the submission in
 /// `write_records` and, on failed precondition, kicks off automatic
@@ -6059,6 +6671,7 @@ fn submit_flow_position_cas_move(
     kind: &'static str,
     expected: FlowPositionExpectation,
     effect: FlowPositionEffect,
+    columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     board_status: Signal<String>,
@@ -6075,6 +6688,7 @@ fn submit_flow_position_cas_move(
         expected,
         effect,
         0,
+        columns,
         state_store,
         write_records,
         board_status,
@@ -6099,6 +6713,7 @@ fn submit_flow_position_cas_move_with_attempt(
     expected: FlowPositionExpectation,
     effect: FlowPositionEffect,
     attempt: u8,
+    mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -6171,6 +6786,7 @@ fn submit_flow_position_cas_move_with_attempt(
             "move_id": move_id,
             "cell": cell_id,
             "board_space_id": board_space_id,
+            "flow_id": flow_id,
             "expected_position": match &expected {
                 FlowPositionExpectation::Initial => serde_json::Value::Null,
                 FlowPositionExpectation::At {
@@ -6214,6 +6830,12 @@ fn submit_flow_position_cas_move_with_attempt(
                 // CAS update into the cell. cas_conflict surfaces as an
                 // Err arm because the envelope was rejected with a
                 // non-200 status — that branch is handled below.
+                state_store.write().update_raw_operation_write_state(
+                    &move_for_track,
+                    "accepted",
+                    Some(resp.event_id.clone()),
+                    None,
+                );
                 let submission_state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission_with_event_id(
                     move_for_track.clone(),
@@ -6235,6 +6857,7 @@ fn submit_flow_position_cas_move_with_attempt(
                         short_protocol_id(&resp.event_id)
                     );
                 }
+                set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending anchor (event_id={})",
                     short_protocol_id(&move_for_track),
@@ -6249,6 +6872,12 @@ fn submit_flow_position_cas_move_with_attempt(
                 } else {
                     CardState::SoftFailed
                 };
+                state_store.write().update_raw_operation_write_state(
+                    &move_for_track,
+                    card_state.data_state(),
+                    None,
+                    Some(err_text.to_string()),
+                );
                 if let Some(record) = write_records
                     .write()
                     .iter_mut()
@@ -6257,6 +6886,7 @@ fn submit_flow_position_cas_move_with_attempt(
                     record.state = card_state.clone();
                     record.note = format!("events.submit failed: {err_text}");
                 }
+                set_card_state_in_columns(&mut columns, &flow_id, card_state);
                 board_status.set(format!("{kind_for_record} event {err_text}"));
                 // Auto-rebase the CAS event after a cas_conflict: re-fetch
                 // the cell's current head via the projection endpoint,
@@ -6276,6 +6906,7 @@ fn submit_flow_position_cas_move_with_attempt(
                         kind_for_record,
                         effect_for_rebase,
                         attempt + 1,
+                        columns,
                         state_store,
                         write_records,
                         board_status,
@@ -6291,6 +6922,15 @@ fn submit_flow_position_cas_move_with_attempt(
                             "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                         );
                     }
+                    state_store.write().update_raw_operation_write_state(
+                        &move_for_track,
+                        "quarantined",
+                        None,
+                        Some(format!(
+                            "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
+                        )),
+                    );
+                    set_card_state_in_columns(&mut columns, &flow_id, CardState::Quarantined);
                     board_status.set(format!(
                         "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
                     ));
@@ -6324,6 +6964,7 @@ fn rebase_flow_position_after_conflict(
     kind: String,
     effect: FlowPositionEffect,
     attempt: u8,
+    columns: Signal<Vec<KanbanColumn>>,
     state_store: Signal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
@@ -6375,6 +7016,7 @@ fn rebase_flow_position_after_conflict(
             new_expected,
             effect,
             attempt,
+            columns,
             state_store,
             write_records,
             board_status,
@@ -7358,6 +8000,47 @@ mod tests {
     }
 
     #[test]
+    fn local_space_create_state_becomes_synced_once_projection_contains_target() {
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let raw_operations = vec![RawOperationRecord {
+            operation_id: "sha256:local-board-create".to_owned(),
+            space_id: Some("cx:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "cx.space.create",
+                "operation_id": "sha256:local-board-create",
+                "body": {
+                    "object": {
+                        "id": board_id,
+                        "schema": "cx.schema.space.v1",
+                        "kind": "board",
+                        "title": "Design board"
+                    }
+                },
+                "write_state": "queued"
+            }),
+        }];
+        let projected_ids = BTreeSet::from([board_id.to_owned()]);
+
+        let state = local_space_create_state_for_target(&raw_operations, &projected_ids, board_id);
+
+        assert_eq!(state, Some(CardState::Synced));
+    }
+
+    #[test]
+    fn displayed_card_state_uses_server_flow_projection_over_local_queue() {
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000003";
+        let mut card = test_card(flow_id, "U");
+        card.state = CardState::Queued;
+        let projected_flow_ids = BTreeSet::from([flow_id.to_owned()]);
+
+        assert_eq!(
+            displayed_card_state(&card, &projected_flow_ids),
+            CardState::Synced
+        );
+    }
+
+    #[test]
     fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
         let list_id = "cx:space:0196419b-0000-7000-8000-000000000002";
@@ -7636,15 +8319,40 @@ mod tests {
 
         let entries =
             card_synthesis_track_entries(&card, &raw_operations, &LocalStateStore::default());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].body, "second synthesis");
+        assert_eq!(entries[0].author_label, "bob:acme.example");
+        assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
+        assert!(entries[0].edited);
+        assert_eq!(entries[0].revisions.len(), 2);
+        assert_eq!(entries[0].revisions[0].body, "first synthesis");
+        assert_eq!(entries[0].revisions[0].author_label, "alice:acme.example");
+        assert_eq!(entries[0].revisions[1].body, "second synthesis");
+    }
+
+    #[test]
+    fn synthesis_new_entry_appends_without_replacing_existing_entries() {
+        let mut card = test_card("cx:flow:edit-me", "U");
+        card.synthesis = join_synthesis_entry_bodies(vec![
+            "first active synthesis".to_owned(),
+            "second active synthesis".to_owned(),
+        ]);
+
+        let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].body, "first synthesis");
-        assert_eq!(entries[0].author_label, "alice:acme.example");
-        assert_eq!(entries[0].timestamp_label, "2026-05-22 10:00");
-        assert!(!entries[0].edited);
-        assert_eq!(entries[1].body, "second synthesis");
-        assert_eq!(entries[1].author_label, "bob:acme.example");
-        assert_eq!(entries[1].timestamp_label, "2026-05-22 11:00");
-        assert!(entries[1].edited);
+        assert_eq!(entries[0].body, "first active synthesis");
+        assert_eq!(entries[1].body, "second active synthesis");
+
+        let updated = synthesis_body_after_entry_edit(&entries, None, "third active synthesis");
+        let bodies = split_synthesis_entry_bodies(&updated);
+        assert_eq!(
+            bodies,
+            vec![
+                "first active synthesis".to_owned(),
+                "second active synthesis".to_owned(),
+                "third active synthesis".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -7944,14 +8652,14 @@ mod tests {
         let cols = seed_columns();
         let mut states: Vec<&'static str> = cols
             .iter()
-            .flat_map(|c| c.cards.iter().map(|card| card.state.label()))
+            .flat_map(|c| c.cards.iter().map(|card| card.state.data_state()))
             .collect();
         states.sort();
         states.dedup();
         assert!(states.contains(&"synced"), "seed missing Synced demo card");
         assert!(states.contains(&"queued"), "seed missing Queued demo card");
         assert!(
-            states.contains(&"CAS conflict"),
+            states.contains(&"conflict"),
             "seed missing Conflict demo card"
         );
     }

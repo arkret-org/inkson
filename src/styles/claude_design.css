@@ -2493,13 +2493,18 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 }
 .column-drag-handle:active { cursor: grabbing; }
 .column-drop-target-before {
-    height: 8px;
-    margin: -2px 0 6px;
+    display: none;
+    height: 0;
+    margin: 0;
+    overflow: hidden;
     border-radius: 4px;
     outline: 1px dashed transparent;
     outline-offset: -1px;
 }
 .board-grid.is-column-dragging .column-drop-target-before {
+    display: block;
+    height: 8px;
+    margin: -2px 0 6px;
     outline-color: var(--accent, #7c83ff);
     background-color: color-mix(in srgb, var(--accent, #7c83ff) 10%, transparent);
 }

@@ -3972,14 +3972,20 @@ pub fn ChatPanel(
                                                                                     {
                                                                                         found.vote(&actor, idx);
                                                                                     }
+                                                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == card_message_id) {
+                                                                                        found.pending = true;
+                                                                                        found.failed = false;
+                                                                                        found.error = None;
+                                                                                    }
                                                                                     let base = base_for_vote.clone();
                                                                                     let space = space.clone();
                                                                                     let actor = actor.clone();
                                                                                     let poll_id = card_poll_id.clone();
                                                                                     let option_id = option_id.clone();
+                                                                                    let message_id_for_status = card_message_id.clone();
                                                                                     let api_token = api_token.clone();
                                                                                     spawn(async move {
-                                                                                        let _ = crate::views::helpers::with_authed_api(
+                                                                                        match crate::views::helpers::with_authed_api(
                                                                                             &base,
                                                                                             api_token,
                                                                                             |api| async move {
@@ -3992,7 +3998,26 @@ pub fn ChatPanel(
                                                                                                 api.submit_event_envelope(&op).await
                                                                                             },
                                                                                         )
-                                                                                        .await;
+                                                                                        .await
+                                                                                        {
+                                                                                            Ok(_) => {
+                                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
+                                                                                                    found.pending = false;
+                                                                                                    found.failed = false;
+                                                                                                    found.error = None;
+                                                                                                }
+                                                                                                status_msg.set("Poll vote sent".to_owned());
+                                                                                            }
+                                                                                            Err(error) => {
+                                                                                                let error_text = error.display();
+                                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
+                                                                                                    found.pending = false;
+                                                                                                    found.failed = true;
+                                                                                                    found.error = Some(format!("Poll vote failed: {error_text}"));
+                                                                                                }
+                                                                                                status_msg.set(format!("Poll vote failed: {error_text}"));
+                                                                                            }
+                                                                                        }
                                                                                     });
                                                                                 }
                                                                             },
@@ -4033,13 +4058,19 @@ pub fn ChatPanel(
                                                                     {
                                                                         found.close();
                                                                     }
+                                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == card_message_id) {
+                                                                        found.pending = true;
+                                                                        found.failed = false;
+                                                                        found.error = None;
+                                                                    }
                                                                     let base = base_for_close.clone();
                                                                     let space = space.clone();
                                                                     let actor = actor.clone();
                                                                     let poll_id = card_poll_id.clone();
+                                                                    let message_id_for_status = card_message_id.clone();
                                                                     let api_token = api_token.clone();
                                                                     spawn(async move {
-                                                                        let _ = crate::views::helpers::with_authed_api(
+                                                                        match crate::views::helpers::with_authed_api(
                                                                             &base,
                                                                             api_token,
                                                                             |api| async move {
@@ -4051,7 +4082,26 @@ pub fn ChatPanel(
                                                                                 api.submit_event_envelope(&op).await
                                                                             },
                                                                         )
-                                                                        .await;
+                                                                        .await
+                                                                        {
+                                                                            Ok(_) => {
+                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
+                                                                                    found.pending = false;
+                                                                                    found.failed = false;
+                                                                                    found.error = None;
+                                                                                }
+                                                                                status_msg.set("Poll closed".to_owned());
+                                                                            }
+                                                                            Err(error) => {
+                                                                                let error_text = error.display();
+                                                                                if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == message_id_for_status.as_str()) {
+                                                                                    found.pending = false;
+                                                                                    found.failed = true;
+                                                                                    found.error = Some(format!("Poll close failed: {error_text}"));
+                                                                                }
+                                                                                status_msg.set(format!("Poll close failed: {error_text}"));
+                                                                            }
+                                                                        }
                                                                     });
                                                                 }
                                                             },
@@ -4187,6 +4237,8 @@ pub fn ChatPanel(
                                                             found.body = content.clone();
                                                             found.edited = true;
                                                             found.pending = true;
+                                                            found.failed = false;
+                                                            found.error = None;
                                                         }
                                                         editing_message.set(None);
                                                         let base = base.clone();
@@ -4203,10 +4255,19 @@ pub fn ChatPanel(
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
+                                                                                found.failed = false;
+                                                                                found.error = None;
                                                                             }
                                                                             status_msg.set("Message updated".to_owned());
                                                                         }
-                                                                        Err(error) => status_msg.set(format!("Message update failed: {error}")),
+                                                                        Err(error) => {
+                                                                            if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                                found.pending = false;
+                                                                                found.failed = true;
+                                                                                found.error = Some(format!("Message update failed: {error}"));
+                                                                            }
+                                                                            status_msg.set(format!("Message update failed: {error}"));
+                                                                        }
                                                                     }
                                                                 }
                                                                 Err(error) => status_msg.set(format!("Invalid server URL: {error}")),
@@ -4241,6 +4302,8 @@ pub fn ChatPanel(
                                                             found.redacted = true;
                                                             found.body.clear();
                                                             found.pending = true;
+                                                            found.failed = false;
+                                                            found.error = None;
                                                         }
                                                         redact_confirm.set(None);
                                                         let base = base.clone();
@@ -4257,10 +4320,19 @@ pub fn ChatPanel(
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
+                                                                                found.failed = false;
+                                                                                found.error = None;
                                                                             }
                                                                             status_msg.set("Message removed".to_owned());
                                                                         }
-                                                                        Err(error) => status_msg.set(format!("Message removal failed: {error}")),
+                                                                        Err(error) => {
+                                                                            if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
+                                                                                found.pending = false;
+                                                                                found.failed = true;
+                                                                                found.error = Some(format!("Message removal failed: {error}"));
+                                                                            }
+                                                                            status_msg.set(format!("Message removal failed: {error}"));
+                                                                        }
                                                                     }
                                                                 }
                                                                 Err(error) => status_msg.set(format!("Invalid server URL: {error}")),
@@ -5178,8 +5250,9 @@ pub fn ChatPanel(
                                         let api_token = token();
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
+                                        let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
-                                            let _ = crate::views::helpers::with_authed_api(
+                                            match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
@@ -5193,7 +5266,26 @@ pub fn ChatPanel(
                                                     api.submit_event_envelope(&op).await
                                                 },
                                             )
-                                            .await;
+                                            .await
+                                            {
+                                                Ok(_) => {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                        found.pending = false;
+                                                        found.failed = false;
+                                                        found.error = None;
+                                                    }
+                                                    status_msg.set("Poll sent".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let error_text = error.display();
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                        found.pending = false;
+                                                        found.failed = true;
+                                                        found.error = Some(format!("Poll send failed: {error_text}"));
+                                                    }
+                                                    status_msg.set(format!("Poll send failed: {error_text}"));
+                                                }
+                                            }
                                         });
                                     }
                                 },
@@ -5251,8 +5343,9 @@ pub fn ChatPanel(
                                         let api_token = token();
                                         let draft_for_op = draft_snapshot.clone();
                                         let poll_id_for_op = poll_id.clone();
+                                        let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
-                                            let _ = crate::views::helpers::with_authed_api(
+                                            match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
@@ -5266,7 +5359,26 @@ pub fn ChatPanel(
                                                     api.submit_event_envelope(&op).await
                                                 },
                                             )
-                                            .await;
+                                            .await
+                                            {
+                                                Ok(_) => {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                        found.pending = false;
+                                                        found.failed = false;
+                                                        found.error = None;
+                                                    }
+                                                    status_msg.set("Poll sent".to_owned());
+                                                }
+                                                Err(error) => {
+                                                    let error_text = error.display();
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                        found.pending = false;
+                                                        found.failed = true;
+                                                        found.error = Some(format!("Poll send failed: {error_text}"));
+                                                    }
+                                                    status_msg.set(format!("Poll send failed: {error_text}"));
+                                                }
+                                            }
                                         });
                                     }
                                 },

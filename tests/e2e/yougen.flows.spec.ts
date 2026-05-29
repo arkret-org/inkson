@@ -130,6 +130,13 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await page.getByTestId("account-menu-button").click();
   await page.getByTestId("space-scope-descendants").click();
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+  await expect(page.getByTestId("spaces-summary")).toContainText("Recent Realms & Spaces");
+  await expect(
+    page.getByTestId("dashboard-space-card").filter({ hasText: "Contrix Demo Space" }).locator(".pill.muted.xs"),
+  ).toHaveText("Realm");
+  await expect(
+    page.getByTestId("dashboard-space-card").filter({ hasText: "Launch Child Space" }).locator(".pill.muted.xs"),
+  ).toHaveText("Space");
 
   await page.getByTestId("space-button").first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();

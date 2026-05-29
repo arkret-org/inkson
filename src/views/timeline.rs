@@ -76,6 +76,8 @@ pub struct TimelineEvent {
     pub tombstone_reason: Option<String>,
     pub revisions: Vec<TimelineRevision>,
     pub pending: bool,
+    pub failed: bool,
+    pub error: Option<String>,
     /// When present, this message carries an `encrypted_payload`
     /// object that the local MLS group may be able to decrypt.
     /// Timeline's audit-accessed emitter watches this field
@@ -105,6 +107,8 @@ impl Default for TimelineEvent {
             tombstone_reason: None,
             revisions: Vec::new(),
             pending: false,
+            failed: false,
+            error: None,
             encrypted_payload: None,
         }
     }
@@ -154,6 +158,8 @@ impl TimelineEvent {
         self.operation_id = Some(operation_id);
         self.event_id = None;
         self.pending = false;
+        self.failed = false;
+        self.error = None;
     }
 
     pub fn apply_revision(
@@ -177,6 +183,8 @@ impl TimelineEvent {
         self.tombstone_reason = None;
         self.edited = true;
         self.pending = false;
+        self.failed = false;
+        self.error = None;
     }
 
     pub fn apply_redaction(&mut self, redaction_id: String, reason: Option<String>) {
@@ -187,6 +195,8 @@ impl TimelineEvent {
         self.tombstone_reason = reason;
         self.timestamp = timestamp_now();
         self.pending = false;
+        self.failed = false;
+        self.error = None;
     }
 
     pub fn fact_summary(&self) -> Option<String> {
@@ -654,21 +664,48 @@ pub fn TimelinePanel(
                             .contains(&search_query().to_lowercase())
                     })
                 {
-                    div {
-                        class: "event",
-                        id: "{event.id}",
-                        "data-testid": "timeline-event",
-                        "data-event-id": "{event.id}",
-                        role: "article",
-                        "aria-label": "Timeline event from {event.sender_display}",
-                        key: "{event.id}",
+                    {
+                        rsx! {
+                            div {
+                                class: if event.failed { "event is-failed" } else if event.pending { "event is-pending" } else { "event" },
+                                id: "{event.id}",
+                                "data-testid": "timeline-event",
+                                "data-event-id": "{event.id}",
+                                role: "article",
+                                "aria-label": "Timeline event from {event.sender_display}",
+                                key: "{event.id}",
 
                         div { class: "event-head",
                             span { "{event.sender_display}" }
                             span {
                                 "{event.timestamp}"
-                                if event.pending {
-                                    " (pending)"
+                                if event.failed {
+                                    span {
+                                        class: "message-status-icon is-failed",
+                                        "data-testid": "timeline-send-status",
+                                        title: event.error.as_deref().unwrap_or("Send failed"),
+                                        "!"
+                                    }
+                                } else if event.pending {
+                                    span {
+                                        class: "message-status-icon is-pending",
+                                        "data-testid": "timeline-send-status",
+                                        title: "Sending"
+                                    }
+                                }
+                            }
+                        }
+                        if event.failed {
+                            div {
+                                class: "message-error-row",
+                                "data-testid": "timeline-event-error",
+                                span { class: "message-error-mark", "!" }
+                                span {
+                                    if let Some(error) = &event.error {
+                                        "{error}"
+                                    } else {
+                                        "Event send failed"
+                                    }
                                 }
                             }
                         }
@@ -1008,6 +1045,8 @@ pub fn TimelinePanel(
                                                             found.timestamp = timestamp_now();
                                                             found.edited = true;
                                                             found.pending = true;
+                                                            found.failed = false;
+                                                            found.error = None;
                                                             orig
                                                         });
                                                     editing_index.set(None);
@@ -1028,6 +1067,8 @@ pub fn TimelinePanel(
                                                                         found.operation_id = Some(op_id.clone());
                                                                         found.event_id = Some(updated.event_id.clone());
                                                                         found.pending = false;
+                                                                        found.failed = false;
+                                                                        found.error = None;
                                                                     }
                                                                     state_store.write().append_raw_operation(
                                                                         op_id.clone(),
@@ -1055,6 +1096,8 @@ pub fn TimelinePanel(
                                                                         }
                                                                         found.edited = !found.revisions.is_empty();
                                                                         found.pending = false;
+                                                                        found.failed = true;
+                                                                        found.error = Some(format!("edit failed: {error}"));
                                                                     }
                                                                     write_status.set(format!("edit failed: {error}"));
                                                                 }
@@ -1109,6 +1152,8 @@ pub fn TimelinePanel(
                                                             found.tombstone_reason = reason.clone();
                                                             found.timestamp = timestamp_now();
                                                             found.pending = true;
+                                                            found.failed = false;
+                                                            found.error = None;
                                                             orig
                                                         });
                                                     redact_confirm.set(None);
@@ -1149,6 +1194,8 @@ pub fn TimelinePanel(
                                                                         && let Some(original) = original
                                                                     {
                                                                         *found = original;
+                                                                        found.failed = true;
+                                                                        found.error = Some(format!("redact failed: {error}"));
                                                                     }
                                                                     write_status.set(format!("redact failed: {error}"));
                                                                 }
@@ -1197,21 +1244,23 @@ pub fn TimelinePanel(
                             div { class: "muted", "data-testid": "event-fact", "{fact}" }
                         }
 
-                        if !event.revisions.is_empty() {
-                            div { class: "section", "data-testid": "revision-chain",
-                                div { class: "muted", "Revision chain ({event.revisions.len()})" }
-                                for revision in &event.revisions {
-                                    {
-                                        let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
-                                        let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
-                                        rsx! {
-                                            div { class: "muted", "data-testid": "revision-entry",
-                                                "{revision.timestamp}: {revision.body}"
-                                                if let Some(operation_id) = &revision_operation_id_label {
-                                                    " [{operation_id}]"
-                                                }
-                                                if let Some(event_id) = &revision_event_id_label {
-                                                    " / {event_id}"
+                                if !event.revisions.is_empty() {
+                                    div { class: "section", "data-testid": "revision-chain",
+                                        div { class: "muted", "Revision chain ({event.revisions.len()})" }
+                                        for revision in &event.revisions {
+                                            {
+                                                let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
+                                                let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
+                                                rsx! {
+                                                    div { class: "muted", "data-testid": "revision-entry",
+                                                        "{revision.timestamp}: {revision.body}"
+                                                        if let Some(operation_id) = &revision_operation_id_label {
+                                                            " [{operation_id}]"
+                                                        }
+                                                        if let Some(event_id) = &revision_event_id_label {
+                                                            " / {event_id}"
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1601,6 +1650,8 @@ pub fn TimelinePanel(
                                 tombstone_reason: None,
                                 revisions: Vec::new(),
                                 pending: true,
+                                failed: false,
+                                error: None,
                                 encrypted_payload: None,
                             });
                             let base = base_url_sig();
@@ -1630,7 +1681,11 @@ pub fn TimelinePanel(
                                             }
                                         }
                                         Err(error) => {
-                                            timeline.write().retain(|e| e.id != event_id);
+                                            if let Some(event) = timeline.write().iter_mut().find(|e| e.id == event_id) {
+                                                event.pending = false;
+                                                event.failed = true;
+                                                event.error = Some(format!("send failed: {error}"));
+                                            }
                                             write_status.set(format!("send failed: {error}"));
                                         }
                                     }
@@ -1931,6 +1986,10 @@ pub fn TimelinePanel(
                                                                 .find(|candidate| candidate.id == local_event_id)
                                                             {
                                                                 found.pending = false;
+                                                                found.failed = true;
+                                                                found.error = Some(format!(
+                                                                    "discarded pending change: {error_text}"
+                                                                ));
                                                             }
                                                             write_status.set(format!(
                                                                 "discarded pending change: {error_text}"
@@ -1945,6 +2004,10 @@ pub fn TimelinePanel(
                                                                 .find(|candidate| candidate.id == local_event_id)
                                                             {
                                                                 found.pending = false;
+                                                                found.failed = true;
+                                                                found.error = Some(format!(
+                                                                    "send failed after reconnect retries: {error_text}"
+                                                                ));
                                                             }
                                                             write_status.set(format!(
                                                                 "send failed after reconnect retries: {error_text}"

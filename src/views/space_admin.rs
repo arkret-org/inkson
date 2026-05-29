@@ -286,6 +286,8 @@ pub fn SpaceAdminPanel(
     let mut repair_head_a = use_signal(String::new);
     let mut repair_head_b = use_signal(String::new);
     let mut repair_capability_ref = use_signal(|| "cap.recovery-01".to_owned());
+    let mut repair_state_witness_ref = use_signal(String::new);
+    let mut repair_inclusion_proof_ref = use_signal(String::new);
     let mut repair_winner_json = use_signal(String::new);
     // Device-revoke MLS Remove builder. The full round-trip is: load
     // encrypted snapshot from `state_store`, decrypt with user-supplied
@@ -743,6 +745,20 @@ pub fn SpaceAdminPanel(
                         placeholder: "cap.recovery-01",
                         oninput: move |evt| repair_capability_ref.set(evt.value()),
                     }
+                    label { "state_witness ref" }
+                    input {
+                        "data-testid": "repair-state-witness-input",
+                        value: "{repair_state_witness_ref}",
+                        placeholder: "cx:snapshot:sha256:...",
+                        oninput: move |evt| repair_state_witness_ref.set(evt.value()),
+                    }
+                    label { "inclusion_proof ref" }
+                    input {
+                        "data-testid": "repair-inclusion-proof-input",
+                        value: "{repair_inclusion_proof_ref}",
+                        placeholder: "cx:proof:sha256:...",
+                        oninput: move |evt| repair_inclusion_proof_ref.set(evt.value()),
+                    }
                     label { "Winner value (JSON)" }
                     textarea {
                         "data-testid": "repair-winner-json-input",
@@ -767,12 +783,14 @@ pub fn SpaceAdminPanel(
                                     let head_a = repair_head_a().trim().to_owned();
                                     let head_b = repair_head_b().trim().to_owned();
                                     let cap = repair_capability_ref().trim().to_owned();
+                                    let witness = repair_state_witness_ref().trim().to_owned();
+                                    let proof = repair_inclusion_proof_ref().trim().to_owned();
                                     let winner_str = repair_winner_json();
                                     if cell.is_empty() || head_a.is_empty() || head_b.is_empty()
-                                        || cap.is_empty()
+                                        || cap.is_empty() || witness.is_empty() || proof.is_empty()
                                     {
                                         status_msg.set(
-                                            "fill cell + both heads + recovery capability before submitting repair"
+                                            "fill cell + both heads + recovery capability + state witness + inclusion proof before submitting repair"
                                                 .to_owned(),
                                         );
                                         return;
@@ -799,6 +817,8 @@ pub fn SpaceAdminPanel(
                                         &cell,
                                         &heads,
                                         &cap,
+                                        &witness,
+                                        &proof,
                                         winner_value,
                                     )
                                     .build("yougen");

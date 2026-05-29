@@ -73,7 +73,7 @@ pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
 pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use verify_badges::{NeedsVerificationBadge, RealmClass, RealmClassBadge};
-pub use write_state::{WriteState, WriteStateExplainer, WriteStatePill};
+pub use write_state::{WriteState, WriteStateExplainer, WriteStateIcon, WriteStatePill};
 
 // LazyLinkBadge is declared below.
 
