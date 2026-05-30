@@ -2235,12 +2235,13 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// The caller — the `cx.audit.accessed` emitter inside
 /// [`TimelinePanel`] — uses `Some(...)` as the firing trigger, so any
 /// soft failure quietly suppresses the audit emit instead of looping.
-/// Native-only because OpenMLS is gated to non-wasm. On wasm we
-/// uniformly return `None` so the emitter is a no-op there.
+/// Runs on every target now that OpenMLS builds on wasm32 (the browser
+/// uses the same in-tree OpenMLS via the `js` feature). Any soft failure
+/// (no snapshot / wrong device secret / payload that doesn't decrypt)
+/// returns `None`, so the audit emitter is a no-op in those cases.
 ///
 /// The snapshot secret is device-scoped and read from `SecureKeyStore`.
 /// Only real SDK-encrypted payloads should trigger the audit hook.
-#[cfg(not(target_arch = "wasm32"))]
 fn try_local_mls_decrypt(
     state_store: Signal<LocalStateStore>,
     space_id: &str,
@@ -2260,17 +2261,6 @@ fn try_local_mls_decrypt(
     let payload: contrix_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     group.decrypt_payload(&payload).ok()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn try_local_mls_decrypt(
-    _state_store: Signal<LocalStateStore>,
-    _space_id: &str,
-    _actor_did: &str,
-    _device_id: &str,
-    _payload_value: &Value,
-) -> Option<Vec<u8>> {
-    None
 }
 
 #[cfg(test)]

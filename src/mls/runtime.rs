@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 const DEVICE_SNAPSHOT_SECRET_PREFIX: &str = "yougen.mls_snapshot.device_secret.v1";
+const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MlsRuntimeStatus {
@@ -32,10 +33,10 @@ impl MlsRuntimeStatus {
                 format!("device MLS snapshot secret unavailable: {reason}")
             }
             Self::SnapshotDecryptFailed(reason) => {
-                format!("stored MLS snapshot cannot be opened with this device key; restore or migrate MLS history first ({reason})")
+                format!("stored MLS history could not be decrypted ({reason}); restore your encrypted MLS history with your account recovery passphrase.")
             }
             Self::UnsupportedTarget => {
-                "MLS runtime is not supported on this build target".to_owned()
+                "MLS runtime unavailable (internal error)".to_owned()
             }
         }
     }
@@ -189,7 +190,6 @@ pub fn mls_restore_epoch_floor(
     anchor_epoch.max(local_epoch)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn restore_mls_history_backup_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -217,19 +217,6 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     Ok(summary)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn restore_mls_history_backup_with_device_snapshot(
-    _state_store: &mut crate::local_state::LocalStateStore,
-    _secure_store: &dyn SecureKeyStore,
-    _actor_did: &str,
-    _device_id: &str,
-    _body: &Value,
-) -> Result<MlsHistoryRestoreSummary, MlsRuntimeError> {
-    Err(MlsRuntimeError::SnapshotRestore(
-        MlsRuntimeStatus::UnsupportedTarget.user_message(),
-    ))
-}
-
 fn require_backup_str(body: &Value, key: &str, expected: &str) -> Result<(), MlsRuntimeError> {
     match body.get(key).and_then(Value::as_str) {
         Some(actual) if actual == expected => Ok(()),
@@ -250,6 +237,8 @@ fn require_backup_u64(body: &Value, key: &str, expected: u64) -> Result<(), MlsR
     }
 }
 
+/// Legacy per-device storage key. Retained only for migration lookups: the
+/// snapshot secret is now account-scoped (see [`account_mls_secret_key`]).
 pub fn device_snapshot_secret_key(actor_did: &str, device_id: &str) -> String {
     format!(
         "{DEVICE_SNAPSHOT_SECRET_PREFIX}.{}.{}",
@@ -258,52 +247,129 @@ pub fn device_snapshot_secret_key(actor_did: &str, device_id: &str) -> String {
     )
 }
 
-pub fn load_or_create_device_snapshot_secret(
+/// Account-scoped storage key for the MLS snapshot secret shared by every
+/// device of the account. Recoverable via the user's recovery passphrase.
+pub fn account_mls_secret_key(actor_did: &str) -> String {
+    format!("{ACCOUNT_MLS_SECRET_PREFIX}.{}", actor_did.trim())
+}
+
+/// Store (or overwrite) the account-scoped MLS snapshot secret. Used by the
+/// recovery import path after unwrapping the recovery vault.
+pub fn store_account_mls_secret(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+    secret: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_did is required for MLS snapshot secret".to_owned(),
+        ));
+    }
+    if secret.trim().is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "account MLS secret must not be empty".to_owned(),
+        ));
+    }
+    store.store_secret(&account_mls_secret_key(actor), secret)
+}
+
+/// Load (or create) the account-scoped MLS snapshot secret.
+///
+/// Resolution order:
+///   a. an existing account secret is returned as-is;
+///   b. otherwise, if a legacy device-scoped secret exists for `(actor,
+///      device)`, it is *promoted* to the account key (so single-device users
+///      keep their local MLS state) and returned;
+///   c. otherwise a fresh random 32-byte secret is generated, stored under the
+///      account key, and returned.
+pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
     actor_did: &str,
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     let actor = actor_did.trim();
-    let device = device_id.trim();
-    if actor.is_empty() || device.is_empty() {
+    if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did and device_id are required for MLS snapshot secret".to_owned(),
+            "actor_did is required for MLS snapshot secret".to_owned(),
         ));
     }
-    let key = device_snapshot_secret_key(actor, device);
-    if let Some(existing) = store.get_secret(&key)?
+    let account_key = account_mls_secret_key(actor);
+    // a. existing account secret wins.
+    if let Some(existing) = store.get_secret(&account_key)?
         && !existing.trim().is_empty()
     {
         return Ok(existing);
     }
+    // b. migrate a legacy device-scoped secret if one exists for this device.
+    let device = device_id.trim();
+    if !device.is_empty() {
+        let device_key = device_snapshot_secret_key(actor, device);
+        if let Some(legacy) = store.get_secret(&device_key)?
+            && !legacy.trim().is_empty()
+        {
+            store.store_secret(&account_key, &legacy)?;
+            return Ok(legacy);
+        }
+    }
+    // c. generate a fresh account secret.
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes)
         .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
     let secret = URL_SAFE_NO_PAD.encode(bytes);
-    store.store_secret(&key, &secret)?;
+    store.store_secret(&account_key, &secret)?;
     Ok(secret)
 }
 
+/// Load-or-create the snapshot secret for `(actor, device)`.
+///
+/// The `device_id` parameter is retained for source compatibility and legacy
+/// migration only; the secret is account-scoped and shared by every device.
+pub fn load_or_create_device_snapshot_secret(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    load_or_create_account_mls_secret(store, actor_did, device_id)
+}
+
+/// Load (without creating) the snapshot secret for `(actor, device)`.
+///
+/// Delegates to the account-scoped secret. As a migration convenience, if no
+/// account secret exists yet but a legacy device-scoped secret does, the legacy
+/// value is promoted to the account key and returned. `device_id` no longer
+/// scopes the stored key.
 pub fn load_device_snapshot_secret(
     store: &dyn SecureKeyStore,
     actor_did: &str,
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     let actor = actor_did.trim();
-    let device = device_id.trim();
-    if actor.is_empty() || device.is_empty() {
+    if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did and device_id are required for MLS snapshot secret".to_owned(),
+            "actor_did is required for MLS snapshot secret".to_owned(),
         ));
     }
-    let key = device_snapshot_secret_key(actor, device);
-    match store.get_secret(&key)? {
-        Some(existing) if !existing.trim().is_empty() => Ok(existing),
-        _ => Err(SecureKeyStoreError::NotFound),
+    let account_key = account_mls_secret_key(actor);
+    if let Some(existing) = store.get_secret(&account_key)?
+        && !existing.trim().is_empty()
+    {
+        return Ok(existing);
     }
+    // Migration: promote a legacy device-scoped secret if present.
+    let device = device_id.trim();
+    if !device.is_empty() {
+        let device_key = device_snapshot_secret_key(actor, device);
+        if let Some(legacy) = store.get_secret(&device_key)?
+            && !legacy.trim().is_empty()
+        {
+            store.store_secret(&account_key, &legacy)?;
+            return Ok(legacy);
+        }
+    }
+    Err(SecureKeyStoreError::NotFound)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
     let mut welcomes = Vec::new();
     let Some(events) = value.get("events").and_then(|v| v.as_array()) else {
@@ -319,7 +385,6 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
     welcomes
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -374,7 +439,6 @@ pub fn apply_welcome_messages_with_device_snapshot(
     Ok(applied)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
 pub fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
@@ -440,30 +504,6 @@ pub fn encrypt_values_with_device_snapshot(
     ))
 }
 
-#[cfg(target_arch = "wasm32")]
-#[allow(clippy::type_complexity)]
-pub fn encrypt_values_with_device_snapshot(
-    _state_store: &mut crate::local_state::LocalStateStore,
-    _secure_store: &dyn SecureKeyStore,
-    _space_id: &str,
-    _actor_did: &str,
-    _device_id: &str,
-    _content_type: &str,
-    _plaintext_values: &[Vec<u8>],
-) -> Result<
-    (
-        contrix_sdk::Hash,
-        Vec<contrix_sdk::Did>,
-        Vec<serde_json::Value>,
-        contrix_sdk::MlsCommitEnvelope,
-    ),
-    MlsRuntimeError,
-> {
-    Err(MlsRuntimeError::SnapshotRestore(
-        MlsRuntimeStatus::UnsupportedTarget.user_message(),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -519,6 +559,60 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert!(a.starts_with("yougen.mls_snapshot.device_secret.v1."));
+    }
+
+    #[test]
+    fn account_secret_is_shared_across_devices() {
+        let store = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let from_a = load_or_create_device_snapshot_secret(&store, actor, "cx:device:a").unwrap();
+        // A different device of the SAME account must resolve the SAME secret.
+        let from_b = load_or_create_device_snapshot_secret(&store, actor, "cx:device:b").unwrap();
+        assert_eq!(from_a, from_b);
+        // It is stored under the account key, not a device key.
+        assert!(
+            store
+                .get_secret(&account_mls_secret_key(actor))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn legacy_device_secret_is_promoted_to_account_key() {
+        let store = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "cx:device:legacy";
+        // Simulate an existing single-device user with a legacy device secret.
+        store
+            .store_secret(&device_snapshot_secret_key(actor, device), "legacy-secret")
+            .unwrap();
+        // load_or_create must promote and return the legacy value unchanged.
+        let resolved = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
+        assert_eq!(resolved, "legacy-secret");
+        assert_eq!(
+            store.get_secret(&account_mls_secret_key(actor)).unwrap(),
+            Some("legacy-secret".to_owned())
+        );
+        // load-only path also resolves the promoted account secret.
+        let loaded = load_device_snapshot_secret(&store, actor, device).unwrap();
+        assert_eq!(loaded, "legacy-secret");
+    }
+
+    #[test]
+    fn store_account_mls_secret_round_trips() {
+        let store = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        store_account_mls_secret(&store, actor, "recovered-secret").unwrap();
+        let loaded = load_device_snapshot_secret(&store, actor, "cx:device:fresh").unwrap();
+        assert_eq!(loaded, "recovered-secret");
+    }
+
+    #[test]
+    fn store_account_mls_secret_rejects_empty() {
+        let store = MemorySecureKeyStore::new();
+        assert!(store_account_mls_secret(&store, "did:web:alice.example", "  ").is_err());
+        assert!(store_account_mls_secret(&store, "  ", "secret").is_err());
     }
 
     #[test]

@@ -221,3 +221,20 @@ jsonschema = { version = "0.46.4", default-features = false, features = ["resolv
 walkdir = "2.5"
 regex = "1.11"
 rand_core = { version = "0.6", features = ["std"] }
+
+# Use the in-tree OpenMLS workspace (../openmls) instead of the crates.io
+# release so the MLS stack can be modified locally — notably to keep
+# wasm32-unknown-unknown building AND running the live group, which is what
+# lets the browser build decrypt realm/kanban history across devices.
+#
+# All four openmls-family crates MUST be patched together: mixing a path copy
+# of `openmls` with a crates.io copy of `openmls_rust_crypto` would link two
+# distinct `openmls_traits` and fail to compile (trait/type mismatch). The
+# local versions (openmls 0.8.1 / traits 0.5.0 / rust_crypto 0.5.1 /
+# basic_credential 0.5.0) match the version reqs the SDK pins, so the patch is
+# source-only and keeps the per-target `js` feature wiring intact.
+[patch.crates-io]
+openmls = { path = "../openmls/openmls" }
+openmls_traits = { path = "../openmls/traits" }
+openmls_rust_crypto = { path = "../openmls/openmls_rust_crypto" }
+openmls_basic_credential = { path = "../openmls/basic_credential" }

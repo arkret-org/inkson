@@ -4753,6 +4753,9 @@ pub fn parse_events_subscribe_ndjson_text(
     Ok(frames)
 }
 
+// Consumed only by the native (`not(wasm32)`) streaming reader
+// (`drain_events_subscribe_response` / `events_subscribe_stream`).
+#[cfg(not(target_arch = "wasm32"))]
 fn drain_events_subscribe_ndjson_lines<F>(
     pending: &mut Vec<u8>,
     on_frame: &mut F,
@@ -6025,3 +6028,4 @@ mod tests {
         );
     }
 }
+// cache-bust 1479123202

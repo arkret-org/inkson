@@ -544,6 +544,9 @@ fn clear_token(slot: &Mutex<Option<String>>) {
     }
 }
 
+// Consumed only by the native (`not(wasm32)`) provider-token path
+// below; the wasm build subscribes via the service worker instead.
+#[cfg(not(target_arch = "wasm32"))]
 fn read_token(slot: &Mutex<Option<String>>) -> Option<String> {
     slot.lock().ok().and_then(|guard| guard.clone())
 }
@@ -573,6 +576,8 @@ pub fn clear_apns_push_token() {
     clear_token(apns_token_slot());
 }
 
+// Consumed only by the native (`not(wasm32)`) provider-token path.
+#[cfg(not(target_arch = "wasm32"))]
 fn normalize_provider_token(prefix: &str, token: &str) -> Option<String> {
     let trimmed = token.trim();
     if trimmed.is_empty() {

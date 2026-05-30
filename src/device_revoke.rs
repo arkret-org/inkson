@@ -251,7 +251,6 @@ pub struct DeviceRevokeMlsRemoveOutput {
 /// re-encrypt + persist before submitting the operation — otherwise a
 /// crash between submit and persist leaves the local cache one epoch
 /// behind the server.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn execute_mls_remove_from_snapshot(
     envelope: &crate::mls::persistence::MlsSnapshotEnvelope,
     snapshot_secret: &str,
@@ -272,7 +271,6 @@ pub fn execute_mls_remove_from_snapshot(
 /// submission envelope + the post-commit group state record that MUST
 /// be re-encrypted via [`crate::mls::persistence::encrypt_state`] and
 /// persisted before the commit is submitted to the server.
-#[cfg(not(target_arch = "wasm32"))]
 pub struct DeviceRevokeFullSnapshot {
     pub output: DeviceRevokeMlsRemoveOutput,
     pub post_state: contrix_sdk::MlsGroupStateRecord,

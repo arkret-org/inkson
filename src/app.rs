@@ -9472,61 +9472,57 @@ async fn bootstrap_mls_welcome_for_space(
     .await
     .map_err(|error| error.display())?;
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (messages, actor_did, device_id, state_store);
-        Ok(MlsWelcomeBootstrapOutcome::default())
+    // Runs on every target now that OpenMLS builds + runs under wasm32
+    // (the browser uses the in-tree OpenMLS via the `js` feature). Previously
+    // the wasm branch discarded the device messages and returned the default
+    // outcome, which is why a fresh browser never applied a pending Welcome
+    // and showed empty/locked encrypted spaces.
+    let messages_value =
+        serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let applied = {
+        let mut store = state_store.write();
+        crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
+            &mut store,
+            secure_store.as_ref(),
+            &space_id,
+            &actor_did,
+            &device_id,
+            &messages_value,
+        )
+    }
+    .map_err(|error| error.user_message())?;
+
+    if applied == 0 {
+        return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let messages_value =
-            serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        let applied = {
-            let mut store = state_store.write();
-            crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
-                &mut store,
-                secure_store.as_ref(),
-                &space_id,
-                &actor_did,
-                &device_id,
-                &messages_value,
-            )
-        }
-        .map_err(|error| error.user_message())?;
-
-        if applied == 0 {
-            return Ok(MlsWelcomeBootstrapOutcome::default());
-        }
-
-        let Some(snapshot) = state_store.read().mls_snapshot_for(&space_id) else {
-            return Ok(MlsWelcomeBootstrapOutcome {
-                applied,
-                backup_id: None,
-            });
-        };
-        let actor_for_backup = actor_did.clone();
-        let device_for_backup = device_id.clone();
-        let backup_id =
-            crate::views::helpers::with_authed_api(&base_url, session_token, |api| async move {
-                crate::mls::runtime::upload_mls_snapshot_backup(
-                    &api,
-                    &snapshot,
-                    &actor_for_backup,
-                    &device_for_backup,
-                )
-                .await
-                .map_err(|err| anyhow::anyhow!(err.user_message()))
-            })
-            .await
-            .map_err(|error| error.display())?;
-
-        Ok(MlsWelcomeBootstrapOutcome {
+    let Some(snapshot) = state_store.read().mls_snapshot_for(&space_id) else {
+        return Ok(MlsWelcomeBootstrapOutcome {
             applied,
-            backup_id: Some(backup_id),
+            backup_id: None,
+        });
+    };
+    let actor_for_backup = actor_did.clone();
+    let device_for_backup = device_id.clone();
+    let backup_id =
+        crate::views::helpers::with_authed_api(&base_url, session_token, |api| async move {
+            crate::mls::runtime::upload_mls_snapshot_backup(
+                &api,
+                &snapshot,
+                &actor_for_backup,
+                &device_for_backup,
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!(err.user_message()))
         })
-    }
+        .await
+        .map_err(|error| error.display())?;
+
+    Ok(MlsWelcomeBootstrapOutcome {
+        applied,
+        backup_id: Some(backup_id),
+    })
 }
 
 fn server_options_for(current_server_url: &str) -> Vec<String> {

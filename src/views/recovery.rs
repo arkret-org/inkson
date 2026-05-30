@@ -62,6 +62,11 @@ struct BackupSummaryRow {
     salt_b64: String,
     nonce_b64: String,
     ciphertext_b64: String,
+    /// Full server-returned envelope, retained so the recovery path can
+    /// re-drive `restore_mls_history_backup_with_device_snapshot` and unwrap the
+    /// account MLS secret (which both need the complete body, not just the
+    /// summary fields). The list endpoint already returns full bodies.
+    body: serde_json::Value,
 }
 
 fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
@@ -110,6 +115,7 @@ fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
         salt_b64,
         nonce_b64,
         ciphertext_b64,
+        body: v.clone(),
     })
 }
 
@@ -584,6 +590,9 @@ pub fn RecoveryPanel(
                                         VAULT_ARGON2_P,
                                     );
                                     let backup_id_clone = backup_id_for_async.clone();
+                                    // Cloned up-front because the primary upload moves `api_token`.
+                                    let mls_base = base.clone();
+                                    let mls_api_token = api_token.clone();
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.put_key_backup(&backup_id_clone, body).await
                                     })
@@ -604,6 +613,55 @@ pub fn RecoveryPanel(
                                             next.vault_backup_id = backup_id_for_async;
                                             next.vault_uploaded_at = now;
                                             save_state(&mut store, &actor_key_for_async, &next);
+
+                                            // Option A — also wrap the ACCOUNT-scoped MLS snapshot
+                                            // secret behind the same passphrase so a brand-new
+                                            // browser of this account can decrypt realm/kanban
+                                            // history after recovery. Reuses the already-derived KEK
+                                            // (no second Argon2id pass). Best-effort: a failure here
+                                            // must not undo the primary vault upload above.
+                                            let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                            match crate::mls::runtime::load_or_create_account_mls_secret(
+                                                secure.as_ref(),
+                                                &actor_for_async,
+                                                &device_for_async,
+                                            ) {
+                                                Ok(account_secret) => {
+                                                    let mls_backup_id =
+                                                        format!("cx:backup:{}", uuid_v7());
+                                                    match crate::mls::account_recovery::build_mls_account_secret_backup_body_with_kek(
+                                                        &mls_backup_id,
+                                                        &actor_for_async,
+                                                        &device_for_async,
+                                                        &kek,
+                                                        &account_secret,
+                                                    ) {
+                                                        Ok(mls_body) => {
+                                                            let mls_id = mls_backup_id.clone();
+                                                            let mls_outcome = with_authed_api(
+                                                                &mls_base,
+                                                                mls_api_token,
+                                                                |api| async move {
+                                                                    api.put_key_backup(&mls_id, mls_body).await
+                                                                },
+                                                            )
+                                                            .await;
+                                                            if let Err(err) = mls_outcome {
+                                                                vault_status.set(format!(
+                                                                    "Vault uploaded; account MLS recovery key upload failed: {}",
+                                                                    err.display()
+                                                                ));
+                                                            }
+                                                        }
+                                                        Err(err) => vault_status.set(format!(
+                                                            "Vault uploaded; failed to wrap account MLS secret: {err}"
+                                                        )),
+                                                    }
+                                                }
+                                                Err(err) => vault_status.set(format!(
+                                                    "Vault uploaded; account MLS secret unavailable: {err}"
+                                                )),
+                                            }
                                         }
                                         Err(err) => {
                                             vault_sync.set(SyncBadge::Failed);
@@ -1104,12 +1162,18 @@ pub fn RecoveryPanel(
                                     disabled: restore_pass().is_empty() || target_row.salt_b64.is_empty() || target_row.nonce_b64.is_empty() || target_row.ciphertext_b64.is_empty(),
                                     onclick: {
                                         let target_row = target_row.clone();
+                                        let actor_key = actor_key.clone();
+                                        let mut store = state_store;
                                         move |_| {
                                             let pass_bytes = restore_pass().into_bytes();
                                             let salt = target_row.salt_b64.clone();
                                             let nonce = target_row.nonce_b64.clone();
                                             let ct = target_row.ciphertext_b64.clone();
                                             let bid = target_row.backup_id.clone();
+                                            // Captured for the Option A account-MLS recovery below.
+                                            let all_rows = backup_rows();
+                                            let actor_key = actor_key.clone();
+                                            let device = device_id();
                                             restore_status.set("Stretching passphrase with Argon2id…".to_owned());
                                             restore_loading.set(true);
                                             spawn(async move {
@@ -1118,8 +1182,64 @@ pub fn RecoveryPanel(
                                                     Ok(plain) => {
                                                         let text = String::from_utf8_lossy(&plain).into_owned();
                                                         restore_plaintext.set(text);
-                                                        restore_pass.set(String::new());
                                                         restore_status.set(format!("Decrypted {bid_label}. The plaintext below stays in memory only — clear it when done."));
+
+                                                        // Option A — recover the ACCOUNT-scoped MLS
+                                                        // snapshot secret so this fresh browser can
+                                                        // decrypt realm/kanban history. The same
+                                                        // passphrase that just opened the recovery
+                                                        // vault also unwraps the `mls_account_secret`
+                                                        // backup; once stored, replay each
+                                                        // `mls_history` backup so history is
+                                                        // immediately decryptable.
+                                                        let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                                        let mls_secret_body = all_rows.iter().map(|r| &r.body).find(|b| {
+                                                            crate::mls::account_recovery::is_mls_account_secret_backup(b)
+                                                        });
+                                                        if let Some(mls_secret_body) = mls_secret_body {
+                                                            match crate::mls::account_recovery::decrypt_mls_account_secret_backup(
+                                                                &pass_bytes,
+                                                                mls_secret_body,
+                                                            ) {
+                                                                Ok(secret_bytes) => {
+                                                                    let secret = String::from_utf8_lossy(&secret_bytes).into_owned();
+                                                                    if let Err(err) = crate::mls::runtime::store_account_mls_secret(
+                                                                        secure.as_ref(),
+                                                                        &actor_key,
+                                                                        &secret,
+                                                                    ) {
+                                                                        restore_status.set(format!(
+                                                                            "Decrypted {bid_label}; storing account MLS secret failed: {err}"
+                                                                        ));
+                                                                    } else {
+                                                                        let mut restored = 0usize;
+                                                                        let mut failed = 0usize;
+                                                                        for r in all_rows.iter().filter(|r| r.backup_class == "mls_history") {
+                                                                            let mut guard = store.write();
+                                                                            let result = crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
+                                                                                &mut guard,
+                                                                                secure.as_ref(),
+                                                                                &actor_key,
+                                                                                &device,
+                                                                                &r.body,
+                                                                            );
+                                                                            drop(guard);
+                                                                            match result {
+                                                                                Ok(_) => restored += 1,
+                                                                                Err(_) => failed += 1,
+                                                                            }
+                                                                        }
+                                                                        restore_status.set(format!(
+                                                                            "Decrypted {bid_label}. Account MLS secret recovered; restored {restored} history backup(s), {failed} failed."
+                                                                        ));
+                                                                    }
+                                                                }
+                                                                Err(err) => restore_status.set(format!(
+                                                                    "Decrypted {bid_label}; account MLS secret unwrap failed: {err}"
+                                                                )),
+                                                            }
+                                                        }
+                                                        restore_pass.set(String::new());
                                                     }
                                                     Err(err) => {
                                                         restore_plaintext.set(String::new());
