@@ -209,13 +209,25 @@ impl YougenEventSigner {
         let canonical_bytes = builder
             .canonical_bytes(&canonical)
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let payload_digest = crate::canonical::sha256_digest(&canonical_bytes);
+        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+
+        let verification_method = self.verification_method_for_event(event);
+        let created_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let proof_binding = serde_json::json!({
+            "event_digest": event_digest.as_str(),
+            "actor_id": event.actor_id.as_str(),
+            "verification_method": verification_method.as_str(),
+            "created_at": created_at.as_str(),
+        });
+        let proof_binding_bytes = builder
+            .canonical_bytes(&proof_binding)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
 
         // Run the SDK signer — its `sign` already prepends the b64u
         // header + b64u payload and returns the raw signature bytes.
         let signature = self
             .inner
-            .sign(&canonical_bytes)
+            .sign(&proof_binding_bytes)
             .map_err(|err| EventSignerError::Backend(err.to_string()))?;
 
         // Reassemble the detached JWS using the same header constant the
@@ -228,17 +240,13 @@ impl YougenEventSigner {
         let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
         let jws = format!("{header_b64}..{sig_b64}");
 
-        let verification_method = self.verification_method_for_event(event);
         event.proofs = vec![EventProof {
             kind: "detached_jws".to_owned(),
             alg: self.algorithm().to_owned(),
             verification_method,
-            payload_digest,
+            event_digest,
             jws,
-            // Canonical RFC3339 UTC (no fractional seconds) per
-            // spec encoding.md §3.5 / soland validator
-            // `canonical::validate_timestamp_canonical`.
-            created_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            created_at,
         }];
         if event.actor_id.is_empty() {
             event.actor_id = self.signer_did.clone();
@@ -484,7 +492,7 @@ mod tests {
         assert_eq!(proof.kind, "detached_jws");
         assert_eq!(proof.alg, "EdDSA");
         assert_eq!(proof.verification_method, "did:web:bob.example#device");
-        assert!(proof.payload_digest.starts_with("sha256:"));
+        assert!(proof.event_digest.starts_with("sha256:"));
         // Real detached JWS: header..signature, signature non-empty.
         let parts: Vec<&str> = proof.jws.split('.').collect();
         assert_eq!(parts.len(), 3);

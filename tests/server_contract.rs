@@ -158,10 +158,26 @@ fn yougen_accepts_server_contract_payloads() {
         },
         "stripped_state": [],
         "join_rule": "public",
-        "via_services": ["did:web:server.local"]
+        "join_candidates": [{
+            "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+            "service_did": "did:web:server.local",
+            "service_type": "principal_server",
+            "role": "primary",
+            "endpoint": "http://server",
+            "operations": ["cx.events.submit"],
+            "join_methods": ["invite_accept", "member_join"],
+            "priority": 0,
+            "source": "directory_ingest",
+            "as_of": "2026-05-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z"
+        }]
     }))
     .unwrap();
     assert_eq!(resolved.join_rule, "public");
+    assert_eq!(
+        resolved.join_candidates[0].service_did,
+        "did:web:server.local"
+    );
 
     let submit: yougen::models::SubmitEventResponse = serde_json::from_value(json!({
         "status": "accepted",

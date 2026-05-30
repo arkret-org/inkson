@@ -214,7 +214,7 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 # Stream J conformance gates (`tests/conformance_gates.rs`,
 # `tests/anchor_staleness_drill.rs`): JSON Schema 2020-12 validation of
 # envelopes produced by typed builders against
-# `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`.
+# `contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 # Pinned to the same version cotest uses so a registry/resource bump
 # lands in one place.
 jsonschema = { version = "0.46.4", default-features = false, features = ["resolve-file"] }

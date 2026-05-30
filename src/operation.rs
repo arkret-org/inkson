@@ -1,6 +1,6 @@
 //! Typed v1 Event Envelope used by yougen's active write paths.
 //!
-//! Spec source of truth: `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`.
+//! Spec source of truth: `contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //!
 //! # Signing
 //!
@@ -102,7 +102,7 @@ pub(crate) fn scope_id_as_realm_id(value: &str) -> String {
         .unwrap_or_else(|| value.to_owned())
 }
 
-/// Typed semantic reference per spec `event-schema.json $defs/semantic_ref`.
+/// Typed semantic reference per spec `event-envelope.schema.json $defs/semantic_ref`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SemanticRef {
     pub id: String,
@@ -117,7 +117,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Typed inclusion-proof body per spec `event-schema.json $defs/semantic_ref.proof`.
+/// Typed inclusion-proof body per spec `event-envelope.schema.json $defs/semantic_ref.proof`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InclusionProof {
     pub kind: String,
@@ -127,14 +127,14 @@ pub struct InclusionProof {
     pub tree_size: u64,
 }
 
-/// Typed precondition per spec `event-schema.json $defs/precondition`.
+/// Typed precondition per spec `event-envelope.schema.json $defs/precondition`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Precondition {
     pub cell: String,
     pub predicate: Predicate,
 }
 
-/// Typed predicate per spec `event-schema.json $defs/predicate`.
+/// Typed predicate per spec `event-envelope.schema.json $defs/predicate`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Predicate {
     pub op: String,
@@ -146,14 +146,14 @@ pub struct Predicate {
     pub predicate_id: Option<String>,
 }
 
-/// Typed effect per spec `event-schema.json $defs/effect`.
+/// Typed effect per spec `event-envelope.schema.json $defs/effect`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Effect {
     pub cell: String,
     pub op: LatticeOp,
 }
 
-/// Typed lattice op per spec `event-schema.json $defs/lattice_op`.
+/// Typed lattice op per spec `event-envelope.schema.json $defs/lattice_op`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LatticeOp {
     pub kind: String,
@@ -175,7 +175,7 @@ pub struct LatticeOp {
     pub predecessor: Option<String>,
 }
 
-/// Typed envelope requirements block per spec `event-schema.json
+/// Typed envelope requirements block per spec `event-envelope.schema.json
 /// properties.requirements`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EventRequirements {
@@ -189,7 +189,7 @@ pub struct EventRequirements {
     pub critical_extensions: Vec<CriticalExtension>,
 }
 
-/// Typed critical-extension declaration per spec `event-schema.json
+/// Typed critical-extension declaration per spec `event-envelope.schema.json
 /// $defs/criticalExtension`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CriticalExtension {
@@ -202,7 +202,7 @@ pub struct CriticalExtension {
 
 /// Current v1 Event Envelope used by active write paths.
 ///
-/// Field names match the wire JSON exactly per spec `event-schema.json` —
+/// Field names match the wire JSON exactly per spec `event-envelope.schema.json` —
 /// no serde renames. `preconditions` / `effects` / `anchor_ref` are
 /// `Option<Vec<...>>` / `Option<String>` because reducer-input event kinds
 /// require them and non-reducer kinds (read marker, account_data, ...)
@@ -243,7 +243,7 @@ pub struct EventProof {
     pub kind: String,
     pub alg: String,
     pub verification_method: String,
-    pub payload_digest: String,
+    pub event_digest: String,
     pub created_at: String,
     pub jws: String,
 }
@@ -409,7 +409,7 @@ impl EventEnvelope {
     pub fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
         let digest = self.canonical_digest()?;
         for proof in &mut self.proofs {
-            proof.payload_digest = digest.clone();
+            proof.event_digest = digest.clone();
         }
         Ok(())
     }
@@ -2511,7 +2511,7 @@ mod tests {
     fn spec_event_schema_lists_client_write_kinds() {
         let schema_text = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../contrix-spec/spec/v1/artifacts/schemas/event-schema.json"),
+                .join("../contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json"),
         )
         .unwrap();
         for kind in [
@@ -2559,7 +2559,7 @@ mod tests {
         let proof = op.proofs.first().expect("proof present");
         assert_eq!(proof.alg, "EdDSA");
         assert_eq!(proof.verification_method, "did:web:alice#k1");
-        assert!(proof.payload_digest.starts_with("sha256:"));
+        assert!(proof.event_digest.starts_with("sha256:"));
         // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
         assert_eq!(proof.jws.matches('.').count(), 2);
         assert!(op.require_proof().is_ok());

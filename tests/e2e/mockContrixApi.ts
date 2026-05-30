@@ -869,7 +869,7 @@ export async function mockContrixApi(page: Page) {
         space_preview: spacePreview(),
         stripped_state: [],
         join_rule: "public",
-        via_services: ["did:web:server.local"],
+        join_candidates: [joinCandidate()],
       });
     }
 
@@ -1134,6 +1134,22 @@ function spacePreview() {
     tags: ["demo"],
     public: true,
     category: "collaboration",
+  };
+}
+
+function joinCandidate() {
+  return {
+    realm_id: DEMO_SPACE.replace(/^cx:space:/, "cx:realm:"),
+    service_did: "did:web:server.local",
+    service_type: "principal_server",
+    role: "primary",
+    endpoint: "http://server",
+    operations: ["cx.events.submit"],
+    join_methods: ["invite_accept", "member_join"],
+    priority: 0,
+    source: "directory_ingest",
+    as_of: "2026-05-30T00:00:00Z",
+    expires_at: "2099-01-01T00:00:00Z",
   };
 }
 

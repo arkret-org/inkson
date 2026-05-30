@@ -1,12 +1,12 @@
 //! Conformance gate: every typed builder in yougen MUST produce an
-//! EventEnvelope that validates against contrix-spec event-schema.json.
+//! EventEnvelope that validates against contrix-spec event-envelope.schema.json.
 //!
 //! Stream J of `_claude_todos.md`. Three families of gates live here:
 //!
 //! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
 //!    wire-only fields a real submitter would attach (`anchor_ref`, `proofs[0]` from a real Ed25519
 //!    signer) → serialise → validate against
-//!    `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`. Schema requires reducer-input
+//!    `contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`. Schema requires reducer-input
 //!    events to carry `preconditions`, `effects`, `anchor_ref`, and at least one proof; the gate
 //!    therefore covers both the builder output and the sign-and-stamp pipeline immediately
 //!    downstream.
@@ -106,19 +106,19 @@ fn code_portion(line: &str) -> &str {
 fn event_schema_validator() -> &'static jsonschema::Validator {
     static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
     VALIDATOR.get_or_init(|| {
-        let event_schema_path = spec_artifact("schemas/event-schema.json");
+        let event_schema_path = spec_artifact("schemas/event-envelope.schema.json");
         let schemas_dir = spec_artifact("schemas");
 
         let event_schema_raw = fs::read_to_string(&event_schema_path).unwrap_or_else(|err| {
             panic!("read {} failed: {err}", event_schema_path.display());
         });
-        let event_schema: Value =
-            serde_json::from_str(&event_schema_raw).expect("event-schema.json parses as JSON");
+        let event_schema: Value = serde_json::from_str(&event_schema_raw)
+            .expect("event-envelope.schema.json parses as JSON");
 
         let event_schema_id = event_schema
             .get("$id")
             .and_then(Value::as_str)
-            .unwrap_or("https://contrix.io/artifacts/schemas/event-schema.json")
+            .unwrap_or("https://contrix.io/artifacts/schemas/event-envelope.schema.json")
             .to_owned();
 
         let mut registry = Registry::new();
@@ -188,7 +188,7 @@ const TEST_ANCHOR_REF: &str =
 /// Stamp the wire fields the submit pipeline would normally attach
 /// (anchor_ref + Ed25519 proof) so the envelope satisfies the
 /// "reducer-input requires preconditions/effects/anchor_ref/proofs"
-/// rules baked into event-schema.json.
+/// rules baked into event-envelope.schema.json.
 fn stamp_wire_fields(envelope: &mut EventEnvelope) {
     if envelope.anchor_ref.is_none() {
         envelope.anchor_ref = Some(TEST_ANCHOR_REF.to_owned());
@@ -252,7 +252,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
             "kind": "detached_jws",
             "alg": "EdDSA",
             "verification_method": "did:web:alice.example#device",
-            "payload_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "event_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "created_at": "2026-05-21T13:00:00Z",
             "jws": "a.b.c"
         }]
@@ -261,7 +261,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         !validator.is_valid(&reducer_missing_required),
         "validator accepted a reducer-input cx.realm.create envelope \
          missing preconditions/effects/anchor_ref; the conditional `if/then` \
-         branch on event-schema.json is not being evaluated"
+         branch on event-envelope.schema.json is not being evaluated"
     );
 }
 

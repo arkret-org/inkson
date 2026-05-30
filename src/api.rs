@@ -110,10 +110,10 @@ use crate::models::{
     MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
     MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
-    OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
-    ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
-    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
+    OkResBody, PolicyCheckResBody, PushRegisterResponse, RealmJoinCandidate, ReceiptResponse,
+    ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse,
+    SearchSpacesResponse, ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse,
+    SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
     TypingResponse, UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
@@ -1982,6 +1982,21 @@ impl ContrixApi {
             .await
     }
 
+    pub async fn resolve_invitee_did(&self, target: &str) -> anyhow::Result<String> {
+        let target = target.trim();
+        if target.is_empty() {
+            anyhow::bail!("invitee is required");
+        }
+        if contrix_sdk::Did::new(target.to_owned()).is_ok() {
+            return Ok(target.to_owned());
+        }
+        let resolved = self.resolve_handle(target).await?;
+        contrix_sdk::Did::new(resolved.did.clone()).map_err(|err| {
+            anyhow::anyhow!("directory resolved invalid DID `{}`: {err}", resolved.did)
+        })?;
+        Ok(resolved.did)
+    }
+
     /// R3.2 (contrix-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
     ///
     /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
@@ -2218,8 +2233,13 @@ impl ContrixApi {
         target: &str,
         role: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
+        let invitee_did = self.resolve_invitee_did(target).await?;
         let envelope = crate::operation::cx_ops::invite_create_structured(
-            space_id, actor_id, invite_id, target, role,
+            space_id,
+            actor_id,
+            invite_id,
+            &invitee_did,
+            role,
         )
         .build("yougen");
         self.submit_event_envelope(&envelope).await
@@ -2234,7 +2254,10 @@ impl ContrixApi {
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope =
             crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id).build("yougen");
-        self.submit_event_envelope(&envelope).await
+        let resolved = self.resolve_realm(&scope_id_as_realm_id(space_id)).await?;
+        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        self.submit_event_envelope_via_join_candidate(candidate, &envelope)
+            .await
     }
 
     /// Join a Realm through an outstanding invite. The invite projection
@@ -2247,7 +2270,38 @@ impl ContrixApi {
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
-        self.submit_event_envelope(&envelope).await
+        let resolved = self.resolve_realm(realm_id).await?;
+        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        self.submit_event_envelope_via_join_candidate(candidate, &envelope)
+            .await
+    }
+
+    async fn submit_event_envelope_via_join_candidate(
+        &self,
+        candidate: &RealmJoinCandidate,
+        event: &EventEnvelope,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let Some(endpoint) = candidate
+            .endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return self.submit_event_envelope(event).await;
+        };
+        let endpoint_url = validate_server_url(endpoint)?;
+        if endpoint_url == self.base_url {
+            return self.submit_event_envelope(event).await;
+        }
+
+        let mut routed = ContrixApi::new(endpoint)?;
+        if let Some(token) = self.access_token.as_deref() {
+            routed = routed.with_bearer(token.to_owned());
+        }
+        if let Some(sync_token) = self.wait_for_sync_token.as_deref() {
+            routed = routed.with_wait_for(sync_token.to_owned());
+        }
+        routed.submit_event_envelope(event).await
     }
 
     /// Reject an invite via `cx.invite.cancel` event (spec-canonical).
@@ -2733,7 +2787,7 @@ impl ContrixApi {
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let response = self.snapshot_head(realm_id).await?;
         // Soland projects the head as a snapshot_ref in the form
-        // `cx:anchor:sha256:<hex>` (matches event-schema.json
+        // `cx:anchor:sha256:<hex>` (matches event-envelope.schema.json
         // $defs/anchor_ref). Trust the server's wire shape and return
         // it verbatim — fail closed if the field is empty so an
         // upstream bug shows up locally before the wire round-trip.
@@ -4689,6 +4743,47 @@ pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescrib
 
 pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmResponse> {
     Ok(serde_json::from_value(value)?)
+}
+
+fn select_join_candidate<'a>(
+    resolved: &'a ResolveRealmResponse,
+    join_method: &str,
+) -> anyhow::Result<&'a RealmJoinCandidate> {
+    let realm_id = scope_id_as_realm_id(resolved.space_preview.projection_realm_id());
+    resolved
+        .join_candidates
+        .iter()
+        .filter(|candidate| candidate.realm_id == realm_id)
+        .filter(|candidate| {
+            candidate
+                .operations
+                .iter()
+                .any(|op| op == "cx.events.submit")
+        })
+        .filter(|candidate| {
+            candidate
+                .join_methods
+                .iter()
+                .any(|method| method == join_method)
+        })
+        .filter(|candidate| join_candidate_is_current(candidate))
+        .min_by(|left, right| {
+            left.priority
+                .unwrap_or(u16::MAX)
+                .cmp(&right.priority.unwrap_or(u16::MAX))
+                .then_with(|| left.service_did.cmp(&right.service_did))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "resolve_realm did not return a current join candidate for {join_method}"
+            )
+        })
+}
+
+fn join_candidate_is_current(candidate: &RealmJoinCandidate) -> bool {
+    chrono::DateTime::parse_from_rfc3339(&candidate.expires_at)
+        .map(|expires_at| expires_at.with_timezone(&chrono::Utc) > chrono::Utc::now())
+        .unwrap_or(false)
 }
 
 fn patch_touches_create_locked_encryption_profile(patch: &Value) -> bool {

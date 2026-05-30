@@ -295,12 +295,38 @@ pub struct DirectoryDescribeResBody {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveRealmResponse {
+    #[serde(alias = "realm_preview")]
     pub space_preview: SpacePreview,
     #[serde(default)]
     pub stripped_state: Vec<Value>,
     pub join_rule: String,
     #[serde(default)]
-    pub via_services: Vec<String>,
+    pub join_candidates: Vec<RealmJoinCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RealmJoinCandidate {
+    pub realm_id: String,
+    pub service_did: String,
+    pub service_type: String,
+    pub role: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub operations: Vec<String>,
+    #[serde(default)]
+    pub join_methods: Vec<String>,
+    #[serde(default)]
+    pub priority: Option<u16>,
+    pub source: String,
+    #[serde(default)]
+    pub source_refs: Option<Vec<String>>,
+    #[serde(default)]
+    pub frontier_ref: Option<String>,
+    pub as_of: String,
+    pub expires_at: String,
+    #[serde(default)]
+    pub proofs: Vec<Value>,
 }
 
 /// Sidebar tag distinguishing a security-boundary Realm from a
@@ -321,7 +347,7 @@ pub enum SpacePreviewKind {
     Space,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SpacePreview {
     pub space_id: String,
     pub name: String,
@@ -342,6 +368,51 @@ pub struct SpacePreview {
     /// own home); set to the parent Realm id for Spaces.
     #[serde(default)]
     pub realm_id: String,
+}
+
+impl<'de> Deserialize<'de> for SpacePreview {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            space_id: Option<String>,
+            #[serde(default)]
+            realm_id: Option<String>,
+            name: String,
+            description: Option<String>,
+            #[serde(default)]
+            tags: std::collections::BTreeSet<String>,
+            public: bool,
+            category: Option<String>,
+            #[serde(default)]
+            parent_space_id: Option<String>,
+            #[serde(default)]
+            child_space_ids: Vec<String>,
+            #[serde(default)]
+            kind: SpacePreviewKind,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let space_id = wire
+            .space_id
+            .or_else(|| wire.realm_id.clone())
+            .ok_or_else(|| serde::de::Error::missing_field("space_id"))?;
+        Ok(Self {
+            space_id,
+            name: wire.name,
+            description: wire.description,
+            tags: wire.tags,
+            public: wire.public,
+            category: wire.category,
+            parent_space_id: wire.parent_space_id,
+            child_space_ids: wire.child_space_ids,
+            kind: wire.kind,
+            realm_id: wire.realm_id.unwrap_or_default(),
+        })
+    }
 }
 
 impl SpacePreview {

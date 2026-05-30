@@ -14,7 +14,7 @@
 //!      SHA-256-derived anchor ref.
 //!   2. `proofs[0].jws` matches `^[A-Za-z0-9_-]+\.\.[A-Za-z0-9_-]+$` (detached-JWS shape) and is
 //!      NOT the dev placeholder `"a..b"`.
-//!   3. `proofs[0].payload_digest` starts with `sha256:` and has 64 hex chars.
+//!   3. `proofs[0].event_digest` starts with `sha256:` and has 64 hex chars.
 //!   4. `anchor_ref` is `Some(_)` for reducer-input kinds AND matches
 //!      `^cx:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the all-zero hash.
 //!
@@ -95,7 +95,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     stamp_real_proof_and_anchor(&mut envelope);
 
     assert_jws_is_real_signature(&envelope);
-    assert_payload_digest_is_sha256(&envelope);
+    assert_event_digest_is_sha256(&envelope);
     assert_anchor_ref_is_real(&envelope);
 }
 
@@ -129,7 +129,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     for mut envelope in events {
         stamp_real_proof_and_anchor(&mut envelope);
         assert_jws_is_real_signature(&envelope);
-        assert_payload_digest_is_sha256(&envelope);
+        assert_event_digest_is_sha256(&envelope);
         assert_anchor_ref_is_real(&envelope);
     }
 }
@@ -167,31 +167,31 @@ fn assert_jws_is_real_signature(envelope: &EventEnvelope) {
     );
 }
 
-fn assert_payload_digest_is_sha256(envelope: &EventEnvelope) {
+fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
     let proof = envelope
         .proofs
         .first()
         .unwrap_or_else(|| panic!("envelope kind={} missing proofs[0]", envelope.kind));
     let hex = proof
-        .payload_digest
+        .event_digest
         .strip_prefix("sha256:")
         .unwrap_or_else(|| {
             panic!(
-                "envelope kind={} payload_digest `{}` does not start with `sha256:`",
-                envelope.kind, proof.payload_digest
+                "envelope kind={} event_digest `{}` does not start with `sha256:`",
+                envelope.kind, proof.event_digest
             )
         });
     assert_eq!(
         hex.len(),
         64,
-        "envelope kind={} payload_digest hex segment is {} chars (expected 64): `{}`",
+        "envelope kind={} event_digest hex segment is {} chars (expected 64): `{}`",
         envelope.kind,
         hex.len(),
         hex
     );
     assert!(
         hex.chars().all(|c| c.is_ascii_hexdigit()),
-        "envelope kind={} payload_digest `{}` contains non-hex characters",
+        "envelope kind={} event_digest `{}` contains non-hex characters",
         envelope.kind,
         hex
     );

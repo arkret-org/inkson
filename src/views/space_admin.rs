@@ -1267,11 +1267,23 @@ pub fn SpaceAdminPanel(
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                             Ok(api) => {
+                                                let invitee_did = match api.resolve_invitee_did(&target).await {
+                                                    Ok(did) => did,
+                                                    Err(error) => {
+                                                        status_msg.set(format!("invitee resolve failed: {error}"));
+                                                        return;
+                                                    }
+                                                };
+                                                let invitee_label = if invitee_did == target {
+                                                    invitee_did.clone()
+                                                } else {
+                                                    format!("{target} -> {invitee_did}")
+                                                };
                                                 let op = cx_ops::invite_create_structured(
                                                     &space,
                                                     &actor,
                                                     &invite_id,
-                                                    &target,
+                                                    &invitee_did,
                                                     None,
                                                 )
                                                 .build("yougen");
@@ -1280,7 +1292,7 @@ pub fn SpaceAdminPanel(
                                                     Ok(submitted) => {
                                                         space_invites.write().push(InviteRecord {
                                                             invite_id: invite_id.clone(),
-                                                            target: target.clone(),
+                                                            target: invitee_did.clone(),
                                                             role: None,
                                                             state: "pending".to_owned(),
                                                             operation_id: Some(op_id.clone()),
@@ -1299,7 +1311,7 @@ pub fn SpaceAdminPanel(
                                                                 json!({
                                                                     "kind": "cx.invite.create",
                                                                     "invite_id": invite_id,
-                                                                    "invitee": target,
+                                                                    "invitee": invitee_did,
                                                                     "state": "pending",
                                                                     "event_id": submitted.event_id,
                                                                 }),
@@ -1308,7 +1320,7 @@ pub fn SpaceAdminPanel(
                                                         invite_target.set(String::new());
                                                         status_msg.set(format!(
                                                             "invited {} (pending) fact {}",
-                                                            target,
+                                                            invitee_label,
                                                             short_protocol_id(&op_id)
                                                         ));
                                                     }

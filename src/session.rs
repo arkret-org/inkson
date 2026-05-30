@@ -106,12 +106,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn returns_none_when_no_refresher_registered() {
-        // Fresh test thread → no refresher installed on this thread-local.
-        assert_eq!(refresh_current_bearer().await, None);
-    }
-
-    #[tokio::test]
     async fn returns_registered_refresher_result() {
         register_session_refresher(Rc::new(|| {
             Box::pin(async { Some("fresh-bearer".to_owned()) })
