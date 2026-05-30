@@ -106,7 +106,7 @@ pub fn SettingsSecurityPanel(
                         }
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "Key backup" }
-                            HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + MLS history key. The passphrase is stretched on-device with Argon2id; the server only stores the ciphertext.".to_owned() }
+                            HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + account MLS history key. The passphrase is stretched on-device with Argon2id; the server only stores ciphertext. Anyone who learns the passphrase can unlock historical encrypted backups, and device revocation does not erase an MLS history key already stored on that device.".to_owned() }
                         }
                     }
 

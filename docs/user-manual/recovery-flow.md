@@ -28,7 +28,8 @@ Use this when:
 1. Install yougen on the recovery device. Sign in via coauth as usual.
 2. Open **Settings → Recovery → Restore from vault**.
 3. Enter the passphrase. yougen pulls the encrypted blob, runs Argon2id,
-   decrypts via XChaCha20-Poly1305, then re-bootstraps the device key.
+   decrypts via XChaCha20-Poly1305, then re-bootstraps the device key and
+   imports the account MLS history secret when one is present.
 4. The new device automatically publishes a `cx.device.authorize` envelope
    with `successor_of` pointing at the recovered identity.
 
@@ -36,6 +37,11 @@ Use this when:
 
 If decryption fails, the passphrase is wrong. There is no recovery for a
 forgotten passphrase — fall back to SSS or the recovery key.
+
+For encrypted history, this passphrase is the account-level trust root: anyone
+who can unlock the `mls_account_secret` backup can decrypt historical
+`mls_history` backups. Revoking a device does not retroactively remove a copy
+of the account MLS secret that was already stored on that device.
 
 ---
 

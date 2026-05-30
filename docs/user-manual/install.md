@@ -80,9 +80,9 @@ warning banner:
 
 > Using browser storage fallback — recommend Tauri desktop for full security.
 
-This is expected. The browser has no symmetric-secret tier; keys live in
-LocalStorage / IndexedDB and survive cross-tab use but never reach OS-level
-hardware protection.
+This is expected. The web build still runs the live MLS encrypted-history
+path, but the browser has no OS keychain tier; keys live in LocalStorage /
+IndexedDB and survive cross-tab use without hardware-backed protection.
 
 <!-- TODO(screenshot): web-fallback-banner.png -->
 

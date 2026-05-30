@@ -6643,6 +6643,10 @@ pub fn RouterView() -> Element {
     let mut shortcut_help_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
+    // Step 3 of the account-MLS-secret auto-unlock flow: set by the bootstrap
+    // effect when this device has no local account secret yet but the server
+    // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
+    let needs_mls_unlock = use_signal(|| false);
 
     // On first render with a live session, fetch the directory + sync so
     // the sidebar's Space list shows up after a page reload. The list
@@ -7000,6 +7004,7 @@ pub fn RouterView() -> Element {
         let state_store_for_bootstrap = state_store;
         let crypto_state_for_bootstrap = crypto_state;
         let last_error_for_bootstrap = last_error;
+        let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
         use_effect(move || {
             let selected = selected_space();
             if !bootstrap_route_uses_space_context {
@@ -7034,6 +7039,13 @@ pub fn RouterView() -> Element {
             let mut crypto_state_task = crypto_state_for_bootstrap;
             let mut last_error_task = last_error_for_bootstrap;
             let space_label = short_protocol_id(&bootstrap_space_id);
+            // Detection-step clones: the originals are moved into the Welcome
+            // bootstrap call below; we reuse these for the account-secret
+            // unlock probe afterwards.
+            let detect_base = base.clone();
+            let detect_session = session.clone();
+            let detect_actor = actor.clone();
+            let detect_device = device.clone();
             spawn(async move {
                 match bootstrap_mls_welcome_for_space(
                     base,
@@ -7059,6 +7071,38 @@ pub fn RouterView() -> Element {
                     Ok(_) => {}
                     Err(error) => {
                         last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                    }
+                }
+
+                // Step-3 detection: if this device has no local account MLS
+                // secret yet AND the server holds an account-secret backup,
+                // flag the unlock prompt. Detection errors must NOT block or
+                // fail boot — log and leave the flag false.
+                let has_local_secret = crate::mls::runtime::load_device_snapshot_secret(
+                    crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                    &detect_actor,
+                    &detect_device,
+                )
+                .is_ok();
+                if !has_local_secret {
+                    match crate::views::helpers::with_authed_api(
+                        &detect_base,
+                        detect_session,
+                        |api| async move {
+                            crate::mls::account_recovery::fetch_mls_account_secret_backup(&api)
+                                .await
+                        },
+                    )
+                    .await
+                    {
+                        Ok(Some(_)) => needs_mls_unlock_for_bootstrap.set(true),
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error.display(),
+                                "MLS account-secret unlock detection failed"
+                            );
+                        }
                     }
                 }
             });
@@ -7364,6 +7408,18 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            // Step 3 of the account-MLS-secret auto-unlock flow: a
+            // recovery-passphrase banner that restores encrypted history on
+            // a fresh device. Renders nothing unless boot detection flagged
+            // `needs_mls_unlock`.
+            crate::components::MlsUnlockPrompt {
+                base_url,
+                token,
+                actor_did: account_did,
+                device_id,
+                state_store,
+                needs_mls_unlock,
+            }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
                     class: "btn icon sm ghost",
@@ -9480,7 +9536,7 @@ async fn bootstrap_mls_welcome_for_space(
     let messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let applied = {
+    let welcome_outcome = {
         let mut store = state_store.write();
         crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
             &mut store,
@@ -9493,6 +9549,20 @@ async fn bootstrap_mls_welcome_for_space(
     }
     .map_err(|error| error.user_message())?;
 
+    // Welcomes were present but some/all failed to apply: report (do not fail
+    // the boot when others succeeded). A totally-empty welcome set has
+    // `failed == 0` and is silent.
+    if welcome_outcome.failed > 0 {
+        tracing::warn!(
+            space = %space_id,
+            applied = welcome_outcome.applied,
+            failed = welcome_outcome.failed,
+            first_error = welcome_outcome.first_error.as_deref().unwrap_or(""),
+            "some MLS welcome(s) failed to apply"
+        );
+    }
+
+    let applied = welcome_outcome.applied;
     if applied == 0 {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }

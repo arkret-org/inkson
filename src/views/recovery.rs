@@ -462,7 +462,7 @@ pub fn RecoveryPanel(
                         pending_label: Some("Uploading…".to_owned()),
                         test_id: Some("vault-sync-badge".to_owned()),
                     }
-                    HelpTip { text: "Your passphrase is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and the resulting key encrypts the recovery payload with XChaCha20-Poly1305 before it leaves the device. The salt and nonce travel with the ciphertext; the passphrase does not." }
+                    HelpTip { text: "Your passphrase is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret with XChaCha20-Poly1305 before upload. Anyone who learns it can unlock encrypted history backups; revoking a device does not erase an MLS history secret already stored on that device." }
                 }
                 div { class: "workflow-form",
                     label { r#for: "vault-passphrase", "Vault passphrase" }

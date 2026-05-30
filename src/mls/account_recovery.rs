@@ -22,18 +22,14 @@ use crate::recovery_crypto::{
 
 /// `item_type` carried by the account MLS snapshot secret backup.
 ///
-/// DEVIATION FROM DESIGN: the design asked for `item_type ==
-/// "mls_account_secret"`, but soland's (unmodifiable) `secret_storage`
-/// item-type allowlist
+/// Both soland's validator
 /// (`soland/src/routing/identity/key_backup.rs::KEY_BACKUP_CONTENT_TYPES`)
-/// does NOT include that string and would reject the PUT with a
-/// `SchemaViolation`. We therefore reuse the already-allowlisted
-/// `mls_group_secrets_backup_key` content type — which is the
-/// closest-semantics `secret_storage` item (an MLS-group secret backup key) —
-/// and carry the MLS account-secret identity through the (unvalidated)
-/// `secret_id`. The recovery side keys off `secret_id`, so the change is
-/// transparent end-to-end.
-pub const MLS_ACCOUNT_SECRET_ITEM_TYPE: &str = "mls_group_secrets_backup_key";
+/// and the yougen client validator
+/// (`key_backup::item_type_allowed_for_class`) allowlist this dedicated
+/// content type under the `secret_storage` class, so it is the primary
+/// discriminator for the recovery import path. `secret_id` is still carried
+/// for human-readable disambiguation.
+pub const MLS_ACCOUNT_SECRET_ITEM_TYPE: &str = "mls_account_secret";
 /// `secret_id` carried by the account MLS snapshot secret backup. This is the
 /// stable discriminator the recovery import path matches against.
 pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "yougen_mls_account_secret";
@@ -52,9 +48,15 @@ pub fn build_mls_account_secret_backup_body(
     device_id: &str,
     account_secret: &str,
 ) -> Result<Value> {
-    let kek = derive_vault_kek(account_secret.as_bytes())
-        .map_err(|err| anyhow!("derive KEK: {err}"))?;
-    build_mls_account_secret_backup_body_with_kek(backup_id, actor_did, device_id, &kek, account_secret)
+    let kek =
+        derive_vault_kek(account_secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
+    build_mls_account_secret_backup_body_with_kek(
+        backup_id,
+        actor_did,
+        device_id,
+        &kek,
+        account_secret,
+    )
 }
 
 /// Variant of [`build_mls_account_secret_backup_body`] that wraps the account
@@ -139,16 +141,178 @@ pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Res
     decrypt_vault(passphrase, salt_b64, nonce_b64, ciphertext_b64)
 }
 
-/// True when `body` is an MLS account-secret backup. Matched on `secret_id`
-/// (the stable discriminator) rather than `item_type`, since the item_type is a
-/// shared `secret_storage` content type (see [`MLS_ACCOUNT_SECRET_ITEM_TYPE`]).
+/// True when `body` is an MLS account-secret backup. Matched on the dedicated
+/// `mls_account_secret` item type (now allowlisted by both validators);
+/// `secret_id` remains as a secondary, human-readable label.
 pub fn is_mls_account_secret_backup(body: &Value) -> bool {
     body.get("contents")
         .and_then(Value::as_array)
         .and_then(|c| c.first())
-        .and_then(|item| item.get("secret_id"))
+        .and_then(|item| item.get("item_type"))
         .and_then(Value::as_str)
-        == Some(MLS_ACCOUNT_SECRET_SECRET_ID)
+        == Some(MLS_ACCOUNT_SECRET_ITEM_TYPE)
+}
+
+/// Iterate the `{"backups": [...]}` payload returned by
+/// [`crate::api::ContrixApi::list_key_backups`].
+///
+/// The selection helpers below are consumed by the async auto-restore helpers
+/// (now available on all targets) and their tests.
+fn iter_backup_bodies(list_payload: &Value) -> impl Iterator<Item = &Value> {
+    list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter())
+        .into_iter()
+        .flatten()
+}
+
+/// Pure body-selection: pick the `mls_account_secret` backup from a
+/// `list_key_backups`-shaped payload, if present. Returns the first match.
+pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
+    iter_backup_bodies(list_payload)
+        .find(|body| is_mls_account_secret_backup(body))
+        .cloned()
+}
+
+/// Pure body-selection: collect every `mls_history` backup body from a
+/// `list_key_backups`-shaped payload.
+pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
+    iter_backup_bodies(list_payload)
+        .filter(|body| {
+            body.get("backup_class").and_then(Value::as_str)
+                == Some(crate::key_backup::KeyBackupClass::MlsHistory.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+/// Counts returned by [`auto_restore_mls_history_with_passphrase`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RestoreReport {
+    /// Whether the account MLS secret was freshly imported from the server
+    /// backup on this call (false if a local account secret already existed).
+    pub account_secret_imported: bool,
+    /// Number of `mls_history` backups successfully restored into the state store.
+    pub restored: usize,
+    /// Number of `mls_history` backups that failed to restore.
+    pub failed: usize,
+    /// First restore failure reason, for diagnostics.
+    pub first_error: Option<String>,
+}
+
+/// Pure-fetch helper: list the server's key backups and return the
+/// `mls_account_secret` body if one is present (None if absent). No passphrase
+/// is required — this is the SAFE half that can run at silent boot to *detect*
+/// whether account-secret recovery is available.
+pub async fn fetch_mls_account_secret_backup(
+    api: &crate::api::ContrixApi,
+) -> Result<Option<Value>> {
+    let payload = api
+        .list_key_backups()
+        .await
+        .map_err(|err| anyhow!("list key backups: {err}"))?;
+    Ok(select_mls_account_secret_backup(&payload))
+}
+
+/// Fetch the full key-backup list once for MLS account-secret import +
+/// history restore.
+///
+/// UI callers that hold a Dioxus `Signal<LocalStateStore>` should call this
+/// before acquiring `state_store.write()`, then pass the returned payload into
+/// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
+/// state write guard out of the network await.
+pub async fn fetch_mls_restore_payload(api: &crate::api::ContrixApi) -> Result<Value> {
+    api.list_key_backups()
+        .await
+        .map_err(|err| anyhow!("list key backups: {err}"))
+}
+
+/// Restore MLS account secret + history from an already-fetched
+/// `list_key_backups` payload.
+///
+/// This function is deliberately synchronous: it can run inside a short
+/// `state_store.write()` critical section after all network awaits have
+/// completed.
+pub fn restore_mls_history_with_passphrase_from_payload(
+    list_payload: &Value,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    passphrase: &[u8],
+) -> Result<RestoreReport> {
+    let mut report = RestoreReport::default();
+
+    // Step 1: ensure a local account secret exists. If absent, import it from
+    // the server's account-secret backup (decrypted with the passphrase).
+    let has_local_secret =
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id)
+            .is_ok();
+    if !has_local_secret {
+        let secret_body = select_mls_account_secret_backup(list_payload).ok_or_else(|| {
+            anyhow!("no mls_account_secret backup on server; cannot recover MLS history")
+        })?;
+        let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
+        let secret = String::from_utf8(secret_bytes)
+            .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
+        crate::mls::runtime::store_account_mls_secret(secure_store, actor_did, &secret)
+            .map_err(|err| anyhow!("store account MLS secret: {err}"))?;
+        report.account_secret_imported = true;
+    }
+
+    // Step 2: restore every mls_history backup. A failure on one backup is
+    // counted but does not abort the others.
+    for body in select_mls_history_backups(list_payload) {
+        match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
+            state_store,
+            secure_store,
+            actor_did,
+            device_id,
+            &body,
+        ) {
+            Ok(_) => report.restored += 1,
+            Err(err) => {
+                report.failed += 1;
+                if report.first_error.is_none() {
+                    report.first_error = Some(err.user_message());
+                }
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+/// Auto-restore MLS history for a fresh device using the recovery passphrase.
+///
+/// Flow:
+///   1. If a local account MLS secret already exists, skip the import step.
+///      Otherwise fetch the server's `mls_account_secret` backup, decrypt it
+///      with `passphrase`, and store it under the account key.
+///   2. List every `mls_history` backup and restore each one via
+///      [`crate::mls::runtime::restore_mls_history_backup_with_device_snapshot`].
+///
+/// This is the function the recovery UI / a future "unlock MLS" prompt calls
+/// once the user has supplied the passphrase. Returns per-backup counts.
+pub async fn auto_restore_mls_history_with_passphrase(
+    api: &crate::api::ContrixApi,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    passphrase: &[u8],
+) -> Result<RestoreReport> {
+    // List once and reuse for both the account-secret and history selection.
+    let payload = fetch_mls_restore_payload(api).await?;
+    restore_mls_history_with_passphrase_from_payload(
+        &payload,
+        state_store,
+        secure_store,
+        actor_did,
+        device_id,
+        passphrase,
+    )
 }
 
 #[cfg(test)]
@@ -164,8 +328,14 @@ mod tests {
 
     fn wrap() -> Value {
         let kek = derive_vault_kek(PASSPHRASE).unwrap();
-        build_mls_account_secret_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, ACCOUNT_SECRET)
-            .unwrap()
+        build_mls_account_secret_backup_body_with_kek(
+            BACKUP_ID,
+            ACTOR,
+            DEVICE,
+            &kek,
+            ACCOUNT_SECRET,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -195,11 +365,8 @@ mod tests {
             Some(MLS_ACCOUNT_SECRET_SECRET_ID)
         );
         assert_eq!(body["backup_class"], "secret_storage");
-        // item_type must be one soland's allowlist accepts.
-        assert_eq!(
-            MLS_ACCOUNT_SECRET_ITEM_TYPE, "mls_group_secrets_backup_key",
-            "item_type must remain in soland's KEY_BACKUP_CONTENT_TYPES allowlist"
-        );
+        // item_type must be one both validators' allowlists accept.
+        assert_eq!(MLS_ACCOUNT_SECRET_ITEM_TYPE, "mls_account_secret");
     }
 
     #[test]
@@ -224,7 +391,10 @@ mod tests {
         for (label, field) in [
             ("ciphertext", body["ciphertext"].as_str().unwrap()),
             ("salt", body["encryption"]["kdf"]["salt"].as_str().unwrap()),
-            ("nonce", body["encryption"]["aead"]["nonce"].as_str().unwrap()),
+            (
+                "nonce",
+                body["encryption"]["aead"]["nonce"].as_str().unwrap(),
+            ),
         ] {
             assert!(!field.is_empty(), "{label} must not be empty");
             assert!(
@@ -279,5 +449,49 @@ mod tests {
             let recovered = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
             assert_eq!(recovered, secret.as_bytes(), "iteration {i}: round-trip");
         }
+    }
+
+    #[test]
+    fn select_account_secret_finds_it_in_a_list_payload() {
+        let account_secret_body = wrap();
+        // A `list_key_backups`-shaped payload mixing a history backup, an
+        // unrelated recovery vault, and the account-secret backup.
+        let payload = serde_json::json!({
+            "backups": [
+                { "backup_id": "cx:backup:a", "backup_class": "mls_history" },
+                { "backup_id": "cx:backup:b", "backup_class": "recovery",
+                  "contents": [ { "secret_id": "yougen_recovery_vault_payload" } ] },
+                account_secret_body.clone(),
+            ]
+        });
+        let found = select_mls_account_secret_backup(&payload).expect("account secret present");
+        assert!(is_mls_account_secret_backup(&found));
+        // No-account-secret payload returns None.
+        let none_payload = serde_json::json!({
+            "backups": [ { "backup_id": "cx:backup:a", "backup_class": "mls_history" } ]
+        });
+        assert!(select_mls_account_secret_backup(&none_payload).is_none());
+        // Absent/empty payloads are tolerated.
+        assert!(select_mls_account_secret_backup(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn select_history_backups_filters_by_class() {
+        let payload = serde_json::json!({
+            "backups": [
+                { "backup_id": "cx:backup:a", "backup_class": "mls_history" },
+                { "backup_id": "cx:backup:b", "backup_class": "secret_storage" },
+                { "backup_id": "cx:backup:c", "backup_class": "mls_history" },
+                { "backup_id": "cx:backup:d" },
+            ]
+        });
+        let histories = select_mls_history_backups(&payload);
+        assert_eq!(histories.len(), 2);
+        assert!(
+            histories
+                .iter()
+                .all(|b| { b.get("backup_class").and_then(Value::as_str) == Some("mls_history") })
+        );
+        assert!(select_mls_history_backups(&serde_json::json!({})).is_empty());
     }
 }

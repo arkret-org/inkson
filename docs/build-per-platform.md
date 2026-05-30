@@ -106,6 +106,12 @@ dx build --platform web --release
 Outputs land under `target/dx/yougen/release/web/`. Serve with any static
 host that preserves the Dioxus asset paths.
 
+The web build uses the same in-tree OpenMLS patch as native builds for
+persisted MLS snapshots and encrypted-history restore. It still relies on
+browser storage for local long-lived material, so it is suitable for browser
+compatibility and recovery testing but has a weaker local secret-storage tier
+than desktop.
+
 For a containerized build:
 
 ```powershell

@@ -102,6 +102,28 @@ impl MlsRuntimeError {
     }
 }
 
+/// Outcome of [`apply_welcome_messages_with_device_snapshot`].
+///
+/// Lets callers distinguish "no welcomes present" (`applied == 0 && failed ==
+/// 0`) from "welcomes present but some/all failed" (`failed > 0`). A failure of
+/// one welcome never aborts the others; `first_error` carries the first failure
+/// reason for diagnostics.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WelcomeApplyOutcome {
+    pub applied: usize,
+    pub failed: usize,
+    pub first_error: Option<String>,
+}
+
+impl WelcomeApplyOutcome {
+    fn record_failure(&mut self, reason: String) {
+        self.failed += 1;
+        if self.first_error.is_none() {
+            self.first_error = Some(reason);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MlsHistoryRestoreSummary {
     pub backup_id: Option<String>,
@@ -392,37 +414,61 @@ pub fn apply_welcome_messages_with_device_snapshot(
     actor_did: &str,
     device_id: &str,
     messages_value: &serde_json::Value,
-) -> Result<usize, MlsRuntimeError> {
+) -> Result<WelcomeApplyOutcome, MlsRuntimeError> {
     let welcome_entries = collect_welcome_entries(messages_value);
+    // A totally-empty welcome set is a success with nothing to do.
     if welcome_entries.is_empty() {
-        return Ok(0);
+        return Ok(WelcomeApplyOutcome::default());
     }
+    // The snapshot secret / identity are prerequisites for ALL welcomes: if they
+    // are unavailable no welcome could possibly apply, so surface them as a hard
+    // error (the readiness status machinery keys off these).
     let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let principal_did = contrix_sdk::Did::new(actor_did.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = contrix_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let mut applied = 0usize;
+    // Per-welcome failures no longer abort the loop or get swallowed: each is
+    // counted and the first reason retained so callers can report partial
+    // success without failing the whole boot.
+    let mut outcome = WelcomeApplyOutcome::default();
     for welcome_value in welcome_entries {
-        let Ok(welcome) = serde_json::from_value::<contrix_sdk::MlsWelcomeEnvelope>(welcome_value)
-        else {
-            continue;
+        let welcome = match serde_json::from_value::<contrix_sdk::MlsWelcomeEnvelope>(welcome_value)
+        {
+            Ok(welcome) => welcome,
+            Err(err) => {
+                outcome.record_failure(format!("welcome envelope parse: {err}"));
+                continue;
+            }
         };
-        let Ok(identity) = contrix_sdk::ContrixMlsIdentity::new_basic(
+        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
             principal_did.clone(),
             device_id_typed.clone(),
-        ) else {
-            continue;
+        ) {
+            Ok(identity) => identity,
+            Err(err) => {
+                outcome.record_failure(format!("identity: {err:?}"));
+                continue;
+            }
         };
-        let Ok(group) = contrix_sdk::ContrixMlsGroup::join_from_welcome(identity, &welcome) else {
-            continue;
+        let group = match contrix_sdk::ContrixMlsGroup::join_from_welcome(identity, &welcome) {
+            Ok(group) => group,
+            Err(err) => {
+                outcome.record_failure(format!("join welcome: {err}"));
+                continue;
+            }
         };
-        let Ok(post_state) = group.export_state_record() else {
-            continue;
+        let post_state = match group.export_state_record() {
+            Ok(post_state) => post_state,
+            Err(err) => {
+                outcome.record_failure(format!("export state: {err}"));
+                continue;
+            }
         };
         let mut salt = [0u8; 16];
-        if getrandom::fill(&mut salt).is_err() {
+        if let Err(err) = getrandom::fill(&mut salt) {
+            outcome.record_failure(format!("salt: {err}"));
             continue;
         }
         let snapshot = crate::mls::persistence::encrypt_state(
@@ -434,9 +480,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
             &salt,
         );
         state_store.save_mls_snapshot(space_id.to_owned(), snapshot);
-        applied += 1;
+        outcome.applied += 1;
     }
-    Ok(applied)
+    Ok(outcome)
 }
 
 #[allow(clippy::type_complexity)]
@@ -847,5 +893,188 @@ mod tests {
 
         assert!(error.user_message().contains("outdated snapshot"));
         assert!(state.mls_snapshot_for(space).is_none());
+    }
+
+    /// End-to-end regression guard for "same account, brand-new browser sees
+    /// history" (Option A). Proves cross-device MLS-history recovery works using
+    /// ONLY the account-secret backup unwrapped with the recovery passphrase —
+    /// device B has NO local random secret of its own.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cross_device_recovery_restores_history_without_local_secret() {
+        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+
+        use crate::mls::account_recovery::{
+            build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,
+        };
+        use crate::recovery_crypto::derive_vault_kek;
+
+        let actor = "did:web:alice.example";
+        let device_a = "cx:device:01904100-0000-7000-8000-00000000000a";
+        let device_b = "cx:device:01904100-0000-7000-8000-00000000000b";
+        let space = "cx:space:01904100-0000-7000-8000-0000000000ab";
+        let passphrase: &[u8] = b"correct horse battery staple";
+
+        // --- Device A: account secret + a real MLS group + history backup body.
+        let store_a = MemorySecureKeyStore::new();
+        let secret_a = load_or_create_account_mls_secret(&store_a, actor, device_a).unwrap();
+
+        let identity = ContrixMlsIdentity::new_basic(
+            Did::new(actor.to_owned()).unwrap(),
+            DeviceId::new(device_a.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(space.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        let envelope = crate::mls::persistence::encrypt_state(
+            space,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            &secret_a,
+            b"deterministic-salt",
+        );
+        let (_history_backup_id, history_body) =
+            build_mls_history_backup_body(&envelope, actor, device_a);
+
+        // Device A wraps the account secret behind the recovery PASSPHRASE
+        // (KEK derived from the passphrase, exactly like the recovery setup
+        // path), so a sibling device can later unwrap it with that passphrase.
+        let setup_kek = derive_vault_kek(passphrase).unwrap();
+        let account_secret_body = build_mls_account_secret_backup_body_with_kek(
+            "cx:backup:01904100-0000-7000-8000-0000000000ac",
+            actor,
+            device_a,
+            &setup_kek,
+            &secret_a,
+        )
+        .unwrap();
+
+        // --- Device B: a FRESH empty store with NO secret of any kind.
+        let store_b = MemorySecureKeyStore::new();
+        assert!(
+            store_b.is_empty(),
+            "device B must start with no local secret"
+        );
+        // Without the account secret, restore must fail (no local random secret).
+        let mut state_b = temp_state_store("xdev-before");
+        let pre_restore = restore_mls_history_backup_with_device_snapshot(
+            &mut state_b,
+            &store_b,
+            actor,
+            device_b,
+            &history_body,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            pre_restore,
+            MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound)
+        ));
+
+        // Recover the account secret with the passphrase and store it on B.
+        let recovered = decrypt_mls_account_secret_backup(passphrase, &account_secret_body)
+            .expect("correct passphrase unwraps the account secret");
+        let recovered_secret = String::from_utf8(recovered).unwrap();
+        assert_eq!(recovered_secret, secret_a);
+        store_account_mls_secret(&store_b, actor, &recovered_secret).unwrap();
+
+        // Now restore must succeed on B using only the recovered account secret.
+        let mut state_b = temp_state_store("xdev-after");
+        let summary = restore_mls_history_backup_with_device_snapshot(
+            &mut state_b,
+            &store_b,
+            actor,
+            device_b,
+            &history_body,
+        )
+        .expect("restore succeeds once the account secret is recovered");
+
+        // The restored snapshot must match A's group_id / epoch.
+        assert_eq!(summary.space_id, space);
+        assert_eq!(summary.group_id, record.group_id);
+        assert_eq!(summary.envelope_epoch, record.epoch);
+        let restored_snapshot = state_b.mls_snapshot_for(space).unwrap();
+        assert_eq!(restored_snapshot.group_id, record.group_id);
+        assert_eq!(restored_snapshot.epoch, record.epoch);
+
+        // --- Negative: a WRONG passphrase cannot unwrap the account secret, so a
+        // fresh device C never gets a usable secret and history stays locked.
+        let wrong = decrypt_mls_account_secret_backup(b"incorrect horse", &account_secret_body);
+        assert!(wrong.is_err(), "wrong passphrase must fail to unwrap");
+        let store_c = MemorySecureKeyStore::new();
+        let mut state_c = temp_state_store("xdev-wrong");
+        let locked = restore_mls_history_backup_with_device_snapshot(
+            &mut state_c,
+            &store_c,
+            actor,
+            device_b,
+            &history_body,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            locked,
+            MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod welcome_outcome_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::secure_key_store::MemorySecureKeyStore;
+
+    fn temp_state_store(name: &str) -> crate::local_state::LocalStateStore {
+        let path = std::env::temp_dir().join(format!(
+            "yougen-mls-welcome-{name}-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        crate::local_state::LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn empty_welcome_set_reports_no_work() {
+        let mut state = temp_state_store("empty");
+        let store = MemorySecureKeyStore::new();
+        let outcome = apply_welcome_messages_with_device_snapshot(
+            &mut state,
+            &store,
+            "cx:space:empty",
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+            &json!({ "events": [] }),
+        )
+        .unwrap();
+        assert_eq!(outcome, WelcomeApplyOutcome::default());
+        assert_eq!(outcome.applied, 0);
+        assert_eq!(outcome.failed, 0);
+        assert!(outcome.first_error.is_none());
+        // No welcomes present => no secret was created either.
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn malformed_welcome_is_counted_not_swallowed() {
+        let mut state = temp_state_store("malformed");
+        let store = MemorySecureKeyStore::new();
+        // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
+        let messages = json!({
+            "events": [
+                { "type": "cx.mls.welcome", "content": { "not": "a welcome" } }
+            ]
+        });
+        let outcome = apply_welcome_messages_with_device_snapshot(
+            &mut state,
+            &store,
+            "cx:space:malformed",
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+            &messages,
+        )
+        .unwrap();
+        assert_eq!(outcome.applied, 0);
+        assert_eq!(outcome.failed, 1);
+        assert!(outcome.first_error.is_some());
     }
 }

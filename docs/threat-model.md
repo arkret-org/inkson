@@ -83,6 +83,8 @@ Threats:
 - A malicious or stale recovery path restores keys onto the wrong device.
 - Partial bootstrap state is accepted as complete.
 - Late-recovered content appears without user-visible context.
+- The recovery passphrase becomes the effective protection for all
+  account-level encrypted-history backups.
 
 Controls:
 
@@ -91,11 +93,45 @@ Controls:
   fully implemented.
 - Late-recovery banners must remain visible when older content decrypts after
   arrival.
+- Recovery passphrases are stretched locally with Argon2id before any
+  encrypted vault or account-MLS-secret backup is opened.
+- Web builds run the live OpenMLS snapshot/decrypt path through WebAssembly,
+  but browser storage remains weaker than native OS keychain storage.
 
 Open phase-3 items:
 
 - Partial bootstrap behavior is tracked in §13.
 - OIDC callback and passkey completion is tracked in §18.
+
+## MLS history recovery and account secret
+
+The desktop and web clients now use the same live OpenMLS path for persisted
+MLS snapshots. WebAssembly builds no longer treat MLS history as an
+unsupported target, but they still store long-lived local material in browser
+storage rather than an OS keychain.
+
+Encrypted realm / kanban history recovery uses one account-level MLS snapshot
+secret. The secret is wrapped into a `secret_storage` key-backup item with
+`item_type = "mls_account_secret"`; the wrapping key is derived from the
+user's recovery passphrase with Argon2id and XChaCha20-Poly1305. A fresh device
+can fetch that server-side ciphertext, unwrap it locally after the user enters
+the passphrase, and then decrypt every `mls_history` backup sealed with the
+account secret.
+
+Security consequences:
+
+- A weak or leaked recovery passphrase can expose all historical encrypted MLS
+  history backups protected by the account secret.
+- Device revocation does not currently erase an account secret already copied
+  onto the revoked device. The revoked device may retain access to history it
+  already stored or can still fetch through valid server credentials.
+- The local 1.0 design intentionally uses one account secret rather than a
+  per-realm secret. This keeps backup and restore simple, but compromise of
+  the account secret has account-wide impact.
+
+Required follow-up before production hardening: either add account-secret
+versioning and rotation on device revoke, or keep the above limitation visible
+in product UI and release notes.
 
 ## Supply-chain and release risks
 

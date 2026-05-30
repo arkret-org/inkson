@@ -62,8 +62,9 @@ restart yougen.
 
 **Symptom**: a small amber banner persists at the top of the page.
 
-**Cause**: by design. The browser has no symmetric-secret tier, so signing
-material lives in LocalStorage / IndexedDB instead of the OS keychain.
+**Cause**: by design. The browser has no OS keychain tier, so signing material
+and recovered MLS history material live in LocalStorage / IndexedDB. This does
+not mean MLS is disabled in the web build.
 
 **Fix**: switch to the desktop build for sensitive accounts. The web build
 is fine for low-stakes testing or read-only browsing.

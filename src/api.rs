@@ -4716,6 +4716,9 @@ fn events_query_path(space_id: &str) -> String {
     format!("api/v1/events?realms={}", query_component(space_id))
 }
 
+// Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
+// streaming reader; the wasm build has no streaming subscribe path yet.
+#[cfg(not(target_arch = "wasm32"))]
 fn events_subscribe_path(
     space_id: &str,
     after: Option<&str>,
@@ -6028,4 +6031,3 @@ mod tests {
         );
     }
 }
-// cache-bust 1479123202
