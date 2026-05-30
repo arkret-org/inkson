@@ -38,7 +38,8 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::{
-    ContrixApi, is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after, sleep_for,
+    AccountSubscribeSnapshotOutcome, ContrixApi, is_auth_expired_error, is_invalid_cursor_error,
+    rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
@@ -113,6 +114,12 @@ enum IterationOutcome {
     /// exponential backoff. Avoids spamming on top of a rate-limited
     /// server.
     RateLimited { retry_after_ms: u64, reason: String },
+    /// Subscribe control frame advertised a minimum reconnect delay for
+    /// this scope. This is not an HTTP error; the stream closed cleanly.
+    ReconnectAfter {
+        reconnect_after_ms: u64,
+        reason: Option<String>,
+    },
     /// Configuration is incomplete (empty base URL or token). Engine
     /// exits — caller will respawn when the missing piece arrives.
     NotReady,
@@ -203,6 +210,18 @@ pub async fn run_sync_engine(
                 // restarts the generic backoff ladder from the floor.
                 backoff_secs = MIN_BACKOFF_SECS;
             }
+            IterationOutcome::ReconnectAfter {
+                reconnect_after_ms,
+                reason,
+            } => {
+                {
+                    let mut last_error = ctx.last_error;
+                    last_error.set(reason.map(|reason| format!("sync_engine: {reason}")));
+                }
+                let wait_ms = reconnect_after_ms.max(MIN_BACKOFF_SECS.saturating_mul(1000));
+                sleep_for(Duration::from_millis(wait_ms)).await;
+                backoff_secs = MIN_BACKOFF_SECS;
+            }
             IterationOutcome::Transient(reason) => {
                 {
                     let mut last_error = ctx.last_error;
@@ -243,8 +262,11 @@ async fn run_iteration(
         .filter(|c| !c.trim().is_empty() && c != "-");
     let is_full_sync = cursor.is_none();
 
-    match api.account_subscribe_snapshot(cursor.as_deref()).await {
-        Ok(response) => {
+    match api
+        .account_subscribe_snapshot_outcome(cursor.as_deref())
+        .await
+    {
+        Ok(AccountSubscribeSnapshotOutcome::Delta(response)) => {
             // Late-arriving response from a stale generation must not
             // overwrite signals owned by the new generation. The
             // state_store write below is still safe because it's keyed
@@ -254,6 +276,22 @@ async fn run_iteration(
             }
             apply_response(&response, is_full_sync, ctx);
             IterationOutcome::Ok
+        }
+        Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
+            reconnect_after_ms,
+            reason,
+            reset_cursor,
+        }) => {
+            if reset_cursor {
+                let mut state_store = ctx.state_store;
+                let mut sync_cursor = ctx.sync_cursor;
+                state_store.write().save_sync_cursor("-");
+                sync_cursor.set("-".to_owned());
+            }
+            IterationOutcome::ReconnectAfter {
+                reconnect_after_ms,
+                reason,
+            }
         }
         Err(error) if is_auth_expired_error(&error) => IterationOutcome::AuthExpired,
         Err(error) if let Some(retry_after_ms) = rate_limited_retry_after(&error) => {

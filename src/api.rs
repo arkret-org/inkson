@@ -341,6 +341,44 @@ impl fmt::Display for ContrixApiError {
 
 impl std::error::Error for ContrixApiError {}
 
+const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
+
+#[derive(Clone, Debug)]
+pub enum AccountSubscribeSnapshotOutcome {
+    Delta(ClientSyncResponse),
+    ReconnectAfter {
+        reconnect_after_ms: u64,
+        reason: Option<String>,
+        reset_cursor: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct AccountSubscribeReconnectAfter {
+    pub reconnect_after_ms: u64,
+    pub reason: Option<String>,
+    pub reset_cursor: bool,
+}
+
+impl fmt::Display for AccountSubscribeReconnectAfter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.reason.as_deref() {
+            Some(reason) => write!(
+                f,
+                "account subscribe requested reconnect after {} ms: {}",
+                self.reconnect_after_ms, reason
+            ),
+            None => write!(
+                f,
+                "account subscribe requested reconnect after {} ms",
+                self.reconnect_after_ms
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AccountSubscribeReconnectAfter {}
+
 /// True when the server has *definitively* told us the session is dead.
 ///
 /// We require both:
@@ -1263,6 +1301,25 @@ impl ContrixApi {
         &self,
         after: Option<&str>,
     ) -> anyhow::Result<ClientSyncResponse> {
+        match self.account_subscribe_snapshot_outcome(after).await? {
+            AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
+            AccountSubscribeSnapshotOutcome::ReconnectAfter {
+                reconnect_after_ms,
+                reason,
+                reset_cursor,
+            } => Err(AccountSubscribeReconnectAfter {
+                reconnect_after_ms,
+                reason,
+                reset_cursor,
+            }
+            .into()),
+        }
+    }
+
+    pub async fn account_subscribe_snapshot_outcome(
+        &self,
+        after: Option<&str>,
+    ) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
         // H3 — enforce `cx:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
         if let Some(token) = after {
@@ -1290,7 +1347,7 @@ impl ContrixApi {
             }
             .into());
         }
-        parse_account_subscribe_snapshot(&bytes)
+        parse_account_subscribe_snapshot_outcome(&bytes)
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
@@ -4864,15 +4921,44 @@ pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncResponse> {
     Ok(serde_json::from_value(value)?)
 }
 
+#[cfg(test)]
 fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncResponse> {
+    match parse_account_subscribe_snapshot_outcome(bytes)? {
+        AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
+        AccountSubscribeSnapshotOutcome::ReconnectAfter {
+            reconnect_after_ms,
+            reason,
+            reset_cursor,
+        } => Err(AccountSubscribeReconnectAfter {
+            reconnect_after_ms,
+            reason,
+            reset_cursor,
+        }
+        .into()),
+    }
+}
+
+fn parse_account_subscribe_snapshot_outcome(
+    bytes: &[u8],
+) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
     for line in bytes.split(|byte| *byte == b'\n') {
         let trimmed = trim_ascii(line);
         if trimmed.is_empty() {
             continue;
         }
         let frame: contrix_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        if frame.requires_resubscribe() {
+            let reset_cursor = frame.kind == contrix_sdk::AccountSubscribeFrameKind::ResyncRequired;
+            return Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
+                reconnect_after_ms: frame
+                    .reconnect_after_ms()
+                    .unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS),
+                reason: frame.reason,
+                reset_cursor,
+            });
+        }
         if let Some(response) = ClientSyncResponse::from_account_subscribe_frame(frame) {
-            return Ok(response);
+            return Ok(AccountSubscribeSnapshotOutcome::Delta(response));
         }
     }
     anyhow::bail!("account subscribe stream ended before a delta frame")
@@ -5292,6 +5378,24 @@ mod tests {
         );
         assert!(account_frame.left_spaces.is_empty());
 
+        let reconnect = parse_account_subscribe_snapshot_outcome(
+            br#"{"kind":"resync_required","reason":"compaction","reconnect_after_ms":10000}
+"#,
+        )
+        .unwrap();
+        match reconnect {
+            AccountSubscribeSnapshotOutcome::ReconnectAfter {
+                reconnect_after_ms,
+                reason,
+                reset_cursor,
+            } => {
+                assert_eq!(reconnect_after_ms, 10_000);
+                assert_eq!(reason.as_deref(), Some("compaction"));
+                assert!(reset_cursor);
+            }
+            other => panic!("expected reconnect outcome, got {other:?}"),
+        }
+
         let directory = parse_directory_describe(json!({
             "service_did": "did:web:server.local",
             "resource_types": ["space", "organization", "actor"],
@@ -5709,7 +5813,7 @@ mod tests {
         assert!(pending.is_empty());
         assert!(matches!(
             &frames[1],
-            contrix_sdk::EventsSubscribeFrameBody::ResyncRequired { reason } if reason == "server restart"
+            contrix_sdk::EventsSubscribeFrameBody::ResyncRequired { reason, .. } if reason == "server restart"
         ));
     }
 
