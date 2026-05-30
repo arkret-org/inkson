@@ -854,9 +854,27 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/directory/resolve-handle") {
       const body = await route.request().postDataJSON();
+      const audience =
+        body.audience ?? body.realm_id ?? body.requester ?? "did:web:server.local";
+      const memberDeliveryBinding = {
+        recipient_service_did: "did:web:server.local",
+        recipient_service_type: "principal_server",
+        binding_source: "explicit",
+        delivery_modes: ["events", "sync", "to_device", "push", "key_packages"],
+      };
       return json(route, {
         did: "did:web:alice.example",
+        subject: "did:web:alice.example",
         handle: body.handle,
+        audience,
+        member_delivery_binding: memberDeliveryBinding,
+        handle_claim: {
+          subject: "did:web:alice.example",
+          handle: body.handle,
+          issuer: "did:web:server.local",
+          audience,
+          member_delivery_binding: memberDeliveryBinding,
+        },
         did_document: {
           id: "did:web:alice.example",
           alsoKnownAs: [`acct:${body.handle}`],

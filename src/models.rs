@@ -668,19 +668,73 @@ pub struct SearchActorsResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleResponse {
+    #[serde(default, alias = "subject")]
     pub did: String,
     pub handle: String,
     pub did_document: Option<Value>,
+    #[serde(default)]
+    pub verified: bool,
+    #[serde(default)]
+    pub claims: Value,
     /// Audience the directory bound the response claim to. Spec 0a5ab85:
     /// the client MUST reject claims whose audience doesn't match the
     /// invocation context (e.g. the Space the user is about to join).
     #[serde(default)]
     pub audience: Option<String>,
+    /// Membership-builder routing evidence for `intent=member_add|invite`.
+    /// Some directory implementations expose this top-level; others carry
+    /// the same object inside `handle_claim.member_delivery_binding`.
+    #[serde(default)]
+    pub member_delivery_binding: Option<Value>,
     /// Raw handle claim envelope when the directory issued one. Shape
     /// conforms to `handle-claim.schema.json` — typed deserialization is
     /// TODO(spec-sync 0a5ab85) once we depend on the SDK `HandleClaim`.
     #[serde(default)]
     pub handle_claim: Option<Value>,
+    /// §9.1 common resolve metadata.
+    #[serde(default)]
+    pub as_of: Option<String>,
+    #[serde(default)]
+    pub source_refs: Vec<String>,
+    #[serde(default)]
+    pub policy_revision: Option<String>,
+    #[serde(default)]
+    pub stale: bool,
+    #[serde(default)]
+    pub divergent: bool,
+    #[serde(default)]
+    pub via_services: Vec<String>,
+}
+
+impl ResolveHandleResponse {
+    pub fn subject_did(&self) -> Option<&str> {
+        (!self.did.trim().is_empty())
+            .then_some(self.did.as_str())
+            .or_else(|| {
+                self.handle_claim
+                    .as_ref()
+                    .and_then(|claim| claim.get("subject"))
+                    .and_then(Value::as_str)
+            })
+    }
+
+    pub fn claim_audience(&self) -> Option<&str> {
+        self.audience.as_deref().or_else(|| {
+            self.handle_claim
+                .as_ref()
+                .and_then(|claim| claim.get("audience"))
+                .and_then(Value::as_str)
+        })
+    }
+
+    pub fn has_member_delivery_binding(&self) -> bool {
+        self.member_delivery_binding.is_some()
+            || self
+                .handle_claim
+                .as_ref()
+                .and_then(|claim| claim.get("member_delivery_binding"))
+                .is_some()
+    }
 }
 
 /// Structured mention node embedded in message body. Spec b56cab1

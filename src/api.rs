@@ -310,6 +310,23 @@ impl Default for RetryPolicy {
     }
 }
 
+/// Context for `cx.directory.resolve_handle`.
+///
+/// Protocol distinction: `lookup` / `mention` are display-safe resolves;
+/// `member_add` / `invite` request Realm/audience-bound membership-builder
+/// material. Callers that are about to invite or add a member MUST provide
+/// `intent`, `requester`, `realm_id`, and `audience`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ResolveHandleContext<'a> {
+    pub intent: Option<&'a str>,
+    pub requester: Option<&'a str>,
+    pub audience: Option<&'a str>,
+    pub realm_id: Option<&'a str>,
+    pub expected_did: Option<&'a str>,
+    pub proof_challenge: Option<&'a str>,
+    pub proofs: &'a [&'a str],
+}
+
 #[derive(Clone, Debug)]
 pub struct ContrixApiError {
     pub status: StatusCode,
@@ -445,6 +462,74 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
                 .is_some_and(|payload| !payload.is_empty())
         })
         .then(|| tokens.join(","))
+}
+
+fn resolve_handle_request_body(handle: &str, context: ResolveHandleContext<'_>) -> Value {
+    let mut body = serde_json::Map::new();
+    body.insert("handle".to_owned(), json!(handle));
+    if let Some(intent) = context.intent.filter(|value| !value.trim().is_empty()) {
+        body.insert("intent".to_owned(), json!(intent));
+    }
+    if let Some(requester) = context.requester.filter(|value| !value.trim().is_empty()) {
+        body.insert("requester".to_owned(), json!(requester));
+    }
+    if let Some(audience) = context.audience.filter(|value| !value.trim().is_empty()) {
+        body.insert("audience".to_owned(), json!(audience));
+    }
+    if let Some(realm_id) = context.realm_id.filter(|value| !value.trim().is_empty()) {
+        body.insert("realm_id".to_owned(), json!(realm_id));
+    }
+    if let Some(expected_did) = context
+        .expected_did
+        .filter(|value| !value.trim().is_empty())
+    {
+        body.insert("expected_did".to_owned(), json!(expected_did));
+    }
+    if let Some(challenge) = context
+        .proof_challenge
+        .filter(|value| !value.trim().is_empty())
+    {
+        body.insert("proof_challenge".to_owned(), json!(challenge));
+    }
+    let proofs = context
+        .proofs
+        .iter()
+        .map(|proof| proof.trim())
+        .filter(|proof| !proof.is_empty())
+        .collect::<Vec<_>>();
+    if !proofs.is_empty() {
+        body.insert("proofs".to_owned(), json!(proofs));
+    }
+    Value::Object(body)
+}
+
+fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
+    parse_user_handle(target)
+        .map(|handle| handle.handle)
+        .ok_or_else(|| {
+            anyhow::anyhow!("invitee must be a DID or canonical handle `<localpart>:<domain>`")
+        })
+}
+
+fn validate_invite_handle_resolution(
+    resolved: &ResolveHandleResponse,
+    expected_audience: &str,
+) -> anyhow::Result<()> {
+    match resolved.claim_audience() {
+        Some(audience) if audience == expected_audience => {}
+        Some(audience) => anyhow::bail!(
+            "directory handle claim audience mismatch: expected `{expected_audience}`, got `{audience}`"
+        ),
+        None => anyhow::bail!(
+            "directory resolve_handle(intent=invite) response did not include audience"
+        ),
+    }
+    if !resolved.has_member_delivery_binding() {
+        anyhow::bail!(
+            "directory resolve_handle(intent=invite) response did not include member_delivery_binding"
+        );
+    }
+    Ok(())
 }
 
 /// Typed error class for the `post_audit_user_action` path.
@@ -1978,8 +2063,26 @@ impl ContrixApi {
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
-        self.post_json("api/v1/directory/resolve-handle", json!({"handle": handle}))
-            .await
+        self.resolve_handle_with_context(
+            handle,
+            ResolveHandleContext {
+                intent: Some("lookup"),
+                ..ResolveHandleContext::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn resolve_handle_with_context(
+        &self,
+        handle: &str,
+        context: ResolveHandleContext<'_>,
+    ) -> anyhow::Result<ResolveHandleResponse> {
+        self.post_json(
+            "api/v1/directory/resolve-handle",
+            resolve_handle_request_body(handle, context),
+        )
+        .await
     }
 
     pub async fn resolve_invitee_did(&self, target: &str) -> anyhow::Result<String> {
@@ -1990,11 +2093,51 @@ impl ContrixApi {
         if contrix_sdk::Did::new(target.to_owned()).is_ok() {
             return Ok(target.to_owned());
         }
-        let resolved = self.resolve_handle(target).await?;
-        contrix_sdk::Did::new(resolved.did.clone()).map_err(|err| {
-            anyhow::anyhow!("directory resolved invalid DID `{}`: {err}", resolved.did)
+        let handle = canonical_invitee_handle(target)?;
+        let resolved = self.resolve_handle(&handle).await?;
+        let subject = resolved.subject_did().ok_or_else(|| {
+            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
         })?;
-        Ok(resolved.did)
+        contrix_sdk::Did::new(subject.to_owned())
+            .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}"))?;
+        Ok(subject.to_owned())
+    }
+
+    pub async fn resolve_invitee_did_for_invite(
+        &self,
+        target: &str,
+        space_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<String> {
+        let target = target.trim();
+        if target.is_empty() {
+            anyhow::bail!("invitee is required");
+        }
+        if contrix_sdk::Did::new(target.to_owned()).is_ok() {
+            return Ok(target.to_owned());
+        }
+
+        let handle = canonical_invitee_handle(target)?;
+        let realm_id = scope_id_as_realm_id(space_id);
+        let resolved = self
+            .resolve_handle_with_context(
+                &handle,
+                ResolveHandleContext {
+                    intent: Some("invite"),
+                    requester: Some(actor_id),
+                    audience: Some(&realm_id),
+                    realm_id: Some(&realm_id),
+                    ..ResolveHandleContext::default()
+                },
+            )
+            .await?;
+        validate_invite_handle_resolution(&resolved, &realm_id)?;
+        let invitee = resolved.subject_did().ok_or_else(|| {
+            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
+        })?;
+        contrix_sdk::Did::new(invitee.to_owned())
+            .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{invitee}`: {err}"))?;
+        Ok(invitee.to_owned())
     }
 
     /// R3.2 (contrix-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
@@ -2233,7 +2376,9 @@ impl ContrixApi {
         target: &str,
         role: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let invitee_did = self.resolve_invitee_did(target).await?;
+        let invitee_did = self
+            .resolve_invitee_did_for_invite(target, space_id, actor_id)
+            .await?;
         let envelope = crate::operation::cx_ops::invite_create_structured(
             space_id,
             actor_id,
@@ -4850,6 +4995,78 @@ mod tests {
             Some("dump".to_owned())
         );
         assert_eq!(safe_blob_filename_header("🧪").as_deref(), None);
+    }
+
+    #[test]
+    fn resolve_handle_request_body_carries_invite_context() {
+        let body = resolve_handle_request_body(
+            "bob:local.host",
+            ResolveHandleContext {
+                intent: Some("invite"),
+                requester: Some("did:web:alice.example"),
+                audience: Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
+                realm_id: Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
+                expected_did: Some("did:web:bob.example"),
+                proof_challenge: Some("cx:challenge:test"),
+                proofs: &["proof-a", "  ", "proof-b"],
+            },
+        );
+
+        assert_eq!(body["handle"], "bob:local.host");
+        assert_eq!(body["intent"], "invite");
+        assert_eq!(body["requester"], "did:web:alice.example");
+        assert_eq!(
+            body["audience"],
+            "cx:realm:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(
+            body["realm_id"],
+            "cx:realm:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(body["expected_did"], "did:web:bob.example");
+        assert_eq!(body["proof_challenge"], "cx:challenge:test");
+        assert_eq!(body["proofs"], json!(["proof-a", "proof-b"]));
+    }
+
+    #[test]
+    fn canonical_invitee_handle_accepts_display_alias() {
+        assert_eq!(
+            canonical_invitee_handle("@Bob:Local.Host").unwrap(),
+            "bob:local.host"
+        );
+    }
+
+    #[test]
+    fn invite_handle_resolution_requires_bound_candidate_material() {
+        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let resolved: ResolveHandleResponse = serde_json::from_value(json!({
+            "subject": "did:web:bob.example",
+            "handle": "bob:local.host",
+            "handle_claim": {
+                "subject": "did:web:bob.example",
+                "audience": realm_id,
+                "member_delivery_binding": {
+                    "recipient_service_did": "did:web:local.host",
+                    "recipient_service_type": "principal_server",
+                    "binding_source": "explicit",
+                    "delivery_modes": ["events"]
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(resolved.subject_did(), Some("did:web:bob.example"));
+        validate_invite_handle_resolution(&resolved, realm_id).unwrap();
+
+        let missing_binding: ResolveHandleResponse = serde_json::from_value(json!({
+            "did": "did:web:bob.example",
+            "handle": "bob:local.host",
+            "audience": realm_id
+        }))
+        .unwrap();
+        let error = validate_invite_handle_resolution(&missing_binding, realm_id)
+            .expect_err("invite resolution must carry delivery binding material");
+        assert!(error.to_string().contains("member_delivery_binding"));
     }
 
     #[test]

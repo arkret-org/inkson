@@ -1055,6 +1055,18 @@ pub struct ClientLocalState {
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
     pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
+    /// Actor DID that the currently-persisted account-scoped state
+    /// (sync cursor, space projections, session grant, OIDC bundle, …)
+    /// belongs to. Stamped by [`LocalStateStore::adopt_account_scope`]
+    /// whenever a session is established. When a new session's actor
+    /// disagrees with this owner, every account-scoped record is wiped
+    /// before the new session adopts the scope — this is what stops a
+    /// previous identity's revoked grant or foreign-principal sync
+    /// cursor from leaking into the new session (`cursor_integrity_invalid`
+    /// / `session grant is not active: revoked`). `None` until the first
+    /// stamp.
+    #[serde(default)]
+    pub account_scope_owner: Option<String>,
 }
 
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
@@ -1226,6 +1238,7 @@ impl Default for ClientLocalState {
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),
             member_handle_cache: BTreeMap::new(),
+            account_scope_owner: None,
         }
     }
 }
@@ -1711,6 +1724,57 @@ impl LocalStateStore {
             ..ClientLocalState::default()
         };
         let _ = self.flush();
+    }
+
+    /// Stamp the current account-scope owner without wiping anything.
+    /// Used by paths that have already validated the actor (e.g. the
+    /// connect bootstrap's `/account/me` probe) and just need to record
+    /// who the account-scoped state now belongs to so a later
+    /// [`adopt_account_scope`](Self::adopt_account_scope) recognises it.
+    pub fn stamp_account_scope_owner(&mut self, actor: &str) {
+        self.ensure_cached_loaded();
+        let actor = actor.trim();
+        let next = (!actor.is_empty()).then(|| actor.to_owned());
+        if self.cached.account_scope_owner == next {
+            return;
+        }
+        self.cached.account_scope_owner = next;
+        let _ = self.flush();
+    }
+
+    /// Adopt the account-scope for `actor`. When the persisted scope
+    /// belongs to a *different* — or unknown — actor, every account-scoped
+    /// record is wiped first: sync cursor, projections, drafts, **and the
+    /// session grant + OIDC bundle** (which `clear_account_scoped` alone
+    /// preserves — wrong across an identity change). Device-level state
+    /// (local identity, push registration, DPoP key) is preserved.
+    ///
+    /// This is the single guard that stops a previous identity's *revoked*
+    /// session grant or *foreign-principal* sync cursor from bleeding into
+    /// a freshly established session — the root of the `cursor_integrity_invalid`
+    /// / `session grant is not active: revoked` cascade. Call it whenever a
+    /// session is (re-)established for `actor` (login, and the connect
+    /// bootstrap once the canonical actor is known).
+    ///
+    /// Returns `true` when a wipe happened.
+    pub fn adopt_account_scope(&mut self, actor: &str) -> bool {
+        self.ensure_cached_loaded();
+        let actor = actor.trim();
+        let owner_matches = self
+            .cached
+            .account_scope_owner
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|owner| !owner.is_empty() && owner == actor);
+        if owner_matches {
+            return false;
+        }
+        self.clear_account_scoped();
+        self.cached.session_grant = None;
+        self.cached.oidc_tokens = None;
+        self.cached.account_scope_owner = (!actor.is_empty()).then(|| actor.to_owned());
+        let _ = self.flush();
+        true
     }
 
     /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`
@@ -4034,6 +4098,74 @@ mod tests {
         assert_eq!(
             state.oidc_tokens.as_ref().unwrap().access_token,
             bundle.access_token,
+        );
+    }
+
+    #[test]
+    fn adopt_account_scope_resets_grant_cursor_and_oidc_on_identity_change() {
+        let path = temp_state_path("adopt-account-scope");
+        let mut store = LocalStateStore::with_path(path);
+
+        // Establish alice's scope with a grant + OIDC + cursor + projection.
+        assert!(
+            store.adopt_account_scope("did:web:alice.example"),
+            "first adopt (owner None) stamps and reports a reset"
+        );
+        let identity = store
+            .ensure_local_identity()
+            .expect("ensure_local_identity should succeed in plaintext mode");
+        store.save_sync_cursor("sx:alice");
+        store.save_space_projection("cx:space:a", serde_json::json!({}));
+        store.set_oidc_tokens(Some(OidcTokenBundle {
+            access_token: "alice-at".to_owned(),
+            refresh_token: Some("alice-rt".to_owned()),
+            token_type: "Bearer".to_owned(),
+            expires_at_unix: None,
+            id_token: None,
+            scope: None,
+            audience: None,
+            stored_at: chrono::Utc::now(),
+        }));
+        store.set_session_grant(Some(PersistedSessionGrant {
+            grant_jwt: "alice.grant".to_owned(),
+            session_private_key_pem: "pem".to_owned(),
+            grant_id: "g-alice".to_owned(),
+            audience: "https://principal.example/api".to_owned(),
+            principal_did: "did:web:alice.example".to_owned(),
+            device_id: "device-1".to_owned(),
+            principal_server_url: "https://principal.example".to_owned(),
+            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            grant_expires_at: None,
+            session_expires_at: None,
+            stored_at: chrono::Utc::now(),
+        }));
+
+        // Re-adopting the same actor is a no-op and keeps state.
+        assert!(!store.adopt_account_scope("did:web:alice.example"));
+        assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
+        assert!(store.load().session_grant.is_some());
+
+        // A different identity wipes the previous scope — including the
+        // (possibly revoked) grant and the foreign-principal cursor — so
+        // they can't leak into bob's session.
+        assert!(store.adopt_account_scope("did:web:bob.example"));
+        let state = store.load();
+        assert!(state.sync_cursor.is_none(), "stale cursor must be wiped");
+        assert!(state.space_projections.is_empty(), "projections must be wiped");
+        assert!(
+            state.session_grant.is_none(),
+            "previous identity's grant must be wiped, not preserved"
+        );
+        assert!(state.oidc_tokens.is_none(), "previous OIDC bundle must be wiped");
+        assert_eq!(
+            state.account_scope_owner.as_deref(),
+            Some("did:web:bob.example"),
+            "owner is stamped to the new identity"
+        );
+        // Device-level identity survives the account-scope swap.
+        assert_eq!(
+            state.local_identity.as_ref().unwrap().did_key,
+            identity.device_did,
         );
     }
 

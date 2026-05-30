@@ -10142,15 +10142,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     // server's `/account/me` disagrees with our cached
                     // actor). When the previous actor was non-empty this
                     // means a different human is signing in on the same
-                    // device — every account-scoped cache (projections,
-                    // drafts, anchor views, read markers, remarks…) is
-                    // someone else's data and must be wiped before the
-                    // sync below repopulates the store. Device-level
-                    // state (local_identity, push_registration) is
+                    // device — every account-scoped record (projections,
+                    // drafts, anchor views, read markers, remarks, and the
+                    // previous identity's session grant + OIDC bundle) is
+                    // someone else's data and must be wiped before the sync
+                    // below repopulates the store. `adopt_account_scope`
+                    // performs the wipe and stamps the new owner so a later
+                    // login recognises the scope. Device-level state
+                    // (local_identity, push_registration, DPoP key) is
                     // preserved.
                     if !actor.trim().is_empty() {
                         let mut store = state_store.write();
-                        store.clear_account_scoped();
+                        store.adopt_account_scope(&canonical_actor);
                         // Also wipe the in-memory UI signals so the
                         // sidebar can't paint the previous actor's
                         // spaces between this point and the sync that's
@@ -10166,8 +10169,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // the freshly-wiped state.
                         let mut sync_generation = ctx.sync_generation;
                         sync_generation.set(sync_generation() + 1);
+                    } else {
+                        // No previous identity to displace — just record
+                        // who the scope now belongs to (don't wipe: a
+                        // just-established grant could be dropped).
+                        state_store.write().stamp_account_scope_owner(&canonical_actor);
                     }
                     account_did.set(canonical_actor.clone());
+                } else {
+                    // Actor unchanged — record the scope owner so a later
+                    // login for a different identity is recognised and the
+                    // stale scope is reset.
+                    state_store.write().stamp_account_scope_owner(&canonical_actor);
                 }
                 persist_config(
                     config_store,

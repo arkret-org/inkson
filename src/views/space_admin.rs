@@ -1267,7 +1267,14 @@ pub fn SpaceAdminPanel(
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                             Ok(api) => {
-                                                let invitee_did = match api.resolve_invitee_did(&target).await {
+                                                let invitee_did = match api
+                                                    .resolve_invitee_did_for_invite(
+                                                        &target,
+                                                        &space,
+                                                        &actor,
+                                                    )
+                                                    .await
+                                                {
                                                     Ok(did) => did,
                                                     Err(error) => {
                                                         status_msg.set(format!("invitee resolve failed: {error}"));
