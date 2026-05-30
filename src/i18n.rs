@@ -612,6 +612,39 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.vault_section", "Encrypted Cloud Vault");
     dict.set("recovery.recovery_key_section", "Recovery Key");
     dict.set("recovery.social_section", "Social Recovery");
+    dict.set("mls_unlock.aria_label", "Unlock encrypted history");
+    dict.set("mls_unlock.title", "Unlock encrypted history");
+    dict.set("mls_unlock.subtitle", "account MLS secret");
+    dict.set(
+        "mls_unlock.description",
+        "This device doesn't have your account MLS history secret yet. Enter your recovery passphrase to restore encrypted spaces from your account backup.",
+    );
+    dict.set(
+        "mls_unlock.loading_hint",
+        "Deriving the recovery key and restoring multiple encrypted spaces can take a few seconds. Keep this tab open.",
+    );
+    dict.set("mls_unlock.placeholder", "Recovery passphrase");
+    dict.set("mls_unlock.button_idle", "Unlock history");
+    dict.set("mls_unlock.button_busy", "Unlocking...");
+    dict.set(
+        "mls_unlock.status.enter_passphrase",
+        "Enter your recovery passphrase to unlock encrypted history.",
+    );
+    dict.set(
+        "mls_unlock.status.fetching",
+        "Looking up encrypted history backups...",
+    );
+    dict.set(
+        "mls_unlock.status.restoring_prefix",
+        "Deriving recovery key and restoring",
+    );
+    dict.set(
+        "mls_unlock.status.restoring_suffix",
+        "encrypted backup(s). This can take a few seconds.",
+    );
+    dict.set("mls_unlock.status.restored_prefix", "Restored");
+    dict.set("mls_unlock.status.restored_suffix", "encrypted space(s).");
+    dict.set("mls_unlock.status.failed_suffix", "failed");
 
     // Space-admin view (section labels)
     dict.set("space_admin.title", "Space Settings");
@@ -1513,6 +1546,36 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.vault_section", "加密云保险箱");
     dict.set("recovery.recovery_key_section", "恢复密钥");
     dict.set("recovery.social_section", "社交恢复");
+    dict.set("mls_unlock.aria_label", "解锁加密历史");
+    dict.set("mls_unlock.title", "解锁加密历史");
+    dict.set("mls_unlock.subtitle", "账号 MLS secret");
+    dict.set(
+        "mls_unlock.description",
+        "此设备还没有你的账号 MLS 历史 secret。输入恢复口令即可从账号备份恢复加密空间。",
+    );
+    dict.set(
+        "mls_unlock.loading_hint",
+        "派生恢复密钥并批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
+    );
+    dict.set("mls_unlock.placeholder", "恢复口令");
+    dict.set("mls_unlock.button_idle", "解锁历史");
+    dict.set("mls_unlock.button_busy", "正在解锁…");
+    dict.set(
+        "mls_unlock.status.enter_passphrase",
+        "输入恢复口令以解锁加密历史。",
+    );
+    dict.set("mls_unlock.status.fetching", "正在查找加密历史备份…");
+    dict.set(
+        "mls_unlock.status.restoring_prefix",
+        "正在派生恢复密钥并恢复",
+    );
+    dict.set(
+        "mls_unlock.status.restoring_suffix",
+        "个加密备份，可能需要几秒钟。",
+    );
+    dict.set("mls_unlock.status.restored_prefix", "已恢复");
+    dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
+    dict.set("mls_unlock.status.failed_suffix", "个失败");
 
     // Space-admin view
     dict.set("space_admin.title", "Space 设置");

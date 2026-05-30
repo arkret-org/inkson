@@ -35,7 +35,7 @@ pub fn MlsUnlockPrompt(
         }
         let pass = passphrase();
         if pass.is_empty() {
-            status.set("Enter your recovery passphrase to unlock encrypted history.".to_owned());
+            status.set(crate::i18n::tr("mls_unlock.status.enter_passphrase"));
             return;
         }
         let base = base_url();
@@ -45,7 +45,7 @@ pub fn MlsUnlockPrompt(
         let mut state_store = state_store;
         let mut needs_mls_unlock = needs_mls_unlock;
         busy.set(true);
-        status.set("Unlocking encrypted history…".to_owned());
+        status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
             let result = match with_authed_api(&base, session, |api| async move {
                 crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
@@ -53,6 +53,15 @@ pub fn MlsUnlockPrompt(
             .await
             {
                 Ok(payload) => {
+                    let history_count =
+                        crate::mls::account_recovery::select_mls_history_backups(&payload).len();
+                    status.set(format!(
+                        "{} {} {}",
+                        crate::i18n::tr("mls_unlock.status.restoring_prefix"),
+                        history_count,
+                        crate::i18n::tr("mls_unlock.status.restoring_suffix")
+                    ));
+                    crate::api::sleep_for(std::time::Duration::from_millis(16)).await;
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                     let mut store = state_store.write();
                     crate::mls::account_recovery::restore_mls_history_with_passphrase_from_payload(
@@ -74,13 +83,22 @@ pub fn MlsUnlockPrompt(
                         // Some backups failed even though the call returned Ok —
                         // keep the prompt open so the user can retry.
                         status.set(format!(
-                            "Restored {} space(s); {} failed: {err}",
-                            report.restored, report.failed
+                            "{} {} {}; {} {}: {err}",
+                            crate::i18n::tr("mls_unlock.status.restored_prefix"),
+                            report.restored,
+                            crate::i18n::tr("mls_unlock.status.restored_suffix"),
+                            report.failed,
+                            crate::i18n::tr("mls_unlock.status.failed_suffix")
                         ));
                     } else {
                         passphrase.set(String::new());
                         needs_mls_unlock.set(false);
-                        status.set(format!("Restored {} space(s).", report.restored));
+                        status.set(format!(
+                            "{} {} {}",
+                            crate::i18n::tr("mls_unlock.status.restored_prefix"),
+                            report.restored,
+                            crate::i18n::tr("mls_unlock.status.restored_suffix")
+                        ));
                     }
                 }
                 Err(err) => {
@@ -96,19 +114,27 @@ pub fn MlsUnlockPrompt(
             class: "event mls-unlock-banner",
             "data-testid": "mls-unlock-banner",
             role: "region",
-            "aria-label": "Unlock encrypted history",
+            "aria-label": crate::i18n::tr("mls_unlock.aria_label"),
             div { class: "event-head",
-                strong { "Unlock encrypted history" }
-                span { class: "muted", "account MLS secret" }
+                strong { {crate::i18n::tr("mls_unlock.title")} }
+                span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
             }
             div { class: "muted",
-                "This device doesn't have your account MLS history secret yet. Enter your recovery passphrase to restore encrypted spaces from your account backup."
+                {crate::i18n::tr("mls_unlock.description")}
+            }
+            if busy() {
+                div {
+                    class: "muted",
+                    "data-testid": "mls-unlock-loading",
+                    role: "status",
+                    {crate::i18n::tr("mls_unlock.loading_hint")}
+                }
             }
             div { class: "mls-unlock-row",
                 input {
                     r#type: "password",
                     "data-testid": "mls-unlock-passphrase",
-                    placeholder: "Recovery passphrase",
+                    placeholder: crate::i18n::tr("mls_unlock.placeholder"),
                     value: "{passphrase}",
                     disabled: busy(),
                     oninput: move |evt| passphrase.set(evt.value()),
@@ -118,7 +144,11 @@ pub fn MlsUnlockPrompt(
                     "data-testid": "mls-unlock-submit",
                     disabled: busy(),
                     onclick: on_unlock,
-                    if busy() { "Unlocking…" } else { "Unlock history" }
+                    if busy() {
+                        {crate::i18n::tr("mls_unlock.button_busy")}
+                    } else {
+                        {crate::i18n::tr("mls_unlock.button_idle")}
+                    }
                 }
             }
             if !status().is_empty() {

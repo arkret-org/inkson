@@ -6647,6 +6647,7 @@ pub fn RouterView() -> Element {
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
     let needs_mls_unlock = use_signal(|| false);
+    let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
     // On first render with a live session, fetch the directory + sync so
     // the sidebar's Space list shows up after a page reload. The list
@@ -6938,6 +6939,65 @@ pub fn RouterView() -> Element {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
         });
     });
+
+    // D1: detect the account-MLS unlock requirement as soon as a logged-in
+    // session finishes bootstrap, without waiting for the user to enter a
+    // Space/Board/Document route that runs the per-space Welcome bootstrap.
+    {
+        let mut seen_detection_key = mls_unlock_detection_key_seen;
+        let mut needs_mls_unlock = needs_mls_unlock;
+        use_effect(move || {
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let generation = sync_generation();
+            if session.trim().is_empty() {
+                needs_mls_unlock.set(false);
+                return;
+            }
+            if base.trim().is_empty()
+                || actor.trim().is_empty()
+                || device.trim().is_empty()
+                || !sync_bootstrap_complete()
+            {
+                return;
+            }
+            let detection_key = format!("{generation}|{base}|{actor}|{device}");
+            if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
+                return;
+            }
+            seen_detection_key.set(Some(detection_key));
+
+            spawn(async move {
+                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                let has_local_secret = crate::mls::runtime::load_device_snapshot_secret(
+                    secure_store.as_ref(),
+                    &actor,
+                    &device,
+                )
+                .is_ok();
+                if has_local_secret {
+                    needs_mls_unlock.set(false);
+                    return;
+                }
+                match crate::views::helpers::with_authed_api(&base, session, |api| async move {
+                    crate::mls::account_recovery::fetch_mls_account_secret_backup(&api).await
+                })
+                .await
+                {
+                    Ok(Some(_)) => needs_mls_unlock.set(true),
+                    Ok(None) => needs_mls_unlock.set(false),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error.display(),
+                            "MLS account-secret login unlock detection failed"
+                        );
+                    }
+                }
+            });
+        });
+    }
 
     let routed_space_id = route.space_id().map(str::to_owned);
     let remembered_space_id = selected_space();
