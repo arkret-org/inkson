@@ -20,6 +20,7 @@ pub fn MlsUnlockPrompt(
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     needs_mls_unlock: Signal<bool>,
+    restore_payload_cache: Signal<Option<serde_json::Value>>,
 ) -> Element {
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
@@ -44,15 +45,22 @@ pub fn MlsUnlockPrompt(
         let device = device_id();
         let mut state_store = state_store;
         let mut needs_mls_unlock = needs_mls_unlock;
+        let mut restore_payload_cache = restore_payload_cache;
+        let cached_payload = restore_payload_cache();
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
-            let result = match with_authed_api(&base, session, |api| async move {
-                crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
-            })
-            .await
-            {
+            let payload_result = if let Some(payload) = cached_payload {
+                Ok(payload)
+            } else {
+                with_authed_api(&base, session, |api| async move {
+                    crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                })
+                .await
+            };
+            let result = match payload_result {
                 Ok(payload) => {
+                    restore_payload_cache.set(Some(payload.clone()));
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
                     status.set(format!(
@@ -91,14 +99,17 @@ pub fn MlsUnlockPrompt(
                             crate::i18n::tr("mls_unlock.status.failed_suffix")
                         ));
                     } else {
-                        passphrase.set(String::new());
-                        needs_mls_unlock.set(false);
-                        status.set(format!(
+                        let restored_status = format!(
                             "{} {} {}",
                             crate::i18n::tr("mls_unlock.status.restored_prefix"),
                             report.restored,
                             crate::i18n::tr("mls_unlock.status.restored_suffix")
-                        ));
+                        );
+                        passphrase.set(String::new());
+                        restore_payload_cache.set(None);
+                        status.set(restored_status);
+                        crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
+                        needs_mls_unlock.set(false);
                     }
                 }
                 Err(err) => {

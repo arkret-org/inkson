@@ -13,6 +13,10 @@ use crate::models::{
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+pub fn live_media_enabled() -> bool {
+    cfg!(feature = "experimental-webrtc")
+}
+
 /// Client-side call lifecycle FSM. Soland owns the participant-scoped
 /// `call_state`; this enum keeps the UI panels and testids stable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

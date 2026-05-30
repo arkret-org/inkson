@@ -675,8 +675,8 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute("data-feature", "experimental-agents");
 
   await page.goto("/call", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("call-panel")).toContainText("Controls ready");
-  await expect(page.getByTestId("call-panel")).not.toContainText("signaling-only");
+  await expect(page.getByTestId("call-panel")).toContainText("Signaling ready");
+  await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute("data-feature", "experimental-webrtc");
 });
 
 test("setup realm form stays in the main workspace layout", async ({ page }) => {

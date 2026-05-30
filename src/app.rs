@@ -6667,6 +6667,7 @@ pub fn RouterView() -> Element {
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
     let needs_mls_unlock = use_signal(|| false);
+    let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
     // On first render with a live session, fetch the directory + sync so
@@ -6889,6 +6890,7 @@ pub fn RouterView() -> Element {
     {
         let mut seen_detection_key = mls_unlock_detection_key_seen;
         let mut needs_mls_unlock = needs_mls_unlock;
+        let mut restore_payload_cache = mls_restore_payload_cache;
         use_effect(move || {
             let base = base_url();
             let session = token();
@@ -6897,6 +6899,7 @@ pub fn RouterView() -> Element {
             let generation = sync_generation();
             if session.trim().is_empty() {
                 needs_mls_unlock.set(false);
+                restore_payload_cache.set(None);
                 return;
             }
             if base.trim().is_empty()
@@ -6922,15 +6925,25 @@ pub fn RouterView() -> Element {
                 .is_ok();
                 if has_local_secret {
                     needs_mls_unlock.set(false);
+                    restore_payload_cache.set(None);
                     return;
                 }
                 match crate::views::helpers::with_authed_api(&base, session, |api| async move {
-                    crate::mls::account_recovery::fetch_mls_account_secret_backup(&api).await
+                    crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
                 })
                 .await
                 {
-                    Ok(Some(_)) => needs_mls_unlock.set(true),
-                    Ok(None) => needs_mls_unlock.set(false),
+                    Ok(payload) => {
+                        if crate::mls::account_recovery::select_mls_account_secret_backup(&payload)
+                            .is_some()
+                        {
+                            restore_payload_cache.set(Some(payload));
+                            needs_mls_unlock.set(true);
+                        } else {
+                            restore_payload_cache.set(None);
+                            needs_mls_unlock.set(false);
+                        }
+                    }
                     Err(error) => {
                         tracing::warn!(
                             error = %error.display(),
@@ -7008,6 +7021,7 @@ pub fn RouterView() -> Element {
         let crypto_state_for_bootstrap = crypto_state;
         let last_error_for_bootstrap = last_error;
         let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
+        let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         use_effect(move || {
             let selected = selected_space();
             if !bootstrap_route_uses_space_context {
@@ -7092,14 +7106,21 @@ pub fn RouterView() -> Element {
                         &detect_base,
                         detect_session,
                         |api| async move {
-                            crate::mls::account_recovery::fetch_mls_account_secret_backup(&api)
-                                .await
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
                         },
                     )
                     .await
                     {
-                        Ok(Some(_)) => needs_mls_unlock_for_bootstrap.set(true),
-                        Ok(None) => {}
+                        Ok(payload) => {
+                            if crate::mls::account_recovery::select_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .is_some()
+                            {
+                                restore_payload_cache_for_bootstrap.set(Some(payload));
+                                needs_mls_unlock_for_bootstrap.set(true);
+                            }
+                        }
                         Err(error) => {
                             tracing::warn!(
                                 error = %error.display(),
@@ -7422,6 +7443,7 @@ pub fn RouterView() -> Element {
                 device_id,
                 state_store,
                 needs_mls_unlock,
+                restore_payload_cache: mls_restore_payload_cache,
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {
@@ -8830,13 +8852,17 @@ pub fn RouterView() -> Element {
                     },
                     Route::Call => rsx! {
                         crate::views::call::CallPanel { state_store }
-                        crate::views::webrtc::WebRtcCallPanel {
-                            base_url: base_url(),
-                            token,
-                            state_store,
-                            selected_space: active_space_id.clone(),
-                            account_did: account_did(),
-                            device_id: device_id(),
+                        if crate::views::webrtc::live_media_enabled() {
+                            crate::views::webrtc::WebRtcCallPanel {
+                                base_url: base_url(),
+                                token,
+                                state_store,
+                                selected_space: active_space_id.clone(),
+                                account_did: account_did(),
+                                device_id: device_id(),
+                            }
+                        } else {
+                            DeferredFeatureGate { feature: "experimental-webrtc" }
                         }
                     },
                     Route::Recovery => rsx! {
@@ -10173,14 +10199,18 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // No previous identity to displace — just record
                         // who the scope now belongs to (don't wipe: a
                         // just-established grant could be dropped).
-                        state_store.write().stamp_account_scope_owner(&canonical_actor);
+                        state_store
+                            .write()
+                            .stamp_account_scope_owner(&canonical_actor);
                     }
                     account_did.set(canonical_actor.clone());
                 } else {
                     // Actor unchanged — record the scope owner so a later
                     // login for a different identity is recognised and the
                     // stale scope is reset.
-                    state_store.write().stamp_account_scope_owner(&canonical_actor);
+                    state_store
+                        .write()
+                        .stamp_account_scope_owner(&canonical_actor);
                 }
                 persist_config(
                     config_store,

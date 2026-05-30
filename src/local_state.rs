@@ -4151,12 +4151,18 @@ mod tests {
         assert!(store.adopt_account_scope("did:web:bob.example"));
         let state = store.load();
         assert!(state.sync_cursor.is_none(), "stale cursor must be wiped");
-        assert!(state.space_projections.is_empty(), "projections must be wiped");
+        assert!(
+            state.space_projections.is_empty(),
+            "projections must be wiped"
+        );
         assert!(
             state.session_grant.is_none(),
             "previous identity's grant must be wiped, not preserved"
         );
-        assert!(state.oidc_tokens.is_none(), "previous OIDC bundle must be wiped");
+        assert!(
+            state.oidc_tokens.is_none(),
+            "previous OIDC bundle must be wiped"
+        );
         assert_eq!(
             state.account_scope_owner.as_deref(),
             Some("did:web:bob.example"),

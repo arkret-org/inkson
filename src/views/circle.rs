@@ -181,8 +181,7 @@ pub fn CircleGrantsPanel(summary: CircleSummary, grants: Vec<CircleGrantRow>) ->
                 p {
                     class: "muted",
                     "data-testid": "circle-grants-empty",
-                    "TODO(R3.1): No grants attached. The attach / detach controls land once "
-                    "`/api/v1/circles/{circle_id}/grants` is wired."
+                    "No grants are attached to this Circle yet."
                 }
             } else {
                 ul { class: "grant-list",

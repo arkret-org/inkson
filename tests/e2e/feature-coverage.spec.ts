@@ -409,13 +409,15 @@ test.describe("feature coverage placeholders", () => {
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
     // yougen ships the call SIGNALING surface
     // (`cx.call.signal` / `cx.call.state` / `cx.call.recording.start`)
-    // but the WebRTC media stack is renderer-provided. This e2e pins
-    // the call-panel surface so the SFU-vs-recording-grant contract
-    // has a UI to bind to. The full SFU-never-touches-plaintext
-    // assertion runs in `crate::webrtc::tests`.
+    // but the WebRTC media stack is renderer-provided and hidden from
+    // the default local 1.0 UI until `experimental-webrtc` is enabled.
     await page.goto("/call", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("call-panel")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("call-signal-count")).toBeVisible();
+    await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
+      "data-feature",
+      "experimental-webrtc",
+    );
   });
 
   // ---- Push gateway masking ----

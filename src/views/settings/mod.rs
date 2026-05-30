@@ -3031,10 +3031,12 @@ pub fn SettingsPanel(
                         // First user-facing button on the anchored cell pipeline. Builds a
                         // cx.consent.grant event, signs with a deterministic demo ed25519 key
                         // (TODO real-key-management), and submits it through cx.events.submit.
-                        crate::views::consent_demo::ConsentGrantDemoCard {
-                            base_url,
-                            token,
-                            state_store,
+                        if crate::views::agents::agents_enabled() {
+                            crate::views::consent_demo::ConsentGrantDemoCard {
+                                base_url,
+                                token,
+                                state_store,
+                            }
                         }
 
                         // ── Account Data (actor-private View preferences) ─────

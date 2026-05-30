@@ -39,6 +39,8 @@ experimental-polls = []
 experimental-discussion-promote = []
 experimental-agents = []
 experimental-applets = []
+experimental-webrtc = []
+experimental-document-collaboration = []
 # Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
 # `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
 # `HostSecretBridge` trait the platform shell installs; there is NO real

@@ -25,6 +25,10 @@ use crate::local_state::LocalStateStore;
 use crate::operation::cx_ops;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
+pub fn document_collaboration_enabled() -> bool {
+    cfg!(feature = "experimental-document-collaboration")
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum BlockKind {
     Paragraph,
@@ -1053,6 +1057,7 @@ pub fn DocumentPanel(
             // ─────────────────────────────────────────────────────
             // G3.Y4 — collaborative surface
             // ─────────────────────────────────────────────────────
+            if document_collaboration_enabled() {
 
             // Editor wrapper carrying the cursor markers and `data-*`
             // attributes the cotest harness uses to assert presence.
@@ -1434,6 +1439,20 @@ pub fn DocumentPanel(
                                 }
                             }
                         }
+                    }
+                }
+            }
+            } else {
+                div {
+                    class: "event",
+                    "data-testid": "document-collaboration-deferred",
+                    "data-feature": "experimental-document-collaboration",
+                    div { class: "event-head",
+                        span { "Collaboration" }
+                        span { class: "badge", "Deferred" }
+                    }
+                    div { class: "muted",
+                        "Presence, anchored comments, restore, and version diff controls are hidden in the default UI until the collaboration transport and snapshot endpoints are wired."
                     }
                 }
             }

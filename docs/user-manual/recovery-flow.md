@@ -41,7 +41,8 @@ forgotten passphrase — fall back to SSS or the recovery key.
 For encrypted history, this passphrase is the account-level trust root: anyone
 who can unlock the `mls_account_secret` backup can decrypt historical
 `mls_history` backups. Revoking a device does not retroactively remove a copy
-of the account MLS secret that was already stored on that device.
+of the account MLS secret, cached plaintext, or old history backups that were
+already stored on that device.
 
 ---
 
@@ -98,9 +99,14 @@ Within 24 hours of recovery:
 
 1. Open **Settings → Devices** on the new device.
 2. **Revoke** every device you can no longer reach. Each revocation
-   publishes a `cx.device.revoke` envelope.
+   publishes a `cx.device.revoke` envelope, rotates future history backups,
+   and removes the device from new MLS epochs.
 3. Run **Cross-signing → Re-sign trusted contacts** so your peers
    register the new device as a successor.
+
+Revocation is not a remote wipe. If the old device was stolen, compromised, or
+offline before you revoked it, assume any secret or plaintext it had already
+cached remains readable on that device.
 
 <!-- TODO(screenshot): settings-devices-revoke-after-recovery.png -->
 

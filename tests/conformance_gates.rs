@@ -395,6 +395,48 @@ fn build_space_state_event_history_visibility_matches_event_schema() {
 }
 
 #[test]
+fn build_realm_history_sharing_policy_event_matches_event_schema() {
+    let mut envelope = api::build_realm_history_sharing_policy_event(
+        TEST_REALM_ID,
+        TEST_ACTOR_DID,
+        serde_json::json!({
+            "version": 1,
+            "default_key_share": "event_time_visibility",
+            "allowed_key_sources": ["verified_member_device"],
+            "allowed_receiver_states": ["active_member"],
+            "audit": {
+                "share_audit_event_required": true,
+                "access_audit_required": true
+            }
+        }),
+    )
+    .expect("build_realm_history_sharing_policy_event succeeds");
+    stamp_wire_fields(&mut envelope);
+    assert_envelope_matches_schema("build_space_state_event[history_sharing_policy]", &envelope);
+}
+
+#[test]
+fn build_realm_preview_policy_event_matches_event_schema() {
+    let mut envelope = api::build_realm_preview_policy_event(
+        TEST_REALM_ID,
+        TEST_ACTOR_DID,
+        serde_json::json!({
+            "mode": "stripped_state",
+            "audiences": ["link_token_holder"],
+            "fields": ["title", "summary", "join_rule", "history_visibility"],
+            "token": {
+                "required": true,
+                "ttl_seconds": 600,
+                "bind_target_digest": true
+            }
+        }),
+    )
+    .expect("build_realm_preview_policy_event succeeds");
+    stamp_wire_fields(&mut envelope);
+    assert_envelope_matches_schema("build_space_state_event[preview_policy]", &envelope);
+}
+
+#[test]
 fn build_member_state_event_matches_event_schema() {
     // `build_member_state_event` itself is private. It is a thin wrapper
     // around `build_member_state_transition_event` with from=None and
@@ -614,6 +656,103 @@ fn yougen_source_tree_is_free_of_forbidden_legacy_terms() {
         "yougen production code contains legacy terms that were renamed \
          during the Realm/Space inversion (Stream B/C):\n  {}",
         offenders.join("\n  ")
+    );
+}
+
+// ----------------------------------------------------------------------
+// Release-readiness gates for documented deferred surfaces
+// ----------------------------------------------------------------------
+
+#[test]
+fn wasm_secure_key_store_upgrade_window_is_documented_and_boot_wired() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let secure_key_store =
+        fs::read_to_string(manifest.join("src/secure_key_store.rs")).expect("secure_key_store.rs");
+    let app = fs::read_to_string(manifest.join("src/app.rs")).expect("app.rs");
+    let security = fs::read_to_string(manifest.join("SECURITY.md")).expect("SECURITY.md");
+
+    assert!(
+        secure_key_store.contains("LocalStorageSecureKeyStore")
+            && secure_key_store.contains("IndexedDbSecureKeyStore")
+            && secure_key_store.contains("upgrade_wasm_secure_key_store_async")
+            && secure_key_store.contains("migrate_localstorage_entries_to_indexeddb"),
+        "wasm secure key store must keep the localStorage fallback, IndexedDB upgrade, and migration path visible"
+    );
+    assert!(
+        app.contains("upgrade_wasm_secure_key_store_async(\"yougen\")"),
+        "app startup must invoke the wasm secure-key-store upgrade"
+    );
+    assert!(
+        security.contains("first-paint localStorage tier")
+            && security.contains("XSS, extension, or browser profile")
+            && security.contains("dump during that window")
+            && security.contains("After the async upgrade succeeds"),
+        "SECURITY.md must explain the localStorage exposure window and the IndexedDB upgrade boundary"
+    );
+}
+
+#[test]
+fn revocation_remote_wipe_limit_is_user_visible() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let devices = fs::read_to_string(manifest.join("src/views/settings/devices.rs"))
+        .expect("settings devices view");
+    let security = fs::read_to_string(manifest.join("SECURITY.md")).expect("SECURITY.md");
+    let recovery = fs::read_to_string(manifest.join("docs/user-manual/recovery-flow.md"))
+        .expect("recovery-flow.md");
+
+    for (label, raw) in [
+        ("settings devices revoke modal", devices.as_str()),
+        ("SECURITY.md", security.as_str()),
+        ("recovery user manual", recovery.as_str()),
+    ] {
+        assert!(
+            raw.contains("remote") && raw.contains("wipe") || raw.contains("remotely erase"),
+            "{label} must tell users revocation is not a remote wipe"
+        );
+        assert!(
+            raw.contains("already") && (raw.contains("secret") || raw.contains("plaintext")),
+            "{label} must mention already-copied secrets/plaintext remain at risk"
+        );
+    }
+}
+
+#[test]
+fn unfinished_interactive_surfaces_are_default_off_or_explicitly_deferred() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cargo = fs::read_to_string(manifest.join("Cargo.toml")).expect("Cargo.toml");
+    let app = fs::read_to_string(manifest.join("src/app.rs")).expect("app.rs");
+    let call = fs::read_to_string(manifest.join("src/views/call.rs")).expect("call.rs");
+    let webrtc = fs::read_to_string(manifest.join("src/views/webrtc.rs")).expect("webrtc.rs");
+    let document = fs::read_to_string(manifest.join("src/views/document.rs")).expect("document.rs");
+    let object_address =
+        fs::read_to_string(manifest.join("src/object_address.rs")).expect("object_address.rs");
+    let viewport =
+        fs::read_to_string(manifest.join("tests/e2e/viewport.spec.ts")).expect("viewport.spec.ts");
+
+    assert!(
+        cargo.contains("experimental-webrtc = []")
+            && webrtc.contains("cfg!(feature = \"experimental-webrtc\")")
+            && app.contains("DeferredFeatureGate { feature: \"experimental-webrtc\" }")
+            && call.contains("Live WebRTC media remains feature-gated"),
+        "live WebRTC media must stay hidden behind experimental-webrtc in the default UI"
+    );
+    assert!(
+        cargo.contains("experimental-document-collaboration = []")
+            && document.contains("cfg!(feature = \"experimental-document-collaboration\")")
+            && document.contains("document-collaboration-deferred"),
+        "document collaboration controls must be hidden behind experimental-document-collaboration by default"
+    );
+    assert!(
+        object_address.contains("HTTPS-fragment-only")
+            && object_address.contains("does")
+            && object_address.contains("register"),
+        "OS deep-link/protocol-handler support must remain explicitly deferred"
+    );
+    assert!(
+        viewport.contains("test.skip(")
+            && viewport.contains("fixtures")
+            && viewport.contains("catch up"),
+        "viewport checks must stay visibly skipped/deferred until fixtures are ready"
     );
 }
 

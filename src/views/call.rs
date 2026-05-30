@@ -1,7 +1,9 @@
-//! Call view — compact status surface for call controls.
+//! Call view — compact status surface for call signaling.
 //!
-//! The actual controls live in `webrtc.rs`; this panel keeps the stable
-//! `call-panel` / `call-signal-count` handles and summarizes signal state.
+//! The live media controls live in `webrtc.rs` and are gated by the
+//! `experimental-webrtc` feature. This panel keeps the stable
+//! `call-panel` / `call-signal-count` handles and summarizes signal state
+//! without implying the default production UI can place media calls.
 //!
 //! R3 spec sync (b47ff6ec) — also surfaces CXP-0010 media-binding wire
 //! contract status: token-exchange integration, focus_unavailable_for_client
@@ -35,11 +37,11 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
             div { class: "event",
                 div { class: "event-head",
                     span { "Calls" }
-                    span { class: "badge green", "Controls ready" }
-                    HelpTip { text: "Use the WebRTC controls below to start, accept, decline, mute, share, record, and leave calls. This summary shows the durable call signal state observed locally." }
+                    span { class: "badge", "Signaling ready" }
+                    HelpTip { text: "The durable call signal contract is available. Live media controls are hidden unless the experimental-webrtc feature is enabled." }
                 }
                 div { class: "muted",
-                    "Call controls are available below; this summary keeps protocol signal health visible without blocking the user flow."
+                    "This summary keeps protocol signal health visible. Live WebRTC media remains feature-gated until the renderer transport is wired."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -54,8 +56,8 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                     div { class: "metric",
                         strong { "Media transport" }
-                        span { "Browser bridge" }
-                        div { class: "muted", "Peer setup is handled by the active renderer" }
+                        span { "Deferred" }
+                        div { class: "muted", "Hidden by default; enable experimental-webrtc only for renderer transport testing" }
                     }
                     div { class: "metric",
                         strong { "Recording" }
@@ -75,7 +77,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     span { class: "badge", "spec b47ff6ec" }
                 }
                 div { class: "muted",
-                    "Token exchange + MLS-exporter SFrame keying + participant identity cross-check + Contrix-blob recording pipeline are wire-contract aligned with the b47ff6ec spec. Live SFU integration lands in R3.1."
+                    "Token exchange + MLS-exporter SFrame keying + participant identity cross-check + Contrix-blob recording pipeline are wire-contract aligned with the b47ff6ec spec. Live SFU UI is deferred behind experimental-webrtc."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",

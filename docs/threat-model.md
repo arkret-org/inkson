@@ -125,6 +125,11 @@ Security consequences:
 - Device revocation does not currently erase an account secret already copied
   onto the revoked device. The revoked device may retain access to history it
   already stored or can still fetch through valid server credentials.
+- Yougen cannot issue a remote wipe for browser localStorage, IndexedDB,
+  native keychain records, exported logs, or cached plaintext on a device that
+  is offline or controlled by an attacker. The revocation UI therefore warns
+  users that rotation protects future backups and group epochs, not old
+  material already present on that device.
 - The local 1.0 design intentionally uses one account secret rather than a
   per-realm secret. This keeps backup and restore simple, but compromise of
   the account secret has account-wide impact.

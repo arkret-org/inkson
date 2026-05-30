@@ -1392,8 +1392,8 @@ impl ContrixApi {
     ///
     /// `address` is the canonical `web+contrix:` (or HTTPS-fragment) string
     /// derived from [`contrix_sdk::model::parse_address`]; `token` is present
-    /// iff the address carried `lt=invite`. The server binds an invite token
-    /// to the resolved object via the SDK's
+    /// iff the address carried `lt=invite` or `lt=preview`. The server binds
+    /// an invite or preview token to the resolved object via the SDK's
     /// [`contrix_sdk::model::verify_token_target`]; the client only forwards
     /// the opaque token here.
     ///
@@ -2400,6 +2400,11 @@ impl ContrixApi {
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
                 "actor_id is required for canonical Realm policy events"
+            ));
+        }
+        if history_visibility.trim() == "restricted" {
+            return Err(anyhow::anyhow!(
+                "restricted history_visibility requires cx.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
             ));
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
@@ -3787,6 +3792,11 @@ pub fn build_realm_bootstrap_events(
     // the creator — the reducer writes that cell atomically with the
     // create event.
     let mut events: Vec<EventEnvelope> = Vec::new();
+    if history_visibility.trim() == "restricted" {
+        return Err(anyhow::anyhow!(
+            "restricted history_visibility requires a cx.realm.history_sharing_policy event in the same ordered batch"
+        ));
+    }
     let invitees = parse_realm_bootstrap_members(invitees)?;
     events.push(build_realm_create_event(
         space_id,
@@ -4148,6 +4158,8 @@ pub fn build_space_state_event(
     let cell_family = match kind {
         "cx.realm.join_rule" => "cx.component.realm.join_rule.v1",
         "cx.realm.history_visibility" => "cx.component.realm.history_visibility.v1",
+        "cx.realm.history_sharing_policy" => "cx.component.realm.history_sharing_policy.v1",
+        "cx.realm.preview_policy" => "cx.component.realm.preview_policy.v1",
         "cx.realm.discovery" => "cx.component.realm.discovery.v1",
         "cx.realm.schema" => "cx.component.realm.schema.v1",
         "cx.realm.policy_components" => "cx.component.realm.policy_components.v1",
@@ -4190,6 +4202,27 @@ pub fn build_space_state_event(
         .build("yougen");
     envelope.created_at = created_at;
     Ok(envelope)
+}
+
+pub fn build_realm_history_sharing_policy_event(
+    space_id: &str,
+    actor_id: &str,
+    policy: Value,
+) -> anyhow::Result<EventEnvelope> {
+    build_space_state_event(
+        space_id,
+        actor_id,
+        "cx.realm.history_sharing_policy",
+        policy,
+    )
+}
+
+pub fn build_realm_preview_policy_event(
+    space_id: &str,
+    actor_id: &str,
+    policy: Value,
+) -> anyhow::Result<EventEnvelope> {
+    build_space_state_event(space_id, actor_id, "cx.realm.preview_policy", policy)
 }
 
 /// Build a `cx.realm.plaintext_visible_services` event when the caller

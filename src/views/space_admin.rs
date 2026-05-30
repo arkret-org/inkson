@@ -2071,10 +2071,17 @@ pub fn SpaceAdminPanel(
                         div { class: "muted", "did:web:partner.example · weekly job · revocable" }
                     }
                 }
-                div { class: "actions", "data-testid": "grant-decision-actions",
-                    button { class: "primary", "data-testid": "grant-approve-button", "Approve Researcher Agent" }
-                    button { class: "secondary", "data-testid": "grant-deny-button", "Deny and sign cx.capability.revoke" }
-                    button { class: "secondary", "data-testid": "grant-explain-button", "View full grant trail (audit)" }
+                div { class: "metric-grid", "data-testid": "grant-decision-actions",
+                    div { class: "metric", "data-testid": "grant-approval-status",
+                        strong { "Researcher Agent" }
+                        span { "pending approval" }
+                        div { class: "muted", "No local approval action is available from this snapshot." }
+                    }
+                    div { class: "metric", "data-testid": "grant-trail-status",
+                        strong { "Audit trail" }
+                        span { "available from audit views" }
+                        div { class: "muted", "Use the signed capability grant / revoke card below for live changes." }
+                    }
                 }
                 div { class: "muted",
                     "Reducer decision inputs: cx.capability.grant / cx.capability.revoke / resolved approval_constraint. Full trail in /audit."

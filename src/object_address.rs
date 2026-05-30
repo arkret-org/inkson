@@ -4,7 +4,7 @@
 //! A user can share a Realm / Flow / Message as a link. This module is the
 //! yougen-side glue on top of the SDK's client-agnostic addressing grammar
 //! ([`contrix_sdk::model::parse_address`] / [`build_address`] /
-//! [`build_https_landing`]) plus the [`target_digest`] invite-token binding:
+//! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message) plus routing hints.
 //!   [`ShareTarget::build_links`] produces both output forms.
@@ -19,9 +19,10 @@
 //!   using the fragment.
 //! * The open-link path never distinguishes `not_found` from `unauthorized`: any resolve failure
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
-//! * Reference links carry no authorization. Invite links bind the [`TargetDescriptor`] digest so a
-//!   token minted for object A cannot be replayed onto object B (scope-confusion defence lives in
-//!   the SDK's [`contrix_sdk::model::verify_token_target`]).
+//! * Reference links carry no authorization. Invite and preview links bind the
+//!   [`TargetDescriptor`] digest so a token minted for object A cannot be replayed
+//!   onto object B (scope-confusion defence lives in the SDK's
+//!   [`contrix_sdk::model::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! yougen deliberately ships the **HTTPS-fragment-only** landing path and does
@@ -132,7 +133,7 @@ impl ShareTarget {
             action,
             // A stray token on a reference link is dropped by the SDK builder.
             link_type,
-            token: if link_type == LinkType::Invite {
+            token: if matches!(link_type, LinkType::Invite | LinkType::Preview) {
                 token
             } else {
                 None
@@ -173,6 +174,19 @@ impl ShareTarget {
         self.build_links(landing, via, action, LinkType::Reference, None)
     }
 
+    /// Build a `preview` link pair. Preview tokens are policy-limited by
+    /// `cx.realm.preview_policy`; they do not grant membership, write access or
+    /// join routing.
+    pub fn build_preview_links(
+        &self,
+        landing: &str,
+        via: &[String],
+        action: AddressAction,
+        token: String,
+    ) -> ShareLinks {
+        self.build_links(landing, via, action, LinkType::Preview, Some(token))
+    }
+
     /// Compute the [`TargetDescriptor`] digest this target would bind into an
     /// `invite` token's signed payload. The digest covers ONLY the identity
     /// tuple + `link_type`, never the via/action hints, so a server can mint a
@@ -184,12 +198,21 @@ impl ShareTarget {
     // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
     // via the directory before digesting (TargetDescriptor::set_realm_id).
     pub fn invite_target_digest(&self) -> anyhow::Result<String> {
-        let parsed = self.to_parsed_address(&[], AddressAction::View, LinkType::Invite, None);
+        self.target_digest_for_link_type(LinkType::Invite)
+    }
+
+    /// Compute the target descriptor digest a `preview` token must bind.
+    pub fn preview_target_digest(&self) -> anyhow::Result<String> {
+        self.target_digest_for_link_type(LinkType::Preview)
+    }
+
+    fn target_digest_for_link_type(&self, link_type: LinkType) -> anyhow::Result<String> {
+        let parsed = self.to_parsed_address(&[], AddressAction::View, link_type, None);
         let mut descriptor = TargetDescriptor::from_parsed(&parsed);
-        descriptor.link_type = LinkType::Invite;
+        descriptor.link_type = link_type;
         if !descriptor.realm_id.starts_with("cx:realm:") {
             return Err(anyhow::anyhow!(
-                "cannot bind an invite token to an alias realm — resolve to a canonical realm_id first"
+                "cannot bind a token to an alias realm — resolve to a canonical realm_id first"
             ));
         }
         target_digest(&descriptor).map_err(|err| anyhow::anyhow!("target_digest failed: {err}"))
@@ -210,7 +233,7 @@ pub struct ShareLinks {
 
 /// A parsed shareable link plus the local route it resolves to. `address` is
 /// the SDK [`ParsedAddress`]; `token` is lifted out for the resolve request
-/// body (present iff the link was an invite link).
+/// body (present iff the link was an invite or preview link).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenedLink {
     pub address: ParsedAddress,
@@ -450,9 +473,31 @@ mod tests {
     }
 
     #[test]
+    fn preview_link_roundtrips_token_and_binds_digest() {
+        let target = ShareTarget::flow(&format!("cx:realm:{R}"), &format!("cx:flow:{F}"));
+        let links = target.build_preview_links(
+            LANDING,
+            &[VIA.to_owned()],
+            AddressAction::View,
+            "preview-token-123".to_owned(),
+        );
+        assert!(links.web_contrix.contains("lt=preview"));
+        assert!(links.web_contrix.contains("tok=preview-token-123"));
+        let opened = OpenedLink::parse(&links.web_contrix).unwrap();
+        assert_eq!(opened.address.link_type, LinkType::Preview);
+        assert_eq!(opened.token.as_deref(), Some("preview-token-123"));
+
+        let invite_digest = target.invite_target_digest().unwrap();
+        let preview_digest = target.preview_target_digest().unwrap();
+        assert!(preview_digest.starts_with("sha256:"));
+        assert_ne!(invite_digest, preview_digest);
+    }
+
+    #[test]
     fn invite_digest_fails_closed_on_alias_realm() {
         let target = ShareTarget::realm("team.example.com");
         assert!(target.invite_target_digest().is_err());
+        assert!(target.preview_target_digest().is_err());
     }
 
     #[test]

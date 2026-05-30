@@ -300,7 +300,7 @@ pub struct ResolveRealmResponse {
     #[serde(default)]
     pub stripped_state: Vec<Value>,
     pub join_rule: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub join_candidates: Vec<RealmJoinCandidate>,
 }
 

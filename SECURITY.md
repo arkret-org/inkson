@@ -103,10 +103,27 @@ On native targets, `crate::secure_key_store::KeyringSecureKeyStore`
 routes signing-key persistence through macOS Keychain Services /
 freedesktop Secret Service / Windows Credential Manager via the
 `keyring 3.6.x` `Entry` API. The wasm32 build falls back to
-`LocalStorageSecureKeyStore` / `IndexedDbSecureKeyStore`; the browser
-"no symmetric-secret tier" trade-off is called out in the keystore
-module docs. There is no code path that writes signing material to a
-plain-text file on disk.
+`LocalStorageSecureKeyStore` for first paint, then upgrades to
+`IndexedDbSecureKeyStore` once IndexedDB and SubtleCrypto are available.
+The first-paint localStorage tier stores the AEAD wrapping seed and
+ciphertext under the same origin, so an XSS, extension, or browser profile
+dump during that window can decrypt secrets offline. After the async upgrade succeeds,
+the seed and migrated ciphertext are removed from localStorage and
+new reads use IndexedDB plus a non-extractable SubtleCrypto key. Browsers
+that deny IndexedDB/SubtleCrypto keep the weaker localStorage fallback and
+must be treated as lower assurance than native OS keychain storage. There is
+no code path that writes signing material to a plain-text file on disk.
+
+### Device revocation boundary
+
+Revoking a device removes it from the active device set, asks MLS groups to
+remove the leaf, invalidates future KeyPackages, unregisters push wakeups, and
+rotates the account MLS history secret for future backups. This is not a
+remote wipe: it cannot remotely erase secrets, plaintext cache, or old
+`mls_history` backups that were already
+copied onto the revoked device. Users should treat a lost or compromised
+device as able to read anything it retained before revocation until account
+secret versioning/rotation evidence proves otherwise.
 
 ### Telemetry default OFF
 

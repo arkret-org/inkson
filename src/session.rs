@@ -110,7 +110,10 @@ mod tests {
         register_session_refresher(Rc::new(|| {
             Box::pin(async { Some("fresh-bearer".to_owned()) })
         }));
-        assert_eq!(refresh_current_bearer().await, Some("fresh-bearer".to_owned()));
+        assert_eq!(
+            refresh_current_bearer().await,
+            Some("fresh-bearer".to_owned())
+        );
     }
 
     #[tokio::test]
@@ -129,8 +132,7 @@ mod tests {
             })
         }));
 
-        let (first, second) =
-            tokio::join!(refresh_current_bearer(), refresh_current_bearer());
+        let (first, second) = tokio::join!(refresh_current_bearer(), refresh_current_bearer());
 
         assert_eq!(first, Some("tok".to_owned()));
         assert_eq!(second, Some("tok".to_owned()));

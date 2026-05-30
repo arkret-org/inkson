@@ -62,12 +62,94 @@ pub fn build_report_body(recent_tracing: &[String], app_version: &str, os: &str)
         body.push_str("(no recent tracing captured)\n");
     } else {
         for line in recent_tracing {
-            body.push_str(line);
+            body.push_str(&sanitize_report_trace_line(line));
             body.push('\n');
         }
     }
     body.push_str("```\n");
     body
+}
+
+fn sanitize_report_trace_line(line: &str) -> String {
+    let prefix_redacted = redact_prefixed_identifiers(line);
+    prefix_redacted
+        .split_inclusive(char::is_whitespace)
+        .map(redact_handle_like_segment)
+        .collect()
+}
+
+fn redact_prefixed_identifiers(line: &str) -> String {
+    let mut redacted = String::with_capacity(line.len());
+    let mut index = 0;
+    while index < line.len() {
+        let rest = &line[index..];
+        let replacement = if rest.starts_with("did:") {
+            Some("<redacted:did>")
+        } else if rest.starts_with("cx:") {
+            Some("<redacted:contrix-id>")
+        } else if rest.starts_with("acct:") {
+            Some("<redacted:handle>")
+        } else if rest.starts_with("web+contrix:") {
+            Some("<redacted:contrix-link>")
+        } else {
+            None
+        };
+
+        if let Some(marker) = replacement {
+            redacted.push_str(marker);
+            index = advance_sensitive_token(line, index);
+            continue;
+        }
+
+        let ch = rest.chars().next().expect("index is at a char boundary");
+        redacted.push(ch);
+        index += ch.len_utf8();
+    }
+    redacted
+}
+
+fn advance_sensitive_token(line: &str, start: usize) -> usize {
+    let mut index = start;
+    while index < line.len() {
+        let ch = line[index..]
+            .chars()
+            .next()
+            .expect("index is at a char boundary");
+        if ch.is_whitespace()
+            || matches!(
+                ch,
+                '"' | '\'' | '`' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | ',' | ';'
+            )
+        {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    index
+}
+
+fn redact_handle_like_segment(segment: &str) -> String {
+    let trimmed = segment.trim_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '"' | '\'' | '`' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | ',' | ';'
+            )
+    });
+    if trimmed.contains('@') && looks_like_user_handle(trimmed) {
+        segment.replace(trimmed, "<redacted:handle>")
+    } else {
+        segment.to_owned()
+    }
+}
+
+fn looks_like_user_handle(token: &str) -> bool {
+    if token.starts_with('@') {
+        return token.len() > 1;
+    }
+    token
+        .split_once('@')
+        .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
 }
 
 #[component]
@@ -145,6 +227,27 @@ mod tests {
     fn empty_tracing_renders_placeholder() {
         let body = build_report_body(&[], "0.1.0", "web");
         assert!(body.contains("no recent tracing captured"));
+    }
+
+    #[test]
+    fn report_body_redacts_stable_identifiers_from_tracing() {
+        let body = build_report_body(
+            &[
+                "actor=did:web:alice.example realm=cx:realm:01964137-0000-7000-8000-000000000001"
+                    .to_owned(),
+                "handle alice@example.com opened web+contrix:realm/demo".to_owned(),
+            ],
+            "0.1.0",
+            "web",
+        );
+
+        assert!(body.contains("<redacted:did>"));
+        assert!(body.contains("<redacted:contrix-id>"));
+        assert!(body.contains("<redacted:handle>"));
+        assert!(body.contains("<redacted:contrix-link>"));
+        assert!(!body.contains("did:web:alice.example"));
+        assert!(!body.contains("alice@example.com"));
+        assert!(!body.contains("cx:realm:01964137"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
