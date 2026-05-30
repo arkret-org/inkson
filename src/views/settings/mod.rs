@@ -28,8 +28,9 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
 use crate::recovery_crypto::{
-    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
-    estimate_passphrase_strength,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
+    derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    recovery_passphrase_strength_error,
 };
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -1477,14 +1478,15 @@ pub fn SettingsPanel(
                         // Inline strength meter so users notice when the
                         // passphrase is too short to protect the backup.
                         let strength = estimate_passphrase_strength(&key_backup_passphrase());
+                        let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
                         let strength_label = match strength {
                             0 => "(passphrase required)",
                             1..=2 => "weak",
-                            3 => "fair",
+                            3 => "good",
                             _ => "strong",
                         };
                         rsx! { div { class: "muted",
-                            "Passphrase strength: {strength_label}"
+                            "Passphrase strength: {strength_label}; minimum good ({min_strength}/5). Losing this E2E recovery passphrase means encrypted history cannot be restored on a fresh device."
                         } }
                     }
                     div { class: "actions",
@@ -1503,6 +1505,7 @@ pub fn SettingsPanel(
                         button {
                             class: "secondary",
                             "data-testid": "key-backup-setup",
+                            disabled: recovery_passphrase_strength_error(&key_backup_passphrase()).is_some(),
                             onclick: move |_| {
                                 let base = base_url();
                                 let api_token = token();
@@ -1515,6 +1518,10 @@ pub fn SettingsPanel(
                                         "Enter a vault passphrase before storing the backup."
                                             .to_owned(),
                                     );
+                                    return;
+                                }
+                                if let Some(reason) = recovery_passphrase_strength_error(&passphrase) {
+                                    key_backup_status.set(reason.to_owned());
                                     return;
                                 }
                                 // Backup body schema mirrors the recovery vault

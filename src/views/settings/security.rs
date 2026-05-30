@@ -23,7 +23,9 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
+    derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    recovery_passphrase_strength_error,
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -74,6 +76,16 @@ fn save_state(state_store: &mut LocalStateStore, account_did: &str, state: &KeyB
     }
 }
 
+fn passphrase_strength_label(score: u8) -> &'static str {
+    match score {
+        0 => "required",
+        1 => "weak",
+        2 => "fair",
+        3 => "good",
+        _ => "strong",
+    }
+}
+
 #[component]
 pub fn SettingsSecurityPanel(
     base_url: Signal<String>,
@@ -94,6 +106,8 @@ pub fn SettingsSecurityPanel(
     let has_session = !token().trim().is_empty();
     let last_backup_id_value = last_backup_id();
     let last_backup_id_label = short_protocol_id(&last_backup_id_value);
+    let passphrase_strength = estimate_passphrase_strength(&passphrase());
+    let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
 
     rsx! {
         div { class: "settings", "data-testid": "settings-security-panel",
@@ -106,7 +120,7 @@ pub fn SettingsSecurityPanel(
                         }
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "Key backup" }
-                            HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + account MLS history key. The passphrase is stretched on-device with Argon2id; the server only stores ciphertext. Anyone who learns the passphrase can unlock historical encrypted backups, and device revocation does not erase an MLS history key already stored on that device.".to_owned() }
+                            HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + account MLS history key. The passphrase is the E2E recovery trust root: anyone who learns it can unlock historical encrypted backups, and if you lose it, encrypted history cannot be restored on a fresh device.".to_owned() }
                         }
                     }
 
@@ -152,7 +166,7 @@ pub fn SettingsSecurityPanel(
                             span { "manual triggers" }
                         }
                         p { class: "muted",
-                            "Enter a passphrase, then trigger a backup or restore. The passphrase plaintext only lives in this tab's memory during the Argon2id stretch."
+                            "Enter a strong passphrase, then trigger a backup or restore. The passphrase plaintext only lives in this tab's memory during the Argon2id stretch."
                         }
                         div { class: "workflow-form",
                             label { r#for: "key-backup-passphrase", "Backup passphrase" }
@@ -161,16 +175,20 @@ pub fn SettingsSecurityPanel(
                                 "data-testid": "key-backup-passphrase-input",
                                 r#type: "password",
                                 value: "{passphrase}",
-                                placeholder: "16+ characters recommended",
+                                placeholder: "24+ characters or several random words",
                                 autocomplete: "new-password",
                                 oninput: move |evt| passphrase.set(evt.value()),
+                            }
+                            div { class: "muted", "data-testid": "key-backup-passphrase-strength",
+                                "Strength: {passphrase_strength_label(passphrase_strength)} ({passphrase_strength}/5). Minimum: good ({min_strength}/5)."
                             }
                         }
                         div { class: "actions",
                             button {
                                 class: "primary",
                                 "data-testid": "key-backup-trigger-button",
-                                disabled: !has_session || passphrase().trim().is_empty(),
+                                disabled: !has_session
+                                    || recovery_passphrase_strength_error(&passphrase()).is_some(),
                                 onclick: {
                                     let actor = actor_did.clone();
                                     move |_| {
@@ -179,6 +197,10 @@ pub fn SettingsSecurityPanel(
                                         let actor_owned = actor.clone();
                                         let device = device_id();
                                         let pass = passphrase();
+                                        if let Some(reason) = recovery_passphrase_strength_error(&pass) {
+                                            action_status.set(reason.to_owned());
+                                            return;
+                                        }
                                         let backup_id = if last_backup_id().is_empty() {
                                             format!("cx:backup:{}", uuid_v7())
                                         } else {

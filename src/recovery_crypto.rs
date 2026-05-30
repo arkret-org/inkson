@@ -320,6 +320,8 @@ impl OobCodeAttemptTracker {
 /// Heuristic passphrase strength on a 0..=5 scale, mirroring the
 /// "Passphrase strength" tile in the Recovery view. Pure function so the
 /// UI can call it on every keystroke without touching state.
+pub const RECOVERY_PASSPHRASE_MIN_STRENGTH: u8 = 3;
+
 pub fn estimate_passphrase_strength(passphrase: &str) -> u8 {
     if passphrase.is_empty() {
         return 0;
@@ -352,6 +354,16 @@ pub fn estimate_passphrase_strength(passphrase: &str) -> u8 {
         _ => 0,
     };
     score.clamp(0, 5) as u8
+}
+
+pub fn recovery_passphrase_strength_error(passphrase: &str) -> Option<&'static str> {
+    if estimate_passphrase_strength(passphrase) < RECOVERY_PASSPHRASE_MIN_STRENGTH {
+        Some(
+            "Choose a stronger recovery passphrase before uploading a backup. Use 24+ characters or several random words; minimum strength is Good (3/5).",
+        )
+    } else {
+        None
+    }
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -532,6 +544,14 @@ mod tests {
             estimate_passphrase_strength("Correct horse battery staple 9!"),
             5
         );
+    }
+
+    #[test]
+    fn recovery_passphrase_policy_rejects_weak_choices() {
+        assert!(recovery_passphrase_strength_error("short").is_some());
+        assert!(recovery_passphrase_strength_error("twelve chars").is_some());
+        assert!(recovery_passphrase_strength_error("correct horse battery").is_none());
+        assert!(recovery_passphrase_strength_error("Alllowercaseonly1!").is_none());
     }
 
     #[test]

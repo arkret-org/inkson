@@ -26,8 +26,9 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, decrypt_vault, derive_vault_kek,
-    encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key, generate_recovery_key,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
+    decrypt_vault, derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    fingerprint_recovery_key, generate_recovery_key, recovery_passphrase_strength_error,
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -334,6 +335,7 @@ pub fn RecoveryPanel(
     let mut restore_plaintext = use_signal(String::new);
 
     let strength = estimate_passphrase_strength(&passphrase());
+    let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
 
     let snapshot_state = move || RecoveryState {
         vault_backup_id: vault_backup_id(),
@@ -462,7 +464,7 @@ pub fn RecoveryPanel(
                         pending_label: Some("Uploading…".to_owned()),
                         test_id: Some("vault-sync-badge".to_owned()),
                     }
-                    HelpTip { text: "Your passphrase is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret with XChaCha20-Poly1305 before upload. Anyone who learns it can unlock encrypted history backups; revoking a device does not erase an MLS history secret already stored on that device." }
+                    HelpTip { text: "Your passphrase is the E2E recovery trust root. It is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret; if you lose it, encrypted MLS history cannot be restored on a fresh device." }
                 }
                 div { class: "workflow-form",
                     label { r#for: "vault-passphrase", "Vault passphrase" }
@@ -471,7 +473,7 @@ pub fn RecoveryPanel(
                         "data-testid": "vault-passphrase",
                         r#type: "password",
                         value: "{passphrase}",
-                        placeholder: "Choose a strong passphrase (16+ chars recommended)",
+                        placeholder: "24+ characters or several random words",
                         autocomplete: "new-password",
                         oninput: move |evt| passphrase.set(evt.value()),
                     }
@@ -485,7 +487,7 @@ pub fn RecoveryPanel(
                         oninput: move |evt| confirm_pass.set(evt.value()),
                     }
                     div { class: "muted", "data-testid": "vault-passphrase-strength",
-                        "Strength: {passphrase_strength_label(strength)} ({strength}/5)"
+                        "Strength: {passphrase_strength_label(strength)} ({strength}/5). Minimum: Good ({min_strength}/5)."
                     }
                 }
                 div { class: "metric-grid",
@@ -522,7 +524,9 @@ pub fn RecoveryPanel(
                     button {
                         class: "primary",
                         "data-testid": "vault-rekey",
-                        disabled: strength < 2 || passphrase() != confirm_pass() || passphrase().is_empty(),
+                        disabled: recovery_passphrase_strength_error(&passphrase()).is_some()
+                            || passphrase() != confirm_pass()
+                            || passphrase().is_empty(),
                         onclick: {
                             let base = base_url.clone();
                             let mut store = state_store;
@@ -532,6 +536,10 @@ pub fn RecoveryPanel(
                                 let confirm = confirm_pass();
                                 if pass.is_empty() || pass != confirm {
                                     vault_status.set("Passphrase and confirmation must match.".to_owned());
+                                    return;
+                                }
+                                if let Some(reason) = recovery_passphrase_strength_error(&pass) {
+                                    vault_status.set(reason.to_owned());
                                     return;
                                 }
                                 vault_sync.set(SyncBadge::Pending);

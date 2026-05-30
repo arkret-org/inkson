@@ -195,7 +195,7 @@ pub fn SettingsRecoveryPanel(
                         }
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "Recovery passphrase" }
-                            HelpTip { text: "Generate a 12-word recovery passphrase. Write it down somewhere safe; we never store the plaintext. Confirm by typing it back so we know you have a copy.".to_owned() }
+                            HelpTip { text: "Generate a 12-word recovery passphrase. This is the E2E recovery trust root for encrypted backups and MLS history; write it down because losing it means history cannot be restored on a fresh device.".to_owned() }
                         }
                     }
 
@@ -205,7 +205,7 @@ pub fn SettingsRecoveryPanel(
                             span { "12 words · ~96-132 bits entropy" }
                         }
                         p { class: "muted",
-                            "Words are chosen with the OS RNG (getrandom). The passphrase plaintext only lives in this tab's memory until you navigate away."
+                            "Words are chosen with the OS RNG (getrandom). The passphrase plaintext only lives in this tab's memory until you navigate away; Contrix cannot recover it for you."
                         }
                         div { class: "actions",
                             button {
