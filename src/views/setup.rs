@@ -1188,18 +1188,12 @@ pub fn SetupPanel(
                                                                 let message = if is_auth_expired_error(&error) {
                                                                     // The short-lived principal bearer may have
                                                                     // simply rolled over between background-poller
-                                                                    // ticks. Try the same silent re-mint that
-                                                                    // connect()/chat send use before wiping the
-                                                                    // session and bouncing to login.
-                                                                    if crate::app::refresh_bearer_for_view(
-                                                                        &base,
-                                                                        &actor,
-                                                                        &device,
-                                                                        state_store,
-                                                                        token,
-                                                                    )
-                                                                    .await
-                                                                    .is_some()
+                                                                    // ticks. Try the same silent re-mint every
+                                                                    // other path uses before wiping the session
+                                                                    // and bouncing to login.
+                                                                    if crate::session::refresh_current_bearer()
+                                                                        .await
+                                                                        .is_some()
                                                                     {
                                                                         "Session refreshed — retry creating the Realm.".to_owned()
                                                                     } else {

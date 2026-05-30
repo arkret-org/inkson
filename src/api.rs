@@ -113,7 +113,7 @@ use crate::models::{
     OkResBody, PolicyCheckResBody, PushRegisterResponse, ReceiptResponse, ResolveHandleResponse,
     ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
     ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse, SpacePolicyResponse,
-    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody, TokenRefreshResponse,
+    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
     TypingResponse, UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
@@ -222,27 +222,6 @@ pub struct MorphProjectionView {
     pub state: String,
 }
 
-/// G3.Y0 — closure surface for the DPoP-bound refresh interceptor.
-///
-/// The HTTP layer can't reach into `LocalStateStore` to mint a fresh
-/// proof itself (layering inversion — `LocalStateStore` lives one
-/// crate-internal level above the API client and carries `Signal`
-/// state). Instead, the caller registers a hook that takes the
-/// triggering 401 response and produces the new access token, then
-/// the API client retries the failed request with the new bearer.
-///
-/// Returning `Err` falls through to the existing 401 handling (let
-/// the request fail with `AuthExpired`); returning `Ok(None)` means
-/// "we *could* refresh but won't right now" (transient backoff);
-/// returning `Ok(Some(_))` swaps the bearer and retries once.
-pub type DpopRefreshHook = std::sync::Arc<
-    dyn Fn() -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + 'static>,
-        > + Send
-        + Sync
-        + 'static,
->;
-
 #[derive(Clone)]
 pub struct ContrixApi {
     base_url: Url,
@@ -250,12 +229,6 @@ pub struct ContrixApi {
     access_token: Option<String>,
     wait_for_sync_token: Option<String>,
     retry: RetryPolicy,
-    refresh_token: Option<String>,
-    /// G3.Y0 — DPoP-bound refresh interceptor. Called when the server
-    /// returns a 401 on a request that carries a `cnf.jkt`-bound
-    /// bearer (the hook's caller knows that signal because the
-    /// `ContrixApi` is freshly minted with the bound token).
-    dpop_refresh_hook: Option<DpopRefreshHook>,
     /// Coauth-issued session grant and optional introspection proof headers
     /// used by chime push register/unregister calls.
     chime_session_grant: Option<String>,
@@ -278,14 +251,6 @@ impl fmt::Debug for ContrixApi {
             )
             .field("wait_for_sync_token", &self.wait_for_sync_token)
             .field("retry", &self.retry)
-            .field(
-                "refresh_token",
-                &self.refresh_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "dpop_refresh_hook",
-                &self.dpop_refresh_hook.as_ref().map(|_| "<closure>"),
-            )
             .field(
                 "chime_session_grant",
                 &self.chime_session_grant.as_ref().map(|_| "<redacted>"),
@@ -313,14 +278,6 @@ pub enum NetworkState {
     Online,
     Offline,
     Reconnecting,
-}
-
-/// Result of an automatic token refresh attempt.
-#[derive(Clone, Debug)]
-pub struct TokenRefreshResult {
-    pub new_access_token: String,
-    pub new_refresh_token: Option<String>,
-    pub expires_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -538,26 +495,12 @@ impl ContrixApi {
             access_token: None,
             wait_for_sync_token: None,
             retry: options.retry,
-            refresh_token: None,
-            dpop_refresh_hook: None,
             chime_session_grant: None,
             chime_session_grant_proof: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
             events_describe_cache: Arc::new(OnceCell::new()),
         })
-    }
-
-    /// G3.Y0 — install a DPoP-bound refresh hook. See [`DpopRefreshHook`].
-    /// The hook fires once per request when the server returns 401; on
-    /// `Ok(Some(new_token))` the request is replayed with the new
-    /// bearer, on `Ok(None)` or `Err(_)` the original 401 is returned
-    /// to the caller (which will surface as `AuthExpired` and bounce
-    /// the user to the login view via the existing
-    /// `redirect_to_login` machinery).
-    pub fn with_dpop_refresh_hook(mut self, hook: DpopRefreshHook) -> Self {
-        self.dpop_refresh_hook = Some(hook);
-        self
     }
 
     /// Attach the coauth session-grant material chime requires for
@@ -584,12 +527,6 @@ impl ContrixApi {
         self
     }
 
-    /// Set the refresh token for automatic token refresh.
-    pub fn with_refresh_token(mut self, refresh_token: impl Into<String>) -> Self {
-        self.refresh_token = Some(refresh_token.into());
-        self
-    }
-
     /// Set a cancellation token for this API client.
     /// When the token is cancelled, in-flight requests will be aborted.
     pub fn with_cancel(mut self, token: CancellationToken) -> Self {
@@ -605,46 +542,6 @@ impl ContrixApi {
     /// Set the network state.
     pub async fn set_network_state(&self, state: NetworkState) {
         *self.network_state.write().await = state;
-    }
-
-    /// Update the access token (e.g., after a refresh).
-    pub fn set_access_token(&mut self, token: impl Into<String>) {
-        self.access_token = Some(token.into());
-    }
-
-    /// Get the current access token.
-    pub fn access_token(&self) -> Option<&str> {
-        self.access_token.as_deref()
-    }
-
-    /// Attempt to refresh the access token using the stored refresh token.
-    /// Returns the new tokens if successful.
-    pub async fn try_refresh_token(&self) -> anyhow::Result<TokenRefreshResult> {
-        let rt = self
-            .refresh_token
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no refresh token available"))?;
-        let response = self
-            .http
-            .post(self.endpoint("api/v1/auth/token/refresh")?)
-            .json(&json!({"refresh_token": rt}))
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let bytes = response.bytes().await?;
-            return Err(ContrixApiError {
-                status,
-                error: decode_contrix_error(status, &bytes),
-            }
-            .into());
-        }
-        let response: TokenRefreshResponse = response.json().await?;
-        Ok(TokenRefreshResult {
-            new_access_token: response.access_token,
-            new_refresh_token: None, // Server may return a new refresh token
-            expires_at: Some(response.expires_at),
-        })
     }
 
     /// Check server health and update network state.
@@ -3163,60 +3060,21 @@ impl ContrixApi {
         retryable: bool,
     ) -> anyhow::Result<reqwest::Response> {
         let mut attempt = 0usize;
-        let mut did_refresh = false;
-        let mut refreshed_access_token = None::<String>;
         loop {
             // Check if request was cancelled
             if self.cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
                 return Err(anyhow::anyhow!("request cancelled"));
             }
 
-            let Some(mut candidate) = request.try_clone() else {
+            let Some(candidate) = request.try_clone() else {
                 return Ok(request.send().await?);
             };
-            if let Some(token) = refreshed_access_token.as_deref() {
-                candidate = candidate.bearer_auth(token);
-            }
+            // 401 handling lives at the app layer (`crate::session`): a
+            // refresh future capturing Dioxus signals + wasm `reqwest` is
+            // `!Send`, so the HTTP client can't own it. The client just
+            // surfaces the 401; the caller re-mints and retries.
             match candidate.send().await {
                 Ok(response) => {
-                    // Handle 401 with automatic token refresh
-                    if response.status() == StatusCode::UNAUTHORIZED
-                        && !did_refresh
-                        && self.refresh_token.is_some()
-                        && let Ok(result) = self.try_refresh_token().await
-                    {
-                        refreshed_access_token = Some(result.new_access_token);
-                        did_refresh = true;
-                        continue;
-                    }
-
-                    // G3.Y0 — DPoP-bound 401 retry. Distinct from the
-                    // OIDC `refresh_token` path above: the hook fires
-                    // for the session-grant `cnf.jkt` flow where there
-                    // *is* no OAuth refresh token, only the grant +
-                    // device key. The hook decides whether to mint a
-                    // new access token (Ok(Some(_))) or fall through
-                    // to the AuthExpired soft-logout (Ok(None) / Err).
-                    if response.status() == StatusCode::UNAUTHORIZED
-                        && !did_refresh
-                        && self.refresh_token.is_none()
-                        && let Some(hook) = self.dpop_refresh_hook.as_ref()
-                    {
-                        let hook = hook.clone();
-                        match hook().await {
-                            Ok(Some(new_token)) => {
-                                refreshed_access_token = Some(new_token);
-                                did_refresh = true;
-                                continue;
-                            }
-                            Ok(None) | Err(_) => {
-                                // Fall through to the un-refreshed
-                                // response; caller's AuthExpired
-                                // handling kicks in (soft logout).
-                            }
-                        }
-                    }
-
                     if retryable
                         && attempt < self.retry.max_retries
                         && is_retryable_status(response.status())

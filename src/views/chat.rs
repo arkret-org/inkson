@@ -2253,30 +2253,23 @@ async fn submit_chat_operation_with_plaintext_retry(
 
 /// Submit a chat operation and, if the first attempt fails with a
 /// definitive `auth_expired` (the short-lived principal bearer died
-/// between the background refresh ticks), silently re-mint the bearer
-/// and retry once before surfacing the error.
+/// between background refresh ticks), silently re-mint the bearer through
+/// the shared refresher and retry once before surfacing the error.
 ///
-/// Previously the send paths bounced straight to `/login` on the first
-/// `auth_expired`, which is the source of the "it randomly asks me to
-/// sign in mid-conversation" report: the bearer expires on the order of
-/// minutes and the proactive poller can lag (backgrounded tab, no
-/// `expires_in` on the OIDC token). By trying the same recovery
-/// `connect()` uses ([`crate::app::refresh_bearer_for_view`]) the user
-/// stays signed in across a token rollover; only a genuinely dead session
-/// (refresh material exhausted) still returns an `auth_expired` for the
-/// caller to route to login.
-#[allow(clippy::too_many_arguments)]
+/// The send paths used to bounce straight to `/login` on the first
+/// `auth_expired` — the "it randomly asks me to sign in mid-conversation"
+/// report. Routing through [`crate::session::refresh_current_bearer`]
+/// keeps the user signed in across a routine token rollover; only a
+/// genuinely dead session (refresh material exhausted) still returns an
+/// `auth_expired` for the caller to route to login.
 async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
     actor_did: &str,
-    device_id: &str,
     space_id: &str,
     access_token: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
-    state_store: Signal<LocalStateStore>,
-    token: Signal<String>,
 ) -> anyhow::Result<SubmitEventResponse> {
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(
@@ -2290,15 +2283,7 @@ async fn submit_chat_operation_with_auth_refresh(
     match first {
         Ok(response) => Ok(response),
         Err(error) if is_auth_expired_error(&error) => {
-            match crate::app::refresh_bearer_for_view(
-                base_url,
-                actor_did,
-                device_id,
-                state_store,
-                token,
-            )
-            .await
-            {
+            match crate::session::refresh_current_bearer().await {
                 Some(fresh_token) => {
                     let retry_api =
                         authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;
@@ -3622,7 +3607,6 @@ pub fn ChatPanel(
                                                 let service_did = plaintext_service_did.clone();
                                                 let space = msg.space_id.clone();
                                                 let actor = account_did.clone();
-                                                let device = device_id.clone();
                                                 let local_id = msg.id.clone();
                                                 let body = msg.body.clone();
                                                 let flow_id = msg.flow_id.clone();
@@ -3678,19 +3662,15 @@ pub fn ChatPanel(
                                                     let mention_values_for_store = mentions_to_json(&mentions);
                                                     let space_for_record = space.clone();
                                                     let actor_for_retry = actor.clone();
-                                                    let device = device.clone();
                                                     spawn(async move {
                                                         match submit_chat_operation_with_auth_refresh(
                                                             &base,
                                                             &actor_for_retry,
-                                                            &device,
                                                             &space,
                                                             api_token,
                                                             wait_for,
                                                             &plaintext_services,
                                                             &op,
-                                                            state_store,
-                                                            token,
                                                         ).await {
                                                             Ok(resp) => {
                                                                 {
@@ -5351,7 +5331,6 @@ pub fn ChatPanel(
                             let service_did = plaintext_service_did.clone();
                             let space = selected_space.clone();
                             let actor = account_did.clone();
-                            let device = device_id.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -5497,19 +5476,15 @@ pub fn ChatPanel(
                                     plaintext_services_for_policy(projection.as_ref(), &service_did);
                                 let wait_for = active_sync_token(sync_cursor());
                                 let actor_for_retry = actor.clone();
-                                let device = device.clone();
                                 spawn(async move {
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,
                                         &actor_for_retry,
-                                        &device,
                                         &space,
                                         api_token,
                                         wait_for,
                                         &plaintext_services,
                                         &op,
-                                        state_store,
-                                        token,
                                     ).await {
                                         Ok(resp) => {
                                             {

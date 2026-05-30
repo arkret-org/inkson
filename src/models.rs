@@ -581,15 +581,6 @@ pub struct ModerationReportResBody {
     pub routed_to: Vec<String>,
 }
 
-// ── Authentication ──────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TokenRefreshResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub expires_at: String,
-}
-
 // ── Directory ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

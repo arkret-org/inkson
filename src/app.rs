@@ -6520,6 +6520,26 @@ pub fn RouterView() -> Element {
     let mut account_did = use_signal(move || initial_account_did);
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_token);
+
+    // Install the app-wide, single-flight bearer refresher exactly once.
+    // Every auth-expired handler (connect, sync, chat send, Realm create,
+    // the account-menu button, the background poller) re-mints through
+    // this one closure via `crate::session::refresh_current_bearer()`, so
+    // refresh policy lives in a single place and concurrent rollovers
+    // coalesce instead of racing.
+    use_hook(move || {
+        crate::session::register_session_refresher(std::rc::Rc::new(move || {
+            Box::pin(remint_principal_bearer(
+                base_url,
+                account_did,
+                device_id,
+                state_store,
+                token,
+                config_store,
+            )) as crate::session::LocalRefreshFuture
+        }));
+    });
+
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
@@ -6661,141 +6681,64 @@ pub fn RouterView() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
-    // Background session-refresh poller. Prefer the durable OIDC
-    // refresh_token path; keep the legacy session-grant exchange only as
-    // a fallback for older local deployments.
+    // Background session-refresh poller. Proactively re-mints the bearer
+    // a little before it expires so requests rarely hit a cold 401. The
+    // re-mint itself goes through the shared single-flight refresher
+    // (`crate::session`), so this poller and any reactive 401-retry can
+    // never fire two competing refreshes for the same rollover.
     use_future({
-        let mut token = token;
-        let mut state_store = state_store;
         let mut status = status;
         let mut last_error = last_error;
+        let state_store = state_store;
         let account_did = account_did;
+        let token = token;
         move || async move {
+            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
             loop {
-                // Drive prepare/exchange/commit by hand so the
-                // `state_store` WriteGuard is *not* held across the
-                // network await. Holding it crashes every concurrent
-                // signal mutation with `AlreadyBorrowedMut` — clicking
-                // the sidebar scope toggle, persisting drafts, anything
-                // that calls `state_store.write()` while the exchange
-                // is in flight.
-                let active_base = base_url();
-                let active_actor = account_did();
-                let active_device = device_id();
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                let oidc_bundle = {
+                // Freshness gate — only re-mint when the active credential
+                // is actually near expiry. We key off *both* signals and
+                // refresh if either is due:
+                //   * the OIDC access token's own `expires_at` (when the
+                //     IdP advertised `expires_in`), and
+                //   * the session grant's `session_expires_at`, which
+                //     tracks the short-lived principal bearer itself.
+                // The grant signal is what saves IdPs that omit
+                // `expires_in` (where `due_for_refresh` can never fire) —
+                // we still proactively refresh before the principal bearer
+                // dies instead of waiting for a cold 401. (Read-only
+                // borrow, dropped before any await, so concurrent
+                // `state_store.write()` callers never hit
+                // `AlreadyBorrowedMut`.)
+                let due = {
                     let store = state_store.read();
-                    store.load_oidc_tokens_with_secure_store(&active_actor, secure_store.as_ref())
+                    let oidc_due = store
+                        .load_oidc_tokens_with_secure_store(&account_did(), secure_store.as_ref())
+                        .map(|bundle| crate::oidc::lifecycle::due_for_refresh(&bundle))
+                        .unwrap_or(false);
+                    let grant_due = matches!(
+                        crate::session_refresh::refresh_decision(&store),
+                        crate::session_refresh::RefreshDecision::Due
+                    );
+                    oidc_due || grant_due
                 };
-                if let Some(bundle) = oidc_bundle {
-                    if !crate::oidc::lifecycle::due_for_refresh(&bundle) {
-                        crate::api::sleep_for(std::time::Duration::from_secs(
-                            crate::session_refresh::POLL_INTERVAL_SECS,
-                        ))
-                        .await;
-                        continue;
+                if due {
+                    if token().trim().is_empty() {
+                        status.set("Restoring session...".to_owned());
                     }
-
-                    if crate::oidc::lifecycle::has_refresh_token(&bundle) {
-                        if token().trim().is_empty() {
-                            status.set("Restoring session...".to_owned());
+                    match crate::session::refresh_current_bearer().await {
+                        Some(_) => {
+                            status.set("Online".to_owned());
+                            last_error.set(None);
                         }
-                        let result = refresh_oidc_bearer_for_server(
-                            &active_base,
-                            &active_actor,
-                            &active_device,
-                            &bundle,
-                        )
-                        .await;
-                        if !same_server_url(&active_base, &base_url()) {
-                            continue;
+                        None => {
+                            // Keep the current bearer alive; a reactive 401
+                            // (or the login flow) handles a genuinely dead
+                            // session. Surface the last issue for dev tools.
+                            last_error.set(Some(
+                                "background session refresh produced no new bearer".to_owned(),
+                            ));
                         }
-                        match result {
-                            Ok(next) => {
-                                let access_token = next.access_token.clone();
-                                state_store.write().set_oidc_tokens_with_secure_store(
-                                    Some(next),
-                                    &active_actor,
-                                    secure_store.as_ref(),
-                                );
-                                token.set(access_token.clone());
-                                persist_config(
-                                    config_store,
-                                    active_base.clone(),
-                                    active_actor.clone(),
-                                    active_device.clone(),
-                                    access_token,
-                                );
-                                status.set("Online".to_owned());
-                                last_error.set(None);
-                                crate::api::sleep_for(std::time::Duration::from_secs(
-                                    crate::session_refresh::POLL_INTERVAL_SECS,
-                                ))
-                                .await;
-                                continue;
-                            }
-                            Err(error) => {
-                                // Try the session-grant fallback below
-                                // when one was persisted alongside the
-                                // OIDC bundle. This covers local IdPs
-                                // that issue an access token but no
-                                // refresh token, or a revoked upstream
-                                // refresh token while the Contrix grant
-                                // is still valid.
-                                last_error.set(Some(format!("OIDC refresh transient: {error}")));
-                            }
-                        }
-                    } else {
-                        if token().trim().is_empty() {
-                            status.set("Restoring session...".to_owned());
-                        }
-                        last_error.set(Some(
-                            "OIDC access token expired and no refresh_token is available; trying session grant"
-                                .to_owned(),
-                        ));
                     }
-                }
-                let prepared = {
-                    let mut store = state_store.write();
-                    crate::session_refresh::prepare_refresh_for_server(&mut store, &active_base)
-                };
-                let outcome = match prepared {
-                    crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
-                    crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-                        let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
-                        let mut store = state_store.write();
-                        crate::session_refresh::commit_refresh(&mut store, result)
-                    }
-                };
-                if !same_server_url(&active_base, &base_url()) {
-                    continue;
-                }
-                match outcome {
-                    crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
-                        token.set(access_token.clone());
-                        persist_config(
-                            config_store,
-                            active_base.clone(),
-                            active_actor.clone(),
-                            active_device.clone(),
-                            access_token,
-                        );
-                    }
-                    crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
-                        status.set(
-                            "Session refresh unavailable; current bearer left active".to_owned(),
-                        );
-                        last_error.set(Some(format!("session refresh: {reason}")));
-                    }
-                    crate::session_refresh::RefreshOutcome::Transient { reason } => {
-                        // Don't disturb the UI — log to last_error so a
-                        // developer poking at the dev tools can see the
-                        // last refresh issue, but keep the token alive
-                        // for the next retry.
-                        last_error.set(Some(format!("session refresh transient: {reason}")));
-                    }
-                    crate::session_refresh::RefreshOutcome::NoGrant
-                    | crate::session_refresh::RefreshOutcome::Fresh => {}
                 }
                 crate::api::sleep_for(std::time::Duration::from_secs(
                     crate::session_refresh::POLL_INTERVAL_SECS,
@@ -8376,16 +8319,7 @@ pub fn RouterView() -> Element {
                                                                         // dead — clicking "Refresh session" must
                                                                         // *keep* the user signed in, not bounce
                                                                         // them to login on a routine token rollover.
-                                                                        if let Some(fresh) = refresh_session_bearer_once(
-                                                                            &base,
-                                                                            &actor,
-                                                                            &device,
-                                                                            state_store,
-                                                                            token,
-                                                                            config_store,
-                                                                            status,
-                                                                            last_error,
-                                                                        ).await {
+                                                                        if let Some(fresh) = crate::session::refresh_current_bearer().await {
                                                                             let canonical_actor = match ContrixApi::new(&base) {
                                                                                 Ok(api) => api
                                                                                     .with_bearer(fresh)
@@ -9867,63 +9801,76 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
-async fn refresh_session_bearer_once(
-    active_base: &str,
-    active_actor: &str,
-    active_device: &str,
+/// The single source of truth for re-minting the principal bearer.
+///
+/// Registered once at the app root and reached everywhere through
+/// [`crate::session::refresh_current_bearer`]. Reads the live
+/// base/actor/device from their signals (so it always targets the active
+/// session), tries the OIDC `refresh_token` path first, then the
+/// session-grant exchange. On success it writes the fresh bearer into the
+/// `token` signal and persisted config and returns it; on definitive
+/// failure it returns `None` and the caller routes to login.
+///
+/// Concurrency is handled by `crate::session`: callers coalesce onto one
+/// in-flight invocation, so this never runs twice in parallel for a single
+/// rollover.
+async fn remint_principal_bearer(
+    base_url: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    mut status: Signal<String>,
-    mut last_error: Signal<Option<String>>,
 ) -> Option<String> {
+    let base = base_url();
+    let actor = account_did();
+    let device = device_id();
+
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let oidc_bundle = {
         let store = state_store.read();
-        store.load_oidc_tokens_with_secure_store(active_actor, secure_store.as_ref())
+        store.load_oidc_tokens_with_secure_store(&actor, secure_store.as_ref())
     };
     if let Some(bundle) = oidc_bundle
         && crate::oidc::lifecycle::has_refresh_token(&bundle)
+        && let Ok(next) = refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await
     {
-        match refresh_oidc_bearer_for_server(active_base, active_actor, active_device, &bundle)
-            .await
-        {
-            Ok(next) => {
-                let access_token = next.access_token.clone();
-                state_store.write().set_oidc_tokens_with_secure_store(
-                    Some(next),
-                    active_actor,
-                    secure_store.as_ref(),
-                );
-                token.set(access_token.clone());
-                persist_config(
-                    config_store,
-                    active_base.to_owned(),
-                    active_actor.to_owned(),
-                    active_device.to_owned(),
-                    access_token.clone(),
-                );
-                status.set("Online".to_owned());
-                last_error.set(None);
-                return Some(access_token);
-            }
-            Err(error) => {
-                last_error.set(Some(format!("OIDC refresh after 401 failed: {error}")));
-            }
+        // Abandon if the user switched servers while the refresh was in
+        // flight — committing here would resurrect the old server's
+        // credentials over the freshly selected session.
+        if !same_server_url(&base, &base_url()) {
+            return None;
         }
+        let access_token = next.access_token.clone();
+        state_store.write().set_oidc_tokens_with_secure_store(
+            Some(next),
+            &actor,
+            secure_store.as_ref(),
+        );
+        token.set(access_token.clone());
+        persist_config(
+            config_store,
+            base.clone(),
+            actor.clone(),
+            device.clone(),
+            access_token.clone(),
+        );
+        return Some(access_token);
     }
 
     let prepared = {
         let mut store = state_store.write();
-        crate::session_refresh::prepare_refresh_for_server_after_unauthorized(
-            &mut store,
-            active_base,
-        )
+        crate::session_refresh::prepare_refresh_for_server_after_unauthorized(&mut store, &base)
     };
     let outcome = match prepared {
         crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
         crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
             let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+            // Same server-switch guard as the OIDC path: don't write the
+            // old server's grant outcome onto a session that just moved.
+            if !same_server_url(&base, &base_url()) {
+                return None;
+            }
             let mut store = state_store.write();
             crate::session_refresh::commit_refresh(&mut store, result)
         }
@@ -9933,98 +9880,11 @@ async fn refresh_session_bearer_once(
             token.set(access_token.clone());
             persist_config(
                 config_store,
-                active_base.to_owned(),
-                active_actor.to_owned(),
-                active_device.to_owned(),
+                base.clone(),
+                actor.clone(),
+                device.clone(),
                 access_token.clone(),
             );
-            status.set("Online".to_owned());
-            last_error.set(None);
-            Some(access_token)
-        }
-        crate::session_refresh::RefreshOutcome::NoGrant => {
-            last_error.set(Some(
-                "No refresh material is available for this session".to_owned(),
-            ));
-            None
-        }
-        crate::session_refresh::RefreshOutcome::Fresh => None,
-        crate::session_refresh::RefreshOutcome::LoginRequired { reason }
-        | crate::session_refresh::RefreshOutcome::Transient { reason } => {
-            last_error.set(Some(format!("session refresh after 401 failed: {reason}")));
-            None
-        }
-    }
-}
-
-/// View-side silent bearer refresh for *operational* paths (chat send,
-/// card actions, anything a leaf view fires on a user gesture) that hit
-/// `auth_expired` mid-action.
-///
-/// The principal bearer is short-lived (minutes). The background refresh
-/// poller usually re-mints it proactively, but it is best-effort: it
-/// no-ops when the OIDC bundle carries no `expires_at_unix`
-/// ([`crate::oidc::lifecycle::due_for_refresh`] returns `false`), and its
-/// `sleep_for` tick is throttled by the browser while the tab is
-/// backgrounded. So a user who acts inside the window where the bearer
-/// has died but the poller hasn't caught up gets a definitive 401.
-///
-/// `connect()` already recovers from that with
-/// [`refresh_session_bearer_once`]; leaf views did not, and instead wiped
-/// the token and bounced to `/login` — the "why did it suddenly ask me to
-/// sign in?" bug. This is the shared recovery primitive they call before
-/// surfacing the 401.
-///
-/// It mirrors the connect-path recovery (OIDC `refresh_token` first, then
-/// the session-grant exchange), updates the live `token` signal +
-/// persisted OIDC/grant state, and returns the fresh bearer. It does
-/// **not** touch `LocalConfigStore`: the live `token` signal is the
-/// in-session source of truth, and a hard reload re-refreshes from the
-/// persisted OIDC bundle / session grant via `connect()`. Returns `None`
-/// only when the session is genuinely dead and the caller must bounce to
-/// login.
-pub(crate) async fn refresh_bearer_for_view(
-    base_url: &str,
-    actor_did: &str,
-    device_id: &str,
-    mut state_store: Signal<LocalStateStore>,
-    mut token: Signal<String>,
-) -> Option<String> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let oidc_bundle = {
-        let store = state_store.read();
-        store.load_oidc_tokens_with_secure_store(actor_did, secure_store.as_ref())
-    };
-    if let Some(bundle) = oidc_bundle
-        && crate::oidc::lifecycle::has_refresh_token(&bundle)
-        && let Ok(next) =
-            refresh_oidc_bearer_for_server(base_url, actor_did, device_id, &bundle).await
-    {
-        let access_token = next.access_token.clone();
-        state_store.write().set_oidc_tokens_with_secure_store(
-            Some(next),
-            actor_did,
-            secure_store.as_ref(),
-        );
-        token.set(access_token.clone());
-        return Some(access_token);
-    }
-
-    let prepared = {
-        let mut store = state_store.write();
-        crate::session_refresh::prepare_refresh_for_server_after_unauthorized(&mut store, base_url)
-    };
-    let outcome = match prepared {
-        crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
-        crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
-            let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
-            let mut store = state_store.write();
-            crate::session_refresh::commit_refresh(&mut store, result)
-        }
-    };
-    match outcome {
-        crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
-            token.set(access_token.clone());
             Some(access_token)
         }
         _ => None,
@@ -10163,18 +10023,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
 
                 let mut session_token = token();
                 if session_token.trim().is_empty() {
-                    if let Some(refreshed) = refresh_session_bearer_once(
-                        &base,
-                        &actor,
-                        &device,
-                        state_store,
-                        token,
-                        config_store,
-                        status,
-                        last_error,
-                    )
-                    .await
-                    {
+                    if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                         session_token = refreshed;
                     } else {
                         let probe_label = description
@@ -10220,18 +10069,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         actor.clone()
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = refresh_session_bearer_once(
-                            &base,
-                            &actor,
-                            &device,
-                            state_store,
-                            token,
-                            config_store,
-                            status,
-                            last_error,
-                        )
-                        .await
-                        {
+                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.account_me().await {
@@ -10349,18 +10187,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 let sync_result = match authed.account_subscribe_snapshot(None).await {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = refresh_session_bearer_once(
-                            &base,
-                            &canonical_actor,
-                            &device,
-                            state_store,
-                            token,
-                            config_store,
-                            status,
-                            last_error,
-                        )
-                        .await
-                        {
+                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
                             authed = api.clone().with_bearer(session_token.clone());
                             authed.account_subscribe_snapshot(None).await
@@ -10638,18 +10465,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 let events_result = match authed.events_describe().await {
                     Ok(events) => Ok(events),
                     Err(error) if is_auth_expired_error(&error) => {
-                        if let Some(refreshed) = refresh_session_bearer_once(
-                            &base,
-                            &canonical_actor,
-                            &device,
-                            state_store,
-                            token,
-                            config_store,
-                            status,
-                            last_error,
-                        )
-                        .await
-                        {
+                        if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                             session_token = refreshed;
                             authed = api.clone().with_bearer(session_token.clone());
                             authed.events_describe().await
