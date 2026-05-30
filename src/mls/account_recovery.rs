@@ -69,6 +69,26 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     kek: &VaultKek,
     account_secret: &str,
 ) -> Result<Value> {
+    build_mls_account_secret_backup_body_with_kek_and_version(
+        backup_id,
+        actor_did,
+        device_id,
+        kek,
+        account_secret,
+        crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+    )
+}
+
+/// Variant of [`build_mls_account_secret_backup_body_with_kek`] that records
+/// the local account-secret version in the backup content metadata.
+pub fn build_mls_account_secret_backup_body_with_kek_and_version(
+    backup_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    kek: &VaultKek,
+    account_secret: &str,
+    account_secret_version: u32,
+) -> Result<Value> {
     let ct = encrypt_vault(kek, account_secret.as_bytes())
         .map_err(|err| anyhow!("encrypt account secret: {err}"))?;
     // `encrypt_vault` emits base64url (`-`/`_`) natively, which is exactly the
@@ -103,6 +123,10 @@ pub fn build_mls_account_secret_backup_body_with_kek(
         item.insert(
             "secret_id".to_owned(),
             Value::String(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
+        );
+        item.insert(
+            "secret_version".to_owned(),
+            Value::Number(serde_json::Number::from(account_secret_version)),
         );
     }
     crate::key_backup::attach_key_backup_domain_separation(
@@ -167,11 +191,53 @@ fn iter_backup_bodies(list_payload: &Value) -> impl Iterator<Item = &Value> {
         .flatten()
 }
 
-/// Pure body-selection: pick the `mls_account_secret` backup from a
-/// `list_key_backups`-shaped payload, if present. Returns the first match.
+fn backup_series_seq(body: &Value) -> u64 {
+    body.get("series_seq").and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn backup_created_at(body: &Value) -> &str {
+    body.get("created_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn backup_secret_version(body: &Value) -> u64 {
+    body.get("contents")
+        .and_then(Value::as_array)
+        .and_then(|c| c.first())
+        .and_then(|item| item.get("secret_version"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+/// Version recorded in an `mls_account_secret` backup. Legacy backups did not
+/// carry this field, so they import at the current default version.
+pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
+    backup_secret_version(body)
+        .try_into()
+        .ok()
+        .filter(|version| *version > 0)
+        .unwrap_or(crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION)
+}
+
+/// Pure body-selection: pick the latest `mls_account_secret` backup from a
+/// `list_key_backups`-shaped payload, if present. Newer `series_seq` wins,
+/// followed by the local secret version and creation timestamp.
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     iter_backup_bodies(list_payload)
-        .find(|body| is_mls_account_secret_backup(body))
+        .filter(|body| is_mls_account_secret_backup(body))
+        .max_by(|a, b| {
+            (
+                backup_series_seq(a),
+                backup_secret_version(a),
+                backup_created_at(a),
+            )
+                .cmp(&(
+                    backup_series_seq(b),
+                    backup_secret_version(b),
+                    backup_created_at(b),
+                ))
+        })
         .cloned()
 }
 
@@ -256,8 +322,14 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
-        crate::mls::runtime::store_account_mls_secret(secure_store, actor_did, &secret)
-            .map_err(|err| anyhow!("store account MLS secret: {err}"))?;
+        let version = mls_account_secret_backup_version(&secret_body);
+        crate::mls::runtime::store_account_mls_secret_version(
+            secure_store,
+            actor_did,
+            version,
+            &secret,
+        )
+        .map_err(|err| anyhow!("store account MLS secret: {err}"))?;
         report.account_secret_imported = true;
     }
 
@@ -315,6 +387,108 @@ pub async fn auto_restore_mls_history_with_passphrase(
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MlsAccountSecretRotationUpload {
+    pub rotation: crate::mls::runtime::AccountMlsSecretRotation,
+    pub account_secret_backup_id: String,
+    pub account_secret_series_seq: u64,
+    pub history_backup_ids: Vec<String>,
+}
+
+fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
+    let Some(prev) = previous else {
+        return body.get("series_seq").and_then(Value::as_u64).unwrap_or(0);
+    };
+    let next_seq = prev.get("series_seq").and_then(Value::as_u64).unwrap_or(0) + 1;
+    if let Some(series_id) = prev.get("series_id").and_then(Value::as_str) {
+        body["series_id"] = Value::String(series_id.to_owned());
+    }
+    body["series_seq"] = Value::Number(serde_json::Number::from(next_seq));
+    next_seq
+}
+
+fn passphrase_is_blank(passphrase: &[u8]) -> bool {
+    passphrase.is_empty()
+        || std::str::from_utf8(passphrase)
+            .map(|text| text.trim().is_empty())
+            .unwrap_or(false)
+}
+
+/// Device-revoke follow-up: rotate the account MLS snapshot secret, upload the
+/// new account-secret backup, and upload freshly rewrapped MLS-history backups.
+///
+/// This deliberately does not mutate local state. Callers should commit
+/// `upload.rotation` via
+/// [`crate::mls::runtime::commit_account_mls_secret_rotation`] only after this
+/// function returns `Ok`, so local snapshots and the local secret advance
+/// together.
+pub async fn upload_mls_account_secret_rotation_after_device_revoke(
+    api: &crate::api::ContrixApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    passphrase: &[u8],
+    snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+) -> Result<MlsAccountSecretRotationUpload> {
+    if passphrase_is_blank(passphrase) {
+        return Err(anyhow!(
+            "recovery passphrase is required to rotate the account MLS secret"
+        ));
+    }
+
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let previous_account_backup = select_mls_account_secret_backup(&list_payload);
+    let account_backup_id = previous_account_backup
+        .as_ref()
+        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+
+    let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
+        secure_store,
+        actor_did,
+        device_id,
+        snapshots,
+    )
+    .map_err(|err| anyhow!(err.user_message()))?;
+
+    let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
+    let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
+        &account_backup_id,
+        actor_did,
+        device_id,
+        &kek,
+        &rotation.new_secret,
+        rotation.new_version,
+    )?;
+    let account_secret_series_seq =
+        apply_next_series(previous_account_backup.as_ref(), &mut account_body);
+    api.put_key_backup(&account_backup_id, account_body)
+        .await
+        .map_err(|err| anyhow!("upload rotated account MLS secret backup: {err}"))?;
+
+    let mut history_backup_ids = Vec::with_capacity(rotation.rewrapped_snapshots.len());
+    for snapshot in rotation.rewrapped_snapshots.values() {
+        let backup_id =
+            crate::mls::runtime::upload_mls_snapshot_backup(api, snapshot, actor_did, device_id)
+                .await
+                .map_err(|err| {
+                    anyhow!(
+                        "upload rewrapped MLS history backup: {}",
+                        err.user_message()
+                    )
+                })?;
+        history_backup_ids.push(backup_id);
+    }
+
+    Ok(MlsAccountSecretRotationUpload {
+        rotation,
+        account_secret_backup_id: account_backup_id,
+        account_secret_series_seq,
+        history_backup_ids,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +541,10 @@ mod tests {
         assert_eq!(body["backup_class"], "secret_storage");
         // item_type must be one both validators' allowlists accept.
         assert_eq!(MLS_ACCOUNT_SECRET_ITEM_TYPE, "mls_account_secret");
+        assert_eq!(
+            mls_account_secret_backup_version(&body),
+            crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
+        );
     }
 
     #[test]
@@ -473,6 +651,23 @@ mod tests {
         assert!(select_mls_account_secret_backup(&none_payload).is_none());
         // Absent/empty payloads are tolerated.
         assert!(select_mls_account_secret_backup(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn select_account_secret_prefers_highest_series_seq() {
+        let mut older = wrap();
+        older["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-00000000bee1");
+        older["series_seq"] = serde_json::json!(1);
+        let mut newer = wrap();
+        newer["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-00000000bee2");
+        newer["series_seq"] = serde_json::json!(2);
+        let payload = serde_json::json!({
+            "backups": [newer.clone(), older]
+        });
+
+        let found = select_mls_account_secret_backup(&payload).expect("account secret present");
+
+        assert_eq!(found["backup_id"], newer["backup_id"]);
     }
 
     #[test]

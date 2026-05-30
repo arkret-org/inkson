@@ -8,7 +8,8 @@
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`]
+//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`],
+//!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
@@ -133,6 +134,7 @@ pub fn SettingsDevicesPanel(
     let mut load_status = use_signal(String::new);
     let revoke_target = use_signal(|| Option::<String>::None);
     let revoke_status = use_signal(String::new);
+    let revoke_passphrase = use_signal(String::new);
 
     // ── Pair (current device side) state ─────────────────────────────
     let pair_payload = use_signal(String::new);
@@ -230,7 +232,11 @@ pub fn SettingsDevicesPanel(
                             revoke_target,
                             revoke_status,
                             base_url,
+                            account_did,
+                            device_id,
                             token,
+                            state_store,
+                            revoke_passphrase,
                         )}
                     }
                 }
@@ -248,7 +254,11 @@ fn render_device_list(
     revoke_target: Signal<Option<String>>,
     revoke_status: Signal<String>,
     base_url: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
     token: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+    revoke_passphrase: Signal<String>,
 ) -> Element {
     let rows = devices();
     let cur = current_device();
@@ -305,6 +315,10 @@ fn render_device_list(
                 revoke_status,
                 devices,
                 load_status,
+                state_store,
+                account_did,
+                device_id,
+                revoke_passphrase,
             )}
         }
     }
@@ -377,6 +391,10 @@ fn render_revoke_modal(
     mut revoke_status: Signal<String>,
     mut devices: Signal<Vec<DeviceRow>>,
     mut load_status: Signal<String>,
+    mut state_store: Signal<LocalStateStore>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+    mut revoke_passphrase: Signal<String>,
 ) -> Element {
     let confirm_target = target.clone();
     let cancel_target = target.clone();
@@ -391,7 +409,17 @@ fn render_revoke_modal(
                 p {
                     "This will write "
                     code { "cx.device.revoke" }
-                    " to your principal control space and remove the device from any E2EE space it participates in. The action cannot be undone."
+                    " to your principal control space, remove the device from any E2EE space it participates in, and rotate the account MLS history secret. The action cannot be undone."
+                }
+                label { r#for: "device-revoke-passphrase", "Recovery passphrase" }
+                input {
+                    id: "device-revoke-passphrase",
+                    "data-testid": "device-revoke-passphrase-input",
+                    r#type: "password",
+                    value: "{revoke_passphrase}",
+                    autocomplete: "current-password",
+                    placeholder: "Required to rotate encrypted history backups",
+                    oninput: move |evt| revoke_passphrase.set(evt.value()),
                 }
                 div { class: "actions",
                     button {
@@ -406,25 +434,74 @@ fn render_revoke_modal(
                     button {
                         class: "primary",
                         "data-testid": "device-revoke-confirm-button",
+                        disabled: revoke_passphrase().trim().is_empty(),
                         onclick: move |_| {
                             let base = base_url();
                             let api_token = token();
+                            let actor = account_did();
+                            let current_device = device_id();
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
                             let target_label = short_protocol_id(&target_for_status);
+                            let passphrase_bytes = revoke_passphrase().into_bytes();
+                            let snapshots = state_store.read().mls_snapshots();
+                            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                            let actor_for_rotation = actor.clone();
+                            let device_for_rotation = current_device.clone();
+                            let secure_store_for_rotation = secure_store.clone();
                             revoke_status.set(format!("Revoking {target_label}…"));
                             spawn(async move {
                                 let target_label = short_protocol_id(&target_for_status);
                                 let target_inner = target_id.clone();
-                                match with_authed_api(&base, api_token.clone(), move |api| async move {
-                                    api.revoke_device(&target_inner).await
-                                })
-                                .await
-                                {
-                                    Ok(_ok) => {
+                                let revoke_result =
+                                    with_authed_api(&base, api_token.clone(), move |api| async move {
+                                        api.revoke_device(&target_inner).await
+                                    })
+                                    .await;
+                                if let Err(err) = revoke_result {
+                                    revoke_status.set(format!(
+                                        "Revoke failed: {}",
+                                        err.display()
+                                    ));
+                                    return;
+                                }
+
+                                let rotation_result = with_authed_api(
+                                    &base,
+                                    api_token.clone(),
+                                    move |api| async move {
+                                        crate::mls::account_recovery::upload_mls_account_secret_rotation_after_device_revoke(
+                                            &api,
+                                            secure_store_for_rotation.as_ref(),
+                                            &actor_for_rotation,
+                                            &device_for_rotation,
+                                            &passphrase_bytes,
+                                            &snapshots,
+                                        )
+                                        .await
+                                    },
+                                )
+                                .await;
+                                match rotation_result {
+                                    Ok(rotation) => {
+                                        let mut local_state = state_store.write();
+                                        if let Err(err) = crate::mls::runtime::commit_account_mls_secret_rotation(
+                                            &mut local_state,
+                                            secure_store.as_ref(),
+                                            &actor,
+                                            &rotation.rotation,
+                                        ) {
+                                            revoke_status.set(format!(
+                                                "Revoked {target_label}; MLS secret rotation uploaded but local commit failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                        let history_count = rotation.history_backup_ids.len();
+                                        let version = rotation.rotation.new_version;
                                         revoke_status.set(format!(
-                                            "Revoked {target_label}. Sibling device will lose write access at next sync."
+                                            "Revoked {target_label}. Rotated MLS history secret to v{version}; uploaded {history_count} fresh history backup(s)."
                                         ));
+                                        revoke_passphrase.set(String::new());
                                         revoke_target.set(None);
                                         // Re-fetch to reflect the new
                                         // active set. Failure here is
@@ -449,7 +526,7 @@ fn render_revoke_modal(
                                     }
                                     Err(err) => {
                                         revoke_status.set(format!(
-                                            "Revoke failed: {}",
+                                            "Revoked {target_label}; MLS secret rotation failed: {}",
                                             err.display()
                                         ));
                                     }

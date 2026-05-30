@@ -1,8 +1,10 @@
 //! Shared MLS runtime helpers.
 //!
-//! Normal Realm/Kanban usage uses a device-scoped secret to wrap local MLS
+//! Normal Realm/Kanban usage uses an account-scoped secret to wrap local MLS
 //! snapshots. The runtime exposes typed readiness errors when a device has not
 //! yet received a Welcome or restored an MLS-history backup.
+
+use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -11,7 +13,9 @@ use serde_json::Value;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 const DEVICE_SNAPSHOT_SECRET_PREFIX: &str = "yougen.mls_snapshot.device_secret.v1";
-const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret.v1";
+const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret";
+pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 2;
+const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MlsRuntimeStatus {
@@ -269,19 +273,44 @@ pub fn device_snapshot_secret_key(actor_did: &str, device_id: &str) -> String {
     )
 }
 
-/// Account-scoped storage key for the MLS snapshot secret shared by every
-/// device of the account. Recoverable via the user's recovery passphrase.
-pub fn account_mls_secret_key(actor_did: &str) -> String {
-    format!("{ACCOUNT_MLS_SECRET_PREFIX}.{}", actor_did.trim())
+/// Stored account-scoped MLS snapshot secret plus the local key version that
+/// carried it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredAccountMlsSecret {
+    pub version: u32,
+    pub secret: String,
 }
 
-/// Store (or overwrite) the account-scoped MLS snapshot secret. Used by the
-/// recovery import path after unwrapping the recovery vault.
-pub fn store_account_mls_secret(
-    store: &dyn SecureKeyStore,
-    actor_did: &str,
+/// Local account-scoped secret rotation material. The network upload path uses
+/// `new_secret` to wrap the new account-secret backup, then commits this
+/// material locally once the server-side backups have landed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountMlsSecretRotation {
+    pub previous_version: u32,
+    pub new_version: u32,
+    pub new_secret: String,
+    pub rewrapped_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+}
+
+/// Account-scoped storage key for a specific MLS snapshot-secret version.
+pub fn account_mls_secret_key_for_version(actor_did: &str, version: u32) -> String {
+    format!(
+        "{ACCOUNT_MLS_SECRET_PREFIX}.v{}.{}",
+        version,
+        actor_did.trim()
+    )
+}
+
+/// Default write key for the account-scoped MLS snapshot secret shared by every
+/// device of the account. Recoverable via the user's recovery passphrase.
+pub fn account_mls_secret_key(actor_did: &str) -> String {
+    account_mls_secret_key_for_version(actor_did, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
+}
+
+fn validate_account_secret_inputs<'a>(
+    actor_did: &'a str,
     secret: &str,
-) -> Result<(), SecureKeyStoreError> {
+) -> Result<&'a str, SecureKeyStoreError> {
     let actor = actor_did.trim();
     if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
@@ -293,18 +322,74 @@ pub fn store_account_mls_secret(
             "account MLS secret must not be empty".to_owned(),
         ));
     }
-    store.store_secret(&account_mls_secret_key(actor), secret)
+    Ok(actor)
+}
+
+/// Store (or overwrite) a specific version of the account-scoped MLS snapshot
+/// secret.
+pub fn store_account_mls_secret_version(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+    version: u32,
+    secret: &str,
+) -> Result<(), SecureKeyStoreError> {
+    if version == 0 || version > ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION {
+        return Err(SecureKeyStoreError::Backend(format!(
+            "account MLS secret version {version} is outside the supported scan range"
+        )));
+    }
+    let actor = validate_account_secret_inputs(actor_did, secret)?;
+    store.store_secret(&account_mls_secret_key_for_version(actor, version), secret)
+}
+
+/// Store (or overwrite) the default/current account-scoped MLS snapshot secret.
+/// Used by the recovery import path after unwrapping the recovery vault.
+pub fn store_account_mls_secret(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+    secret: &str,
+) -> Result<(), SecureKeyStoreError> {
+    store_account_mls_secret_version(store, actor_did, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
+}
+
+/// Load the highest local account-secret version currently present.
+pub fn load_account_mls_secret(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+) -> Result<Option<StoredAccountMlsSecret>, SecureKeyStoreError> {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_did is required for MLS snapshot secret".to_owned(),
+        ));
+    }
+    for version in (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION).rev() {
+        let key = account_mls_secret_key_for_version(actor, version);
+        if let Some(secret) = store.get_secret(&key)?
+            && !secret.trim().is_empty()
+        {
+            return Ok(Some(StoredAccountMlsSecret { version, secret }));
+        }
+    }
+    Ok(None)
+}
+
+fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
 /// Load (or create) the account-scoped MLS snapshot secret.
 ///
 /// Resolution order:
-///   a. an existing account secret is returned as-is;
+///   a. the highest existing versioned account secret is returned as-is;
 ///   b. otherwise, if a legacy device-scoped secret exists for `(actor,
-///      device)`, it is *promoted* to the account key (so single-device users
+///      device)`, it is *promoted* to the v1 account key (so single-device users
 ///      keep their local MLS state) and returned;
 ///   c. otherwise a fresh random 32-byte secret is generated, stored under the
-///      account key, and returned.
+///      current account key, and returned.
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
     actor_did: &str,
@@ -316,12 +401,9 @@ pub fn load_or_create_account_mls_secret(
             "actor_did is required for MLS snapshot secret".to_owned(),
         ));
     }
-    let account_key = account_mls_secret_key(actor);
     // a. existing account secret wins.
-    if let Some(existing) = store.get_secret(&account_key)?
-        && !existing.trim().is_empty()
-    {
-        return Ok(existing);
+    if let Some(existing) = load_account_mls_secret(store, actor)? {
+        return Ok(existing.secret);
     }
     // b. migrate a legacy device-scoped secret if one exists for this device.
     let device = device_id.trim();
@@ -330,16 +412,13 @@ pub fn load_or_create_account_mls_secret(
         if let Some(legacy) = store.get_secret(&device_key)?
             && !legacy.trim().is_empty()
         {
-            store.store_secret(&account_key, &legacy)?;
+            store_account_mls_secret_version(store, actor, 1, &legacy)?;
             return Ok(legacy);
         }
     }
     // c. generate a fresh account secret.
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes)
-        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
-    let secret = URL_SAFE_NO_PAD.encode(bytes);
-    store.store_secret(&account_key, &secret)?;
+    let secret = generate_account_mls_secret()?;
+    store_account_mls_secret(store, actor, &secret)?;
     Ok(secret)
 }
 
@@ -372,11 +451,8 @@ pub fn load_device_snapshot_secret(
             "actor_did is required for MLS snapshot secret".to_owned(),
         ));
     }
-    let account_key = account_mls_secret_key(actor);
-    if let Some(existing) = store.get_secret(&account_key)?
-        && !existing.trim().is_empty()
-    {
-        return Ok(existing);
+    if let Some(existing) = load_account_mls_secret(store, actor)? {
+        return Ok(existing.secret);
     }
     // Migration: promote a legacy device-scoped secret if present.
     let device = device_id.trim();
@@ -385,11 +461,103 @@ pub fn load_device_snapshot_secret(
         if let Some(legacy) = store.get_secret(&device_key)?
             && !legacy.trim().is_empty()
         {
-            store.store_secret(&account_key, &legacy)?;
+            store_account_mls_secret_version(store, actor, 1, &legacy)?;
             return Ok(legacy);
         }
     }
     Err(SecureKeyStoreError::NotFound)
+}
+
+/// Prepare a local account-secret rotation without mutating local state.
+///
+/// Each persisted MLS snapshot is decrypted with the current account secret and
+/// re-encrypted with a newly-generated secret. Callers upload the returned
+/// backups first, then call [`commit_account_mls_secret_rotation`] so local
+/// state and the secret store advance together.
+pub fn prepare_account_mls_secret_rotation(
+    store: &dyn SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    snapshots: &BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+) -> Result<AccountMlsSecretRotation, MlsRuntimeError> {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return Err(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(
+            "actor_did is required for MLS snapshot secret".to_owned(),
+        )));
+    }
+    let previous_secret =
+        match load_account_mls_secret(store, actor).map_err(MlsRuntimeError::DeviceSecret)? {
+            Some(secret) => secret,
+            None => {
+                let _ = load_or_create_account_mls_secret(store, actor, device_id)
+                    .map_err(MlsRuntimeError::DeviceSecret)?;
+                load_account_mls_secret(store, actor)
+                    .map_err(MlsRuntimeError::DeviceSecret)?
+                    .ok_or_else(|| MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?
+            }
+        };
+    let new_version = previous_secret
+        .version
+        .saturating_add(1)
+        .max(ACCOUNT_MLS_SECRET_CURRENT_VERSION);
+    if new_version > ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION {
+        return Err(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(
+            format!("account MLS secret version {new_version} exceeds supported scan range"),
+        )));
+    }
+    let new_secret = generate_account_mls_secret().map_err(MlsRuntimeError::DeviceSecret)?;
+    let mut rewrapped_snapshots = BTreeMap::new();
+    for (space_id, snapshot) in snapshots {
+        let plaintext = crate::mls::persistence::decrypt_envelope(
+            snapshot,
+            &previous_secret.secret,
+        )
+        .map_err(|err| {
+            MlsRuntimeError::SnapshotRestore(format!(
+                "could not decrypt MLS snapshot for {space_id} before account-secret rotation: {err}"
+            ))
+        })?;
+        let mut salt = [0u8; 16];
+        getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+        let rotated = crate::mls::persistence::encrypt_state(
+            &snapshot.space_id,
+            &snapshot.group_id,
+            snapshot.epoch,
+            &plaintext,
+            &new_secret,
+            &salt,
+        );
+        rewrapped_snapshots.insert(space_id.clone(), rotated);
+    }
+    Ok(AccountMlsSecretRotation {
+        previous_version: previous_secret.version,
+        new_version,
+        new_secret,
+        rewrapped_snapshots,
+    })
+}
+
+/// Commit a prepared rotation to local state and the secure store.
+pub fn commit_account_mls_secret_rotation(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    actor_did: &str,
+    rotation: &AccountMlsSecretRotation,
+) -> Result<(), SecureKeyStoreError> {
+    for (space_id, envelope) in &rotation.rewrapped_snapshots {
+        state_store.save_mls_snapshot(space_id.clone(), envelope.clone());
+    }
+    store_account_mls_secret_version(
+        secure_store,
+        actor_did,
+        rotation.new_version,
+        &rotation.new_secret,
+    )?;
+    for version in 1..rotation.new_version {
+        let _ = secure_store.delete_secret(&account_mls_secret_key_for_version(actor_did, version));
+    }
+    Ok(())
 }
 
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -553,6 +721,7 @@ pub fn encrypt_values_with_device_snapshot(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
@@ -637,7 +806,9 @@ mod tests {
         let resolved = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
         assert_eq!(resolved, "legacy-secret");
         assert_eq!(
-            store.get_secret(&account_mls_secret_key(actor)).unwrap(),
+            store
+                .get_secret(&account_mls_secret_key_for_version(actor, 1))
+                .unwrap(),
             Some("legacy-secret".to_owned())
         );
         // load-only path also resolves the promoted account secret.
@@ -652,6 +823,25 @@ mod tests {
         store_account_mls_secret(&store, actor, "recovered-secret").unwrap();
         let loaded = load_device_snapshot_secret(&store, actor, "cx:device:fresh").unwrap();
         assert_eq!(loaded, "recovered-secret");
+    }
+
+    #[test]
+    fn account_secret_load_picks_highest_version() {
+        let store = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        store_account_mls_secret_version(&store, actor, 1, "old-secret").unwrap();
+        store_account_mls_secret_version(&store, actor, 3, "new-secret").unwrap();
+
+        let loaded = load_account_mls_secret(&store, actor)
+            .unwrap()
+            .expect("secret present");
+
+        assert_eq!(loaded.version, 3);
+        assert_eq!(loaded.secret, "new-secret");
+        assert_eq!(
+            load_device_snapshot_secret(&store, actor, "cx:device:any").unwrap(),
+            "new-secret"
+        );
     }
 
     #[test]
@@ -722,6 +912,63 @@ mod tests {
 
         assert!(matches!(error, MlsRuntimeError::BackupDecode(_)));
         assert!(error.user_message().contains("epoch mismatch"));
+    }
+
+    #[test]
+    fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let space = "cx:space:01904100-0000-7000-8000-000000000009";
+        let old_secret = "old-account-secret";
+        let plaintext = b"opaque sdk state before revoke";
+        let store = MemorySecureKeyStore::new();
+        store_account_mls_secret_version(&store, actor, 1, old_secret).unwrap();
+        let original = crate::mls::persistence::encrypt_state(
+            space,
+            "group-after-revoke",
+            12,
+            plaintext,
+            old_secret,
+            b"deterministic-salt",
+        );
+        let snapshots = BTreeMap::from([(space.to_owned(), original)]);
+
+        let rotation =
+            prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
+
+        assert_eq!(rotation.previous_version, 1);
+        assert_eq!(rotation.new_version, 2);
+        assert_ne!(rotation.new_secret, old_secret);
+        let rotated = rotation
+            .rewrapped_snapshots
+            .get(space)
+            .expect("rewrapped snapshot");
+        let (_backup_id, body) = build_mls_history_backup_body(rotated, actor, device);
+        let decoded = decode_mls_history_backup_envelope(&body).unwrap();
+        assert!(
+            crate::mls::persistence::decrypt_envelope(&decoded, old_secret).is_err(),
+            "revoked device's old account secret must not decrypt the new backup"
+        );
+        let recovered =
+            crate::mls::persistence::decrypt_envelope(&decoded, &rotation.new_secret).unwrap();
+        assert_eq!(recovered, plaintext);
+
+        let mut state = temp_state_store("rotate-commit");
+        commit_account_mls_secret_rotation(&mut state, &store, actor, &rotation).unwrap();
+        assert_eq!(
+            load_device_snapshot_secret(&store, actor, device).unwrap(),
+            rotation.new_secret
+        );
+        assert!(
+            store
+                .get_secret(&account_mls_secret_key_for_version(actor, 1))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            state.mls_snapshot_for(space).unwrap().ciphertext_hex,
+            rotated.ciphertext_hex
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

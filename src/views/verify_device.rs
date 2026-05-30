@@ -189,6 +189,7 @@ pub fn VerifyDevicePanel(
     let mut sas_code = use_signal(String::new);
     let mut qr_data = use_signal(String::new);
     let mut revoke_confirm = use_signal(|| Option::<String>::None);
+    let mut revoke_passphrase = use_signal(String::new);
     // SAS key-exchange state. The ephemeral keypair is generated
     // lazily on "Generate my key" click + held in an Arc so a
     // single getrandom call covers the lifetime of this SAS
@@ -873,32 +874,94 @@ pub fn VerifyDevicePanel(
                                     div { class: "event", "data-testid": "revoke-confirm",
                                         div { class: "space-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
                                         div { class: "muted",
-                                            "Revoking removes the device from the authorized set and excludes it from future encrypted messages. This cannot be undone."
+                                            "Revoking removes the device from the authorized set, excludes it from future encrypted messages, and rotates the account MLS history secret. This cannot be undone."
+                                        }
+                                        label { r#for: "verify-device-revoke-passphrase", "Recovery passphrase" }
+                                        input {
+                                            id: "verify-device-revoke-passphrase",
+                                            "data-testid": "verify-device-revoke-passphrase-input",
+                                            r#type: "password",
+                                            value: "{revoke_passphrase}",
+                                            autocomplete: "current-password",
+                                            placeholder: "Required to rotate encrypted history backups",
+                                            oninput: move |evt| revoke_passphrase.set(evt.value()),
                                         }
                                         div { class: "actions",
                                             button {
                                                 class: "primary",
                                                 "data-testid": "confirm-revoke-button",
+                                                disabled: revoke_passphrase().trim().is_empty(),
                                                 onclick: {
                                                     let base = base_url.clone();
                                                     let dev_id = entry.device_id.clone();
+                                                    let actor = account_did.clone();
+                                                    let current_device = device_id.clone();
                                                     move |_| {
                                                         let base = base.clone();
                                                         let dev_id = dev_id.clone();
                                                         let api_token = token();
+                                                        let passphrase_bytes = revoke_passphrase().into_bytes();
+                                                        let snapshots = state_store.read().mls_snapshots();
+                                                        let secure_store = default_secure_key_store("yougen");
+                                                        let secure_store_for_rotation = secure_store.clone();
+                                                        let actor_for_rotation = actor.clone();
+                                                        let actor_for_commit = actor.clone();
+                                                        let device_for_rotation = current_device.clone();
                                                         revoke_confirm.set(None);
                                                         spawn(async move {
                                                             let dev_id_for_err = dev_id.clone();
-                                                            match crate::views::helpers::with_authed_api(
+                                                            let revoke_result = crate::views::helpers::with_authed_api(
                                                                 &base,
-                                                                api_token,
+                                                                api_token.clone(),
                                                                 |api| async move { api.revoke_device(&dev_id).await },
                                                             )
-                                                            .await
-                                                            {
-                                                                Ok(_) => verify_status.set(format!("revoked {dev_id_for_err}")),
-                                                                Err(err) => verify_status.set(format!(
+                                                            .await;
+                                                            if let Err(err) = revoke_result {
+                                                                verify_status.set(format!(
                                                                     "revoke {dev_id_for_err} failed: {}",
+                                                                    err.display()
+                                                                ));
+                                                                return;
+                                                            }
+                                                            let rotation_result =
+                                                                crate::views::helpers::with_authed_api(
+                                                                    &base,
+                                                                    api_token,
+                                                                    move |api| async move {
+                                                                        crate::mls::account_recovery::upload_mls_account_secret_rotation_after_device_revoke(
+                                                                            &api,
+                                                                            secure_store_for_rotation.as_ref(),
+                                                                            &actor_for_rotation,
+                                                                            &device_for_rotation,
+                                                                            &passphrase_bytes,
+                                                                            &snapshots,
+                                                                        )
+                                                                        .await
+                                                                    },
+                                                                )
+                                                                .await;
+                                                            match rotation_result {
+                                                                Ok(rotation) => {
+                                                                    let mut local_state = state_store.write();
+                                                                    if let Err(err) = crate::mls::runtime::commit_account_mls_secret_rotation(
+                                                                        &mut local_state,
+                                                                        secure_store.as_ref(),
+                                                                        &actor_for_commit,
+                                                                        &rotation.rotation,
+                                                                    ) {
+                                                                        verify_status.set(format!(
+                                                                            "revoked {dev_id_for_err}; MLS secret rotation uploaded but local commit failed: {err}"
+                                                                        ));
+                                                                        return;
+                                                                    }
+                                                                    revoke_passphrase.set(String::new());
+                                                                    verify_status.set(format!(
+                                                                        "revoked {dev_id_for_err}; rotated MLS history secret to v{}",
+                                                                        rotation.rotation.new_version
+                                                                    ));
+                                                                }
+                                                                Err(err) => verify_status.set(format!(
+                                                                    "revoked {dev_id_for_err}; MLS secret rotation failed: {}",
                                                                     err.display()
                                                                 )),
                                                             }

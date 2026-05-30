@@ -1203,9 +1203,13 @@ pub fn RecoveryPanel(
                                                             ) {
                                                                 Ok(secret_bytes) => {
                                                                     let secret = String::from_utf8_lossy(&secret_bytes).into_owned();
-                                                                    if let Err(err) = crate::mls::runtime::store_account_mls_secret(
+                                                                    let secret_version = crate::mls::account_recovery::mls_account_secret_backup_version(
+                                                                        mls_secret_body,
+                                                                    );
+                                                                    if let Err(err) = crate::mls::runtime::store_account_mls_secret_version(
                                                                         secure.as_ref(),
                                                                         &actor_key,
+                                                                        secret_version,
                                                                         &secret,
                                                                     ) {
                                                                         restore_status.set(format!(
