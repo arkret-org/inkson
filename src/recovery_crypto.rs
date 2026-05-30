@@ -14,11 +14,10 @@
 
 use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as B64};
-use chacha20poly1305::{
-    XChaCha20Poly1305, XNonce,
-    aead::{Aead, KeyInit},
-};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
+use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use getrandom::fill;
 use sha2::{Digest, Sha256};
 
@@ -220,14 +219,13 @@ pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
 /// The OOB code-entry field MUST accept both wire forms (see
 /// `crypto-media/device-lifecycle.md §6.2`, Round R2/R3 close-out):
 ///
-/// 1. **Direct-handle form** — ≥22 characters of base32 drawn from the
-///    Crockford-style alphabet (`0-9` + `A-Z` minus the look-alike
-///    pair `I/L/0/1/O`). This is what the device-handoff QR encodes.
-/// 2. **Lookup form** — shorter, server-determined opaque code (the
-///    server returns `oob_code_kind: "lookup"` and resolves it
-///    against a side table). Length / charset is server-defined; the
-///    client only normalises whitespace + uppercases A-Z so the user
-///    can paste the code with the casing they were emailed.
+/// 1. **Direct-handle form** — ≥22 characters of base32 drawn from the Crockford-style alphabet
+///    (`0-9` + `A-Z` minus the look-alike pair `I/L/0/1/O`). This is what the device-handoff QR
+///    encodes.
+/// 2. **Lookup form** — shorter, server-determined opaque code (the server returns `oob_code_kind:
+///    "lookup"` and resolves it against a side table). Length / charset is server-defined; the
+///    client only normalises whitespace + uppercases A-Z so the user can paste the code with the
+///    casing they were emailed.
 ///
 /// The validator returns the classification so the calling UI can
 /// dispatch to the right server endpoint. Per `oob_code_kind`, the

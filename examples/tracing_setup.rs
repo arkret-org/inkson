@@ -2,11 +2,10 @@
 //!
 //! This example shows the two recommended wirings:
 //!
-//! 1. Native (desktop) target: a `tracing-subscriber` chain that respects
-//!    `RUST_LOG` and uses ANSI-coloured terminal output.
-//! 2. Browser (wasm32) target: a sketch of how to mirror `tracing` events to
-//!    `console.error` and POST recoverable errors to a `/api/v1/telemetry/error`
-//!    endpoint via `fetch`.
+//! 1. Native (desktop) target: a `tracing-subscriber` chain that respects `RUST_LOG` and uses
+//!    ANSI-coloured terminal output.
+//! 2. Browser (wasm32) target: a sketch of how to mirror `tracing` events to `console.error` and
+//!    POST recoverable errors to a `/api/v1/telemetry/error` endpoint via `fetch`.
 //!
 //! Run the native variant with:
 //!
@@ -67,10 +66,9 @@ fn main() {
     //                 .build(),
     //         );
     //
-    //   3. POST structured error payloads to `/api/v1/telemetry/error` from
-    //      a small `report_error(code, context)` helper. The helper is
-    //      fire-and-forget — a failed telemetry POST must never crash the
-    //      SPA. Wire it from `ErrorBanner` and the global panic hook:
+    //   3. POST structured error payloads to `/api/v1/telemetry/error` from a small
+    //      `report_error(code, context)` helper. The helper is fire-and-forget — a failed telemetry
+    //      POST must never crash the SPA. Wire it from `ErrorBanner` and the global panic hook:
     //
     //         pub fn report_error(code: &str, context: &str) {
     //             let body = serde_json::json!({

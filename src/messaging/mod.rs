@@ -9,12 +9,9 @@
 //! `experimental-polls` and `experimental-discussion-promote`.
 //!
 //! Submodules:
-//! * [`polls`] — poll draft + result-tally state used by the composer
-//!   and the timeline poll card.
-//! * [`mentions`] — @mention picker state + sidecar hash helper for
-//!   E2EE-aware mention routing.
-//! * [`discussion_promote`] — "promote this Flow's discussion into a
-//!   child Space" UI state.
+//! * [`polls`] — poll draft + result-tally state used by the composer and the timeline poll card.
+//! * [`mentions`] — @mention picker state + sidecar hash helper for E2EE-aware mention routing.
+//! * [`discussion_promote`] — "promote this Flow's discussion into a child Space" UI state.
 
 pub mod discussion_promote;
 pub mod mentions;

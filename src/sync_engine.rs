@@ -7,28 +7,22 @@
 //! Design contract (matches the "正经做法" laid out in the design
 //! discussion):
 //!
-//! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine
-//!   reads it on every iteration and writes back the new
-//!   `cursor` after each successful response. Reload of the tab
-//!   resumes from the persisted cursor without losing position.
-//! * **First iteration is initial account sync** when no cursor is stored
-//!   (or it's the `"-"` sentinel). Subsequent iterations resume with
-//!   `after=<cursor>&catchup=true`.
-//! * **Server-authoritative reconcile**: on a full sync the response is
-//!   the truth for top-level Realm membership. Nested container Spaces
-//!   may not appear as top-level `response.spaces` entries, so locally
-//!   projected Spaces are retained while their home Realm remains in
-//!   the full-sync response. On incremental, soland's `left_spaces`
-//!   field is the prune signal.
-//! * **Lifecycle via generation counter**: callers (login / logout /
-//!   server-switch) bump the engine's `generation` Signal; the loop
-//!   notices on the next iteration and exits cleanly. A fresh engine
-//!   spawn picks up the next generation.
-//! * **Backoff**: transient network errors double the sleep
-//!   (capped at `MAX_BACKOFF_SECS`); a successful response resets it.
-//!   Auth-expired errors stop the engine and let the refresh poller +
-//!   login flow take over. Cursor-invalid errors clear the cursor and
-//!   immediately retry as a full sync.
+//! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine reads it on every iteration and
+//!   writes back the new `cursor` after each successful response. Reload of the tab resumes from
+//!   the persisted cursor without losing position.
+//! * **First iteration is initial account sync** when no cursor is stored (or it's the `"-"`
+//!   sentinel). Subsequent iterations resume with `after=<cursor>&catchup=true`.
+//! * **Server-authoritative reconcile**: on a full sync the response is the truth for top-level
+//!   Realm membership. Nested container Spaces may not appear as top-level `response.spaces`
+//!   entries, so locally projected Spaces are retained while their home Realm remains in the
+//!   full-sync response. On incremental, soland's `left_spaces` field is the prune signal.
+//! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
+//!   engine's `generation` Signal; the loop notices on the next iteration and exits cleanly. A
+//!   fresh engine spawn picks up the next generation.
+//! * **Backoff**: transient network errors double the sleep (capped at `MAX_BACKOFF_SECS`); a
+//!   successful response resets it. Auth-expired errors stop the engine and let the refresh poller
+//!   + login flow take over. Cursor-invalid errors clear the cursor and immediately retry as a full
+//!   sync.
 //!
 //! The engine deliberately does NOT trigger session refresh inline —
 //! that's owned by [`crate::session_refresh`] which runs in parallel.
@@ -573,8 +567,9 @@ fn apply_account_data(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn empty_response(cursor: &str) -> ClientSyncResponse {
         ClientSyncResponse {

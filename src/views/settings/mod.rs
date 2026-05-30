@@ -1,10 +1,8 @@
 //! Settings surface.
 //!
 //! Territory split (preserved from former sibling files):
-//! - G3.Y1 (device + key-backup): [`devices`], [`recover_restore`],
-//!   [`recovery`], [`security`].
-//! - G3.Y3 (policy / consent / capabilities): [`blocklist`],
-//!   [`capabilities`], [`consent`].
+//! - G3.Y1 (device + key-backup): [`devices`], [`recover_restore`], [`recovery`], [`security`].
+//! - G3.Y3 (policy / consent / capabilities): [`blocklist`], [`capabilities`], [`consent`].
 //! The aggregate routing entry + the generic profile card live in
 //! this `mod.rs`.
 
@@ -16,26 +14,26 @@ pub mod recover_restore;
 pub mod recovery;
 pub mod security;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use dioxus::prelude::*;
-use dioxus_router::{Link, hooks::use_route};
+use dioxus_router::Link;
+use dioxus_router::hooks::use_route;
 use serde_json::json;
 
-use crate::{
-    components::{HelpTip, UiIcon},
-    config::LocalConfigStore,
-    i18n::Locale,
-    key_backup::build_recovery_vault_backup_body,
-    local_state::LocalStateStore,
-    models::AccountDataSetOutcome,
-    recovery_crypto::{
-        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
-        estimate_passphrase_strength,
-    },
-    routes::Route,
-    views::helpers::{short_protocol_id, with_authed_api},
-    workflows::blocked_release_workflows,
+use crate::components::{HelpTip, UiIcon};
+use crate::config::LocalConfigStore;
+use crate::i18n::Locale;
+use crate::key_backup::build_recovery_vault_backup_body;
+use crate::local_state::LocalStateStore;
+use crate::models::AccountDataSetOutcome;
+use crate::recovery_crypto::{
+    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
+    estimate_passphrase_strength,
 };
+use crate::routes::Route;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::workflows::blocked_release_workflows;
 
 /// `cx.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
@@ -3271,8 +3269,9 @@ pub fn SettingsPanel(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
+
+    use super::*;
 
     /// F-BLOCKLIST-VALID-1: the live form validator should accept the
     /// DID Core shapes the rest of yougen routinely round-trips through

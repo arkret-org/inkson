@@ -9,13 +9,12 @@
 //! aggregate the chat / dashboard views can render off of.
 //!
 //! Spec sources:
-//! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries
-//!   a `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `cx.presence` carries
-//!   `{actor_did, status, last_seen?}` with status ∈
-//!   {`online`, `away`, `dnd`, `offline`}.
-//! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling
-//!   carrying `{actor_did, flow_id, started_at}`.
+//! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries a
+//!   `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
+//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_did, status, last_seen?}`
+//!   with status ∈ {`online`, `away`, `dnd`, `offline`}.
+//! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_did, flow_id,
+//!   started_at}`.
 //!
 //! The parsers are deliberately permissive at the field level — they
 //! collapse missing optional fields rather than rejecting the whole
@@ -348,10 +347,12 @@ fn read_scope_key(read_scope: &ReadScopeEvent) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
     use super::*;
     use crate::operation::EventEnvelope;
-    use serde_json::json;
-    use std::collections::BTreeMap;
 
     fn envelope(kind: &str, payload: Value) -> EventEnvelope {
         EventEnvelope {

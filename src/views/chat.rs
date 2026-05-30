@@ -4,22 +4,20 @@ use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::{
-    api::{
-        ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
-        is_space_membership_denied_error,
-    },
-    audit::build_audit_ryw_receipt,
-    components::{HelpTip, SecurityStateBadge, UiIcon},
-    hlc::{Hlc, observe_seq},
-    local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState},
-    models::SubmitEventResponse,
-    operation::{EventEnvelope, OperationBuilder, cx_ops, uuid_v7},
-    routes::Route,
-    views::helpers::{
-        StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
-        short_protocol_id, with_authed_api_with_sync,
-    },
+use crate::api::{
+    ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
+    is_space_membership_denied_error,
+};
+use crate::audit::build_audit_ryw_receipt;
+use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
+use crate::hlc::{Hlc, observe_seq};
+use crate::local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState};
+use crate::models::SubmitEventResponse;
+use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, uuid_v7};
+use crate::routes::Route;
+use crate::views::helpers::{
+    StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
+    short_protocol_id, with_authed_api_with_sync,
 };
 
 const CHAT_EMOJI_GRID: &[&str] = &[
@@ -79,8 +77,8 @@ enum MessageCryptoState {
     /// We see an `encrypted_payload` and the MLS group exists, but a
     /// decrypt round-trip hasn't completed for this event yet.
     Decrypting,
-    /// `encrypted_payload` present but no local MLS group / no
-    /// passphrase / no key package received yet — Welcome is pending.
+    /// `encrypted_payload` present but no local MLS group / no key
+    /// package received yet — Welcome is pending.
     KeyMissing,
     /// Sender device hasn't been verified (cross-signing missing or
     /// fingerprint mismatch). The body still decrypted, but we flag it.
@@ -164,20 +162,19 @@ struct SpaceParticipant {
 }
 
 /// Hydrate the local MLS group for a Space (or
-/// bootstrap a single-member group when no snapshot exists), encrypt
-/// `plaintext_bytes` against it, persist the post-encrypt group state
-/// back under the same passphrase, and return:
+/// restore a device-key-protected snapshot), encrypt `plaintext_bytes`
+/// against it, persist the post-encrypt group state back under the same
+/// device snapshot secret, and return:
 ///
-/// * `Some(schedule_hash)` — the post-encrypt group's `epoch_authenticator`-
-///   derived `Hash`, fed into `GovernanceBindingPayload::from_anchor`.
-/// * `member_dids` — every principal DID in the group (single-element for
-///   solo bootstrap; the full member set for a hydrated multi-device
-///   group). Replaces the prior single-`device_did` audit-receipt
-///   fallback.
-/// * `encrypted_payload` — the typed SDK `EncryptedPayload` serialised as
-///   `serde_json::Value` ready to drop into `content.encrypted_payload`.
+/// * `Some(schedule_hash)` — the post-encrypt group's `epoch_authenticator`- derived `Hash`, fed
+///   into `GovernanceBindingPayload::from_anchor`.
+/// * `member_dids` — every principal DID in the group (single-element for solo bootstrap; the full
+///   member set for a hydrated multi-device group). Replaces the prior single-`device_did`
+///   audit-receipt fallback.
+/// * `encrypted_payload` — the typed SDK `EncryptedPayload` serialised as `serde_json::Value` ready
+///   to drop into `content.encrypted_payload`.
 ///
-/// On any failure (empty passphrase, restore fails, encrypt fails) the
+/// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) the
 /// helper returns `(None, vec![], None, None)` and the caller aborts the
 /// Send Secure flow.
 #[cfg(not(target_arch = "wasm32"))]
@@ -186,7 +183,6 @@ fn run_local_mls_encrypt(
     space_id: &str,
     principal_id: &str,
     device_id: &str,
-    passphrase: &str,
     plaintext_bytes: &[u8],
 ) -> (
     Option<contrix_sdk::Hash>,
@@ -195,119 +191,27 @@ fn run_local_mls_encrypt(
     Option<contrix_sdk::MlsCommitEnvelope>,
 ) {
     let empty = (None, Vec::new(), None, None);
-    if passphrase.is_empty() {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let plaintext_values = vec![plaintext_bytes.to_vec()];
+    let Ok((schedule_hash, member_dids, mut payload_values, commit_envelope)) =
+        crate::mls::runtime::encrypt_values_with_device_snapshot(
+            &mut state_store.write(),
+            secure_store.as_ref(),
+            space_id,
+            principal_id,
+            device_id,
+            "application/vnd.contrix.message+json",
+            &plaintext_values,
+        )
+    else {
         return empty;
-    }
-    let snapshot = state_store.read().mls_snapshot_for(space_id);
-    let mut group = if let Some(env) = snapshot {
-        match crate::mls::persistence::restore_envelope(&env, passphrase, 0) {
-            Ok(group) => group,
-            Err(_) => return empty,
-        }
-    } else {
-        // Bootstrap a fresh single-member group on first Send Secure.
-        // The group lives off the user's `(principal_id, device_id)`
-        // identity; `space_id`'s bytes seed the MLS group_id so two
-        // clients independently bootstrapping the "same" Space land on
-        // identical group ids. Real multi-member flows still require a
-        // dedicated invite / Welcome path (out of scope here).
-        let Ok(principal_did) = contrix_sdk::Did::new(principal_id.to_owned()) else {
-            return empty;
-        };
-        let Ok(typed_device_id) = contrix_sdk::DeviceId::new(device_id.to_owned()) else {
-            return empty;
-        };
-        let Ok(identity) =
-            contrix_sdk::ContrixMlsIdentity::new_basic(principal_did, typed_device_id)
-        else {
-            return empty;
-        };
-        match identity.create_group(space_id.as_bytes()) {
-            Ok(g) => g,
-            Err(_) => return empty,
-        }
     };
-    // Self-update commit BEFORE encrypting so the payload runs under
-    // the rotated epoch — forward secrecy
-    // improves and the Move-pipeline `mls_commit` row can carry the
-    // real `(group_id, epoch, commit_digest)` triple instead of a
-    // synthesized `(space_id, prev_epoch+1, _)` placeholder. Failure
-    // here is non-fatal: we fall back to encrypt-without-commit so a
-    // single Send Secure still succeeds even if `self_update` rejects.
-    let commit_envelope = group.self_update_commit().ok();
-    let encrypted =
-        match group.encrypt_payload("application/vnd.contrix.message+json", plaintext_bytes) {
-            Ok(p) => p,
-            Err(_) => return empty,
-        };
-    let schedule_hash = group.schedule_hash();
-    let member_dids = group.member_principal_dids();
-    let payload_value = match serde_json::to_value(&encrypted) {
-        Ok(v) => v,
-        Err(_) => return empty,
-    };
-    // Re-encrypt + persist the post-encrypt group state so a refresh +
-    // timeline B7 audit hook can hydrate the same group with the same
-    // passphrase. `encrypt_payload` does not advance the epoch but it
-    // mutates the OpenMLS ratchet state, so the snapshot MUST be
-    // refreshed.
-    let post_state = match group.export_state_record() {
-        Ok(state) => state,
-        Err(_) => {
-            return (
-                Some(schedule_hash),
-                member_dids,
-                Some(payload_value),
-                commit_envelope,
-            );
-        }
-    };
-    let mut salt = [0u8; 16];
-    if getrandom::fill(&mut salt).is_err() {
-        return (
-            Some(schedule_hash),
-            member_dids,
-            Some(payload_value),
-            commit_envelope,
-        );
-    }
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        space_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &post_state.serialized_state,
-        passphrase,
-        &salt,
-    );
-    state_store
-        .write()
-        .save_mls_snapshot(space_id.to_owned(), new_envelope);
     (
         Some(schedule_hash),
         member_dids,
-        Some(payload_value),
-        commit_envelope,
+        payload_values.pop(),
+        Some(commit_envelope),
     )
-}
-
-/// Walk a `DeviceMessagesReceiveResBody` JSON representation and
-/// pull out every `cx.mls.welcome` content payload.
-/// The receive endpoint returns `{ "events": [{ type, content, ... }] }`;
-/// this helper does not assume only one welcome per poll.
-#[cfg(not(target_arch = "wasm32"))]
-fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
-    let mut welcomes = Vec::new();
-    let Some(events) = value.get("events").and_then(|v| v.as_array()) else {
-        return welcomes;
-    };
-    for entry in events {
-        if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome")
-            && let Some(content) = entry.get("content")
-        {
-            welcomes.push(content.clone());
-        }
-    }
-    welcomes
 }
 
 fn chat_message_revise_operation(
@@ -2352,6 +2256,7 @@ pub fn ChatPanel(
     base_url: String,
     plaintext_service_did: String,
     account_did: String,
+    device_id: String,
     token: Signal<String>,
     selected_space: String,
     selected_space_scope: Vec<String>,
@@ -2419,11 +2324,6 @@ pub fn ChatPanel(
     // Currently-open context menu (right-click on a message). Stores
     // the message id whose menu is open; None means no menu visible.
     let mut message_context_menu = use_signal(|| Option::<String>::None);
-    // Read the shared per-Space MLS passphrase store. Set from the
-    // passphrase input above Send Secure; read by the secure-send path
-    // to run `group.encrypt_payload()`.
-    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
-    let mut mls_passphrase_draft = use_signal(String::new);
     let mut new_channel_name = use_signal(String::new);
     let mut new_channel_topic = use_signal(String::new);
     let mut new_channel_create_card = use_signal(|| false);
@@ -2804,144 +2704,22 @@ pub fn ChatPanel(
         });
     }
 
-    // Welcome receive shuttle. Poll /api/v1/device_messages once per
-    // mount; if any incoming message
-    // carries `type = cx.mls.welcome`, run
-    // `ContrixMlsGroup::join_from_welcome` against the local identity
-    // for that Space and persist the resulting group snapshot under the
-    // user's per-Space passphrase. Subsequent Send Secure / decrypt
-    // hits the multi-member group automatically.
-    let mut welcome_poll_done = use_signal(|| false);
-    {
-        let base = base_url.clone();
-        let space = selected_space.clone();
-        let actor = account_did.clone();
-        let token_for_poll = token;
-        let passphrase_store = mls_passphrase_store;
-        use_future(move || {
-            let base = base.clone();
-            let space = space.clone();
-            let actor = actor.clone();
-            async move {
-                if welcome_poll_done() {
-                    return;
-                }
-                welcome_poll_done.set(true);
-                if token_for_poll().trim().is_empty() {
-                    return;
-                }
-                let api_token = token_for_poll();
-                let messages = match crate::views::helpers::with_authed_api(
-                    &base,
-                    api_token,
-                    |api| async move { api.receive_device_messages().await },
-                )
-                .await
-                {
-                    Ok(resp) => resp,
-                    Err(_) => return,
-                };
-                let mut applied = 0usize;
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let messages_value = match serde_json::to_value(&messages) {
-                        Ok(v) => v,
-                        Err(_) => return,
-                    };
-                    let welcome_entries = collect_welcome_entries(&messages_value);
-                    if welcome_entries.is_empty() {
-                        return;
-                    }
-                    let passphrase: String = passphrase_store
-                        .read()
-                        .get(&space)
-                        .map(str::to_owned)
-                        .unwrap_or_default();
-                    let device_did = match state_store.read().local_identity() {
-                        Some(identity) => identity.device_did.clone(),
-                        None => return,
-                    };
-                    for welcome_value in welcome_entries {
-                        let welcome: contrix_sdk::MlsWelcomeEnvelope =
-                            match serde_json::from_value(welcome_value.clone()) {
-                                Ok(w) => w,
-                                Err(_) => continue,
-                            };
-                        let principal_did = match contrix_sdk::Did::new(actor.clone()) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-                        let device_id_typed = match contrix_sdk::DeviceId::new(device_did.clone()) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-                        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
-                            principal_did,
-                            device_id_typed,
-                        ) {
-                            Ok(i) => i,
-                            Err(_) => continue,
-                        };
-                        let group = match contrix_sdk::ContrixMlsGroup::join_from_welcome(
-                            identity, &welcome,
-                        ) {
-                            Ok(g) => g,
-                            Err(_) => continue,
-                        };
-                        let post_state = match group.export_state_record() {
-                            Ok(s) => s,
-                            Err(_) => continue,
-                        };
-                        let mut salt = [0u8; 16];
-                        if getrandom::fill(&mut salt).is_err() {
-                            continue;
-                        }
-                        let snapshot = crate::mls::persistence::encrypt_state(
-                            &space,
-                            &post_state.group_id,
-                            post_state.epoch,
-                            &post_state.serialized_state,
-                            &passphrase,
-                            &salt,
-                        );
-                        state_store
-                            .write()
-                            .save_mls_snapshot(space.clone(), snapshot);
-                        applied += 1;
-                    }
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = (messages, passphrase_store, actor);
-                }
-                if applied > 0 {
-                    status_msg.set(format!(
-                        "joined {applied} MLS group(s) from Welcome envelopes"
-                    ));
-                }
-            }
-        });
-    }
-
-    // T7.4: refresh per-message crypto state when the MLS passphrase /
-    // local group state changes. Messages flagged `Decrypting` transition
-    // to `KeyMissing` when no passphrase is saved for the Space so the
-    // user sees a clear "waiting for Welcome" indicator instead of a
-    // spinner forever.
+    // T7.4: refresh per-message crypto state when local group state is
+    // missing. Messages flagged `Decrypting` transition to `KeyMissing`
+    // when no MLS snapshot is saved for the Space so the user sees a clear
+    // "waiting for Welcome" indicator instead of a spinner forever.
     {
         let space_for_crypto = selected_space.clone();
         let mut messages_sig = messages;
-        let passphrase_store_crypto = mls_passphrase_store;
         use_effect(move || {
-            let passphrase = passphrase_store_crypto
+            let snapshot_missing = state_store
                 .read()
-                .get(&space_for_crypto)
-                .map(str::to_owned)
-                .unwrap_or_default();
+                .mls_snapshot_for(&space_for_crypto)
+                .is_none();
             // Only mutate when we'd actually move someone from Decrypting
             // into KeyMissing — Decrypting → Plaintext requires a real
             // decrypt attempt that this view doesn't yet run.
-            if passphrase.is_empty() {
+            if snapshot_missing {
                 let mut current = messages_sig.write();
                 for msg in current.iter_mut() {
                     if matches!(msg.crypto_state, MessageCryptoState::Decrypting) {
@@ -5746,48 +5524,9 @@ pub fn ChatPanel(
                         },
                         {crate::i18n::tr("chat.send")}
                     }
-                    // Per-Space MLS passphrase input. When non-empty,
-                    // Send Secure switches to the
-                    // real `group.encrypt_payload()` path (typed
-                    // EncryptedPayload + persisted post-encrypt state).
-                    // Send Secure requires a saved passphrase for the
-                    // active Space.
                     details { class: "compose-security-panel",
                         summary { "Advanced encryption" }
                         div { class: "compose-security-grid",
-                            input {
-                                class: "secondary",
-                                r#type: "password",
-                                "data-testid": "mls-passphrase-input",
-                                placeholder: crate::i18n::tr("chat.mls_passphrase_placeholder"),
-                                value: "{mls_passphrase_draft}",
-                                oninput: move |evt| mls_passphrase_draft.set(evt.value()),
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "mls-passphrase-save-button",
-                                title: crate::i18n::tr("chat.mls_passphrase_save"),
-                                onclick: {
-                                    let space_id = selected_space.clone();
-                                    let mut store = mls_passphrase_store;
-                                    move |_| {
-                                        let value = mls_passphrase_draft();
-                                        if value.is_empty() {
-                                            store.write().clear(&space_id);
-                                            status_msg.set(
-                                                "MLS passphrase cleared; Send Secure requires a passphrase".to_owned(),
-                                            );
-                                        } else {
-                                            store.write().set(space_id.clone(), value);
-                                            status_msg.set(
-                                                "MLS passphrase set — Send Secure now uses real MLS encrypt".to_owned(),
-                                            );
-                                        }
-                                        mls_passphrase_draft.set(String::new());
-                                    }
-                                },
-                                {crate::i18n::tr("chat.mls_passphrase_save")}
-                            }
                     button {
                         class: "secondary",
                         "data-testid": "send-e2ee-move-button",
@@ -5826,34 +5565,15 @@ pub fn ChatPanel(
                                         "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
                                     });
                                 let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
-                                let identity =
-                                    match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id,
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "identity unavailable: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                let did = identity.device_did.clone();
+                                let did = device_id.clone();
                                 // 1) MLS commit event bumps the epoch +
                                 //    records covered_frontier.
-                                // Real MLS encrypt path. When the user has entered a
-                                // passphrase for this Space, hydrate /
-                                // bootstrap the local `ContrixMlsGroup`,
-                                // encrypt the message
-                                // body via `group.encrypt_payload`, and
-                                // persist the post-encrypt group state so
-                                // a refresh + decrypt round trip can
-                                // recover the same ciphertext. B3d
-                                // (schedule_hash) and B6c (member DIDs)
-                                // now read from the same group instance.
-                                let mls_passphrase: String = mls_passphrase_store
-                                    .read()
-                                    .get(&space)
-                                    .map(str::to_owned)
-                                    .unwrap_or_default();
+                                // Real MLS encrypt path. The shared runtime
+                                // restores the local group from this device's
+                                // secure-store-backed snapshot secret, then
+                                // persists the post-encrypt state. B3d
+                                // (schedule_hash) and B6c (member DIDs) now
+                                // read from the same group instance.
                                 #[cfg(not(target_arch = "wasm32"))]
                                 let (
                                     local_schedule_hash,
@@ -5870,7 +5590,6 @@ pub fn ChatPanel(
                                     &space,
                                     &actor,
                                     &did,
-                                    &mls_passphrase,
                                     body.as_bytes(),
                                 );
                                 #[cfg(target_arch = "wasm32")]
@@ -5888,7 +5607,7 @@ pub fn ChatPanel(
 
                                 let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
                                     status_msg.set(
-                                        "Send Secure requires a saved MLS passphrase and a decryptable local group".to_owned(),
+                                        "Send Secure requires MLS state ready on this device; wait for Welcome or restore MLS history".to_owned(),
                                     );
                                     return;
                                 };
@@ -5998,6 +5717,8 @@ pub fn ChatPanel(
                                     .iter()
                                     .map(|did| did.as_str().to_owned())
                                     .collect();
+                                let actor_for_backup = actor.clone();
+                                let device_for_backup = did.clone();
                                 let commit_op_id = commit_envelope.local_operation_id().to_owned();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
@@ -6041,6 +5762,28 @@ pub fn ChatPanel(
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
                                             status_msg.set("Encrypted message sent".to_owned());
+                                            let snapshot = state_store
+                                                .read()
+                                                .mls_snapshot_for(&space_for_record);
+                                            if let Some(snapshot) = snapshot {
+                                                match crate::mls::runtime::upload_mls_snapshot_backup(
+                                                    &api,
+                                                    &snapshot,
+                                                    &actor_for_backup,
+                                                    &device_for_backup,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(backup_id) => status_msg.set(format!(
+                                                        "Encrypted message sent; MLS history backup {} uploaded",
+                                                        short_protocol_id(&backup_id)
+                                                    )),
+                                                    Err(err) => status_msg.set(format!(
+                                                        "Encrypted message sent; MLS history backup failed: {}",
+                                                        err.user_message()
+                                                    )),
+                                                }
+                                            }
 
                                             // Disclosed-audit hardening profile
                                             // (`cx.profile.disclosed_audit.e2ee.v1`):
@@ -6183,7 +5926,7 @@ mod tests {
                 {"type": "cx.device.message", "content": {"ignore_me": true}},
             ]
         });
-        let welcomes = collect_welcome_entries(&value);
+        let welcomes = crate::mls::runtime::collect_welcome_entries(&value);
         let ids: Vec<&str> = welcomes
             .iter()
             .filter_map(|w| w.get("welcome_envelope_id").and_then(|v| v.as_str()))
@@ -6199,9 +5942,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn collect_welcome_entries_tolerates_missing_events_envelope() {
-        assert!(collect_welcome_entries(&json!({})).is_empty());
-        assert!(collect_welcome_entries(&json!({"events": null})).is_empty());
-        assert!(collect_welcome_entries(&json!({"events": []})).is_empty());
+        assert!(crate::mls::runtime::collect_welcome_entries(&json!({})).is_empty());
+        assert!(crate::mls::runtime::collect_welcome_entries(&json!({"events": null})).is_empty());
+        assert!(crate::mls::runtime::collect_welcome_entries(&json!({"events": []})).is_empty());
     }
 
     #[test]
@@ -6582,8 +6325,9 @@ mod tests {
 
     #[test]
     fn agent_dids_from_raw_operations_filters_by_space_and_kind() {
-        use crate::local_state::RawOperationRecord;
         use chrono::Utc;
+
+        use crate::local_state::RawOperationRecord;
 
         // Mixed bag of raw ops: an agent endpoint for the right space,
         // an agent endpoint for a different space (should be filtered

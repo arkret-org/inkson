@@ -9,10 +9,8 @@
 
 use dioxus::prelude::*;
 
-use crate::{
-    models::ContactResponse,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::models::ContactResponse;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
 pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {

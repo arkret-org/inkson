@@ -300,29 +300,22 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 /// `SubmitMoveResponse.state` field plus the post-anchor effects the
 /// next `/sync` cycle exposes:
 ///
-/// - `PendingAnchor` — server accepted the Move into MoveStore, waiting
-///   for the next anchorer batch to seal it. Initial state for any
-///   successful submit.
-/// - `Effective` — anchorer included the Move in a signed Anchor; the
-///   reducer ran and the resulting cell state is now visible.
-/// - `FailedPrecondition` — soland rejected the Move at submit time
-///   because a precondition (`if_state` / `if_cell` / `parent_anchor`)
-///   no longer matches the server's view.
-/// - `FailedBottom` — the reducer accepted the Move but produced a
-///   bottom (concurrent-candidate) cell; downstream queries are
-///   undefined until an admin resolves the conflict via a `head_in`
+/// - `PendingAnchor` — server accepted the Move into MoveStore, waiting for the next anchorer batch
+///   to seal it. Initial state for any successful submit.
+/// - `Effective` — anchorer included the Move in a signed Anchor; the reducer ran and the resulting
+///   cell state is now visible.
+/// - `FailedPrecondition` — soland rejected the Move at submit time because a precondition
+///   (`if_state` / `if_cell` / `parent_anchor`) no longer matches the server's view.
+/// - `FailedBottom` — the reducer accepted the Move but produced a bottom (concurrent-candidate)
+///   cell; downstream queries are undefined until an admin resolves the conflict via a `head_in`
 ///   repair Move (M8).
-/// - `RejectedAnchor` — the anchorer batch that swept the Move was
-///   rejected (signature / signer-set policy / anchorer-cell
-///   mismatch); the Move never landed.
-/// - `AnchorerPaused` — the Space's anchorer is paused (recovery
-///   anchorer not yet rotated, or quorum unmet); the Space cannot
-///   advance until ops bring it back online.
-/// - `PendingMlsBinding` — the Move targets an E2EE
-///   message but its `covered_frontier` precondition references a
-///   governance frontier the local MLS group has not yet acknowledged.
-///   Held client-side until the binding is observed; the user sees a
-///   toast.
+/// - `RejectedAnchor` — the anchorer batch that swept the Move was rejected (signature / signer-set
+///   policy / anchorer-cell mismatch); the Move never landed.
+/// - `AnchorerPaused` — the Space's anchorer is paused (recovery anchorer not yet rotated, or
+///   quorum unmet); the Space cannot advance until ops bring it back online.
+/// - `PendingMlsBinding` — the Move targets an E2EE message but its `covered_frontier` precondition
+///   references a governance frontier the local MLS group has not yet acknowledged. Held
+///   client-side until the binding is observed; the user sees a toast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveSubmissionState {
@@ -580,8 +573,8 @@ impl LocalAnchorView {
     /// return the safer winner candidate from the cell's competing heads —
     /// the more restrictive membership value or the revoked grant. Returns
     /// `None` when:
-    /// - the cell isn't a known security-relevant family (operator must
-    ///   pick manually — there's no semantic safety ordering to lean on),
+    /// - the cell isn't a known security-relevant family (operator must pick manually — there's no
+    ///   semantic safety ordering to lean on),
     /// - sync hasn't published per-head values yet (`heads` is empty),
     /// - the heads aren't comparable in the safety order.
     ///
@@ -2862,7 +2855,7 @@ impl LocalStateStore {
     /// Persist (or replace) the MLS snapshot envelope for a space.
     /// Idempotent: a re-snapshot at the same epoch overwrites the
     /// previous record. The on-disk envelope is opaque to soland —
-    /// passphrase-derived encryption keeps the server zero-knowledge
+    /// device-secret-derived encryption keeps the server zero-knowledge
     /// of the underlying group keys.
     pub fn save_mls_snapshot(
         &mut self,
@@ -2887,8 +2880,8 @@ impl LocalStateStore {
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known space's group in one pass and by
-    /// the cross-device sync UI to enumerate what's available before
-    /// asking the user for a passphrase.
+    /// device-recovery flows to enumerate the encrypted snapshots that
+    /// can be restored for this device.
     pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots
     }
@@ -3230,9 +3223,10 @@ fn plaintext_identity_seed_fallback_allowed() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
     use crate::secure_key_store::SecureKeyStore;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn move_submission_state_maps_pending_anchor_and_effective() {
@@ -4761,10 +4755,12 @@ mod tests {
         // maps to `AuditPostError::Other`. To exercise the 404 path
         // specifically we spawn a minimal hyper-free TCP listener that
         // blanket-replies with 404.
-        use crate::telemetry::{UserActionOutcome, build_user_action_entry};
         use std::net::SocketAddr;
+
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
+
+        use crate::telemetry::{UserActionOutcome, build_user_action_entry};
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();

@@ -150,14 +150,12 @@ pub type SignatureVerifier<'a> = &'a dyn Fn(&str, &str, &str) -> bool;
 /// 2. `anchor_id` empty → [`WitnessError::MissingAnchorId`].
 /// 3. `witnesses` empty → [`WitnessError::NoWitnessesProvided`].
 /// 4. Repeated `signer_did` → [`WitnessError::DuplicateSigner`].
-/// 5. A signer's domain isn't pinned → [`WitnessError::UnknownSigner`].
-///    (The trust bundle is the local source of truth for which
-///    anchorers we'll accept; spec `finality-and-consensus.md §3`
+/// 5. A signer's domain isn't pinned → [`WitnessError::UnknownSigner`]. (The trust bundle is the
+///    local source of truth for which anchorers we'll accept; spec `finality-and-consensus.md §3`
 ///    explicitly requires this gate.)
-/// 6. `verify_signature(signer_did, post_state_root, signature)`
-///    returns `false` → [`WitnessError::SignatureInvalid`].
-/// 7. Fewer than `threshold_required` distinct *valid* signers →
-///    [`WitnessError::ThresholdNotMet`].
+/// 6. `verify_signature(signer_did, post_state_root, signature)` returns `false` →
+///    [`WitnessError::SignatureInvalid`].
+/// 7. Fewer than `threshold_required` distinct *valid* signers → [`WitnessError::ThresholdNotMet`].
 ///
 /// On success returns `Ok(distinct_valid_signers)` so the caller can
 /// surface a precise audit row.
@@ -212,8 +210,9 @@ pub fn verify_witness_chain(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use contrix_sdk::TrustAnchor;
+
+    use super::*;
 
     fn anchor(domain: &str, key: &str) -> TrustAnchor {
         TrustAnchor {

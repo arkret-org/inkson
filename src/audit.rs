@@ -1,10 +1,10 @@
 //! Audited E2EE event builders (`crypto-media/audited-e2ee.md`).
 //!
 //! Two hardening profiles sit on top of `cx.profile.e2ee_client.v1`:
-//! - `cx.profile.attested_audit.e2ee.v1` — attested audit policy with
-//!   forced `cx.audit.accessed` write on read.
-//! - `cx.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with
-//!   `cx.audit.ryw_receipt` (read-your-write) per-actor receipts.
+//! - `cx.profile.attested_audit.e2ee.v1` — attested audit policy with forced `cx.audit.accessed`
+//!   write on read.
+//! - `cx.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `cx.audit.ryw_receipt`
+//!   (read-your-write) per-actor receipts.
 //!
 //! Both kinds are already in `conformance::known_event_kinds`; this module
 //! provides typed builders so call sites don't hand-roll the body shape.

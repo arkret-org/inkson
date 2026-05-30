@@ -41,11 +41,9 @@ use crate::local_state::{LocalStateStore, UserActionLogEntry};
 /// The init is gated on TWO conditions:
 ///   1. `prefs.enabled == true` — the user explicitly opted in via
 ///      [`crate::components::CrashTelemetryToggle`]. Off by default.
-///   2. The build-time `SENTRY_DSN` env var is non-empty. When unset,
-///      we log a debug breadcrumb and return `None` silently — never
-///      panic. This makes the function safe to call unconditionally
-///      from `main` / `App::default` without leaking a guard into
-///      every test binary.
+///   2. The build-time `SENTRY_DSN` env var is non-empty. When unset, we log a debug breadcrumb and
+///      return `None` silently — never panic. This makes the function safe to call unconditionally
+///      from `main` / `App::default` without leaking a guard into every test binary.
 ///
 /// On wasm builds Sentry is not compiled in (the `sentry` crate
 /// pulls in `tokio` features that don't apply to the browser); the
@@ -236,11 +234,12 @@ pub fn emit_user_action_log(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn isolated_store(tag: &str) -> LocalStateStore {

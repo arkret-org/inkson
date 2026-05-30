@@ -1,21 +1,15 @@
-use std::{
-    fmt,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
-use reqwest::{
-    Client, Method, StatusCode,
-    header::{ACCEPT, HeaderMap, RETRY_AFTER},
-};
+use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
+use reqwest::{Client, Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -377,8 +371,8 @@ impl std::error::Error for ContrixApiError {}
 ///
 /// We require both:
 ///   - HTTP 401 Unauthorized, AND
-///   - an explicit error envelope code that names session loss
-///     (`auth_expired`, `M_UNKNOWN_TOKEN`, `invalid_token`, `token_expired`).
+///   - an explicit error envelope code that names session loss (`auth_expired`, `M_UNKNOWN_TOKEN`,
+///     `invalid_token`, `token_expired`).
 ///
 /// A bare 401 with no structured envelope is treated as a transient denial
 /// — the caller should surface it to the user and let them retry rather
@@ -4439,14 +4433,11 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
 /// Decode a server error response into an SDK [`ErrorEnvelope`]. We try
 /// the current on-the-wire shapes in order:
 ///
-///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what
-///      our principal server emits when its inner handler bubbles a
-///      typed envelope through the outer `ApiErrorBody`).
-///   2. A bare envelope `{ "ok": false, "error": { code, message },
-///      request_id? }` — same shape, no wrapping. The SDK's
-///      [`ErrorEnvelope`] requires `request_id`, so we tolerate its
-///      absence via a local shadow type that defaults it to
-///      `"unknown"`.
+///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what our principal server emits
+///      when its inner handler bubbles a typed envelope through the outer `ApiErrorBody`).
+///   2. A bare envelope `{ "ok": false, "error": { code, message }, request_id? }` — same shape, no
+///      wrapping. The SDK's [`ErrorEnvelope`] requires `request_id`, so we tolerate its absence via
+///      a local shadow type that defaults it to `"unknown"`.
 ///
 /// If none match, we synthesise a minimal envelope tagged
 /// `cx.error.http_status` so downstream code always has something
@@ -4866,8 +4857,9 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use reqwest::header::{HeaderMap, HeaderValue};
+
+    use super::*;
 
     #[test]
     fn endpoint_join_keeps_api_paths_under_base_url() {

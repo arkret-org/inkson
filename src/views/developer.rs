@@ -13,12 +13,10 @@
 
 use dioxus::prelude::*;
 
-use crate::{
-    components::{EmptyState, EmptyStateKind, HelpTip},
-    local_state::LocalStateStore,
-    views::audit::AuditPanel,
-    views::helpers::short_protocol_id,
-};
+use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::local_state::LocalStateStore;
+use crate::views::audit::AuditPanel;
+use crate::views::helpers::short_protocol_id;
 
 /// Default protocol version advertised by yougen — kept here so the
 /// developer panel can surface a stable label until the conformance

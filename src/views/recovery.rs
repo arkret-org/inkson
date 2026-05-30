@@ -2,18 +2,16 @@
 //! Recovery panels. Wires the three recovery layers from
 //! `crypto-media/devices-and-auth.md` §4 to real state:
 //!
-//! - **Encrypted Cloud Vault**: the passphrase is stretched on-device with
-//!   Argon2id (`recovery_crypto::derive_vault_kek`) and the resulting key
-//!   encrypts a JSON payload with XChaCha20-Poly1305 before being POSTed
-//!   to `PUT /api/v1/keys/backups/{backup_id}` via
-//!   [`crate::api::ContrixApi::put_key_backup`]. The server never sees the
-//!   passphrase or the plaintext.
-//! - **Recovery Key**: 256 bits of entropy, formatted as Crockford-base32
-//!   groups. The plaintext only lives in memory between Generate and the
-//!   user's Copy / Print interaction; only a SHA-256 fingerprint plus
-//!   rotation timestamp are persisted via `LocalStateStore::save_private_data`.
-//! - **Social Recovery**: guardian list + Shamir threshold + last-rehearsal
-//!   timestamp persisted as JSON under the same private_data store.
+//! - **Encrypted Cloud Vault**: the passphrase is stretched on-device with Argon2id
+//!   (`recovery_crypto::derive_vault_kek`) and the resulting key encrypts a JSON payload with
+//!   XChaCha20-Poly1305 before being POSTed to `PUT /api/v1/keys/backups/{backup_id}` via
+//!   [`crate::api::ContrixApi::put_key_backup`]. The server never sees the passphrase or the
+//!   plaintext.
+//! - **Recovery Key**: 256 bits of entropy, formatted as Crockford-base32 groups. The plaintext
+//!   only lives in memory between Generate and the user's Copy / Print interaction; only a SHA-256
+//!   fingerprint plus rotation timestamp are persisted via `LocalStateStore::save_private_data`.
+//! - **Social Recovery**: guardian list + Shamir threshold + last-rehearsal timestamp persisted as
+//!   JSON under the same private_data store.
 //!
 //! Everything writeable goes through `private_data`, which is itself
 //! encrypted at rest under the account DID via `xor_encrypt` (and on
@@ -23,18 +21,15 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    components::HelpTip,
-    key_backup::build_recovery_vault_backup_body,
-    local_state::LocalStateStore,
-    operation::uuid_v7,
-    recovery_crypto::{
-        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, decrypt_vault, derive_vault_kek,
-        encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key,
-        generate_recovery_key,
-    },
-    views::helpers::{short_protocol_id, with_authed_api},
+use crate::components::HelpTip;
+use crate::key_backup::build_recovery_vault_backup_body;
+use crate::local_state::LocalStateStore;
+use crate::operation::uuid_v7;
+use crate::recovery_crypto::{
+    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, decrypt_vault, derive_vault_kek,
+    encrypt_vault, estimate_passphrase_strength, fingerprint_recovery_key, generate_recovery_key,
 };
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
 
@@ -130,8 +125,9 @@ fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummaryRow> {
 
 #[cfg(test)]
 mod restore_parse_tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn parse_backup_summary_extracts_kdf_and_aead_fields() {

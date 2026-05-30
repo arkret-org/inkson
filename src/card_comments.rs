@@ -2,11 +2,10 @@
 //! comment threads.
 //!
 //! Spec sources:
-//! - `flow-and-message.md §4.3` — discussion tracks attached to a
-//!   Flow surface as `cx.message.create` events keyed by
-//!   `payload.thread_root = <card_flow_id>`.
-//! - `space-and-place.md §4` — kanban cards ARE Flow objects, so
-//!   reusing the message-create reducer is the natural binding.
+//! - `flow-and-message.md §4.3` — discussion tracks attached to a Flow surface as
+//!   `cx.message.create` events keyed by `payload.thread_root = <card_flow_id>`.
+//! - `space-and-place.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
+//!   is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
 //! that constructs the canonical `cx.message.create` op. The UI

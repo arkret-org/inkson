@@ -2,15 +2,13 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use crate::{
-    device_revoke::{ChainMoveState, MlsRevokeMoveChain},
-    hlc::Hlc,
-    local_state::{LocalStateStore, MoveSubmissionState},
-    models::SpacePreviewKind,
-    operation::cx_ops,
-    routes::Route,
-    views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id},
-};
+use crate::device_revoke::{ChainMoveState, MlsRevokeMoveChain};
+use crate::hlc::Hlc;
+use crate::local_state::{LocalStateStore, MoveSubmissionState};
+use crate::models::SpacePreviewKind;
+use crate::operation::cx_ops;
+use crate::routes::Route;
+use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
 
 /// Default `covered_frontier_lag` warning threshold used by the
 /// space_admin alert banner. Mirrors sodmin's
@@ -232,6 +230,7 @@ fn projected_members_for_space(store: &LocalStateStore, space_id: &str) -> Vec<S
 pub fn SpaceAdminPanel(
     base_url: String,
     account_did: String,
+    device_id: String,
     token: Signal<String>,
     selected_space: String,
     sync_cursor: Signal<String>,
@@ -290,13 +289,12 @@ pub fn SpaceAdminPanel(
     let mut repair_inclusion_proof_ref = use_signal(String::new);
     let mut repair_winner_json = use_signal(String::new);
     // Device-revoke MLS Remove builder. The full round-trip is: load
-    // encrypted snapshot from `state_store`, decrypt with user-supplied
-    // passphrase, run SDK `remove_member_by_principal`, sign the canonical
-    // `mls_commit` Operation, submit via /api/v1/events, then re-encrypt
-    // + persist the post-commit group state so a crash between submit and
-    // persist doesn't leave the local cache an epoch behind.
+    // encrypted snapshot from `state_store`, decrypt with this device's
+    // snapshot secret, run SDK `remove_member_by_principal`, sign the
+    // canonical `mls_commit` Operation, submit via /api/v1/events, then
+    // re-encrypt + persist the post-commit group state so a crash between
+    // submit and persist doesn't leave the local cache an epoch behind.
     let mut device_revoke_target = use_signal(String::new);
-    let mut device_revoke_passphrase = use_signal(String::new);
     let device_revoke_status = use_signal(String::new);
 
     // Read the local anchor view for this space once per render. Surfaces:
@@ -2549,7 +2547,7 @@ pub fn SpaceAdminPanel(
                     } else if !has_snapshot {
                         "No MLS snapshot persisted for this Space yet. Send at least one Secure message (chat.rs) to seed one before revoking a device."
                     } else {
-                        "Snapshot found; enter the passphrase + target device DID and click Build & submit."
+                        "Snapshot found; enter the target device DID and click Build & submit."
                     };
                     let disable_button = !(cfg_native && has_snapshot);
                     rsx! {
@@ -2561,13 +2559,6 @@ pub fn SpaceAdminPanel(
                                 placeholder: crate::i18n::tr("space_admin.mls_remove_target_placeholder"),
                                 oninput: move |evt| device_revoke_target.set(evt.value()),
                             }
-                            input {
-                                "data-testid": "mls-remove-passphrase",
-                                r#type: "password",
-                                value: "{device_revoke_passphrase}",
-                                placeholder: crate::i18n::tr("space_admin.mls_remove_passphrase_placeholder"),
-                                oninput: move |evt| device_revoke_passphrase.set(evt.value()),
-                            }
                             div { class: "actions",
                                 button {
                                     class: "danger",
@@ -2577,20 +2568,24 @@ pub fn SpaceAdminPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let space = selected_space.clone();
+                                        let actor = account_did.clone();
+                                        let device = device_id.clone();
                                         move |_| {
                                             let base = base.clone();
                                             let space = space.clone();
+                                            let actor = actor.clone();
+                                            let device = device.clone();
                                             let api_token = token();
                                             let target = device_revoke_target().trim().to_owned();
-                                            let passphrase = device_revoke_passphrase();
                                             spawn(async move {
                                                 run_device_revoke_from_snapshot(
                                                     base,
                                                     api_token,
                                                     state_store,
                                                     space,
+                                                    actor,
+                                                    device,
                                                     target,
-                                                    passphrase,
                                                     device_revoke_status,
                                                 )
                                                 .await;
@@ -2758,8 +2753,9 @@ async fn run_device_revoke_from_snapshot(
     _api_token: String,
     _state_store: Signal<LocalStateStore>,
     _space_id: String,
+    _actor_did: String,
+    _device_id: String,
     _target_did: String,
-    _passphrase: String,
     mut status: Signal<String>,
 ) {
     status.set(
@@ -2772,12 +2768,12 @@ async fn run_device_revoke_from_snapshot(
 /// [`crate::device_revoke::execute_mls_remove_from_snapshot`]:
 ///
 /// 1. read the encrypted MLS snapshot for the Space out of the local state store;
-/// 2. validate inputs (target DID + passphrase present);
+/// 2. validate inputs and load this device's snapshot secret;
 /// 3. mint a UUIDv7 operation_id, parse typed `Did` / `SpaceId`;
 /// 4. run the SDK Remove (group decrypt → commit → re-export);
 /// 5. submit the `mls_commit` Operation via `with_authed_api`;
-/// 6. on submit success, re-encrypt the post-commit group state and save it
-///    back so the next boot doesn't try to rehydrate the pre-revoke epoch.
+/// 6. on submit success, re-encrypt the post-commit group state and save it back so the next boot
+///    doesn't try to rehydrate the pre-revoke epoch.
 ///
 /// Any error along the way is surfaced verbatim in the `status` signal;
 /// the operator can inspect it inline and retry without page reload.
@@ -2787,16 +2783,13 @@ async fn run_device_revoke_from_snapshot(
     api_token: String,
     mut state_store: Signal<LocalStateStore>,
     space_id: String,
+    actor_did: String,
+    device_id: String,
     target_did: String,
-    passphrase: String,
     mut status: Signal<String>,
 ) {
     if target_did.is_empty() {
         status.set("target device DID is required".to_owned());
-        return;
-    }
-    if passphrase.is_empty() {
-        status.set("snapshot passphrase is required".to_owned());
         return;
     }
     let envelope = match state_store.read().mls_snapshot_for(&space_id) {
@@ -2806,6 +2799,18 @@ async fn run_device_revoke_from_snapshot(
                 "no persisted MLS snapshot for space {}; nothing to revoke against",
                 short_protocol_id(&space_id)
             ));
+            return;
+        }
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let snapshot_secret = match crate::mls::runtime::load_device_snapshot_secret(
+        secure_store.as_ref(),
+        &actor_did,
+        &device_id,
+    ) {
+        Ok(secret) => secret,
+        Err(err) => {
+            status.set(format!("device MLS snapshot secret unavailable: {err}"));
             return;
         }
     };
@@ -2833,7 +2838,7 @@ async fn run_device_revoke_from_snapshot(
     };
     let full = match crate::device_revoke::execute_mls_remove_from_snapshot(
         &envelope,
-        &passphrase,
+        &snapshot_secret,
         &typed_target,
         typed_op_id,
         typed_realm,
@@ -2867,7 +2872,7 @@ async fn run_device_revoke_from_snapshot(
     }
     let envelope = envelope_builder.build("yougen");
     let submit_result =
-        crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
+        crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.submit_event_envelope(&envelope).await
         })
         .await;
@@ -2887,15 +2892,44 @@ async fn run_device_revoke_from_snapshot(
                 &post_state.group_id,
                 post_state.epoch,
                 &post_state.serialized_state,
-                &passphrase,
+                &snapshot_secret,
                 &salt,
             );
             state_store
                 .write()
                 .save_mls_snapshot(space_id.clone(), new_envelope);
+            let snapshot = state_store.read().mls_snapshot_for(&space_id);
+            let backup_result = if let Some(snapshot) = snapshot {
+                crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| {
+                    let actor_did = actor_did.clone();
+                    let device_id = device_id.clone();
+                    async move {
+                        crate::mls::runtime::upload_mls_snapshot_backup(
+                            &api, &snapshot, &actor_did, &device_id,
+                        )
+                        .await
+                        .map_err(|err| anyhow::anyhow!(err.user_message()))
+                    }
+                })
+                .await
+                .map(Some)
+            } else {
+                Ok(None)
+            };
+            let backup_suffix = match backup_result {
+                Ok(Some(backup_id)) => {
+                    format!(
+                        "; MLS history backup {} uploaded",
+                        short_protocol_id(&backup_id)
+                    )
+                }
+                Ok(None) => String::new(),
+                Err(err) => format!("; MLS history backup failed: {}", err.display()),
+            };
             status.set(format!(
-                "MLS Remove submitted; {removed_count} leaf/leaves removed; post-state re-persisted (epoch {})",
-                post_state.epoch
+                "MLS Remove submitted; {removed_count} leaf/leaves removed; post-state re-persisted (epoch {}){}",
+                post_state.epoch,
+                backup_suffix
             ));
         }
         Err(err) => {
@@ -2904,4 +2938,5 @@ async fn run_device_revoke_from_snapshot(
     }
 }
 
-// (Move-flow test module removed; the wire shapes are now covered by soland's events.submit tests and contrix-spec fixtures.)
+// (Move-flow test module removed; the wire shapes are now covered by soland's events.submit tests
+// and contrix-spec fixtures.)

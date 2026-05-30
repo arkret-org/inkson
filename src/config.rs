@@ -4,11 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use contrix_sdk::DeviceId;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::operation::uuid_v7;
-use contrix_sdk::DeviceId;
 
 const DEFAULT_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
@@ -546,8 +546,9 @@ fn app_data_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     #[test]
     fn default_config_matches_dev_server_bootstrap() {

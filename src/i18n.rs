@@ -159,8 +159,7 @@ pub fn translate_chain(
 /// Phase D.2 #8: shared sink for missing `(locale_tag, key)` pairs.
 fn missing_translation_sink()
 -> &'static std::sync::Mutex<std::collections::HashSet<(String, String)>> {
-    use std::sync::Mutex;
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
     static SEEN: OnceLock<Mutex<std::collections::HashSet<(String, String)>>> = OnceLock::new();
     SEEN.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
 }
@@ -205,8 +204,7 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
         Locale::Zh => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
         Locale::Ar => timestamp.format("%Y/%m/%d %H:%M UTC").to_string(),
         // Phase D.2 #8 locale extensions:
-        //   * Spanish uses day-first DD/MM/YYYY (DM ordering matches
-        //     ES/MX/AR conventions).
+        //   * Spanish uses day-first DD/MM/YYYY (DM ordering matches ES/MX/AR conventions).
         //   * Japanese uses Y年M月D日 like Chinese.
         //   * French uses DD/MM/YYYY (matches FR/CA conventions).
         Locale::Es => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
@@ -533,11 +531,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.board_header", "Board");
     dict.set("kanban.board_title", "Board");
     dict.set("kanban.board_hint", "Drag cards between lists.");
-    dict.set(
-        "chat.mls_passphrase_placeholder",
-        "Encryption passphrase (this Space)",
-    );
-    dict.set("chat.mls_passphrase_save", "Save passphrase");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
     dict.set(
@@ -639,10 +632,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "space_admin.mls_remove_target_placeholder",
         "Target device (handle or full identifier)",
-    );
-    dict.set(
-        "space_admin.mls_remove_passphrase_placeholder",
-        "Snapshot passphrase",
     );
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
@@ -1440,8 +1429,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.board_header", "看板");
     dict.set("kanban.board_title", "看板");
     dict.set("kanban.board_hint", "拖动卡片到不同列即可移动。");
-    dict.set("chat.mls_passphrase_placeholder", "加密口令（本 Space）");
-    dict.set("chat.mls_passphrase_save", "保存口令");
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
@@ -1537,14 +1524,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("space_admin.mls_remove_header", "MLS 移除（设备吊销）");
     dict.set(
         "space_admin.mls_remove_hint",
-        "用本地 MLS 快照口令解密群状态，运行 remove_member_by_principal，提交 cx.mls.commit；成功后重新加密持久化新一轮 epoch。",
+        "用本设备 MLS 快照密钥解密群状态，运行 remove_member_by_principal，提交 cx.mls.commit；成功后重新加密持久化新一轮 epoch。",
     );
     dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
     dict.set(
         "space_admin.mls_remove_target_placeholder",
         "目标设备（句柄或完整标识符）",
     );
-    dict.set("space_admin.mls_remove_passphrase_placeholder", "快照口令");
 
     // Chat / Discussion view
     dict.set("chat.discussions_header", "Flow 讨论");

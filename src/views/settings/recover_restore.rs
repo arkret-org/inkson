@@ -3,11 +3,9 @@
 //! Surfaces:
 //! - `recovery-restore-panel` — wrapper
 //! - `recovery-restore-passphrase-input` — paste/type the passphrase
-//! - `recovery-restore-backup-id-input` — optional manual backup_id
-//!   override; defaults to whichever id soland's
-//!   `GET /api/v1/keys/backups` returns at the top of the list
-//! - `recovery-restore-button` — derives the recovery key, fetches +
-//!   decrypts the backup envelope
+//! - `recovery-restore-backup-id-input` — optional manual backup_id override; defaults to whichever
+//!   id soland's `GET /api/v1/keys/backups` returns at the top of the list
+//! - `recovery-restore-button` — derives the recovery key, fetches + decrypts the backup envelope
 //! - `recovery-restore-status` — feedback
 //!
 //! This panel does NOT push `cx.device.authorize` on its own —
@@ -18,22 +16,28 @@
 //! Coauth endpoints that the e2e harness exercises but that don't
 //! yet exist:
 //!
-//! - `POST /api/v1/auth/passkey/begin` —
-//!   TODO(G3.Y1-followup): coauth needs an unauthenticated entry
-//!   point that lets a brand-new device claim the recovered identity
-//!   without first holding a bearer token. Until then this view only
-//!   exercises the on-device passphrase → KEK → decrypt path; the
-//!   server round-trip happens via the existing
-//!   `/api/v1/keys/backups/{backup_id}` endpoint with a temporary
-//!   placeholder token in tests.
+//! - `POST /api/v1/auth/passkey/begin` — TODO(G3.Y1-followup): coauth needs an unauthenticated
+//!   entry point that lets a brand-new device claim the recovered identity without first holding a
+//!   bearer token. Until then this view only exercises the on-device passphrase → KEK → decrypt
+//!   path; the server round-trip happens via the existing `/api/v1/keys/backups/{backup_id}`
+//!   endpoint with a temporary placeholder token in tests.
 
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{components::HelpTip, recovery_crypto::decrypt_vault, views::helpers::with_authed_api};
+use crate::components::HelpTip;
+use crate::local_state::LocalStateStore;
+use crate::recovery_crypto::decrypt_vault;
+use crate::views::helpers::with_authed_api;
 
 #[component]
-pub fn RecoverPanel(base_url: Signal<String>, token: Signal<String>) -> Element {
+pub fn RecoverPanel(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    account_did: String,
+    device_id: String,
+    mut state_store: Signal<LocalStateStore>,
+) -> Element {
     let mut passphrase = use_signal(String::new);
     let mut backup_id = use_signal(String::new);
     let mut restore_status = use_signal(String::new);
@@ -203,7 +207,128 @@ pub fn RecoverPanel(base_url: Signal<String>, token: Signal<String>) -> Element 
                                         }
                                     });
                                 },
-                                "Restore"
+                                "Restore recovery vault"
+                            }
+                            button {
+                                class: "secondary",
+                                "data-testid": "recovery-restore-mls-history-button",
+                                disabled: !has_session || account_did.trim().is_empty() || device_id.trim().is_empty(),
+                                onclick: move |_| {
+                                    let base = base_url();
+                                    let api_token = token();
+                                    let actor = account_did.clone();
+                                    let device = device_id.clone();
+                                    let mut state_store = state_store;
+                                    restore_status.set(
+                                        "Looking up latest MLS history backup from soland…".to_owned(),
+                                    );
+                                    decrypted_payload.set(String::new());
+                                    spawn(async move {
+                                        if api_token.trim().is_empty() {
+                                            restore_status.set(
+                                                "Sign in before restoring MLS history.".to_owned(),
+                                            );
+                                            return;
+                                        }
+                                        let list_value = match with_authed_api(
+                                            &base,
+                                            api_token.clone(),
+                                            |api| async move {
+                                                api.list_key_backups_by_series(
+                                                    None,
+                                                    Some("mls_history"),
+                                                )
+                                                .await
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(value) => value,
+                                            Err(err) => {
+                                                restore_status.set(format!(
+                                                    "MLS history backup list failed: {}",
+                                                    err.display()
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        let Some(candidate) = latest_mls_history_backup(&list_value) else {
+                                            restore_status.set(
+                                                "No MLS history backup is available for this account/device.".to_owned(),
+                                            );
+                                            return;
+                                        };
+                                        let backup_value = if candidate
+                                            .get("ciphertext")
+                                            .and_then(Value::as_str)
+                                            .is_some()
+                                        {
+                                            candidate
+                                        } else {
+                                            let Some(bid) = candidate
+                                                .get("backup_id")
+                                                .and_then(Value::as_str)
+                                                .map(ToOwned::to_owned)
+                                            else {
+                                                restore_status.set(
+                                                    "MLS history backup row missing backup_id.".to_owned(),
+                                                );
+                                                return;
+                                            };
+                                            match with_authed_api(
+                                                &base,
+                                                api_token.clone(),
+                                                move |api| async move {
+                                                    api.get_key_backup(&bid).await
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(value) => value,
+                                                Err(err) => {
+                                                    restore_status.set(format!(
+                                                        "MLS history backup fetch failed: {}",
+                                                        err.display()
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                        };
+                                        let secure_store =
+                                            crate::secure_key_store::default_secure_key_store(
+                                                "yougen",
+                                            );
+                                        match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
+                                            &mut state_store.write(),
+                                            secure_store.as_ref(),
+                                            &actor,
+                                            &device,
+                                            &backup_value,
+                                        ) {
+                                            Ok(summary) => {
+                                                let backup_label = summary
+                                                    .backup_id
+                                                    .as_deref()
+                                                    .unwrap_or("(unknown backup)");
+                                                restore_status.set(format!(
+                                                    "MLS history restored from {backup_label}; space {} epoch {} (floor {}).",
+                                                    crate::views::helpers::short_protocol_id(
+                                                        &summary.space_id
+                                                    ),
+                                                    summary.envelope_epoch,
+                                                    summary.epoch_floor
+                                                ));
+                                            }
+                                            Err(err) => {
+                                                restore_status.set(format!(
+                                                    "MLS history restore failed: {}",
+                                                    err.user_message()
+                                                ));
+                                            }
+                                        }
+                                    });
+                                },
+                                "Restore MLS history"
                             }
                         }
                     }
@@ -237,6 +362,9 @@ fn latest_backup(value: &Value) -> Option<Value> {
     let mut best: Option<&Value> = None;
     let mut best_key = String::new();
     for entry in arr {
+        if entry.get("backup_class").and_then(Value::as_str) == Some("mls_history") {
+            continue;
+        }
         let created = entry
             .get("created_at")
             .and_then(Value::as_str)
@@ -250,10 +378,55 @@ fn latest_backup(value: &Value) -> Option<Value> {
     best.cloned()
 }
 
+fn latest_mls_history_backup(value: &Value) -> Option<Value> {
+    let arr = value.get("backups").and_then(Value::as_array)?;
+    let mut best: Option<&Value> = None;
+    let mut best_epoch = 0u64;
+    let mut best_created = String::new();
+    for entry in arr {
+        if entry.get("backup_class").and_then(Value::as_str) != Some("mls_history") {
+            continue;
+        }
+        let epoch = mls_history_backup_epoch(entry);
+        let created = entry
+            .get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if best.is_none() || epoch > best_epoch || (epoch == best_epoch && created > best_created) {
+            best = Some(entry);
+            best_epoch = epoch;
+            best_created = created;
+        }
+    }
+    best.cloned()
+}
+
+fn mls_history_backup_epoch(value: &Value) -> u64 {
+    value
+        .pointer("/envelope_meta/epoch")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .get("contents")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| {
+                            item.get("item_type").and_then(Value::as_str) == Some("mls_group_state")
+                        })
+                        .and_then(|item| item.get("epoch").and_then(Value::as_u64))
+                })
+        })
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn latest_backup_picks_newest_created_at() {
@@ -272,5 +445,52 @@ mod tests {
     fn latest_backup_returns_none_for_empty_list() {
         assert!(latest_backup(&json!({"backups": []})).is_none());
         assert!(latest_backup(&json!({})).is_none());
+    }
+
+    #[test]
+    fn latest_backup_ignores_mls_history_for_passphrase_restore() {
+        let payload = json!({
+            "backups": [
+                {
+                    "backup_id": "mls",
+                    "backup_class": "mls_history",
+                    "created_at": "2026-05-20T00:00:00Z"
+                },
+                {
+                    "backup_id": "vault",
+                    "backup_class": "secret_storage",
+                    "created_at": "2026-05-01T00:00:00Z"
+                }
+            ]
+        });
+        let picked = latest_backup(&payload).expect("picks recovery vault");
+        assert_eq!(picked["backup_id"], "vault");
+    }
+
+    #[test]
+    fn latest_mls_history_backup_prefers_highest_epoch() {
+        let payload = json!({
+            "backups": [
+                {
+                    "backup_id": "older-created",
+                    "backup_class": "mls_history",
+                    "created_at": "2026-05-30T00:00:00Z",
+                    "envelope_meta": {"epoch": 2}
+                },
+                {
+                    "backup_id": "newer-epoch",
+                    "backup_class": "mls_history",
+                    "created_at": "2026-05-20T00:00:00Z",
+                    "contents": [{"item_type": "mls_group_state", "epoch": 5}]
+                },
+                {
+                    "backup_id": "vault",
+                    "backup_class": "secret_storage",
+                    "created_at": "2026-05-31T00:00:00Z"
+                }
+            ]
+        });
+        let picked = latest_mls_history_backup(&payload).expect("picks MLS backup");
+        assert_eq!(picked["backup_id"], "newer-epoch");
     }
 }

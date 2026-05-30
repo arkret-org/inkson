@@ -26,14 +26,14 @@
 //
 // Shared rules (`_todos.md` §6):
 // 1. Any write UI must explicitly label the canonical event kind it emits.
-// 2. discoverability / join_rule / history_visibility are independent and
-//    must be displayed independently — none implies the other.
-// 3. Cross-Space references default to lazy_link — never expand title /
-//    members / counts on the consumer side.
-// 4. Push paths default to masked payloads (`background_sync_needed`); the
-//    body is decrypted locally.
-// 5. The Auth Service can only issue short-lived `cx.session.grant`; any
-//    change to the long-lived device set must go through `cx.device.authorize`.
+// 2. discoverability / join_rule / history_visibility are independent and must be displayed
+//    independently — none implies the other.
+// 3. Cross-Space references default to lazy_link — never expand title / members / counts on the
+//    consumer side.
+// 4. Push paths default to masked payloads (`background_sync_needed`); the body is decrypted
+//    locally.
+// 5. The Auth Service can only issue short-lived `cx.session.grant`; any change to the long-lived
+//    device set must go through `cx.device.authorize`.
 
 pub mod agents;
 pub mod applets;
@@ -113,11 +113,13 @@ pub enum View {
     Notifications,
     Document,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
-    /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
+    /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret
+    /// storage / key backup / recovery)
     Recovery,
     /// Onboarding stepper — 4-step flow (DID method / Handle / Device / Recovery).
-    /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity setup surface.
-    /// (claude-design `desktop/onboarding.html`, identity-did §3 + identity-handles + device-lifecycle §1-§13)
+    /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity
+    /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
+    /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
     /// Invite-quarantine list. Admins see all entries from coauth's
     /// `GET /admin/v1/invite-quarantine`; non-admins see their own

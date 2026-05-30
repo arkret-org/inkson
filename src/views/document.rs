@@ -1,13 +1,11 @@
 //! Document view — block editor backed by a document Morph projection.
 //!
-//! - Every edit is mirrored to `LocalStateStore.private_data` so the
-//!   draft survives navigation and offline use.
-//! - Save Version emits a real `cx.morph.create` (first time) or
-//!   `cx.morph.update` (subsequent saves). The morph_id is persisted
-//!   per-Space so subsequent saves target the same Morph.
-//! - The header sync badge reports the result of the most recent
-//!   submit: `Synced` / `Pending sync` / `Local draft`. Failed submits
-//!   fall back to local draft without losing the user's edits.
+//! - Every edit is mirrored to `LocalStateStore.private_data` so the draft survives navigation and
+//!   offline use.
+//! - Save Version emits a real `cx.morph.create` (first time) or `cx.morph.update` (subsequent
+//!   saves). The morph_id is persisted per-Space so subsequent saves target the same Morph.
+//! - The header sync badge reports the result of the most recent submit: `Synced` / `Pending sync`
+//!   / `Local draft`. Failed submits fall back to local draft without losing the user's edits.
 //!
 //! G3.Y4 — collaborative surfaces:
 //!
@@ -23,11 +21,9 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{
-    local_state::LocalStateStore,
-    operation::cx_ops,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::local_state::LocalStateStore;
+use crate::operation::cx_ops;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum BlockKind {
@@ -1447,12 +1443,13 @@ pub fn DocumentPanel(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{
         BlockKind, DocumentBlock, DocumentDraft, SyncState, blocks_from_document_body,
         comments_from_projection, default_draft, document_body_payload, mint_morph_id,
         morph_id_storage_key, storage_key, versions_from_projection,
     };
-    use serde_json::json;
 
     #[test]
     fn storage_key_includes_space_id() {

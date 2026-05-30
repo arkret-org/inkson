@@ -6,7 +6,8 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, html as md_html};
 
-use crate::{api::ContrixApi, config::LocalConfigStore};
+use crate::api::ContrixApi;
+use crate::config::LocalConfigStore;
 
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///

@@ -1,26 +1,23 @@
 use std::collections::BTreeSet;
 
-use dioxus::prelude::*;
-use dioxus_router::Link;
-use serde_json::{Value, json};
-
 use contrix_sdk::push_rule_core::{
     EventContext as PushRuleEventContext, ShouldNotify, evaluate_watch_level,
     reason_code as push_rule_reason_code,
 };
+use dioxus::prelude::*;
+use dioxus_router::Link;
+use serde_json::{Value, json};
 
-use crate::{
-    components::{EmptyState, EmptyStateKind, HelpTip, UiIcon},
-    local_state::{ClientLocalState, LocalAnchorView, LocalStateStore},
-    models::ClientSyncResponse,
-    notification_rules::{
-        DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
-        dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
-    },
-    operation::scope_id_as_realm_id,
-    routes::Route,
-    views::helpers::{short_protocol_id, with_authed_api},
+use crate::components::{EmptyState, EmptyStateKind, HelpTip, UiIcon};
+use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore};
+use crate::models::ClientSyncResponse;
+use crate::notification_rules::{
+    DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
+    dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
 };
+use crate::operation::scope_id_as_realm_id;
+use crate::routes::Route;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NotificationGroup {
@@ -1114,8 +1111,9 @@ fn notification_refresh_status(loaded_count: usize, visible_count: usize) -> Str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn hydrate_notifications_applies_push_rules_and_dnd() {

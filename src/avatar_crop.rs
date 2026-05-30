@@ -1,9 +1,7 @@
 use anyhow::Context;
-use image::{
-    GenericImageView, ImageEncoder,
-    codecs::jpeg::JpegEncoder,
-    imageops::{self, FilterType},
-};
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::{self, FilterType};
+use image::{GenericImageView, ImageEncoder};
 
 pub const AVATAR_OUTPUT_SIZE: u32 = 512;
 
@@ -69,8 +67,9 @@ pub fn crop_avatar_jpeg(bytes: &[u8], crop: AvatarCrop) -> anyhow::Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use image::{ImageBuffer, Rgba};
+
+    use super::*;
 
     fn sample_png(width: u32, height: u32) -> Vec<u8> {
         let image = ImageBuffer::from_fn(width, height, |x, y| {

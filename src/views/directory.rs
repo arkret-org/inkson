@@ -1,15 +1,14 @@
 use dioxus::prelude::*;
-use dioxus_router::{Link, hooks::use_navigator};
+use dioxus_router::Link;
+use dioxus_router::hooks::use_navigator;
 use serde_json::Value;
 
-use crate::{
-    components::{EmptyState, EmptyStateKind, HelpTip},
-    local_state::LocalStateStore,
-    models::*,
-    object_address::OpenedLink,
-    routes::Route,
-    views::helpers::{display_name_for_did, short_protocol_id, with_authed_api},
-};
+use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::local_state::LocalStateStore;
+use crate::models::*;
+use crate::object_address::OpenedLink;
+use crate::routes::Route;
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {

@@ -2,12 +2,10 @@
 //! and key-package claim flows.
 //!
 //! Spec sources:
-//! - `identity/session-grants.md` — every grant exchange MUST carry
-//!   a proof binding the request to a client-held keypair so a
-//!   stolen bearer token can't be replayed elsewhere.
-//! - `crypto-media/key-packages.md §3` — `claim_keys` requests must
-//!   present DPoP-style proofs to prevent token substitution
-//!   attacks across recipients.
+//! - `identity/session-grants.md` — every grant exchange MUST carry a proof binding the request to
+//!   a client-held keypair so a stolen bearer token can't be replayed elsewhere.
+//! - `crypto-media/key-packages.md §3` — `claim_keys` requests must present DPoP-style proofs to
+//!   prevent token substitution attacks across recipients.
 //!
 //! RFC 9449 specifies DPoP in terms of EC-based keys (P-256). Yougen
 //! already carries Ed25519 plumbing throughout its cross-signing and
@@ -201,8 +199,9 @@ pub fn fresh_dpop_claims(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ed25519_dalek::{SECRET_KEY_LENGTH, SigningKey};
+
+    use super::*;
 
     fn signing_key_with_seed(seed: u8) -> SigningKey {
         let bytes: [u8; SECRET_KEY_LENGTH] = [seed; SECRET_KEY_LENGTH];

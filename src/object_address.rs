@@ -6,25 +6,22 @@
 //! ([`contrix_sdk::model::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite-token binding:
 //!
-//! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message)
-//!   plus routing hints. [`ShareTarget::build_links`] produces both output
-//!   forms.
-//! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the
-//!   `web+contrix:` "open in app" form.
-//! * [`OpenedLink`] — the result of parsing + resolving a pasted link, routed
-//!   to a local [`crate::routes::Route`] by `target_kind`.
+//! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message) plus routing hints.
+//!   [`ShareTarget::build_links`] produces both output forms.
+//! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+contrix:` "open in
+//!   app" form.
+//! * [`OpenedLink`] — the result of parsing + resolving a pasted link, routed to a local
+//!   [`crate::routes::Route`] by `target_kind`.
 //!
 //! ## Privacy / fail-closed posture
-//! * The HTTPS landing form puts the target + token in the URL FRAGMENT
-//!   (everything after `#`). The landing host never receives the object id or
-//!   the invite token — that is the whole point of using the fragment.
-//! * The open-link path never distinguishes `not_found` from `unauthorized`:
-//!   any resolve failure collapses to a single friendly
-//!   `object_link.error.unavailable` message (anti-enumeration).
-//! * Reference links carry no authorization. Invite links bind the
-//!   [`TargetDescriptor`] digest so a token minted for object A cannot be
-//!   replayed onto object B (scope-confusion defence lives in the SDK's
-//!   [`contrix_sdk::model::verify_token_target`]).
+//! * The HTTPS landing form puts the target + token in the URL FRAGMENT (everything after `#`). The
+//!   landing host never receives the object id or the invite token — that is the whole point of
+//!   using the fragment.
+//! * The open-link path never distinguishes `not_found` from `unauthorized`: any resolve failure
+//!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
+//! * Reference links carry no authorization. Invite links bind the [`TargetDescriptor`] digest so a
+//!   token minted for object A cannot be replayed onto object B (scope-confusion defence lives in
+//!   the SDK's [`contrix_sdk::model::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! yougen deliberately ships the **HTTPS-fragment-only** landing path and does

@@ -2,10 +2,9 @@
 //!
 //! Spec: `crypto-media/encryption-and-audit.md` §10. Every MLS commit MUST
 //! carry preconditions binding it to:
-//! 1. the previous MLS epoch (`mls_epoch_cell.head_eq(prev_epoch)`) — racing
-//!    commits fail closed.
-//! 2. the Space's `covered_frontier_cell.contains(required_governance_anchor)`
-//!    — the commit MUST already cover the governance anchor it asserts.
+//! 1. the previous MLS epoch (`mls_epoch_cell.head_eq(prev_epoch)`) — racing commits fail closed.
+//! 2. the Space's `covered_frontier_cell.contains(required_governance_anchor)` — the commit MUST
+//!    already cover the governance anchor it asserts.
 //!
 //! The commit's effects then:
 //! 1. set `mls_epoch_cell` to the new epoch.
@@ -16,12 +15,11 @@
 //! can produce the canonical precondition / effect tuples and serialize them
 //! as a `governance_binding` payload alongside the commit Move.
 
-use serde::{Deserialize, Serialize};
-
 use contrix_sdk::mls_move::{
     covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
 };
 use contrix_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
+use serde::{Deserialize, Serialize};
 
 /// Serializable view of the MLS Governance Binding payload that travels with
 /// an `cx.mls.commit` event. Keeps yougen call sites typed without forcing
@@ -137,8 +135,9 @@ pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use contrix_sdk::{AnchorId, Hash, SpaceId};
+
+    use super::*;
 
     fn space_id() -> SpaceId {
         SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()

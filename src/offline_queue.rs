@@ -46,16 +46,14 @@ use serde::{Deserialize, Serialize};
 ///
 /// Variants cover the 1.0 yougen surfaces that need durable retry:
 ///
-/// * [`OpKind::BackgroundFetch`] — chime blind-wakeup → background
-///   sync. The payload is the wakeup hint as JSON.
-/// * [`OpKind::PushTokenRotate`] — register-device retry after a
-///   token rotation while the gateway was unreachable.
-/// * [`OpKind::EventSubmit`] — durable event submission (the
-///   higher-level [`crate::offline::QueuedOperation`] replay also
-///   covers this; we keep the kind here so a single driver can route
-///   events from both paths).
-/// * [`OpKind::Generic`] — escape hatch for callers that haven't yet
-///   minted a typed variant.
+/// * [`OpKind::BackgroundFetch`] — chime blind-wakeup → background sync. The payload is the wakeup
+///   hint as JSON.
+/// * [`OpKind::PushTokenRotate`] — register-device retry after a token rotation while the gateway
+///   was unreachable.
+/// * [`OpKind::EventSubmit`] — durable event submission (the higher-level
+///   [`crate::offline::QueuedOperation`] replay also covers this; we keep the kind here so a single
+///   driver can route events from both paths).
+/// * [`OpKind::Generic`] — escape hatch for callers that haven't yet minted a typed variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpKind {
@@ -227,13 +225,10 @@ impl Default for OfflineQueueBackoff {
 /// adapter wire one of these in without pulling tokio into its
 /// dependency closure. The driver typically:
 ///
-///   1. Calls [`enqueue`](OfflineQueueDriver::enqueue) on the
-///      wakeup path to record the hint.
-///   2. Calls [`pop`](OfflineQueueDriver::pop) on a worker loop to
-///      drain eligible entries.
+///   1. Calls [`enqueue`](OfflineQueueDriver::enqueue) on the wakeup path to record the hint.
+///   2. Calls [`pop`](OfflineQueueDriver::pop) on a worker loop to drain eligible entries.
 ///   3. Calls [`mark_success`](OfflineQueueDriver::mark_success) or
-///      [`mark_failure`](OfflineQueueDriver::mark_failure) once the
-///      handler resolves.
+///      [`mark_failure`](OfflineQueueDriver::mark_failure) once the handler resolves.
 pub trait OfflineQueueDriver: Send + Sync {
     /// Append a new entry. Returns the assigned id.
     fn enqueue(&self, kind: OpKind, payload: Vec<u8>) -> Result<u64, OfflineQueueError>;

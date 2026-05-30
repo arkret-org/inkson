@@ -2,8 +2,7 @@
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`):
 //! * `cx.message.create` with `content.kind = cx.content.poll` creates a poll.
-//! * `cx.message.create` with `content.kind = cx.content.poll.response` records
-//!   a response.
+//! * `cx.message.create` with `content.kind = cx.content.poll.response` records a response.
 //! * `cx.message.create` with `content.kind = cx.content.poll.close` closes a poll.
 //!
 //! Polls are enabled in the local 1.0 UI because soland now projects the

@@ -358,8 +358,9 @@ pub fn parse_consent_request(value: &Value) -> Result<MimiConsentRequestResult, 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn new_rejects_empty_base_url() {

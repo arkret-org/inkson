@@ -8,10 +8,10 @@
 //! panel with a retry affordance.
 //!
 //! Why split out the existing `ErrorBanner`:
-//!   * `ErrorBanner` (in `components/mod.rs`) is a passive "here is
-//!     what broke" banner. No retry, no request_id, no toast.
-//!   * `RetryableError` adds the retry button + optional `request_id`
-//!     so users can copy the soland trace ID into a bug report.
+//!   * `ErrorBanner` (in `components/mod.rs`) is a passive "here is what broke" banner. No retry,
+//!     no request_id, no toast.
+//!   * `RetryableError` adds the retry button + optional `request_id` so users can copy the soland
+//!     trace ID into a bug report.
 //!
 //! The component is wired wherever a network-backed view can fail
 //! (settings, recovery, agents). The `on_retry` closure usually

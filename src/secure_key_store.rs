@@ -7,10 +7,8 @@
 //!
 //! * OIDC `refresh_token` (currently persisted plaintext in
 //!   [`crate::local_state::OidcTokenBundle`]).
-//! * coauth-issued session grant (short-lived but useful between
-//!   `register_device` retries).
-//! * Push provider auth bundles for FCM / APNs once the host adapters
-//!   land.
+//! * coauth-issued session grant (short-lived but useful between `register_device` retries).
+//! * Push provider auth bundles for FCM / APNs once the host adapters land.
 //!
 //! ## Backends
 //!
@@ -28,17 +26,14 @@
 //! secret category appears.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
 #[cfg(target_arch = "wasm32")]
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use chacha20poly1305::{
-    AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
-    aead::{Aead, OsRng},
-};
+use chacha20poly1305::aead::{Aead, OsRng};
+use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(target_arch = "wasm32")]
@@ -267,8 +262,7 @@ impl Drop for MemorySecureKeyStore {
 /// to:
 ///
 /// * **macOS** — Security framework Keychain Services.
-/// * **Linux** — freedesktop Secret Service (`libsecret` / GNOME
-///   Keyring / KWallet).
+/// * **Linux** — freedesktop Secret Service (`libsecret` / GNOME Keyring / KWallet).
 /// * **Windows** — Windows Credential Manager (`wincred`).
 ///
 /// The store is keyed by a constant `service_name` (typically
@@ -396,20 +390,16 @@ impl SecureKeyStore for KeyringSecureKeyStore {
 ///
 /// The host implementation contract:
 ///
-/// * **Android** — bridge methods call into a Java class
-///   (`com.contrix.yougen.SecureKeyStoreBridge` or similar) via JNI.
-///   That class proxies to `java.security.KeyStore` with provider
-///   `"AndroidKeyStore"`, aliasing entries as
-///   `"<service_name>:<key>"`. AES-256-GCM is the recommended
-///   cipher; the platform Keystore can be configured to require
-///   user authentication / biometrics before the key is unsealed.
-/// * **iOS** — bridge methods call into Objective-C / Swift code
-///   that invokes `SecItemAdd`, `SecItemCopyMatching`, and
-///   `SecItemDelete` against `kSecClassGenericPassword` keychain
-///   items. `kSecAttrService` is set to `service_name`,
-///   `kSecAttrAccount` is set to the entry key. `kSecAttrAccessible`
-///   defaults to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
-///   so secrets do NOT propagate through iCloud Keychain.
+/// * **Android** — bridge methods call into a Java class (`com.contrix.yougen.SecureKeyStoreBridge`
+///   or similar) via JNI. That class proxies to `java.security.KeyStore` with provider
+///   `"AndroidKeyStore"`, aliasing entries as `"<service_name>:<key>"`. AES-256-GCM is the
+///   recommended cipher; the platform Keystore can be configured to require user authentication /
+///   biometrics before the key is unsealed.
+/// * **iOS** — bridge methods call into Objective-C / Swift code that invokes `SecItemAdd`,
+///   `SecItemCopyMatching`, and `SecItemDelete` against `kSecClassGenericPassword` keychain items.
+///   `kSecAttrService` is set to `service_name`, `kSecAttrAccount` is set to the entry key.
+///   `kSecAttrAccessible` defaults to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` so secrets
+///   do NOT propagate through iCloud Keychain.
 ///
 /// Both bridges MUST be safe to call from arbitrary threads
 /// (the trait demands `Send + Sync`). On Android that means each
@@ -976,16 +966,14 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
 ///
 /// IndexedDbSecureKeyStore (H6) splits the layers:
 ///
-///   1. The wrapping key is derived once via `SubtleCrypto.deriveKey`
-///      with `extractable: false`. The derived `CryptoKey` lives in
-///      the browser's SubtleCrypto subsystem; even
+///   1. The wrapping key is derived once via `SubtleCrypto.deriveKey` with `extractable: false`.
+///      The derived `CryptoKey` lives in the browser's SubtleCrypto subsystem; even
 ///      `crypto.subtle.exportKey(...)` against it rejects.
-///   2. The persisted form of the wrapping key — needed to recover
-///      across page reloads — is the `CryptoKey` *object* itself,
-///      stashed in IndexedDB via structured clone. IndexedDB preserves
+///   2. The persisted form of the wrapping key — needed to recover across page reloads — is the
+///      `CryptoKey` *object* itself, stashed in IndexedDB via structured clone. IndexedDB preserves
 ///      the `extractable: false` attribute on round-trip.
-///   3. Encrypted entries (AES-GCM ciphertext + 12-byte IV) live in a
-///      separate IndexedDB object store, keyed by `service_name`/`key`.
+///   3. Encrypted entries (AES-GCM ciphertext + 12-byte IV) live in a separate IndexedDB object
+///      store, keyed by `service_name`/`key`.
 ///
 /// A disk dump now yields ciphertext + an unusable key handle.
 /// Recovering plaintext requires running JS in the same origin and
@@ -1000,16 +988,13 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
 /// [`SecureKeyStore`] trait is sync. The store resolves this via a
 /// two-phase model:
 ///
-///   * [`IndexedDbSecureKeyStore::new_async`] (async, called once at
-///     app startup) opens the database, derives or loads the wrapping
-///     key, and decrypts every existing entry into an in-process
-///     `HashMap`. This is the only async path.
-///   * Sync trait methods read from / write to the cache directly.
-///     Writes additionally spawn a `wasm_bindgen_futures::spawn_local`
-///     task that re-encrypts and persists the change to IndexedDB.
-///     Failures are logged but do not block the caller (mirrors the
-///     `localStorage` failure mode, where a quota-exceeded `setItem`
-///     also can't be reported through a sync trait).
+///   * [`IndexedDbSecureKeyStore::new_async`] (async, called once at app startup) opens the
+///     database, derives or loads the wrapping key, and decrypts every existing entry into an
+///     in-process `HashMap`. This is the only async path.
+///   * Sync trait methods read from / write to the cache directly. Writes additionally spawn a
+///     `wasm_bindgen_futures::spawn_local` task that re-encrypts and persists the change to
+///     IndexedDB. Failures are logged but do not block the caller (mirrors the `localStorage`
+///     failure mode, where a quota-exceeded `setItem` also can't be reported through a sync trait).
 ///
 /// Result: an in-flight write to IndexedDB that doesn't complete
 /// before a page-unload is lost. Production callers tolerate this
@@ -1055,20 +1040,16 @@ unsafe impl<T> Sync for IndexedDbSendBoundary<T> {}
 //
 // Two concerns sit on top of the existing `IndexedDbSecureKeyStore`:
 //
-//   1. **Schema migration**. `DB_VERSION` is currently `1`. Future
-//      versions need a documented migration plan so the
-//      `onupgradeneeded` handler can route per-version diffs without
-//      smashing existing entries. [`IndexedDbSchemaVersion`] +
-//      [`IndexedDbSchemaMigration`] are the typed surface for that.
+//   1. **Schema migration**. `DB_VERSION` is currently `1`. Future versions need a documented
+//      migration plan so the `onupgradeneeded` handler can route per-version diffs without smashing
+//      existing entries. [`IndexedDbSchemaVersion`] + [`IndexedDbSchemaMigration`] are the typed
+//      surface for that.
 //
-//   2. **WAL-style checkpoint**. IndexedDB autocommits per-transaction,
-//      but the in-process cache and the on-disk encrypted store can
-//      diverge for the duration of an in-flight `spawn_local`
-//      persistence task (see the doc comment on
-//      `IndexedDbSecureKeyStore` about page-unload during writes).
-//      [`IndexedDbCheckpoint`] is the scaffold for a quiescent
-//      checkpoint API that flushes pending writes and persists a
-//      checkpoint marker so a subsequent boot can detect partial
+//   2. **WAL-style checkpoint**. IndexedDB autocommits per-transaction, but the in-process cache
+//      and the on-disk encrypted store can diverge for the duration of an in-flight `spawn_local`
+//      persistence task (see the doc comment on `IndexedDbSecureKeyStore` about page-unload during
+//      writes). [`IndexedDbCheckpoint`] is the scaffold for a quiescent checkpoint API that flushes
+//      pending writes and persists a checkpoint marker so a subsequent boot can detect partial
 //      writes and trigger recovery.
 //
 // Both types are intentionally pure-data scaffolding right now. The
@@ -1494,8 +1475,7 @@ impl IndexedDbSecureKeyStore {
         store: &str,
         key: &str,
     ) -> Result<Option<wasm_bindgen::JsValue>, SecureKeyStoreError> {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
+        use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
         let tx = db
             .transaction_with_str(store)
@@ -1548,8 +1528,7 @@ impl IndexedDbSecureKeyStore {
         key: &str,
         value: &wasm_bindgen::JsValue,
     ) -> Result<(), SecureKeyStoreError> {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
+        use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
         let tx = db
             .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
@@ -1585,8 +1564,7 @@ impl IndexedDbSecureKeyStore {
         store: &str,
         key: &str,
     ) -> Result<(), SecureKeyStoreError> {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
+        use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
         let tx = db
             .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
@@ -1950,24 +1928,20 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///
 /// The boot sequence on wasm32 looks like:
 ///
-///   1. App `main` calls [`default_secure_key_store`] synchronously
-///      and receives a [`LocalStorageSecureKeyStore`]. This unblocks
-///      first paint without waiting on IndexedDB/SubtleCrypto.
+///   1. App `main` calls [`default_secure_key_store`] synchronously and receives a
+///      [`LocalStorageSecureKeyStore`]. This unblocks first paint without waiting on
+///      IndexedDB/SubtleCrypto.
 ///   2. App `main` then `spawn_local`s an async task that calls
-///      `upgrade_wasm_secure_key_store_async(service_name).await`,
-///      which returns either:
-///        * `Ok(Some(store))` — a fully-initialised
-///          [`IndexedDbSecureKeyStore`] installed as the process-wide
-///          default returned by [`default_secure_key_store`].
-///        * `Ok(None)` — IndexedDB or SubtleCrypto were
-///          unavailable (private-mode Firefox, file:// origin,
-///          Tor Browser hardened). Keep the LocalStorage store.
-///        * `Err(...)` — backend failure during init. Caller should
-///          log and keep the LocalStorage store.
-///   3. The first time an entry is written through the IndexedDB
-///      store, [`migrate_localstorage_entries_to_indexeddb`] (also
-///      async) can be invoked to copy any pre-existing wrapped
-///      secrets across, then drop the LocalStorage seed.
+///      `upgrade_wasm_secure_key_store_async(service_name).await`, which returns either:
+///        * `Ok(Some(store))` — a fully-initialised [`IndexedDbSecureKeyStore`] installed as the
+///          process-wide default returned by [`default_secure_key_store`].
+///        * `Ok(None)` — IndexedDB or SubtleCrypto were unavailable (private-mode Firefox, file://
+///          origin, Tor Browser hardened). Keep the LocalStorage store.
+///        * `Err(...)` — backend failure during init. Caller should log and keep the LocalStorage
+///          store.
+///   3. The first time an entry is written through the IndexedDB store,
+///      [`migrate_localstorage_entries_to_indexeddb`] (also async) can be invoked to copy any
+///      pre-existing wrapped secrets across, then drop the LocalStorage seed.
 ///
 /// Returning `Option<Arc<...>>` rather than panicking on
 /// "browser doesn't support this" mirrors the rest of the secure
@@ -2140,21 +2114,17 @@ fn indexeddb_and_subtle_available() -> bool {
 // `default_secure_key_store("yougen")` returns. That picker has two
 // tiers, both transparent to `ensure_signing_seed`:
 //
-//   1. **First-paint sync path** — [`LocalStorageSecureKeyStore`] backed
-//      by `window.localStorage`. The wrapping key is a 32-byte seed
-//      stashed under `yougen.secret.<service>.wrap_seed.v1`. Pros: works
-//      synchronously, no async init needed before the dioxus mount.
-//      Cons: the seed lives next to the ciphertext in localStorage, so a
-//      backup dump / extension with full DOM access can recover plaintext
-//      offline. See the [`LocalStorageSecureKeyStore`] doc-comment §threat
-//      model.
-//   2. **Async-promoted path** — [`IndexedDbSecureKeyStore`] backed by
-//      IndexedDB + SubtleCrypto `deriveKey({ extractable: false })`. The
-//      wrapping key is a non-extractable `CryptoKey` handle persisted
-//      via structured clone; even `subtle.exportKey(...)` rejects on it.
-//      The app calls [`upgrade_wasm_secure_key_store_async`] from a
-//      `spawn_local` task after first paint; once that resolves, every
-//      subsequent `default_secure_key_store` call returns the IDB store
+//   1. **First-paint sync path** — [`LocalStorageSecureKeyStore`] backed by `window.localStorage`.
+//      The wrapping key is a 32-byte seed stashed under `yougen.secret.<service>.wrap_seed.v1`.
+//      Pros: works synchronously, no async init needed before the dioxus mount. Cons: the seed
+//      lives next to the ciphertext in localStorage, so a backup dump / extension with full DOM
+//      access can recover plaintext offline. See the [`LocalStorageSecureKeyStore`] doc-comment
+//      §threat model.
+//   2. **Async-promoted path** — [`IndexedDbSecureKeyStore`] backed by IndexedDB + SubtleCrypto
+//      `deriveKey({ extractable: false })`. The wrapping key is a non-extractable `CryptoKey`
+//      handle persisted via structured clone; even `subtle.exportKey(...)` rejects on it. The app
+//      calls [`upgrade_wasm_secure_key_store_async`] from a `spawn_local` task after first paint;
+//      once that resolves, every subsequent `default_secure_key_store` call returns the IDB store
 //      automatically (`WASM_UPGRADED_SECURE_KEY_STORE` cache hit).
 //
 // The signing seed migrates transparently: the upgrade path runs

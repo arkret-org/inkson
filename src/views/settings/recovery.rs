@@ -13,8 +13,7 @@
 //!   `data-testid="recovery-word-{i}"`
 //! - `recovery-confirm-input` — paste-back confirmation
 //! - `recovery-confirm-button` — verifies the user wrote it down
-//! - `recovery-status` — "not configured" / "verification pending" /
-//!   "active"
+//! - `recovery-status` — "not configured" / "verification pending" / "active"
 //!
 //! ## Word generation
 //!
@@ -37,10 +36,9 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    components::HelpTip, local_state::LocalStateStore,
-    recovery_crypto::estimate_passphrase_strength,
-};
+use crate::components::HelpTip;
+use crate::local_state::LocalStateStore;
+use crate::recovery_crypto::estimate_passphrase_strength;
 
 const RECOVERY_PASSPHRASE_STATE_KEY: &str = "recovery.passphrase.v1";
 const WORD_COUNT: usize = 12;

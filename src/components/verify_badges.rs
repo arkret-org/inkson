@@ -2,12 +2,11 @@
 //!
 //! Two small surfaces:
 //!
-//! - [`NeedsVerificationBadge`] — rendered next to a message when its
-//!   crypto state is `NeedsVerification`. Red dot + tooltip warning the
-//!   reader the sender's device hasn't been cross-signed yet.
-//! - [`RealmClassBadge`] — rendered next to a Realm name in the
-//!   switcher / sidebar / breadcrumb so the user can instantly tell a
-//!   Principal Realm (federation identity) apart from a Collaboration
+//! - [`NeedsVerificationBadge`] — rendered next to a message when its crypto state is
+//!   `NeedsVerification`. Red dot + tooltip warning the reader the sender's device hasn't been
+//!   cross-signed yet.
+//! - [`RealmClassBadge`] — rendered next to a Realm name in the switcher / sidebar / breadcrumb so
+//!   the user can instantly tell a Principal Realm (federation identity) apart from a Collaboration
 //!   Realm (shared workspace inside someone else's Principal Realm).
 //!
 //! The badges are intentionally pure — they take a single typed prop

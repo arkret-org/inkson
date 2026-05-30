@@ -140,12 +140,14 @@ pub fn verify_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::Utc;
+    use contrix_sdk::identifiers::SpaceId;
     use contrix_sdk::{
         EventId, Hash, SnapshotBootstrap, SnapshotBootstrapChunk, SnapshotBootstrapSignature,
-        SnapshotChunkManifest, canonical, identifiers::SpaceId,
+        SnapshotChunkManifest, canonical,
     };
+
+    use super::*;
 
     fn empty_manifest() -> ReducerSnapshotManifest {
         ReducerSnapshotManifest {

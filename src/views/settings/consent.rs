@@ -1,11 +1,9 @@
 use chrono::{Duration, Utc};
 use dioxus::prelude::*;
 
-use crate::{
-    local_state::LocalStateStore,
-    models::ConsentCellResponse,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::local_state::LocalStateStore;
+use crate::models::ConsentCellResponse;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
 pub fn ConsentSettingsCard(

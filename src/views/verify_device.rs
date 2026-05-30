@@ -1,13 +1,12 @@
 use dioxus::prelude::*;
-use qrcode::{EcLevel, QrCode, render::svg};
+use qrcode::render::svg;
+use qrcode::{EcLevel, QrCode};
 
-use crate::{
-    cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan},
-    local_state::LocalStateStore,
-    models::*,
-    secure_key_store::default_secure_key_store,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
+use crate::local_state::LocalStateStore;
+use crate::models::*;
+use crate::secure_key_store::default_secure_key_store;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
 /// string if encoding fails (oversize / invalid input); callers should
@@ -70,8 +69,9 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod verification_key_poll_tests {
-    use super::extract_peer_verification_key;
     use serde_json::json;
+
+    use super::extract_peer_verification_key;
 
     #[test]
     fn picks_key_out_of_flat_events_list() {

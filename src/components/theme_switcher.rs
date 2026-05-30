@@ -7,13 +7,12 @@
 //! flip between two states (light ↔ night) via [`next_manual_theme`];
 //! this component adds a richer three-mode picker that:
 //!
-//!   * surfaces all three modes (light / dark / follow system) so users
-//!     can explicitly delegate to the OS,
-//!   * persists the choice to `localStorage` (browser) or
-//!     `LocalStateStore` private-data (desktop) via the same path the
-//!     existing topbar toggle uses, and
-//!   * mirrors ARIA semantics — `role="radiogroup"` + per-mode
-//!     `aria-checked` so screen-reader users hear the active mode.
+//!   * surfaces all three modes (light / dark / follow system) so users can explicitly delegate to
+//!     the OS,
+//!   * persists the choice to `localStorage` (browser) or `LocalStateStore` private-data (desktop)
+//!     via the same path the existing topbar toggle uses, and
+//!   * mirrors ARIA semantics — `role="radiogroup"` + per-mode `aria-checked` so screen-reader
+//!     users hear the active mode.
 //!
 //! The component is intentionally view-agnostic: caller passes the
 //! `theme` signal + a persistence callback. Wired into the topbar (new

@@ -11,7 +11,8 @@
 
 use dioxus::prelude::*;
 
-use crate::{components::HelpTip, local_state::LocalStateStore};
+use crate::components::HelpTip;
+use crate::local_state::LocalStateStore;
 
 #[component]
 pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
@@ -124,8 +125,9 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use crate::local_state::LocalStateStore;
     use serde_json::json;
+
+    use crate::local_state::LocalStateStore;
 
     #[test]
     fn renders_signal_count_from_raw_operations() {

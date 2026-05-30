@@ -6,13 +6,12 @@
 //! Per spec event-kind-registry, only events that declare a `cell_family`
 //! belong on the Move/Anchor pipeline. Examples:
 //!
-//! - **Yes**: `cx.consent.grant` / `revoke`, `cx.capability.*`,
-//!   `cx.member.state`, `cx.realm.{create,update,destroy,...}`,
-//!   `cx.space.{create,update,archive,restore,...}` (container Spaces),
-//!   `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
-//! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read_cursor.advance`,
-//!   `cx.relation.*`, `cx.redaction` — these stay on the durable Event
-//!   Envelope endpoint (`/api/v1/events`) per spec.
+//! - **Yes**: `cx.consent.grant` / `revoke`, `cx.capability.*`, `cx.member.state`,
+//!   `cx.realm.{create,update,destroy,...}`, `cx.space.{create,update,archive,restore,...}`
+//!   (container Spaces), `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
+//! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read_cursor.advance`, `cx.relation.*`,
+//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/api/v1/events`) per
+//!   spec.
 //!
 //! # Signing model
 //!
@@ -26,26 +25,24 @@
 //!
 //! # Builders provided
 //!
-//! - [`build_consent_grant_move`] — `cx.consent.grant` over the
-//!   `cx.component.consent.grant.v1` OrSet cell
-//! - [`build_member_state_transition_move`] — `cx.member.state` FSM
-//!   transition (`invited` → `join`, etc.) over
-//!   `cx.component.member.state.v1`
+//! - [`build_consent_grant_move`] — `cx.consent.grant` over the `cx.component.consent.grant.v1`
+//!   OrSet cell
+//! - [`build_member_state_transition_move`] — `cx.member.state` FSM transition (`invited` → `join`,
+//!   etc.) over `cx.component.member.state.v1`
 //! - [`build_space_organization_update_move`] — `cx.realm.update` over
 //!   `cx.component.realm.organization.v1` (cas-register; post-R1.7)
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use sha2::{Digest, Sha256};
-
 #[cfg(test)]
 use contrix_sdk::LatticeOpType;
 use contrix_sdk::{
     AnchorId, CellRef, Did, Effect, Hash, Hlc, LatticeOp, Move, MoveId, MoveSignature, SpaceId,
     canonical,
 };
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 /// Output of a builder: an unsigned [`Move`] body together with its
 /// canonical bytes (so the signer can sign exactly the bytes the server
@@ -493,23 +490,23 @@ pub fn build_flow_position_move(
 
 /// Identifies the cas-register cell that holds a Flow's position inside
 /// a given Board. Per
-/// [`spec/v1/zh/models/realm-and-space.md` §3.6](../../contrix-spec/spec/v1/zh/models/realm-and-space.md)
-/// the cell key is `cx:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`
-/// — a Flow can appear on multiple Boards with **independent** position
-/// cells, so the Board id is part of the subject.
+/// [`spec/v1/zh/models/realm-and-space.md`
+/// §3.6](../../contrix-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
+/// `cx:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>` — a Flow can appear on
+/// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn flow_position_cell_id(board_space_id: &str, flow_id: &str) -> String {
     format!("cx:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}")
 }
 
 /// CAS pre-state that the caller expects to find on the position cell
 /// before the Move applies. Compiled into a `head_eq` precondition per
-/// [`spec/v1/zh/sync/operations-sync.md` §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
+/// [`spec/v1/zh/sync/operations-sync.md`
+/// §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// - `Initial` ⇒ `head_eq null` — the Flow is not yet on this Board.
-/// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` —
-///   the Move expects the Flow to currently sit in `list_space_id` at
-///   `rank`; any drift triggers `failed_precondition` and the caller
-///   must rebase against the latest projection.
+/// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` — the Move expects the Flow
+///   to currently sit in `list_space_id` at `rank`; any drift triggers `failed_precondition` and
+///   the caller must rebase against the latest projection.
 ///
 /// Omitting `expected_position` (passing `None` to the builder when the
 /// cell is non-initial) is a spec violation — soland's reducer rejects
@@ -580,14 +577,12 @@ impl FlowPositionEffect {
 ///
 /// Per [`operations-sync.md` §9](../../contrix-spec/spec/v1/zh/sync/operations-sync.md):
 ///
-/// - `expected_position == FlowPositionExpectation::Initial` is only
-///   valid when the Flow has never been positioned on this Board;
-///   reducer rejects with `failed_precondition` otherwise.
-/// - Concurrent Moves that share a `head_eq` but emit different `set`
-///   effects fold to `⊥` (kind=conflict) on the cas-register lattice;
-///   dependent Moves `fail_bottom` and the caller MUST go through the
-///   §8 conflict-recovery path (snapshot + state witness + retry with
-///   refreshed `expected_position`).
+/// - `expected_position == FlowPositionExpectation::Initial` is only valid when the Flow has never
+///   been positioned on this Board; reducer rejects with `failed_precondition` otherwise.
+/// - Concurrent Moves that share a `head_eq` but emit different `set` effects fold to `⊥`
+///   (kind=conflict) on the cas-register lattice; dependent Moves `fail_bottom` and the caller MUST
+///   go through the §8 conflict-recovery path (snapshot + state witness + retry with refreshed
+///   `expected_position`).
 ///
 /// Reorder vs move is encoded by the spec as a static schema rule: if
 /// `effect.list_space_id == expected.list_space_id`, the Move is a
@@ -1345,8 +1340,9 @@ mod tests {
 
     #[test]
     fn mls_commit_move_with_binding_attaches_sdk_preconditions_and_effects() {
-        use crate::mls::governance::GovernanceBindingPayload;
         use contrix_sdk::{AnchorId, Hash, SpaceId};
+
+        use crate::mls::governance::GovernanceBindingPayload;
 
         let space_id =
             SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();

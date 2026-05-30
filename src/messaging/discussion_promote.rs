@@ -4,12 +4,11 @@
 //! `models/space-hierarchy.md §3-§4` (parent/child confirmed edge).
 //!
 //! The full promote flow needs three durable events:
-//! 1. `cx.space.create` for the new child Space, with `parent_space_id`
-//!    pointing back at the parent.
-//! 2. `cx.space.child` on the parent + `cx.space.parent` on the child
-//!    (the bidirectional confirmation edge).
-//! 3. `cx.flow.update` on the original Flow, setting
-//!    `discussion_space_ref = <new_space_id>`.
+//! 1. `cx.space.create` for the new child Space, with `parent_space_id` pointing back at the
+//!    parent.
+//! 2. `cx.space.child` on the parent + `cx.space.parent` on the child (the bidirectional
+//!    confirmation edge).
+//! 3. `cx.flow.update` on the original Flow, setting `discussion_space_ref = <new_space_id>`.
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps

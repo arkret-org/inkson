@@ -8,17 +8,15 @@
 //! pure shape check on the builder output.
 //!
 //! What this file asserts unconditionally (no server required):
-//!   1. `build_realm_create_event` accepts well-formed inputs and
-//!      returns a typed envelope whose canonical shape passes the
-//!      regex-level "real signature, real anchor" checks once the
-//!      submit pipeline stamps them. We simulate that stamping with
-//!      an in-process Ed25519 signer and a SHA-256-derived anchor ref.
-//!   2. `proofs[0].jws` matches `^[A-Za-z0-9_-]+\.\.[A-Za-z0-9_-]+$`
-//!      (detached-JWS shape) and is NOT the dev placeholder `"a..b"`.
+//!   1. `build_realm_create_event` accepts well-formed inputs and returns a typed envelope whose
+//!      canonical shape passes the regex-level "real signature, real anchor" checks once the submit
+//!      pipeline stamps them. We simulate that stamping with an in-process Ed25519 signer and a
+//!      SHA-256-derived anchor ref.
+//!   2. `proofs[0].jws` matches `^[A-Za-z0-9_-]+\.\.[A-Za-z0-9_-]+$` (detached-JWS shape) and is
+//!      NOT the dev placeholder `"a..b"`.
 //!   3. `proofs[0].payload_digest` starts with `sha256:` and has 64 hex chars.
 //!   4. `anchor_ref` is `Some(_)` for reducer-input kinds AND matches
-//!      `^cx:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the
-//!      all-zero hash.
+//!      `^cx:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the all-zero hash.
 //!
 //! The `roundtrip_through_live_soland_endpoint` test below is the live
 //! variant — it is marked `#[ignore]` because it requires a soland
@@ -35,7 +33,6 @@
 use ed25519_dalek::SigningKey;
 use regex::Regex;
 use sha2::{Digest, Sha256};
-
 use yougen::api;
 use yougen::operation::EventEnvelope;
 
@@ -251,10 +248,9 @@ fn roundtrip_through_live_soland_endpoint() {
 
     // The live path needs:
     //   1. A test ContrixApi pointed at `url`.
-    //   2. An installed real Ed25519 signer
-    //      (yougen::event_signer::install_active_signer).
-    //   3. A `cx.realm.create` round-trip whose returned envelope must
-    //      pass the same assertions exercised above.
+    //   2. An installed real Ed25519 signer (yougen::event_signer::install_active_signer).
+    //   3. A `cx.realm.create` round-trip whose returned envelope must pass the same assertions
+    //      exercised above.
     //
     // The shape below is reachable but assumes the test soland
     // instance is in `SOLAND_DEVELOPMENT_MODE=true` so anonymous

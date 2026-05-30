@@ -11,11 +11,9 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    components::{EmptyState, EmptyStateKind, HelpTip},
-    local_state::LocalStateStore,
-    views::helpers::short_protocol_id,
-};
+use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::local_state::LocalStateStore;
+use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Debug, PartialEq)]
 struct AuditRow {
@@ -146,8 +144,9 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuditRow, classify_audit_row};
     use serde_json::json;
+
+    use super::{AuditRow, classify_audit_row};
 
     #[test]
     fn classifies_audit_accessed() {

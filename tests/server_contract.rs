@@ -2,22 +2,20 @@ use std::collections::BTreeSet;
 
 use reqwest::StatusCode;
 use serde_json::json;
-use yougen::{
-    account_data::{
-        AccountDataKey, ContactRemark, SpaceRemark, contact_remark_account_data_key,
-        space_remark_account_data_key,
-    },
-    api::{
-        ContrixApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
-        parse_events_subscribe_ndjson_text, parse_resolve_realm, parse_server_description,
-        parse_sync, parse_sync_describe,
-    },
-    config::{ClientConfig, LocalConfigStore},
-    models::ServerDescriptionExt,
-    operation::OperationBuilder,
-    push::validate_blind_wakeup_payload,
-    telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line},
+use yougen::account_data::{
+    AccountDataKey, ContactRemark, SpaceRemark, contact_remark_account_data_key,
+    space_remark_account_data_key,
 };
+use yougen::api::{
+    ContrixApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
+    parse_events_subscribe_ndjson_text, parse_resolve_realm, parse_server_description, parse_sync,
+    parse_sync_describe,
+};
+use yougen::config::{ClientConfig, LocalConfigStore};
+use yougen::models::ServerDescriptionExt;
+use yougen::operation::OperationBuilder;
+use yougen::push::validate_blind_wakeup_payload;
+use yougen::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
 
 #[test]
 fn yougen_accepts_server_contract_payloads() {
@@ -708,9 +706,8 @@ fn bare_401_does_not_count_as_session_loss() {
 /// in the UI.
 #[test]
 fn decoder_handles_all_envelope_shapes() {
-    // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints
-    //    (e.g. the cell ref the server is reporting the conflict on)
-    //    must flow through the `details` map so the conflict UI can
+    // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
+    //    is reporting the conflict on) must flow through the `details` map so the conflict UI can
     //    surface them.
     let wrapped = decode_contrix_error(
         StatusCode::CONFLICT,

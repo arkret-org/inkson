@@ -298,9 +298,10 @@ impl KeyStore for WindowsCredentialKeyStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     /// Build a fresh isolated state-store path under `temp_dir` so tests
     /// don't pollute (or read) the developer's actual `state.json`.

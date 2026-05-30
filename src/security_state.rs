@@ -238,8 +238,9 @@ pub fn realm_projection_is_encrypted(body: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn realm_projection_reads_profile_and_plaintext_visibility() {

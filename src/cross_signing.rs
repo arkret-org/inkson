@@ -1,20 +1,20 @@
 //! Cross-signing setup orchestration.
 //!
-//! Spec source: [`crypto-media/device-lifecycle.md`](../../contrix-spec/spec/v1/zh/crypto-media/device-lifecycle.md)
-//! §5 (Signing Hierarchy), §5.1 (Cross-Signing Publish Envelope), §5.2 (Device
+//! Spec source:
+//! [`crypto-media/device-lifecycle.md`](../../contrix-spec/spec/v1/zh/crypto-media/
+//! device-lifecycle.md) §5 (Signing Hierarchy), §5.1 (Cross-Signing Publish Envelope), §5.2 (Device
 //! Trust Chain), §14 (Cross-Signing Reset).
 //!
 //! Like [`device_revoke`](super::device_revoke), this layer only produces an
 //! **auditable step plan** — it does not perform side effects. The executor
 //! consumes the steps in order. Corresponding SDK primitives:
 //!
-//! - `CrossSigningPublishContent` / `SignedCrossSigningKey` /
-//!   `CrossSigningBinding`: spec §5.1 wire envelope.
-//! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorize.cross_signing_binding`
-//!   field.
+//! - `CrossSigningPublishContent` / `SignedCrossSigningKey` / `CrossSigningBinding`: spec §5.1 wire
+//!   envelope.
+//! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorize.cross_signing_binding` field.
 //! - `CrossSigningResetContent`: spec §14.1 reset envelope.
-//! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset`
-//!   / `evaluate_trust_chain`: local state machine.
+//! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
+//!   `evaluate_trust_chain`: local state machine.
 //!
 //! The UI renders [`CrossSigningSetupPlan`] and shows the canonical event kind
 //! for each step, mirroring the device-revoke design.
@@ -396,29 +396,25 @@ impl CrossSigningTrustState {
 ///
 /// What this executor **does** (per spec §5.1):
 ///   * Generates Ed25519 keypairs for PSK, SSK, USK via the platform RNG.
-///   * Encodes each public key as multibase (`z` + base58btc with the
-///     `0xed 0x01` Ed25519 multicodec prefix), matching the
-///     `did:key:` / multikey wire format the SDK validates.
-///   * Computes `canonical_cross_signing_binding_input` bytes for SSK
-///     and USK via the SDK's helper, then signs them with the PSK
-///     private key. Signatures are emitted base64-encoded (the SDK's
+///   * Encodes each public key as multibase (`z` + base58btc with the `0xed 0x01` Ed25519
+///     multicodec prefix), matching the `did:key:` / multikey wire format the SDK validates.
+///   * Computes `canonical_cross_signing_binding_input` bytes for SSK and USK via the SDK's helper,
+///     then signs them with the PSK private key. Signatures are emitted base64-encoded (the SDK's
 ///     declared encoding for the `binding.signature` field).
-///   * Assembles a full `CrossSigningPublishContent`, runs the SDK's
-///     `validate_structure()` so the publish event body MUST round-trip
-///     through SDK validation before the API call is even constructed.
+///   * Assembles a full `CrossSigningPublishContent`, runs the SDK's `validate_structure()` so the
+///     publish event body MUST round-trip through SDK validation before the API call is even
+///     constructed.
 ///
 /// What this executor deliberately does **not** do:
-///   * Persist the generated private keys to disk. The caller decides
-///     whether to push them through `secure_key_store::SecureKeyStore`
-///     (preferred) or hand them to the recovery vault for backup. Both
-///     paths are downstream consumers of [`CrossSigningSetupOutput`].
-///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish`, or
-///     `cx.device.authorize` to the server. Those are API-bound side
-///     effects; the executor returns the canonical event bodies and the
-///     caller (a view handler / orchestrator) drives the API.
-///   * Recompute device trust states. That requires reading the device
-///     manager state and is a separate concern; `recompute_trust_states`
-///     consumes this executor's output but lives in the device manager.
+///   * Persist the generated private keys to disk. The caller decides whether to push them through
+///     `secure_key_store::SecureKeyStore` (preferred) or hand them to the recovery vault for
+///     backup. Both paths are downstream consumers of [`CrossSigningSetupOutput`].
+///   * Emit `cx.schema.key_backup.v1`, `cx.cross_signing.publish`, or `cx.device.authorize` to the
+///     server. Those are API-bound side effects; the executor returns the canonical event bodies
+///     and the caller (a view handler / orchestrator) drives the API.
+///   * Recompute device trust states. That requires reading the device manager state and is a
+///     separate concern; `recompute_trust_states` consumes this executor's output but lives in the
+///     device manager.
 pub struct CrossSigningExecutor {
     plan: CrossSigningSetupPlan,
     principal_did: Did,

@@ -2,37 +2,30 @@
 //! pairing (`/settings/devices/pair`).
 //!
 //! Surfaces:
-//! - `device-list` — wrapper element listing the principal's active
-//!   devices (`GET /api/v1/devices` via [`crate::api::ContrixApi::list_devices`])
-//! - `device-row` per row, with `data-device-id` and a
-//!   `device-row-current` boolean tag on the row matching the local
-//!   `LocalStateStore::device_id`
+//! - `device-list` — wrapper element listing the principal's active devices (`GET /api/v1/devices`
+//!   via [`crate::api::ContrixApi::list_devices`])
+//! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
+//!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
-//! - `device-revoke-confirm-button` / `device-revoke-status` after the
-//!   user confirms; revoke hits `POST /api/v1/devices/{device_id}/revoke`
-//!   via [`crate::api::ContrixApi::revoke_device`]
+//! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
+//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`]
 //!
 //! The pair flow on `/settings/devices/pair` carries:
-//! - `pair-device-start-button` — generates a one-time pairing
-//!   payload by calling `POST /api/v1/devices/pairing-challenge`. The
-//!   coauth-side unauthenticated `POST /api/v1/auth/passkey/*`
-//!   endpoints that would let a fresh device kick off the pair flow
-//!   without first authenticating do not yet exist — see the
-//!   `TODO(G3.Y1-followup)` comments below.
-//! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with
-//!   the encoded payload mirrored as plain text in `pair-device-secret`
-//!   so e2e harnesses that don't OCR can read it directly.
+//! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
+//!   /api/v1/devices/pairing-challenge`. The coauth-side unauthenticated `POST
+//!   /api/v1/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow without
+//!   first authenticating do not yet exist — see the `TODO(G3.Y1-followup)` comments below.
+//! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
+//!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
 //! - `pair-device-status` — feedback area.
-//! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status`
-//!   — receiving-device side: paste payload, generate a NEW DPoP key
-//!   for this device (via `auth_dpop::ensure_device_key`), then POST
-//!   to coauth's pairing endpoint.
+//! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status` — receiving-device
+//!   side: paste payload, generate a NEW DPoP key for this device (via
+//!   `auth_dpop::ensure_device_key`), then POST to coauth's pairing endpoint.
 //!
 //! Spec references:
-//! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2
-//!   (revoke), §5.1–§5.2 (cross-signing binding), §6 (device list)
-//! - `identity/key-management.md` §5.0–§5.2 (`cx.device.authorize` /
-//!   `cx.device.revoke`)
+//! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2
+//!   (cross-signing binding), §6 (device list)
+//! - `identity/key-management.md` §5.0–§5.2 (`cx.device.authorize` / `cx.device.revoke`)
 //!
 //! ## Soland / coauth endpoints
 //!
@@ -40,23 +33,21 @@
 //! - `POST /api/v1/devices/{device_id}/revoke` — implemented (soland)
 //! - `POST /api/v1/devices/pairing-challenge` — scaffold (soland)
 //! - `POST /api/v1/devices/authorize-pairing` — scaffold (soland)
-//! - `POST /api/v1/auth/passkey/begin` — TODO(G3.Y1-followup): coauth
-//!   does not yet expose an unauthenticated entry point that lets a
-//!   brand-new device claim a pairing intent without first holding a
-//!   bearer token.
+//! - `POST /api/v1/auth/passkey/begin` — TODO(G3.Y1-followup): coauth does not yet expose an
+//!   unauthenticated entry point that lets a brand-new device claim a pairing intent without first
+//!   holding a bearer token.
 
 use dioxus::prelude::*;
-use dioxus_router::{Link, hooks::use_route};
+use dioxus_router::Link;
+use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
-use crate::{
-    auth_dpop::ensure_device_key,
-    components::{EmptyState, EmptyStateKind, HelpTip},
-    local_state::LocalStateStore,
-    operation::uuid_v7,
-    routes::Route,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::auth_dpop::ensure_device_key;
+use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::local_state::LocalStateStore;
+use crate::operation::uuid_v7;
+use crate::routes::Route;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Debug, PartialEq)]
 struct DeviceRow {
@@ -717,8 +708,9 @@ fn render_pair_flow(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn parses_device_list_response() {

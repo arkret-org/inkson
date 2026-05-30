@@ -4,13 +4,12 @@
 //! backup bodies can be hashed and signed against a single canonical encoder
 //! instead of relying on `serde_json`'s default object-key order.
 
-use serde::Serialize;
-
 pub use contrix_sdk::canonical::{
     canonical_json_bytes as sdk_canonical_json_bytes,
     canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
     sha256_digest as sdk_sha256_digest, validate_timestamp_canonical,
 };
+use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
 /// `encoding.md` §3.2. Returns an `anyhow::Error` so call sites can chain into
@@ -87,8 +86,9 @@ pub fn canonical_anchor_witness_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn key_order_does_not_affect_digest() {

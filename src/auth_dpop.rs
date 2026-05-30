@@ -3,28 +3,25 @@
 //! Layered on top of [`crate::dpop`] (the pure JWS builder). This
 //! module is the policy layer that:
 //!
-//! 1. Generates an Ed25519 device key on first launch and persists it
-//!    via [`crate::local_state::LocalStateStore::set_dpop_device_key`].
-//! 2. Hands out a `DpopHandle` callers can use to mint proofs without
-//!    having to plumb through the raw `SigningKey`.
-//! 3. Surfaces the RFC 7638 thumbprint so the UI / refresh path can
-//!    display `cnf.jkt` for diagnostic testids.
+//! 1. Generates an Ed25519 device key on first launch and persists it via
+//!    [`crate::local_state::LocalStateStore::set_dpop_device_key`].
+//! 2. Hands out a `DpopHandle` callers can use to mint proofs without having to plumb through the
+//!    raw `SigningKey`.
+//! 3. Surfaces the RFC 7638 thumbprint so the UI / refresh path can display `cnf.jkt` for
+//!    diagnostic testids.
 //!
 //! ## Algorithm choice
 //!
 //! Ed25519 (`alg=EdDSA`, `kty=OKP`, `crv=Ed25519`) over ES256. Three
 //! reasons, in order of weight:
 //!
-//! * Every other signing surface in yougen — `event_signer`,
-//!   `cross_signing`, `move_builder`, `session_grant` proofs — is
-//!   already ed25519. Adding a second curve doubles the WASM bundle
+//! * Every other signing surface in yougen — `event_signer`, `cross_signing`, `move_builder`,
+//!   `session_grant` proofs — is already ed25519. Adding a second curve doubles the WASM bundle
 //!   surface for no protocol benefit.
-//! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`)
-//!   accepts `EdDSA` as a first-class algorithm; the JWA registry lists
-//!   it as an approved JWS alg.
-//! * `ed25519-dalek` is pure-Rust and known to build cleanly under
-//!   `wasm32-unknown-unknown`. ES256 via the browser's SubtleCrypto
-//!   means crossing the JS boundary on every mint, which complicates
+//! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`) accepts `EdDSA` as a
+//!   first-class algorithm; the JWA registry lists it as an approved JWS alg.
+//! * `ed25519-dalek` is pure-Rust and known to build cleanly under `wasm32-unknown-unknown`. ES256
+//!   via the browser's SubtleCrypto means crossing the JS boundary on every mint, which complicates
 //!   the test surface in the cotest harness.
 //!
 //! ## Storage choice
@@ -43,12 +40,10 @@ use chrono::Utc;
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
-use crate::{
-    dpop::{
-        DpopClaims, DpopError, build_dpop_proof_ed25519, fresh_dpop_claims, jwk_thumbprint_ed25519,
-    },
-    local_state::{DpopDeviceKeyRecord, LocalStateStore},
+use crate::dpop::{
+    DpopClaims, DpopError, build_dpop_proof_ed25519, fresh_dpop_claims, jwk_thumbprint_ed25519,
 };
+use crate::local_state::{DpopDeviceKeyRecord, LocalStateStore};
 
 /// Errors surfaced when minting or loading the device DPoP key.
 #[derive(Debug)]
@@ -267,12 +262,13 @@ pub fn mint_dpop_proof(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::secure_key_store::MemorySecureKeyStore;
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::secure_key_store::MemorySecureKeyStore;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn isolated_store(tag: &str) -> LocalStateStore {

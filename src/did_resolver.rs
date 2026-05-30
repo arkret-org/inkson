@@ -6,8 +6,7 @@
 //!
 //! Spec sources:
 //! - `identity/identity-did.md` (§3 default DID methods, §4 resolver policy)
-//! - `identity/identity-handles.md` (§5 fail-closed rules, §6 verifier
-//!   authority/cache split)
+//! - `identity/identity-handles.md` (§5 fail-closed rules, §6 verifier authority/cache split)
 //!
 //! TRUST-AUTHORITY: this module is the single authority-grade DID
 //! resolution path. Trust-decision surfaces — wallet disclosure,
@@ -147,14 +146,12 @@ pub fn verify_principal(
 ///
 /// Invariants:
 /// - `max_entries == 0` disables caching entirely (every `get` misses).
-/// - Eviction is LRU by `cached_at` (the entry with the oldest
-///   `cached_at` is dropped first) — sufficient because each `insert`
-///   bumps `cached_at` to "now".
-/// - `get(now)` returns `None` for entries whose `expires_at <= now` and
-///   also lazily removes them so size bookkeeping stays honest.
-/// - `invalidate(did)` is for revocation pushes — the spec requires
-///   clients to drop cached evidence when a `cx.cross_signing.reset`
-///   or `cx.device.revoke` event arrives for the actor.
+/// - Eviction is LRU by `cached_at` (the entry with the oldest `cached_at` is dropped first) —
+///   sufficient because each `insert` bumps `cached_at` to "now".
+/// - `get(now)` returns `None` for entries whose `expires_at <= now` and also lazily removes them
+///   so size bookkeeping stays honest.
+/// - `invalidate(did)` is for revocation pushes — the spec requires clients to drop cached evidence
+///   when a `cx.cross_signing.reset` or `cx.device.revoke` event arrives for the actor.
 ///
 /// Persistence to IndexedDB / local state is a follow-up; this revision
 /// is in-memory only so the cache survives a single login session.
@@ -246,8 +243,8 @@ impl DidResolutionCache {
 
 impl Default for DidResolutionCache {
     /// Default cache:
-    /// - 128 entries — a comfortable upper bound on the number of
-    ///   distinct actors a single yougen session interacts with.
+    /// - 128 entries — a comfortable upper bound on the number of distinct actors a single yougen
+    ///   session interacts with.
     fn default() -> Self {
         Self::new(128)
     }

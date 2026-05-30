@@ -4,12 +4,11 @@
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:
-//!   * `cx.agent.endpoint` registers an agent_did + invocation protocol +
-//!     capability_proof requirement.
-//!   * `cx.agent.protocol_session.{start,status,result}` track agent
-//!     invocations. The terminal `result` event carries a typed result
-//!     payload + the audit_binding proof so the audit timeline can
-//!     verify the agent's output corresponds to the signed input.
+//!   * `cx.agent.endpoint` registers an agent_did + invocation protocol + capability_proof
+//!     requirement.
+//!   * `cx.agent.protocol_session.{start,status,result}` track agent invocations. The terminal
+//!     `result` event carries a typed result payload + the audit_binding proof so the audit
+//!     timeline can verify the agent's output corresponds to the signed input.
 //!
 //! Incoming `cx.agent.protocol_session.result` events fetched from
 //! soland are decoded + verified via
@@ -18,20 +17,15 @@
 //! whether the signature matches.
 //!
 //! G3.Y4 additions:
-//!   * `agent-protocol-handoff-button` initiates a handoff to a
-//!     registered agent endpoint.
-//!   * `agent-protocol-handoff-confirm-button` confirms the handoff
-//!     intent and emits the `cx.agent.protocol_session.start` event
-//!     via soland's `agent_bridge` route.
-//!   * `agent-protocol-handoff-status` carries the pending →
-//!     approved → running → completed/failed lifecycle via
-//!     `data-state`.
-//!   * `agent-protocol-transcript-panel` lists each incremental
-//!     status step as `agent-protocol-transcript-row` carrying
-//!     `data-step-index` + `data-step-kind`.
-//!   * `agent-protocol-audit-verify-button` verifies the full chain
-//!     (start → status* → result) and surfaces the outcome via
-//!     `agent-protocol-audit-verify-result`'s `data-state` attribute.
+//!   * `agent-protocol-handoff-button` initiates a handoff to a registered agent endpoint.
+//!   * `agent-protocol-handoff-confirm-button` confirms the handoff intent and emits the
+//!     `cx.agent.protocol_session.start` event via soland's `agent_bridge` route.
+//!   * `agent-protocol-handoff-status` carries the pending → approved → running → completed/failed
+//!     lifecycle via `data-state`.
+//!   * `agent-protocol-transcript-panel` lists each incremental status step as
+//!     `agent-protocol-transcript-row` carrying `data-step-index` + `data-step-kind`.
+//!   * `agent-protocol-audit-verify-button` verifies the full chain (start → status* → result) and
+//!     surfaces the outcome via `agent-protocol-audit-verify-result`'s `data-state` attribute.
 
 use dioxus::prelude::*;
 use serde_json::{Value, json};
@@ -2071,8 +2065,9 @@ mod tests {
     // Pin the verify helper's outcomes for each canonical wire
     // shape the panel can encounter.
 
-    use super::{AuditVerifyStatus, verify_agent_audit_binding};
     use serde_json::{Value, json};
+
+    use super::{AuditVerifyStatus, verify_agent_audit_binding};
 
     fn build_ed25519_result_payload(
         session_id: &str,

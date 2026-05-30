@@ -1,23 +1,20 @@
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
-use chrono::{DateTime, Utc};
-
-use crate::{
-    api::ContrixApi,
-    coauth::{
-        CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
-        build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
-        capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-        extract_authorization_code_from_callback, extract_error_description_from_callback,
-        extract_error_from_callback, extract_state_from_callback,
-        oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
-        resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
-    },
-    config::{LocalConfigStore, normalize_device_id, normalize_server_url},
-    local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
-    models::DevLoginResponse,
-    views::helpers::{persist_config, short_protocol_id},
+use crate::api::ContrixApi;
+use crate::coauth::{
+    CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
+    build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
+    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
+    extract_authorization_code_from_callback, extract_error_description_from_callback,
+    extract_error_from_callback, extract_state_from_callback,
+    oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
+    resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
 };
+use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
+use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
+use crate::models::DevLoginResponse;
+use crate::views::helpers::{persist_config, short_protocol_id};
 
 #[derive(Clone, Debug)]
 struct CompletedLogin {
@@ -311,23 +308,20 @@ fn persist_completed_login_state(
     if let Some(bundle) = oidc_tokens {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         store.set_oidc_tokens_with_secure_store(Some(bundle), actor_did, secure_store.as_ref());
-        store.set_session_grant(None);
     } else {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         store.set_oidc_tokens_with_secure_store(None, actor_did, secure_store.as_ref());
-        store.set_session_grant(grant);
     }
+    store.set_session_grant(grant);
 }
 
 /// Compute the value of the `session-status` testid. The four states
 /// the cotest harness asserts against:
 ///
-/// * `signed-in` — an access token is present and a session grant is
-///   persisted.
+/// * `signed-in` — an access token is present and a session grant is persisted.
 /// * `signed-out` — no token, no grant.
-/// * `session-expired` — no live token but a session grant is still
-///   persisted (the soft-logout state — the user can re-mint via
-///   `refresh-now-button` without going through OIDC).
+/// * `session-expired` — no live token but a session grant is still persisted (the soft-logout
+///   state — the user can re-mint via `refresh-now-button` without going through OIDC).
 fn compute_session_status(
     access_token: &str,
     session_grant: Option<&PersistedSessionGrant>,
@@ -546,17 +540,40 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
             .await
         {
             Ok(account) => {
+                let actor = if account.did.trim().is_empty() {
+                    principal_did
+                } else {
+                    account.did
+                };
+                let grant_fallback = if crate::oidc::lifecycle::has_refresh_token(&bundle) {
+                    None
+                } else {
+                    let grant = grant.ok_or_else(|| {
+                        "Server sign-in returned an OIDC bearer without refresh_token or session_grant; cannot create a durable session."
+                            .to_owned()
+                    })?;
+                    let bridge = principal.auth_bridge_describe().await.map_err(|error| {
+                        format!("Principal auth bridge describe failed: {error}")
+                    })?;
+                    Some(
+                        persisted_session_grant_from_parts(
+                            grant,
+                            &principal_target,
+                            &actor,
+                            &device,
+                            &bridge.auth.session_grant_exchange_path,
+                            None,
+                        )
+                        .map_err(|error| format!("Could not persist session grant: {error}"))?,
+                    )
+                };
                 let _ = clear_persisted_oidc_scaffold();
                 return Ok(CompletedLogin {
                     principal_server_url: principal_target,
-                    actor: if account.did.trim().is_empty() {
-                        principal_did
-                    } else {
-                        account.did
-                    },
+                    actor,
                     device_id: device,
                     access_token: bundle.access_token.clone(),
-                    grant: None,
+                    grant: grant_fallback,
                     oidc_tokens: Some(bundle),
                 });
             }
@@ -568,8 +585,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
             Err(_) => {
                 // Local/dev deployments may not have OAuth bearer
                 // introspection wired yet. Fall back to the legacy
-                // session-grant exchange below, but do not persist the
-                // consumed grant as a refresh credential.
+                // session-grant exchange below.
             }
         }
     }
@@ -644,6 +660,24 @@ fn persisted_session_grant_from_login(
     actor: &str,
     session_grant_exchange_path: &str,
 ) -> Result<PersistedSessionGrant, String> {
+    persisted_session_grant_from_parts(
+        grant,
+        principal_server_url,
+        actor,
+        &session.device_id,
+        session_grant_exchange_path,
+        parse_rfc3339_utc(&session.expires_at),
+    )
+}
+
+fn persisted_session_grant_from_parts(
+    grant: &CoauthSessionGrantInfo,
+    principal_server_url: &str,
+    actor: &str,
+    device_id: &str,
+    session_grant_exchange_path: &str,
+    session_expires_at: Option<DateTime<Utc>>,
+) -> Result<PersistedSessionGrant, String> {
     let grant_id = grant
         .id
         .as_deref()
@@ -660,11 +694,11 @@ fn persisted_session_grant_from_login(
         grant_id: grant_id.to_owned(),
         audience: audience.to_owned(),
         principal_did: actor.to_owned(),
-        device_id: session.device_id.clone(),
+        device_id: device_id.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
         session_grant_exchange_path: session_grant_exchange_path.to_owned(),
         grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
-        session_expires_at: parse_rfc3339_utc(&session.expires_at),
+        session_expires_at,
         stored_at: Utc::now(),
     })
 }

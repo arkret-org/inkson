@@ -8,13 +8,11 @@
 //!
 //! This module wires three pieces together:
 //!
-//! 1. **Serialize on commit.** The SDK's `ContrixMlsGroup` already
-//!    exposes `export_state_record()` / `restore_from_state_record()`
-//!    so the openmls provider storage can be round-tripped through a
-//!    typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record
-//!    in [`MlsSnapshotEnvelope`] which adds a passphrase-mediated
-//!    confidentiality layer + a SHA-256 MAC so a stolen state.json
-//!    doesn't leak the openmls provider keys.
+//! 1. **Serialize on commit.** The SDK's `ContrixMlsGroup` already exposes `export_state_record()`
+//!    / `restore_from_state_record()` so the openmls provider storage can be round-tripped through
+//!    a typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
+//!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
+//!    openmls provider keys.
 //!
 //! Also exposes the multi-device Welcome shuttle
 //! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
@@ -25,84 +23,55 @@
 //! can round-trip it via `serde_json::from_value` and feed it into
 //! [`contrix_sdk::ContrixMlsGroup::join_from_welcome`].
 //!
-//! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`]
-//!    produces the `cx.schema.key_backup.v1` request body used by
-//!    `PUT /api/v1/keys/backups/{backup_id}`. The blob is opaque to
-//!    soland — passphrase-derived encryption keeps the server
-//!    zero-knowledge of group keys.
+//! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
+//!    `cx.schema.key_backup.v1` request body used by `PUT /api/v1/keys/backups/{backup_id}`. The
+//!    blob is opaque to soland; device-secret-derived encryption keeps the server zero-knowledge of
+//!    group keys.
 //!
-//! 3. **Restore on boot or pair-in.** [`restore_envelope`] decrypts
-//!    the envelope with a recovery passphrase and reconstructs the
-//!    group via the SDK call. Two of the three test cases this
-//!    module ships pin the failure modes:
-//!    [`EnvelopeError::PassphraseMismatch`] (wrong passphrase or
-//!    tampered envelope) and [`EnvelopeError::OutdatedSnapshot`]
-//!    (the envelope's recorded epoch is older than the current
-//!    Anchor view — a paired-in device must NOT bind to a stale
-//!    epoch since that would silently fork the group).
+//! 3. **Restore on boot or pair-in.** [`restore_envelope`] decrypts the envelope with this device's
+//!    MLS snapshot secret and reconstructs the group via the SDK call. Two failure modes are pinned
+//!    in tests: [`EnvelopeError::SecretMismatch`] (wrong device secret or tampered envelope) and
+//!    [`EnvelopeError::OutdatedSnapshot`] (the envelope's recorded epoch is older than the current
+//!    Anchor view — a paired-in device must NOT bind to a stale epoch since that would silently
+//!    fork the group).
 //!
-//! The third test case
-//! ([`tests::persist_restore_round_trip_recovers_group_state`])
-//! pins the happy path: encrypt → write through `LocalStateStore` →
-//! read back → decrypt → SDK restore_from_state_record. This is the
-//! same path the settings-page "Sync MLS state from another device"
-//! button drives.
+//! The happy path is encrypt -> write through `LocalStateStore` -> read
+//! back -> decrypt -> SDK restore_from_state_record. That is the same
+//! path the device rehydrate flow drives.
 //!
 //! ### Crypto choice
 //!
-//! Phase A.6 #2: the envelope now uses real ChaCha20-Poly1305 AEAD —
-//! the `chacha20poly1305` crate is already a direct yougen dependency
-//! (used by the cloud-vault recovery path) and builds cleanly on wasm32.
-//! The pre-A.6 implementation used a SHA-256 keystream + manual
-//! HMAC-SHA-256, which is structurally similar to a Bellare-Namprempre
-//! Encrypt-then-MAC scheme but easy to misuse (key separation done by
-//! convention instead of by the AEAD construction). The new layout:
+//! The envelope uses ChaCha20-Poly1305 AEAD. The `chacha20poly1305`
+//! crate is already a direct yougen dependency (used by the cloud-vault
+//! recovery path) and builds cleanly on wasm32. The layout:
 //!
-//! * **Key derivation:** SHA-256-HMAC-style stretching. The
-//!   passphrase is concatenated with a per-envelope salt and hashed
-//!   `KDF_ITERATIONS` times. The resulting 32-byte key feeds the
-//!   ChaCha20-Poly1305 AEAD directly — no key-splitting needed because
-//!   AEAD authenticates the ciphertext under the same key.
-//! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte
-//!   random nonce per envelope. The nonce is stored alongside the
-//!   ciphertext so decryption is self-contained.
-//! * **Tamper detection:** the AEAD's built-in Poly1305 tag covers
-//!   the ciphertext. We additionally bind the envelope's
-//!   `(salt, epoch, recorded_at, magic)` into the AEAD's
-//!   `additional_data` so a tampered envelope (e.g. an attacker
-//!   swapping the recorded epoch to bypass the freshness check)
-//!   trips the AEAD verification instead of decrypting cleanly under
-//!   a forged epoch.
-//! * **Replay defence:** `recorded_at` is now part of the AEAD AAD,
-//!   so an envelope cannot be replayed with a forged timestamp to
-//!   make it look fresh. The freshness check
-//!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering
-//!   provided by the Anchor view, but the AAD binding guarantees
-//!   the timestamp the caller sees has not been swapped out.
-//!
-//! Legacy SHA-256-keystream envelopes minted before A.6 are still
-//! decryptable via [`decrypt_envelope_legacy_sha256_keystream`]; the
-//! main `decrypt_envelope` path returns
-//! `EnvelopeError::PassphraseMismatch` for them so callers can fall
-//! back to the legacy decoder when they know the blob predates the
-//! migration.
+//! * **Key derivation:** SHA-256-HMAC-style stretching. The device snapshot secret is concatenated
+//!   with a per-envelope salt and hashed `KDF_ITERATIONS` times. The resulting 32-byte key feeds
+//!   the ChaCha20-Poly1305 AEAD directly.
+//! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte random nonce per envelope.
+//!   The nonce is stored alongside the ciphertext so decryption is self-contained.
+//! * **Tamper detection:** the AEAD's built-in Poly1305 tag covers the ciphertext. We additionally
+//!   bind the envelope's `(salt, epoch, recorded_at, magic)` into the AEAD's `additional_data` so a
+//!   tampered envelope (e.g. an attacker swapping the recorded epoch to bypass the freshness check)
+//!   trips the AEAD verification instead of decrypting cleanly under a forged epoch.
+//! * **Replay defence:** `recorded_at` is now part of the AEAD AAD, so an envelope cannot be
+//!   replayed with a forged timestamp to make it look fresh. The freshness check
+//!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Anchor view,
+//!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
 use std::fmt;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chacha20poly1305::{
-    AeadCore, ChaCha20Poly1305, KeyInit, Nonce,
-    aead::{Aead, OsRng, Payload},
-};
-use chrono::SecondsFormat;
-use chrono::{DateTime, Utc};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use chacha20poly1305::aead::{Aead, OsRng, Payload};
+use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
+use chrono::{DateTime, SecondsFormat, Utc};
+use contrix_sdk::MlsGroupStateRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use contrix_sdk::MlsGroupStateRecord;
-
-/// Number of SHA-256 rounds applied during passphrase stretching. The
+/// Number of SHA-256 rounds applied during device-secret stretching. The
 /// trade-off is cost-on-restore vs cost-of-brute-force; 600k matches
 /// the `cx.profile.key_backup.memory_hard.v1` PBKDF2 floor.
 /// Tests use the exact same constant — we don't ship a "test mode"
@@ -113,17 +82,8 @@ pub const KDF_ITERATIONS: u32 = 600_000;
 /// migration can refuse pre-v1 blobs cleanly.
 pub const MLS_ENVELOPE_MAGIC: &[u8] = b"yg-mls-snap-v1";
 
-/// Domain separation tag for the MAC computation. Mirrors what
-/// HMAC-SHA-256 would compute internally; we reproduce the same shape
-/// manually so we stay inside `sha2`-only deps.
-const MAC_OUTER_PAD: u8 = 0x5c;
-const MAC_INNER_PAD: u8 = 0x36;
-
-/// Phase A.6 #2: AEAD envelope version. `0` = legacy SHA-256 keystream
-/// with manual HMAC (pre-A.6, accepted for backward compatibility via
-/// [`decrypt_envelope_legacy_sha256_keystream`]); `1` = ChaCha20-Poly1305
-/// AEAD with `(salt, epoch, recorded_at, magic)` bound into the AAD.
-pub const AEAD_VERSION_LEGACY_KEYSTREAM: u8 = 0;
+/// AEAD envelope version. `1` = ChaCha20-Poly1305 AEAD with
+/// `(salt, epoch, recorded_at, magic)` bound into the AAD.
 pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 
 /// Typed envelope wrapping an encrypted MLS group state
@@ -146,25 +106,14 @@ pub struct MlsSnapshotEnvelope {
     /// outdated-snapshot detection — a peer that paired in a fresher
     /// device sees the larger epoch on the server's anchor view.
     pub epoch: u64,
-    /// Per-envelope salt used during passphrase stretching.
+    /// Per-envelope salt used during device-secret stretching.
     /// Hex-encoded so the JSON form is human-debuggable.
     pub salt_hex: String,
-    /// Ciphertext.
-    ///
-    /// * `aead_version == AEAD_VERSION_CHACHA20_POLY1305`: the
-    ///   ChaCha20-Poly1305 AEAD output, which is the encrypted
-    ///   plaintext followed by the 16-byte Poly1305 tag.
-    /// * `aead_version == AEAD_VERSION_LEGACY_KEYSTREAM`: the
-    ///   pre-A.6 SHA-256-keystream XOR output (no tag — auth is
-    ///   carried separately in `mac_hex`).
+    /// ChaCha20-Poly1305 AEAD output, which is the encrypted plaintext
+    /// followed by the 16-byte Poly1305 tag.
     pub ciphertext_hex: String,
-    /// AEAD nonce / legacy MAC.
-    ///
-    /// * `aead_version == AEAD_VERSION_CHACHA20_POLY1305`: 12-byte
-    ///   ChaCha20-Poly1305 nonce. The nonce is freshly generated per
-    ///   envelope so replay is prevented at the AEAD layer.
-    /// * `aead_version == AEAD_VERSION_LEGACY_KEYSTREAM`: 32-byte
-    ///   HMAC-SHA-256 tag over `salt || epoch || ciphertext`.
+    /// 12-byte ChaCha20-Poly1305 nonce. The nonce is freshly generated
+    /// per envelope so replay is prevented at the AEAD layer.
     pub mac_hex: String,
     /// RFC 3339 timestamp at which the snapshot was taken. Used by
     /// "newest envelope wins" tie-breaking on multi-device restore.
@@ -172,12 +121,8 @@ pub struct MlsSnapshotEnvelope {
     /// is also bound into the AEAD AAD so a tampered envelope cannot
     /// fake a fresh recording time.
     pub recorded_at: DateTime<Utc>,
-    /// AEAD scheme tag. Defaults to
-    /// [`AEAD_VERSION_LEGACY_KEYSTREAM`] when absent from the JSON,
-    /// so envelopes minted before Phase A.6 deserialize without
-    /// migration. Phase A.6 +new envelopes always serialize with
+    /// AEAD scheme tag. New envelopes always serialize with
     /// [`AEAD_VERSION_CHACHA20_POLY1305`].
-    #[serde(default)]
     pub aead_version: u8,
 }
 
@@ -186,10 +131,10 @@ pub struct MlsSnapshotEnvelope {
 /// message + a typed test assertion.
 #[derive(Debug)]
 pub enum EnvelopeError {
-    /// Passphrase did not match the one used at encryption time, OR
-    /// the envelope was tampered with. The two cases are
+    /// Device snapshot secret did not match the one used at encryption
+    /// time, OR the envelope was tampered with. The two cases are
     /// indistinguishable by design (a MAC failure could be either).
-    PassphraseMismatch,
+    SecretMismatch,
     /// The envelope is well-formed and decrypts cleanly but its
     /// recorded epoch is strictly less than the caller-supplied
     /// "current" epoch (typically taken from the latest Anchor view).
@@ -202,7 +147,7 @@ pub enum EnvelopeError {
     /// Hex decode / structural problem.
     Malformed(String),
     /// Round-trip JSON parse on the inner `MlsGroupStateRecord`
-    /// failed. Distinct from [`Self::PassphraseMismatch`] because
+    /// failed. Distinct from [`Self::SecretMismatch`] because
     /// the MAC verified — the bytes match, but the inner shape
     /// changed. This usually means the SDK bumped its on-disk format
     /// in an incompatible way; the user must take a fresh snapshot.
@@ -224,8 +169,8 @@ pub enum EnvelopeError {
 impl fmt::Display for EnvelopeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EnvelopeError::PassphraseMismatch => {
-                f.write_str("passphrase mismatch (or envelope tampered)")
+            EnvelopeError::SecretMismatch => {
+                f.write_str("snapshot secret mismatch (or envelope tampered)")
             }
             EnvelopeError::OutdatedSnapshot {
                 envelope_epoch,
@@ -248,7 +193,7 @@ impl fmt::Display for EnvelopeError {
 
 impl std::error::Error for EnvelopeError {}
 
-/// Encrypt a serialised MLS group state record under a passphrase.
+/// Encrypt a serialised MLS group state record under a device snapshot secret.
 /// `space_id` is metadata only (not encrypted); `state_bytes` is the
 /// SDK-serialised `MlsGroupStateRecord` JSON. `salt` SHOULD be a
 /// 16-byte random value but the helper accepts any length so tests
@@ -265,11 +210,11 @@ pub fn encrypt_state(
     group_id: &str,
     epoch: u64,
     state_bytes: &[u8],
-    passphrase: &str,
+    snapshot_secret: &str,
     salt: &[u8],
 ) -> MlsSnapshotEnvelope {
     let recorded_at = Utc::now();
-    let key = derive_key(passphrase, salt, KDF_ITERATIONS);
+    let key = derive_key(snapshot_secret, salt, KDF_ITERATIONS);
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     let aad = build_aead_aad(salt, epoch, recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
@@ -300,21 +245,14 @@ pub fn encrypt_state(
 /// Decrypt the envelope and return the inner state bytes (the SDK's
 /// `MlsGroupStateRecord` JSON).
 ///
-/// Phase A.6 #2: dispatches on
-/// `aead_version`. For [`AEAD_VERSION_CHACHA20_POLY1305`] envelopes the
-/// AEAD's Poly1305 tag detects both passphrase mismatch and tamper.
-/// For legacy [`AEAD_VERSION_LEGACY_KEYSTREAM`] envelopes the manual
-/// HMAC-SHA-256 over `salt || epoch || ciphertext` is verified before
-/// the XOR-keystream decrypt.
+/// For [`AEAD_VERSION_CHACHA20_POLY1305`] envelopes the AEAD's
+/// Poly1305 tag detects both device-secret mismatch and tamper.
 pub fn decrypt_envelope(
     envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
+    snapshot_secret: &str,
 ) -> Result<Vec<u8>, EnvelopeError> {
     match envelope.aead_version {
-        AEAD_VERSION_CHACHA20_POLY1305 => decrypt_envelope_aead_v1(envelope, passphrase),
-        AEAD_VERSION_LEGACY_KEYSTREAM => {
-            decrypt_envelope_legacy_sha256_keystream(envelope, passphrase)
-        }
+        AEAD_VERSION_CHACHA20_POLY1305 => decrypt_envelope_aead_v1(envelope, snapshot_secret),
         other => Err(EnvelopeError::Malformed(format!(
             "unsupported aead_version {other}"
         ))),
@@ -323,7 +261,7 @@ pub fn decrypt_envelope(
 
 fn decrypt_envelope_aead_v1(
     envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
+    snapshot_secret: &str,
 ) -> Result<Vec<u8>, EnvelopeError> {
     let salt = hex_decode(&envelope.salt_hex)
         .ok_or_else(|| EnvelopeError::Malformed("salt is not hex".to_owned()))?;
@@ -337,7 +275,7 @@ fn decrypt_envelope_aead_v1(
             nonce_bytes.len()
         )));
     }
-    let key = derive_key(passphrase, &salt, KDF_ITERATIONS);
+    let key = derive_key(snapshot_secret, &salt, KDF_ITERATIONS);
     let aad = build_aead_aad(&salt, envelope.epoch, envelope.recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -349,33 +287,10 @@ fn decrypt_envelope_aead_v1(
                 aad: &aad,
             },
         )
-        // ChaCha20-Poly1305 decrypt failure is the typed
-        // PassphraseMismatch signal; we deliberately do not distinguish
-        // "wrong key" from "tampered envelope".
-        .map_err(|_| EnvelopeError::PassphraseMismatch)
-}
-
-/// Phase A.6 #2: legacy decoder for pre-A.6 envelopes that used the
-/// SHA-256 keystream + manual HMAC-SHA-256 construction. New
-/// callers MUST mint AEAD-v1 envelopes via [`encrypt_state`]; this
-/// helper exists only so saved-state restores across the upgrade
-/// boundary keep working.
-pub fn decrypt_envelope_legacy_sha256_keystream(
-    envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
-) -> Result<Vec<u8>, EnvelopeError> {
-    let salt = hex_decode(&envelope.salt_hex)
-        .ok_or_else(|| EnvelopeError::Malformed("salt is not hex".to_owned()))?;
-    let ciphertext = hex_decode(&envelope.ciphertext_hex)
-        .ok_or_else(|| EnvelopeError::Malformed("ciphertext is not hex".to_owned()))?;
-    let stored_mac = hex_decode(&envelope.mac_hex)
-        .ok_or_else(|| EnvelopeError::Malformed("mac is not hex".to_owned()))?;
-    let key = derive_key(passphrase, &salt, KDF_ITERATIONS);
-    let expected = compute_mac(&key, &salt, envelope.epoch, &ciphertext);
-    if !constant_time_eq(&expected, &stored_mac) {
-        return Err(EnvelopeError::PassphraseMismatch);
-    }
-    Ok(xor_keystream(&key, &ciphertext))
+        // ChaCha20-Poly1305 decrypt failure is the typed SecretMismatch
+        // signal; we deliberately do not distinguish "wrong key" from
+        // "tampered envelope".
+        .map_err(|_| EnvelopeError::SecretMismatch)
 }
 
 /// Phase A.6 #2: build the AEAD additional-data bytes binding the
@@ -398,10 +313,10 @@ fn build_aead_aad(salt: &[u8], epoch: u64, recorded_at: DateTime<Utc>) -> Vec<u8
 /// envelope and silently fork the group.
 pub fn decrypt_with_epoch_check(
     envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
+    snapshot_secret: &str,
     current_epoch_floor: u64,
 ) -> Result<Vec<u8>, EnvelopeError> {
-    let bytes = decrypt_envelope(envelope, passphrase)?;
+    let bytes = decrypt_envelope(envelope, snapshot_secret)?;
     if envelope.epoch < current_epoch_floor {
         return Err(EnvelopeError::OutdatedSnapshot {
             envelope_epoch: envelope.epoch,
@@ -432,17 +347,8 @@ impl MlsSnapshotEnvelope {
             "backup_version": "kb_mls_snapshot_v1",
             "created_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
             "encryption": {
-                "recipient_method": "passphrase_kdf",
+                "recipient_method": "device_snapshot_secret",
                 "recipient_key_ref": device_id,
-                "kdf": {
-                    "name": "pbkdf2",
-                    "salt": self.salt_hex,
-                    "params": {
-                        "iterations": KDF_ITERATIONS,
-                        "hash": "sha256"
-                    },
-                    "degraded_profile_reason": "yougen wasm MLS snapshot fallback uses sha256 stretching until native Argon2id is wired"
-                },
                 "aead": {
                     "name": "xchacha20_poly1305",
                     "nonce": nonce
@@ -469,6 +375,7 @@ impl MlsSnapshotEnvelope {
         {
             object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
         }
+        crate::key_backup::attach_key_backup_genesis_series(&mut body);
         crate::key_backup::attach_key_backup_domain_separation(
             &mut body,
             crate::key_backup::KeyBackupClass::MlsHistory,
@@ -491,27 +398,27 @@ impl MlsSnapshotEnvelope {
 /// [`contrix_sdk::ContrixMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
+    snapshot_secret: &str,
     current_epoch_floor: u64,
 ) -> Result<MlsGroupStateRecord, EnvelopeError> {
-    let bytes = decrypt_with_epoch_check(envelope, passphrase, current_epoch_floor)?;
+    let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     serde_json::from_slice::<MlsGroupStateRecord>(&bytes)
         .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
 }
 
-/// Helper used by both the boot path and the "sync from another device" UI
-/// button. Decrypts the envelope, sanity-checks the epoch, and reconstructs
-/// the SDK group via [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`].
+/// Helper used by the boot path and local MLS actions. Decrypts the envelope,
+/// sanity-checks the epoch, and reconstructs the SDK group via
+/// [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Anchor view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
 /// no Anchor view is known yet).
 pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
-    passphrase: &str,
+    snapshot_secret: &str,
     current_epoch_floor: u64,
 ) -> Result<contrix_sdk::ContrixMlsGroup, EnvelopeError> {
-    let bytes = decrypt_with_epoch_check(envelope, passphrase, current_epoch_floor)?;
+    let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
     contrix_sdk::ContrixMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
@@ -519,72 +426,22 @@ pub fn restore_envelope(
 
 // ───────────────────── Crypto primitives ────────────────────────
 
-fn derive_key(passphrase: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
+fn derive_key(snapshot_secret: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
     let mut state: [u8; 32] = {
         let mut hasher = Sha256::new();
         hasher.update(MLS_ENVELOPE_MAGIC);
         hasher.update(salt);
-        hasher.update(passphrase.as_bytes());
+        hasher.update(snapshot_secret.as_bytes());
         hasher.finalize().into()
     };
     for round in 1..iterations {
         let mut hasher = Sha256::new();
         hasher.update(state);
         hasher.update(round.to_be_bytes());
-        hasher.update(passphrase.as_bytes());
+        hasher.update(snapshot_secret.as_bytes());
         state = hasher.finalize().into();
     }
     state
-}
-
-fn xor_keystream(key: &[u8; 32], data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    let mut counter: u64 = 0;
-    for chunk in data.chunks(32) {
-        let mut hasher = Sha256::new();
-        hasher.update(key);
-        hasher.update(counter.to_be_bytes());
-        let block: [u8; 32] = hasher.finalize().into();
-        for (i, byte) in chunk.iter().enumerate() {
-            out.push(byte ^ block[i]);
-        }
-        counter = counter.wrapping_add(1);
-    }
-    out
-}
-
-fn compute_mac(key: &[u8; 32], salt: &[u8], epoch: u64, ciphertext: &[u8]) -> [u8; 32] {
-    // Manual HMAC-SHA-256: H((K ^ opad) || H((K ^ ipad) || msg)).
-    // Block size 64 for SHA-256.
-    let mut k_padded = [0u8; 64];
-    k_padded[..32].copy_from_slice(key);
-    let mut k_inner = [0u8; 64];
-    let mut k_outer = [0u8; 64];
-    for i in 0..64 {
-        k_inner[i] = k_padded[i] ^ MAC_INNER_PAD;
-        k_outer[i] = k_padded[i] ^ MAC_OUTER_PAD;
-    }
-    let mut inner = Sha256::new();
-    inner.update(k_inner);
-    inner.update(salt);
-    inner.update(epoch.to_be_bytes());
-    inner.update(ciphertext);
-    let inner_hash = inner.finalize();
-    let mut outer = Sha256::new();
-    outer.update(k_outer);
-    outer.update(inner_hash);
-    outer.finalize().into()
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (a, b) in left.iter().zip(right) {
-        diff |= a ^ b;
-    }
-    diff == 0
 }
 
 fn is_protocol_device_id(value: &str) -> bool {
@@ -667,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn passphrase_mismatch_is_rejected_distinct_from_other_errors() {
+    fn snapshot_secret_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
         let envelope = encrypt_state(
             "cx:space:demo",
@@ -678,15 +535,15 @@ mod tests {
             &fixed_salt(),
         );
         let result = decrypt_envelope(&envelope, "secret two");
-        assert!(matches!(result, Err(EnvelopeError::PassphraseMismatch)));
+        assert!(matches!(result, Err(EnvelopeError::SecretMismatch)));
 
-        // Tampered ciphertext also surfaces as PassphraseMismatch
-        // (MAC failure — the two cases are indistinguishable by
+        // Tampered ciphertext also surfaces as SecretMismatch
+        // (AEAD failure — the two cases are indistinguishable by
         // design and both block restore).
         let mut tampered = envelope.clone();
         tampered.ciphertext_hex.replace_range(0..2, "ff");
         let result = decrypt_envelope(&tampered, "secret one");
-        assert!(matches!(result, Err(EnvelopeError::PassphraseMismatch)));
+        assert!(matches!(result, Err(EnvelopeError::SecretMismatch)));
     }
 
     #[test]
@@ -711,10 +568,10 @@ mod tests {
             other => panic!("expected OutdatedSnapshot, got {other:?}"),
         }
 
-        // Passphrase-mismatch beats outdated check (we don't leak the
-        // envelope epoch to a wrong-passphrase caller).
+        // Secret mismatch beats outdated check (we don't leak the
+        // envelope epoch to a caller without the device secret).
         let result = decrypt_with_epoch_check(&envelope, "wrong", 5);
-        assert!(matches!(result, Err(EnvelopeError::PassphraseMismatch)));
+        assert!(matches!(result, Err(EnvelopeError::SecretMismatch)));
     }
 
     #[test]
@@ -750,6 +607,17 @@ mod tests {
         );
         assert_eq!(body["backup_class"], "mls_history");
         assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
+        assert!(
+            body["series_id"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("cx:backup_series:"))
+        );
+        assert_eq!(body["series_seq"], 0);
+        assert_eq!(
+            body["encryption"]["recipient_method"],
+            "device_snapshot_secret"
+        );
+        assert!(body["encryption"].get("kdf").is_none());
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
@@ -775,7 +643,7 @@ mod tests {
     #[test]
     fn encrypt_with_distinct_salts_produces_distinct_ciphertext() {
         // Sanity: salt randomisation defeats rainbow-table lookups
-        // even when the same passphrase + plaintext is used across
+        // even when the same device secret + plaintext is used across
         // two snapshots. Mirrors the SDK key_backup invariant.
         let bytes = fake_state_record_bytes("a", 1);
         let one = encrypt_state("s", "a", 1, &bytes, "p", b"salt-one");
@@ -785,29 +653,10 @@ mod tests {
     }
 
     #[test]
-    fn xor_keystream_is_self_inverse() {
-        // Encrypt → encrypt = original. The on-the-wire scheme is XOR
-        // so the same primitive decrypts.
-        let key = derive_key("pass", b"salt", 100);
-        let plain = b"hello mls".to_vec();
-        let cipher = xor_keystream(&key, &plain);
-        let round = xor_keystream(&key, &cipher);
-        assert_eq!(round, plain);
-    }
-
-    #[test]
-    fn constant_time_eq_handles_length_mismatch() {
-        assert!(constant_time_eq(b"abc", b"abc"));
-        assert!(!constant_time_eq(b"abc", b"abd"));
-        assert!(!constant_time_eq(b"abc", b"abcd"));
-        assert!(!constant_time_eq(b"", b"x"));
-    }
-
-    #[test]
     fn invalid_state_record_surfaces_typed_error() {
-        // The MAC verifies (encryption is byte-transparent), but the
+        // The AEAD tag verifies (encryption is byte-transparent), but the
         // inner bytes don't parse as `MlsGroupStateRecord`. The error
-        // is `InvalidStateRecord`, distinct from `PassphraseMismatch`.
+        // is `InvalidStateRecord`, distinct from `SecretMismatch`.
         let envelope = encrypt_state(
             "cx:space:demo",
             "z",

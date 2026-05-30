@@ -3,8 +3,8 @@
 //! Spec: `sync/federation.md`. Cross-domain Event exchange requires:
 //! - Each domain advertises `.well-known/contrix/server` with its service DID.
 //! - Trust anchors are pinned per peer domain (DID + public key).
-//! - Every `FederationTransaction` carries a signature the receiver verifies
-//!   against the origin domain's trust anchor.
+//! - Every `FederationTransaction` carries a signature the receiver verifies against the origin
+//!   domain's trust anchor.
 //!
 //! Yougen previously called the federation HTTP endpoints (`api.rs:1458-1521`)
 //! as opaque pass-throughs. This module adds a client-side trust bundle that

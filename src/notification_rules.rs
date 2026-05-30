@@ -588,8 +588,9 @@ fn server_locus() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn message_context() -> NotificationEvalContext {
         NotificationEvalContext {

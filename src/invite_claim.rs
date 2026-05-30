@@ -3,13 +3,11 @@
 //! The round-4 `cx.invite.claim` wire shape requires the claimant to
 //! produce:
 //!
-//! 1. A `subject_proof` — a device-signed assertion that the device
-//!    presenting the claim controls the principal DID accepting the
-//!    invite. The signing input is the canonical JSON of
+//! 1. A `subject_proof` — a device-signed assertion that the device presenting the claim controls
+//!    the principal DID accepting the invite. The signing input is the canonical JSON of
 //!    `{invite_id, claimant_did, claimant_device_id, claimed_at}`.
-//! 2. A `binding_proof` transcript — the canonical bytes of the OOB
-//!    code material (offline_token or lookup_table_ref / pepper_id)
-//!    that the auth server can hash and match against the original
+//! 2. A `binding_proof` transcript — the canonical bytes of the OOB code material (offline_token or
+//!    lookup_table_ref / pepper_id) that the auth server can hash and match against the original
 //!    `ThirdPartyInvite` envelope.
 //!
 //! Plus five terminal states the receiver-side reducer surfaces to the
@@ -229,9 +227,9 @@ use base64::Engine as _;
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::{SECRET_KEY_LENGTH, Verifier};
+
     use super::*;
-    use ed25519_dalek::SECRET_KEY_LENGTH;
-    use ed25519_dalek::Verifier;
 
     fn deterministic_signing_key(seed_byte: u8) -> SigningKey {
         let mut seed = [0u8; SECRET_KEY_LENGTH];

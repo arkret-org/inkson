@@ -30,7 +30,8 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{coauth::CoauthApi, views::helpers::short_protocol_id};
+use crate::coauth::CoauthApi;
+use crate::views::helpers::short_protocol_id;
 
 /// One quarantined invite row, parsed from the wire JSON.
 #[derive(Clone, Debug, PartialEq)]

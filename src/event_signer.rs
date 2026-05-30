@@ -11,17 +11,14 @@
 //!
 //! ## What lives here
 //!
-//! * [`YougenEventSigner`] — opaque handle around an `EventSigner`
-//!   trait object plus the metadata UI surfaces want (`signer_did`,
-//!   `verification_method`, last-sign timestamp).
-//! * [`build_ed25519_signer`] — bootstrap that takes a 32-byte Ed25519
-//!   seed (typically loaded via `secure_key_store::ensure_signing_seed`)
-//!   and returns a `YougenEventSigner` ready to attach detached JWS
-//!   proofs to event envelopes.
-//! * [`install_active_signer`] / [`active_signer`] — a process-wide
-//!   `OnceLock` that holds the active signer; the submit guard in
-//!   [`crate::api::ContrixApi::submit_event_envelope`] reaches into this
-//!   to lazily sign envelopes that were built unsigned.
+//! * [`YougenEventSigner`] — opaque handle around an `EventSigner` trait object plus the metadata
+//!   UI surfaces want (`signer_did`, `verification_method`, last-sign timestamp).
+//! * [`build_ed25519_signer`] — bootstrap that takes a 32-byte Ed25519 seed (typically loaded via
+//!   `secure_key_store::ensure_signing_seed`) and returns a `YougenEventSigner` ready to attach
+//!   detached JWS proofs to event envelopes.
+//! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
+//!   active signer; the submit guard in [`crate::api::ContrixApi::submit_event_envelope`] reaches
+//!   into this to lazily sign envelopes that were built unsigned.
 //! * [`signer_status`] — diagnostic snapshot for the settings panel.
 //!
 //! ## Canonical bytes alignment
@@ -60,9 +57,8 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-
 use contrix_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
+use serde_json::Value;
 
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
 
@@ -197,7 +193,8 @@ impl YougenEventSigner {
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
     pub fn sign_envelope(&self, event: &mut EventEnvelope) -> Result<(), EventSignerError> {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
         // Mirror EventEnvelope::sign_ed25519: strip proofs + unsigned
         // before canonicalising so the digest is stable across rounds.
@@ -402,14 +399,13 @@ pub fn signer_status() -> Option<SignerStatus> {
 /// Bootstrap the OS-keychain backed signer:
 ///
 /// 1. Pull the platform-default [`crate::secure_key_store::SecureKeyStore`]
-///    (`KeyringSecureKeyStore` on desktop, `LocalStorageSecureKeyStore`
-///    on wasm32, `HostBridgeSecureKeyStore` on mobile when a host
-///    bridge is installed).
-/// 2. [`crate::secure_key_store::ensure_signing_seed`] — loads the seed
-///    or generates and persists a fresh one.
+///    (`KeyringSecureKeyStore` on desktop, `LocalStorageSecureKeyStore` on wasm32,
+///    `HostBridgeSecureKeyStore` on mobile when a host bridge is installed).
+/// 2. [`crate::secure_key_store::ensure_signing_seed`] — loads the seed or generates and persists a
+///    fresh one.
 /// 3. [`build_ed25519_signer`] from the seed + derived did:key.
-/// 4. [`install_active_signer`] + [`crate::operation::set_proof_mode`]
-///    so the submit guard switches to the real-signer path.
+/// 4. [`install_active_signer`] + [`crate::operation::set_proof_mode`] so the submit guard switches
+///    to the real-signer path.
 ///
 /// Returns the installed signer for the caller to thread into the UI.
 /// On error the caller is expected to fall back to either
@@ -429,10 +425,11 @@ pub fn bootstrap_default_signer(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::canonical::canonical_json_bytes;
     use crate::operation::{OperationBuilder, set_proof_mode};
-    use serde_json::json;
 
     /// Same per-process guard pattern operation.rs uses — proof-mode
     /// and active-signer state is global so concurrent tests would
@@ -552,7 +549,8 @@ mod tests {
         let canonical_bytes = canonical_json_bytes(&canonical).unwrap();
         let proof = event.proofs.first().unwrap();
 
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let parts: Vec<&str> = proof.jws.split('.').collect();
         assert_eq!(parts.len(), 3);
         let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");

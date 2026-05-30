@@ -18,16 +18,14 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    components::HelpTip,
-    key_backup::build_recovery_vault_backup_body,
-    local_state::LocalStateStore,
-    operation::uuid_v7,
-    recovery_crypto::{
-        VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
-    },
-    views::helpers::{short_protocol_id, with_authed_api},
+use crate::components::HelpTip;
+use crate::key_backup::build_recovery_vault_backup_body;
+use crate::local_state::LocalStateStore;
+use crate::operation::uuid_v7;
+use crate::recovery_crypto::{
+    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, derive_vault_kek, encrypt_vault,
 };
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const KEY_BACKUP_STATE_KEY: &str = "key_backup.state.v1";
 

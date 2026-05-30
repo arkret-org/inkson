@@ -61,11 +61,11 @@ pub fn known_profiles() -> Vec<ConformanceProfile> {
 
 /// Conformance tier per `artifacts/profiles/conformance-profiles.json` `profile_tiers`.
 ///
-/// - `V1Core` — must be implemented to claim v1 conformance. 14 profiles total at
-///   the spec level; yougen exposes the client-side subset.
-/// - `V1_1Extension` — opt-in extension shipping after v1 core stable. Currently
-///   `applet_service`, `agent_runtime`, `mimi_interop`. Implementations MAY
-///   declare these without violating v1 core conformance.
+/// - `V1Core` — must be implemented to claim v1 conformance. 14 profiles total at the spec level;
+///   yougen exposes the client-side subset.
+/// - `V1_1Extension` — opt-in extension shipping after v1 core stable. Currently `applet_service`,
+///   `agent_runtime`, `mimi_interop`. Implementations MAY declare these without violating v1 core
+///   conformance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConformanceTier {
     V1Core,
@@ -732,8 +732,9 @@ pub struct SpaceDiscovery {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn conformance_profiles_declared() {

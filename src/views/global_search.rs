@@ -21,7 +21,8 @@
 //! - `global-search-result-snippet` for the body excerpt
 
 use dioxus::prelude::*;
-use dioxus_router::{Link, hooks::use_navigator};
+use dioxus_router::Link;
+use dioxus_router::hooks::use_navigator;
 use serde_json::Value;
 
 use crate::api::ContrixApi;
@@ -370,8 +371,9 @@ fn run_search(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn cmd_f_triggers_search() {

@@ -5,17 +5,14 @@
 //! spec is in `contrix-rust-sdk/crates/core/src/model/circle.rs`; this
 //! module is the *client* surface that the rest of yougen consumes:
 //!
-//! - [`CircleScope`] is the active scope a composer / new-Flow form is
-//!   writing into. `Realm` is the default; `Circle { … }` flags a
-//!   Circle-scoped write that must end up with `scope_circle_id` set on
-//!   the canonical envelope.
-//! - [`CircleSummary`] is the lightweight projection rendered by the
-//!   Space-sidebar Circle list, the scope picker, and the Realm-detail
-//!   modal.
-//! - [`CircleErrorKind`] is the typed mapping from the CXP-0007 reason
-//!   codes that surface in soland's error envelopes. The UI Toast layer
-//!   (see [`crate::components::circle_error_toast`]) consumes this to
-//!   produce localized user-facing strings.
+//! - [`CircleScope`] is the active scope a composer / new-Flow form is writing into. `Realm` is the
+//!   default; `Circle { … }` flags a Circle-scoped write that must end up with `scope_circle_id`
+//!   set on the canonical envelope.
+//! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list, the
+//!   scope picker, and the Realm-detail modal.
+//! - [`CircleErrorKind`] is the typed mapping from the CXP-0007 reason codes that surface in
+//!   soland's error envelopes. The UI Toast layer (see [`crate::components::circle_error_toast`])
+//!   consumes this to produce localized user-facing strings.
 //!
 //! ## Status
 //!
@@ -27,9 +24,8 @@
 //! matching against `effective_scope` now happens against the same
 //! enum the reducer produces.
 
-use serde::{Deserialize, Serialize};
-
 use contrix_sdk::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER;
+use serde::{Deserialize, Serialize};
 
 /// The scope a composer / Flow-create form is actively writing into.
 ///

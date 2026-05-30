@@ -395,9 +395,6 @@ fn current_platform_str() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::{Duration, Utc};
-    use ed25519_dalek::pkcs8::EncodePrivateKey as _;
     use std::sync::Arc;
     #[cfg(not(target_arch = "wasm32"))]
     use std::{
@@ -405,6 +402,10 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use chrono::{Duration, Utc};
+    use ed25519_dalek::pkcs8::EncodePrivateKey as _;
+
+    use super::*;
     use crate::local_state::PersistedSessionGrant;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
 

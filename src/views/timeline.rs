@@ -7,16 +7,14 @@ use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::{
-    conformance::PlaintextBoundary,
-    crypto::compose_local_encrypted_message,
-    local_state::{LocalStateStore, ReadMarkerRecord},
-    media::{hash_matches, media_type_preview_policy, sha256_hex},
-    operation::{EventEnvelope, OperationBuilder, uuid_v7},
-    views::helpers::{
-        active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
-        with_authed_api_with_sync,
-    },
+use crate::conformance::PlaintextBoundary;
+use crate::crypto::compose_local_encrypted_message;
+use crate::local_state::{LocalStateStore, ReadMarkerRecord};
+use crate::media::{hash_matches, media_type_preview_policy, sha256_hex};
+use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+use crate::views::helpers::{
+    active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
+    with_authed_api_with_sync,
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
@@ -524,7 +522,6 @@ pub fn TimelinePanel(
     // emits a single `cx.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
     let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
-    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
     {
         let base_a = base_url.clone();
         let token_a = token;
@@ -556,15 +553,10 @@ pub fn TimelinePanel(
                 if candidates.is_empty() {
                     return;
                 }
-                let passphrase = mls_passphrase_store
-                    .read()
-                    .get(&space)
-                    .map(str::to_owned)
-                    .unwrap_or_default();
                 let api_token = token_a();
                 for (event_id, payload_value) in candidates {
                     let Some(plaintext) =
-                        try_local_mls_decrypt(state_store, &space, &passphrase, &payload_value)
+                        try_local_mls_decrypt(state_store, &space, &actor, &device, &payload_value)
                     else {
                         continue;
                     };
@@ -2215,7 +2207,7 @@ fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
             format!("{track} {}", short_protocol_id(object_ref))
         }
         ("flow", Some(object_ref), None) => format!("flow {}", short_protocol_id(object_ref)),
-        (kind, _, _) => kind.to_owned(),
+        (kind, ..) => kind.to_owned(),
     };
     format!(
         "Read marker: {} ({scope}) at {}",
@@ -2237,8 +2229,8 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// emitted by chat.rs
 /// Send Secure. Returns `Some(plaintext_bytes)` on successful decrypt,
 /// `None` for every soft failure (no snapshot, snapshot can't be
-/// hydrated with the supplied passphrase, payload doesn't deserialize
-/// as a typed `EncryptedPayload`, group rejects the payload).
+/// hydrated with this device's snapshot secret, payload doesn't
+/// deserialize as a typed `EncryptedPayload`, group rejects the payload).
 ///
 /// The caller — the `cx.audit.accessed` emitter inside
 /// [`TimelinePanel`] — uses `Some(...)` as the firing trigger, so any
@@ -2246,21 +2238,25 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// Native-only because OpenMLS is gated to non-wasm. On wasm we
 /// uniformly return `None` so the emitter is a no-op there.
 ///
-/// `passphrase` is sourced from the shared `MlsPassphraseStore` context;
-/// an empty string fails closed without firing audit. Only real
-/// SDK-encrypted payloads should trigger the audit hook.
+/// The snapshot secret is device-scoped and read from `SecureKeyStore`.
+/// Only real SDK-encrypted payloads should trigger the audit hook.
 #[cfg(not(target_arch = "wasm32"))]
 fn try_local_mls_decrypt(
     state_store: Signal<LocalStateStore>,
     space_id: &str,
-    passphrase: &str,
+    actor_did: &str,
+    device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
-    if passphrase.is_empty() {
-        return None;
-    }
     let envelope = state_store.read().mls_snapshot_for(space_id)?;
-    let mut group = crate::mls::persistence::restore_envelope(&envelope, passphrase, 0).ok()?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secret = crate::mls::runtime::load_device_snapshot_secret(
+        secure_store.as_ref(),
+        actor_did,
+        device_id,
+    )
+    .ok()?;
+    let mut group = crate::mls::persistence::restore_envelope(&envelope, &secret, 0).ok()?;
     let payload: contrix_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     group.decrypt_payload(&payload).ok()
@@ -2270,7 +2266,8 @@ fn try_local_mls_decrypt(
 fn try_local_mls_decrypt(
     _state_store: Signal<LocalStateStore>,
     _space_id: &str,
-    _passphrase: &str,
+    _actor_did: &str,
+    _device_id: &str,
     _payload_value: &Value,
 ) -> Option<Vec<u8>> {
     None

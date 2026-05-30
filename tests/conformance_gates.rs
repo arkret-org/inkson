@@ -3,28 +3,22 @@
 //!
 //! Stream J of `_claude_todos.md`. Three families of gates live here:
 //!
-//! 1. **J1 — event-schema gate.** For each typed builder in
-//!    `yougen::api`, run build → stamp the wire-only fields a real
-//!    submitter would attach (`anchor_ref`, `proofs[0]` from a real
-//!    Ed25519 signer) → serialise → validate against
-//!    `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`.
-//!    Schema requires reducer-input events to carry `preconditions`,
-//!    `effects`, `anchor_ref`, and at least one proof; the gate
-//!    therefore covers both the builder output and the
-//!    sign-and-stamp pipeline immediately downstream.
+//! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
+//!    wire-only fields a real submitter would attach (`anchor_ref`, `proofs[0]` from a real Ed25519
+//!    signer) → serialise → validate against
+//!    `contrix-spec/spec/v1/artifacts/schemas/event-schema.json`. Schema requires reducer-input
+//!    events to carry `preconditions`, `effects`, `anchor_ref`, and at least one proof; the gate
+//!    therefore covers both the builder output and the sign-and-stamp pipeline immediately
+//!    downstream.
 //!
-//! 2. **J2 — operation_id registry gate.** Recursively scans
-//!    `yougen/src/**/*.rs` for `operation_id = "cx.*"` literals and
-//!    asserts each is in the canonical
-//!    `operation-registry.json` OR namespaced as `cx.extension.yougen.*`.
-//!    Yougen has very few of these (typed Rust API, not HTTP), but the
-//!    gate keeps the convention if any are added.
+//! 2. **J2 — operation_id registry gate.** Recursively scans `yougen/src/**/*.rs` for `operation_id
+//!    = "cx.*"` literals and asserts each is in the canonical `operation-registry.json` OR
+//!    namespaced as `cx.extension.yougen.*`. Yougen has very few of these (typed Rust API, not
+//!    HTTP), but the gate keeps the convention if any are added.
 //!
-//! 3. **J3 — forbidden terms gate.** Recursively scans
-//!    `yougen/src/**/*.rs` for legacy names (`Place`, `place_id`,
-//!    `BoardPlace`, `PlaceProjection`, `PlaceLifecycleState`,
-//!    `flow_branch`) and fails on any occurrence outside
-//!    `#[cfg(test)]` modules or comment lines.
+//! 3. **J3 — forbidden terms gate.** Recursively scans `yougen/src/**/*.rs` for legacy names
+//!    (`Place`, `place_id`, `BoardPlace`, `PlaceProjection`, `PlaceLifecycleState`, `flow_branch`)
+//!    and fails on any occurrence outside `#[cfg(test)]` modules or comment lines.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -36,7 +30,6 @@ use jsonschema::{Registry, Resource};
 use regex::Regex;
 use serde_json::Value;
 use walkdir::WalkDir;
-
 use yougen::api;
 use yougen::operation::EventEnvelope;
 

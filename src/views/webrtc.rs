@@ -7,11 +7,11 @@ use std::collections::BTreeSet;
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::{
-    local_state::LocalStateStore,
-    models::{CallRecordingStartResponse, CreateWebrtcSessionResponse, WebrtcSignalResponse},
-    views::helpers::{short_protocol_id, with_authed_api},
+use crate::local_state::LocalStateStore;
+use crate::models::{
+    CallRecordingStartResponse, CreateWebrtcSessionResponse, WebrtcSignalResponse,
 };
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// Client-side call lifecycle FSM. Soland owns the participant-scoped
 /// `call_state`; this enum keeps the UI panels and testids stable.

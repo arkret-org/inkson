@@ -243,8 +243,9 @@ fn wasm_placeholder_ciphertext_fallback_allowed() -> bool {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::*;
     use contrix_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
+
+    use super::*;
 
     #[test]
     fn local_mls_devices_encrypt_decrypt_and_preserve_pending_ciphertext() {

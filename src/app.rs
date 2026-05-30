@@ -1,30 +1,31 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use dioxus::prelude::*;
-use dioxus_router::{Link, Navigator, Router, hooks::*};
+use dioxus_router::hooks::*;
+use dioxus_router::{Link, Navigator, Router};
 use serde_json::Value;
 
-use crate::{
-    api::{ContrixApi, is_auth_expired_error},
-    components::{SecurityStateBadge, UiIcon},
-    config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url},
-    conformance::{
-        PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
-        PROFILE_PUSH_GATEWAY, profile_ready,
-    },
-    i18n::{Locale, TextDirection},
-    local_state::{ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant},
-    models::{
-        ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
-        projection_realm_id_for_known_space,
-    },
-    routes::Route,
-    views::{
-        ConnectionState,
-        helpers::{persist_config, short_protocol_id},
-        timeline::TimelineEvent,
-    },
+use crate::api::{ContrixApi, is_auth_expired_error};
+use crate::components::{SecurityStateBadge, UiIcon};
+use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
+use crate::conformance::{
+    PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
+    PROFILE_PUSH_GATEWAY, profile_ready,
 };
+use crate::i18n::{Locale, TextDirection};
+use crate::local_state::{
+    ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant,
+};
+use crate::models::{
+    ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
+    projection_realm_id_for_known_space,
+};
+use crate::routes::Route;
+use crate::views::ConnectionState;
+use crate::views::helpers::{persist_config, short_protocol_id};
+use crate::views::timeline::TimelineEvent;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
@@ -6459,16 +6460,30 @@ fn initial_session_token_from_state(
         // Access tokens are short-lived cache material. On a hard page
         // reload, let the refresh-token/session-grant poller mint a fresh
         // bearer instead of racing boot API calls with an expired one.
-        return oidc_access_token_boot_usable(bundle, now_unix)
-            .then(|| bundle.access_token.clone())
-            .unwrap_or_default();
+        if oidc_access_token_boot_usable(bundle, now_unix) {
+            return bundle.access_token.clone();
+        }
     }
     if let Some(grant) = local_state.session_grant.as_ref() {
         return session_grant_access_token_boot_usable(grant, &config.session_token, now_unix)
             .then(|| config.session_token.clone())
             .unwrap_or_default();
     }
+    if local_state.oidc_tokens.is_some() {
+        return String::new();
+    }
     config.session_token.clone()
+}
+
+fn has_bootstrap_refresh_material(store: &LocalStateStore, principal_server_url: &str) -> bool {
+    let state = store.load();
+    if state.oidc_tokens.is_some() {
+        return true;
+    }
+    state.session_grant.as_ref().is_some_and(|grant| {
+        crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
+            && !crate::session_refresh::grant_is_dead(grant)
+    })
 }
 
 #[component]
@@ -6589,16 +6604,6 @@ pub fn RouterView() -> Element {
             crate::i18n::set_locale(&mut sig, locale());
         });
     }
-    // Shared `Signal<MlsPassphraseStore>` for per-Space MLS snapshot
-    // passphrases. Both chat.rs (encrypt path) and timeline.rs
-    // (decrypt-success audit emitter) read from this so a Send Secure
-    // followed by a sync round-trip can be decrypted by the same client.
-    // Default empty — the placeholder/sealed paths still work; once the
-    // user enters a passphrase the real MLS encrypt + decrypt path
-    // engages for that Space.
-    use_context_provider::<Signal<crate::mls::passphrase::MlsPassphraseStore>>(|| {
-        Signal::new(crate::mls::passphrase::MlsPassphraseStore::default())
-    });
     // Cap-Gate-1: shared `Signal<CapabilityEngine>` for UI-side pre-gates.
     // Starts empty; views call `engine.ui_gate(...)` which returns an open
     // gate when no grants for the subject are loaded yet, so the existing
@@ -6637,6 +6642,7 @@ pub fn RouterView() -> Element {
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
     let mut space_scope_mode = use_signal(move || initial_space_scope_mode);
+    let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
 
     // On first render with a live session, fetch the directory + sync so
     // the sidebar's Space list shows up after a page reload. The list
@@ -6677,9 +6683,15 @@ pub fn RouterView() -> Element {
                     store.load_oidc_tokens_with_secure_store(&active_actor, secure_store.as_ref())
                 };
                 if let Some(bundle) = oidc_bundle {
-                    if crate::oidc::lifecycle::due_for_refresh(&bundle)
-                        && crate::oidc::lifecycle::has_refresh_token(&bundle)
-                    {
+                    if !crate::oidc::lifecycle::due_for_refresh(&bundle) {
+                        crate::api::sleep_for(std::time::Duration::from_secs(
+                            crate::session_refresh::POLL_INTERVAL_SECS,
+                        ))
+                        .await;
+                        continue;
+                    }
+
+                    if crate::oidc::lifecycle::has_refresh_token(&bundle) {
                         if token().trim().is_empty() {
                             status.set("Restoring session...".to_owned());
                         }
@@ -6711,32 +6723,32 @@ pub fn RouterView() -> Element {
                                 );
                                 status.set("Online".to_owned());
                                 last_error.set(None);
+                                crate::api::sleep_for(std::time::Duration::from_secs(
+                                    crate::session_refresh::POLL_INTERVAL_SECS,
+                                ))
+                                .await;
+                                continue;
                             }
                             Err(error) => {
-                                // Keep the current bearer in place. A
-                                // failed background refresh must not
-                                // interrupt an otherwise usable page.
-                                if token().trim().is_empty() {
-                                    status.set("Session restore failed; sign in again".to_owned());
-                                }
+                                // Try the session-grant fallback below
+                                // when one was persisted alongside the
+                                // OIDC bundle. This covers local IdPs
+                                // that issue an access token but no
+                                // refresh token, or a revoked upstream
+                                // refresh token while the Contrix grant
+                                // is still valid.
                                 last_error.set(Some(format!("OIDC refresh transient: {error}")));
                             }
                         }
-                    } else if crate::oidc::lifecycle::due_for_refresh(&bundle)
-                        && !crate::oidc::lifecycle::has_refresh_token(&bundle)
-                        && token().trim().is_empty()
-                    {
-                        status.set("Session expired; sign in again".to_owned());
+                    } else {
+                        if token().trim().is_empty() {
+                            status.set("Restoring session...".to_owned());
+                        }
                         last_error.set(Some(
-                            "OIDC access token expired and no refresh_token is available"
+                            "OIDC access token expired and no refresh_token is available; trying session grant"
                                 .to_owned(),
                         ));
                     }
-                    crate::api::sleep_for(std::time::Duration::from_secs(
-                        crate::session_refresh::POLL_INTERVAL_SECS,
-                    ))
-                    .await;
-                    continue;
                 }
                 let prepared = {
                     let mut store = state_store.write();
@@ -6849,7 +6861,11 @@ pub fn RouterView() -> Element {
                 session.clear();
             }
         }
-        if !base.trim().is_empty() && !session.trim().is_empty() {
+        let can_restore_session = {
+            let store = state_store.read();
+            has_bootstrap_refresh_material(&store, &base)
+        };
+        if !base.trim().is_empty() && (!session.trim().is_empty() || can_restore_session) {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
             connect(
@@ -6977,6 +6993,77 @@ pub fn RouterView() -> Element {
     } else {
         None
     };
+    {
+        let bootstrap_route_uses_space_context = route_uses_space_context;
+        let bootstrap_context_space_id = context_space_id.clone();
+        let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
+        let state_store_for_bootstrap = state_store;
+        let crypto_state_for_bootstrap = crypto_state;
+        let last_error_for_bootstrap = last_error;
+        use_effect(move || {
+            let selected = selected_space();
+            if !bootstrap_route_uses_space_context {
+                return;
+            }
+            let bootstrap_space_id = bootstrap_context_space_id
+                .clone()
+                .filter(|space| !space.trim().is_empty())
+                .unwrap_or(selected);
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let description = server_description();
+            let Some(bootstrap_key) = mls_welcome_bootstrap_key(
+                &base,
+                &session,
+                &actor,
+                &device,
+                &bootstrap_space_id,
+                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                sync_bootstrap_complete(),
+            ) else {
+                return;
+            };
+            if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
+                return;
+            }
+            seen_bootstrap_key.set(Some(bootstrap_key));
+
+            let state_store_task = state_store_for_bootstrap;
+            let mut crypto_state_task = crypto_state_for_bootstrap;
+            let mut last_error_task = last_error_for_bootstrap;
+            let space_label = short_protocol_id(&bootstrap_space_id);
+            spawn(async move {
+                match bootstrap_mls_welcome_for_space(
+                    base,
+                    session,
+                    actor,
+                    device,
+                    bootstrap_space_id,
+                    state_store_task,
+                )
+                .await
+                {
+                    Ok(outcome) if outcome.applied > 0 => {
+                        let backup_label = outcome
+                            .backup_id
+                            .as_deref()
+                            .map(short_protocol_id)
+                            .unwrap_or_else(|| "not uploaded".to_owned());
+                        crypto_state_task.set(format!(
+                            "MLS Welcome applied for {space_label}: {} group(s); history backup {backup_label}",
+                            outcome.applied
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                    }
+                }
+            });
+        });
+    }
     let resolved_space_surface = resolve_space_surface(
         &route,
         &state_store(),
@@ -8364,6 +8451,7 @@ pub fn RouterView() -> Element {
                                             plaintext_service_did: active_service_did.clone(),
                                             token,
                                             account_did: account_did(),
+                                            device_id: device_id(),
                                             selected_space: active_space_id.clone(),
                                             projection_realm_id: active_projection_realm_id.clone(),
                                             selected_space_scope: active_space_scope_ids.clone(),
@@ -8435,6 +8523,7 @@ pub fn RouterView() -> Element {
                                     base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
                                     account_did: account_did(),
+                                    device_id: device_id(),
                                     token,
                                     selected_space: active_space_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
@@ -8539,6 +8628,9 @@ pub fn RouterView() -> Element {
                         crate::views::settings::recover_restore::RecoverPanel {
                             base_url,
                             token,
+                            account_did: account_did(),
+                            device_id: device_id(),
+                            state_store,
                         }
                     },
                     Route::VerifyDevice => {
@@ -8568,6 +8660,7 @@ pub fn RouterView() -> Element {
                                 crate::views::space_admin::SpaceAdminPanel {
                                     base_url: base_url(),
                                     account_did: account_did(),
+                                    device_id: device_id(),
                                     token,
                                     selected_space: active_space_id.clone(),
                                     sync_cursor,
@@ -8603,6 +8696,7 @@ pub fn RouterView() -> Element {
                                     plaintext_service_did: active_service_did.clone(),
                                     token,
                                     account_did: account_did(),
+                                    device_id: device_id(),
                                     selected_space: active_space_id.clone(),
                                     projection_realm_id: active_projection_realm_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
@@ -9318,6 +9412,123 @@ fn same_server_url(left: &str, right: &str) -> bool {
     server_key(left) == server_key(right)
 }
 
+fn mls_welcome_bootstrap_key(
+    base_url: &str,
+    session_token: &str,
+    account_did: &str,
+    device_id: &str,
+    space_id: &str,
+    e2ee_ready: bool,
+    sync_bootstrap_complete: bool,
+) -> Option<String> {
+    if !e2ee_ready || !sync_bootstrap_complete {
+        return None;
+    }
+    let base = server_key(base_url);
+    let session = session_token.trim();
+    let actor = account_did.trim();
+    let device = device_id.trim();
+    let space = space_id.trim();
+    if base.is_empty()
+        || session.is_empty()
+        || actor.is_empty()
+        || device.is_empty()
+        || space.is_empty()
+    {
+        return None;
+    }
+
+    let mut token_hash = DefaultHasher::new();
+    session.hash(&mut token_hash);
+    Some(format!(
+        "{base}|{actor}|{device}|{space}|{:016x}",
+        token_hash.finish()
+    ))
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MlsWelcomeBootstrapOutcome {
+    applied: usize,
+    backup_id: Option<String>,
+}
+
+async fn bootstrap_mls_welcome_for_space(
+    base_url: String,
+    session_token: String,
+    actor_did: String,
+    device_id: String,
+    space_id: String,
+    mut state_store: Signal<LocalStateStore>,
+) -> Result<MlsWelcomeBootstrapOutcome, String> {
+    if session_token.trim().is_empty() || space_id.trim().is_empty() {
+        return Ok(MlsWelcomeBootstrapOutcome::default());
+    }
+
+    let messages = crate::views::helpers::with_authed_api(
+        &base_url,
+        session_token.clone(),
+        |api| async move { api.receive_device_messages().await },
+    )
+    .await
+    .map_err(|error| error.display())?;
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (messages, actor_did, device_id, state_store);
+        Ok(MlsWelcomeBootstrapOutcome::default())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let messages_value =
+            serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let applied = {
+            let mut store = state_store.write();
+            crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
+                &mut store,
+                secure_store.as_ref(),
+                &space_id,
+                &actor_did,
+                &device_id,
+                &messages_value,
+            )
+        }
+        .map_err(|error| error.user_message())?;
+
+        if applied == 0 {
+            return Ok(MlsWelcomeBootstrapOutcome::default());
+        }
+
+        let Some(snapshot) = state_store.read().mls_snapshot_for(&space_id) else {
+            return Ok(MlsWelcomeBootstrapOutcome {
+                applied,
+                backup_id: None,
+            });
+        };
+        let actor_for_backup = actor_did.clone();
+        let device_for_backup = device_id.clone();
+        let backup_id =
+            crate::views::helpers::with_authed_api(&base_url, session_token, |api| async move {
+                crate::mls::runtime::upload_mls_snapshot_backup(
+                    &api,
+                    &snapshot,
+                    &actor_for_backup,
+                    &device_for_backup,
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!(err.user_message()))
+            })
+            .await
+            .map_err(|error| error.display())?;
+
+        Ok(MlsWelcomeBootstrapOutcome {
+            applied,
+            backup_id: Some(backup_id),
+        })
+    }
+}
+
 fn server_options_for(current_server_url: &str) -> Vec<String> {
     let mut options: Vec<String> = Vec::new();
     for url in [
@@ -9496,6 +9707,96 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
+async fn refresh_session_bearer_once(
+    active_base: &str,
+    active_actor: &str,
+    active_device: &str,
+    mut state_store: Signal<LocalStateStore>,
+    mut token: Signal<String>,
+    config_store: Signal<LocalConfigStore>,
+    mut status: Signal<String>,
+    mut last_error: Signal<Option<String>>,
+) -> Option<String> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let oidc_bundle = {
+        let store = state_store.read();
+        store.load_oidc_tokens_with_secure_store(active_actor, secure_store.as_ref())
+    };
+    if let Some(bundle) = oidc_bundle
+        && crate::oidc::lifecycle::has_refresh_token(&bundle)
+    {
+        match refresh_oidc_bearer_for_server(active_base, active_actor, active_device, &bundle)
+            .await
+        {
+            Ok(next) => {
+                let access_token = next.access_token.clone();
+                state_store.write().set_oidc_tokens_with_secure_store(
+                    Some(next),
+                    active_actor,
+                    secure_store.as_ref(),
+                );
+                token.set(access_token.clone());
+                persist_config(
+                    config_store,
+                    active_base.to_owned(),
+                    active_actor.to_owned(),
+                    active_device.to_owned(),
+                    access_token.clone(),
+                );
+                status.set("Online".to_owned());
+                last_error.set(None);
+                return Some(access_token);
+            }
+            Err(error) => {
+                last_error.set(Some(format!("OIDC refresh after 401 failed: {error}")));
+            }
+        }
+    }
+
+    let prepared = {
+        let mut store = state_store.write();
+        crate::session_refresh::prepare_refresh_for_server_after_unauthorized(
+            &mut store,
+            active_base,
+        )
+    };
+    let outcome = match prepared {
+        crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
+        crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
+            let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+            let mut store = state_store.write();
+            crate::session_refresh::commit_refresh(&mut store, result)
+        }
+    };
+    match outcome {
+        crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+            token.set(access_token.clone());
+            persist_config(
+                config_store,
+                active_base.to_owned(),
+                active_actor.to_owned(),
+                active_device.to_owned(),
+                access_token.clone(),
+            );
+            status.set("Online".to_owned());
+            last_error.set(None);
+            Some(access_token)
+        }
+        crate::session_refresh::RefreshOutcome::NoGrant => {
+            last_error.set(Some(
+                "No refresh material is available for this session".to_owned(),
+            ));
+            None
+        }
+        crate::session_refresh::RefreshOutcome::Fresh => None,
+        crate::session_refresh::RefreshOutcome::LoginRequired { reason }
+        | crate::session_refresh::RefreshOutcome::Transient { reason } => {
+            last_error.set(Some(format!("session refresh after 401 failed: {reason}")));
+            None
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ConnectContext {
     status: Signal<String>,
@@ -9626,41 +9927,55 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     }
                 };
 
-                let session_token = token();
+                let mut session_token = token();
                 if session_token.trim().is_empty() {
-                    let probe_label = description
-                        .as_ref()
-                        .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
-                        .unwrap_or_else(|| "server probe unavailable".to_owned());
-                    status.set(format!("Refreshed: {probe_label}; sign-in required"));
-                    network_state.set("online".to_owned());
-                    sync_cursor.set("-".to_owned());
-                    spaces.set(Vec::new());
-                    timeline.set(Vec::new());
-                    device_queue.set(0);
-                    crypto_state.set("No authenticated session".to_owned());
-                    persist_config(
+                    if let Some(refreshed) = refresh_session_bearer_once(
+                        &base,
+                        &actor,
+                        &device,
+                        state_store,
+                        token,
                         config_store,
-                        base.clone(),
-                        actor.clone(),
-                        device.clone(),
-                        String::new(),
-                    );
-                    sync_bootstrap_complete.set(true);
-                    return;
+                        status,
+                        last_error,
+                    )
+                    .await
+                    {
+                        session_token = refreshed;
+                    } else {
+                        let probe_label = description
+                            .as_ref()
+                            .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
+                            .unwrap_or_else(|| "server probe unavailable".to_owned());
+                        status.set(format!("Refreshed: {probe_label}; sign-in required"));
+                        network_state.set("online".to_owned());
+                        sync_cursor.set("-".to_owned());
+                        spaces.set(Vec::new());
+                        timeline.set(Vec::new());
+                        device_queue.set(0);
+                        crypto_state.set("No authenticated session".to_owned());
+                        persist_config(
+                            config_store,
+                            base.clone(),
+                            actor.clone(),
+                            device.clone(),
+                            String::new(),
+                        );
+                        sync_bootstrap_complete.set(true);
+                        return;
+                    }
                 }
 
-                let authed = api.clone().with_bearer(session_token.clone());
+                let mut authed = api.clone().with_bearer(session_token.clone());
                 // Resolve the canonical actor DID from `/account/me`. Three
                 // outcomes:
                 //   1. Ok with non-empty DID -> use it as canonical_actor.
-                //   2. Err that looks like auth expiry -> wipe session, bounce
-                //      to login. The session is provably dead.
-                //   3. Anything else (Ok with empty DID, transient 5xx, parse
-                //      error, network failure) -> fall back to the locally
-                //      stored actor, log a diagnostic to last_error so the
-                //      sidebar/status surface can show it, and keep going so
-                //      sync still has a chance to populate spaces.
+                //   2. Err that looks like auth expiry -> wipe session, bounce to login. The
+                //      session is provably dead.
+                //   3. Anything else (Ok with empty DID, transient 5xx, parse error, network
+                //      failure) -> fall back to the locally stored actor, log a diagnostic to
+                //      last_error so the sidebar/status surface can show it, and keep going so sync
+                //      still has a chance to populate spaces.
                 let canonical_actor = match authed.account_me().await {
                     Ok(account) if !account.did.trim().is_empty() => account.did,
                     Ok(_) => {
@@ -9671,26 +9986,79 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         actor.clone()
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        token.set(String::new());
-                        persist_config(
+                        if let Some(refreshed) = refresh_session_bearer_once(
+                            &base,
+                            &actor,
+                            &device,
+                            state_store,
+                            token,
                             config_store,
-                            base.clone(),
-                            actor.clone(),
-                            device.clone(),
-                            String::new(),
-                        );
-                        sync_cursor.set("-".to_owned());
-                        selected_space.set(String::new());
-                        spaces.set(Vec::new());
-                        timeline.set(Vec::new());
-                        device_queue.set(0);
-                        crypto_state.set("Session expired".to_owned());
-                        status.set("Session expired; sign in again".to_owned());
-                        network_state.set("online".to_owned());
-                        last_error.set(Some("auth_expired: session expired".to_owned()));
-                        redirect_to_login(navigator);
-                        sync_bootstrap_complete.set(true);
-                        return;
+                            status,
+                            last_error,
+                        )
+                        .await
+                        {
+                            session_token = refreshed;
+                            authed = api.clone().with_bearer(session_token.clone());
+                            match authed.account_me().await {
+                                Ok(account) if !account.did.trim().is_empty() => account.did,
+                                Ok(_) => {
+                                    last_error.set(Some(
+                                        "account_me: refreshed session returned empty actor DID; reusing local actor"
+                                            .to_owned(),
+                                    ));
+                                    actor.clone()
+                                }
+                                Err(retry_error) if !is_auth_expired_error(&retry_error) => {
+                                    last_error.set(Some(format!("account_me: {retry_error}")));
+                                    actor.clone()
+                                }
+                                Err(_) => {
+                                    token.set(String::new());
+                                    persist_config(
+                                        config_store,
+                                        base.clone(),
+                                        actor.clone(),
+                                        device.clone(),
+                                        String::new(),
+                                    );
+                                    sync_cursor.set("-".to_owned());
+                                    selected_space.set(String::new());
+                                    spaces.set(Vec::new());
+                                    timeline.set(Vec::new());
+                                    device_queue.set(0);
+                                    crypto_state.set("Session expired".to_owned());
+                                    status.set("Session expired; sign in again".to_owned());
+                                    network_state.set("online".to_owned());
+                                    last_error
+                                        .set(Some("auth_expired: session expired".to_owned()));
+                                    redirect_to_login(navigator);
+                                    sync_bootstrap_complete.set(true);
+                                    return;
+                                }
+                            }
+                        } else {
+                            token.set(String::new());
+                            persist_config(
+                                config_store,
+                                base.clone(),
+                                actor.clone(),
+                                device.clone(),
+                                String::new(),
+                            );
+                            sync_cursor.set("-".to_owned());
+                            selected_space.set(String::new());
+                            spaces.set(Vec::new());
+                            timeline.set(Vec::new());
+                            device_queue.set(0);
+                            crypto_state.set("Session expired".to_owned());
+                            status.set("Session expired; sign in again".to_owned());
+                            network_state.set("online".to_owned());
+                            last_error.set(Some("auth_expired: session expired".to_owned()));
+                            redirect_to_login(navigator);
+                            sync_bootstrap_complete.set(true);
+                            return;
+                        }
                     }
                     Err(error) => {
                         last_error.set(Some(format!("account_me: {error}")));
@@ -9744,7 +10112,31 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 // "re-establish the world from scratch". The SyncEngine
                 // (see crate::sync_engine) owns the long-poll loop that
                 // threads the cursor for incremental deltas.
-                match authed.account_subscribe_snapshot(None).await {
+                let sync_result = match authed.account_subscribe_snapshot(None).await {
+                    Ok(sync) => Ok(sync),
+                    Err(error) if is_auth_expired_error(&error) => {
+                        if let Some(refreshed) = refresh_session_bearer_once(
+                            &base,
+                            &canonical_actor,
+                            &device,
+                            state_store,
+                            token,
+                            config_store,
+                            status,
+                            last_error,
+                        )
+                        .await
+                        {
+                            session_token = refreshed;
+                            authed = api.clone().with_bearer(session_token.clone());
+                            authed.account_subscribe_snapshot(None).await
+                        } else {
+                            Err(error)
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+                match sync_result {
                     Ok(sync) => {
                         {
                             let mut store = state_store.write();
@@ -10009,7 +10401,31 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         last_error.set(Some(format!("sync: {error}")));
                     }
                 }
-                match authed.events_describe().await {
+                let events_result = match authed.events_describe().await {
+                    Ok(events) => Ok(events),
+                    Err(error) if is_auth_expired_error(&error) => {
+                        if let Some(refreshed) = refresh_session_bearer_once(
+                            &base,
+                            &canonical_actor,
+                            &device,
+                            state_store,
+                            token,
+                            config_store,
+                            status,
+                            last_error,
+                        )
+                        .await
+                        {
+                            session_token = refreshed;
+                            authed = api.clone().with_bearer(session_token.clone());
+                            authed.events_describe().await
+                        } else {
+                            Err(error)
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+                match events_result {
                     Ok(events) => {
                         if let Some(frontier) = frontier_label(&events.frontier) {
                             frontier_state.set(frontier);
@@ -10165,8 +10581,7 @@ fn is_realm_or_space_projection_id(id: &str) -> bool {
 fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
     // Classify Realm vs Space. Wire signals:
     // - `__kind` (yougen-local tag from optimistic save)
-    // - `schema` (server projection — cx.schema.realm.v1 vs
-    //   cx.schema.space.v1)
+    // - `schema` (server projection — cx.schema.realm.v1 vs cx.schema.space.v1)
     // - parent links on legacy nested Space projections
     // Anything else (legacy) defaults to Realm because
     // pre-M-SPACE-CREATE-1 yougen could only create Realms.
@@ -10373,8 +10788,9 @@ fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     /// The App component installs a default push-token provider on
     /// first render so `device-summary` never
@@ -10429,6 +10845,16 @@ mod tests {
             session_expires_at: Some(now + chrono::Duration::seconds(session_expires_in)),
             stored_at: now,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn isolated_store(tag: &str) -> LocalStateStore {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("yougen-app-{tag}-{stamp}.json"));
+        LocalStateStore::with_path(path)
     }
 
     #[test]
@@ -10517,6 +10943,25 @@ mod tests {
     }
 
     #[test]
+    fn boot_session_token_falls_back_to_session_grant_when_oidc_is_expired() {
+        let now = chrono::Utc::now().timestamp();
+        let mut state = ClientLocalState::default();
+        state.oidc_tokens = Some(oidc_bundle("sx-expired-oidc", Some(now - 1)));
+        state.session_grant = Some(session_grant(120, 3600));
+        let config = ClientConfig::from_fields(
+            "https://local.host",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "bridge-token",
+        );
+
+        assert_eq!(
+            initial_session_token_from_state(&state, &config, now),
+            "bridge-token"
+        );
+    }
+
+    #[test]
     fn boot_session_token_ignores_expired_session_grant_bearer() {
         let now = chrono::Utc::now().timestamp();
         let mut state = ClientLocalState::default();
@@ -10529,6 +10974,40 @@ mod tests {
         );
 
         assert_eq!(initial_session_token_from_state(&state, &config, now), "");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bootstrap_can_start_with_oidc_refresh_material_without_bearer() {
+        let mut store = isolated_store("bootstrap-oidc");
+        let mut state = ClientLocalState::default();
+        state.oidc_tokens = Some(oidc_bundle("sx-expired", Some(1)));
+        store.save(state);
+
+        assert!(has_bootstrap_refresh_material(&store, "https://local.host"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bootstrap_can_start_with_session_grant_without_bearer() {
+        let mut store = isolated_store("bootstrap-grant");
+        store.set_session_grant(Some(session_grant(-1, 3600)));
+
+        assert!(has_bootstrap_refresh_material(&store, "https://local.host"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bootstrap_ignores_session_grant_for_other_server() {
+        let mut store = isolated_store("bootstrap-other-server");
+        let mut grant = session_grant(-1, 3600);
+        grant.principal_server_url = "https://other.local.host".to_owned();
+        store.set_session_grant(Some(grant));
+
+        assert!(!has_bootstrap_refresh_material(
+            &store,
+            "https://local.host"
+        ));
     }
 
     #[test]
@@ -10569,6 +11048,71 @@ mod tests {
                 section: "new-space".to_owned()
             }),
             "New Space"
+        );
+    }
+
+    #[test]
+    fn kanban_board_route_uses_space_context_for_mls_bootstrap() {
+        let route = Route::KanbanBoard {
+            space_id: "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            board_id: "cx:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        };
+
+        assert!(route_uses_space_context(&route));
+        assert_eq!(
+            route.space_id(),
+            Some("cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+        );
+    }
+
+    #[test]
+    fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
+        let route = Route::KanbanBoard {
+            space_id: "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            board_id: "cx:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        };
+        let space_id = route.space_id().expect("board route carries a realm id");
+
+        let key = mls_welcome_bootstrap_key(
+            "http://localhost:8080",
+            "secret-session-token",
+            "did:web:yougen.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            space_id,
+            true,
+            true,
+        )
+        .expect("board route should be eligible for App-owned MLS Welcome bootstrap");
+        let missing_welcome = crate::mls::runtime::MlsRuntimeStatus::MissingWelcome.user_message();
+
+        assert!(!key.contains("secret-session-token"));
+        assert!(!missing_welcome.to_ascii_lowercase().contains("passphrase"));
+        assert!(missing_welcome.contains("MLS Welcome"));
+        assert!(missing_welcome.contains("encrypted MLS history backup"));
+    }
+
+    #[test]
+    fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
+        let base = "https://local.host/";
+        let session = "session-token";
+        let actor = "did:web:yougen.example";
+        let device = "cx:device:01964137-0000-7000-8000-000000000001";
+        let space = "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
+
+        assert_eq!(
+            mls_welcome_bootstrap_key(base, session, actor, device, space, false, true),
+            None
+        );
+        assert_eq!(
+            mls_welcome_bootstrap_key(base, session, actor, device, space, true, false),
+            None
+        );
+        assert_eq!(
+            mls_welcome_bootstrap_key(base, "", actor, device, space, true, true),
+            None
+        );
+        assert!(
+            mls_welcome_bootstrap_key(base, session, actor, device, space, true, true).is_some()
         );
     }
 

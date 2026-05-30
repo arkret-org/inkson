@@ -1,21 +1,20 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
-    components::{
-        EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
-    },
-    hlc::Hlc,
-    local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord},
-    move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id},
-    operation::{scope_id_as_realm_id, uuid_v7},
-    rank::{RankError, rank_for_drop},
-    routes::Route,
-    views::helpers::{
-        display_name_for_did, handle_display_from_did, short_protocol_id, with_authed_api,
-    },
+use crate::components::{
+    EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
+};
+use crate::hlc::Hlc;
+use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
+use crate::move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id};
+use crate::operation::{scope_id_as_realm_id, uuid_v7};
+use crate::rank::{RankError, rank_for_drop};
+use crate::routes::Route;
+use crate::views::helpers::{
+    display_name_for_did, handle_display_from_did, short_protocol_id, with_authed_api,
 };
 
 /// Board Space id used only when the explicit demo seed fallback is
@@ -290,11 +289,10 @@ enum CardDetailContentTab {
 
 /// Which tab the right-hand card-detail sidebar is showing.
 /// - `Details`: per-card metadata (Flow ID, Assignee, Due, Visibility) + Activity hints.
-/// - `Members`: every actor in the surrounding Realm/Space — sourced from
-///   the cached space projection (`members`/`participants`/`owners` keys).
-///   Each row is also marked when the actor has authored an event against
-///   the current Flow (derived from local raw operations), so participation
-///   is surfaced inline instead of in a separate tab.
+/// - `Members`: every actor in the surrounding Realm/Space — sourced from the cached space
+///   projection (`members`/`participants`/`owners` keys). Each row is also marked when the actor
+///   has authored an event against the current Flow (derived from local raw operations), so
+///   participation is surfaced inline instead of in a separate tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CardDetailSidebarTab {
     #[default]
@@ -1868,6 +1866,7 @@ pub fn KanbanPanel(
     plaintext_service_did: String,
     token: Signal<String>,
     account_did: String,
+    device_id: String,
     selected_space: String,
     projection_realm_id: String,
     selected_space_scope: Vec<String>,
@@ -1881,7 +1880,6 @@ pub fn KanbanPanel(
     // explicit demo seed in the board header.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
     let initial_api_columns = try_load_api_columns("");
-    let mls_passphrase_store = use_context::<Signal<crate::mls::passphrase::MlsPassphraseStore>>();
     let initial_source = match initial_api_columns {
         Some(_) => BoardProjectionSource::ApiDerived,
         None if seed_fallback_allowed => BoardProjectionSource::SeedFallback,
@@ -1919,7 +1917,7 @@ pub fn KanbanPanel(
         let state = state_store.read().load();
         let initial_columns =
             if initial_columns.is_empty() && !initial_board_space_id.trim().is_empty() {
-                let (local_columns, _, _) = columns_from_lifecycle_projection_with_local(
+                let (local_columns, ..) = columns_from_lifecycle_projection_with_local(
                     &[],
                     &[],
                     &initial_board_space_id,
@@ -4363,6 +4361,7 @@ pub fn KanbanPanel(
                                                                 let base = base_url.clone();
                                                                 let space = selected_space.clone();
                                                                 let actor = account_did.clone();
+                                                                let device = device_id.clone();
                                                                 let current = card.clone();
                                                                 let entries = synthesis_entries.clone();
                                                                 move |_| {
@@ -4371,6 +4370,7 @@ pub fn KanbanPanel(
                                                                         token,
                                                                         space.clone(),
                                                                         actor.clone(),
+                                                                        device.clone(),
                                                                         current.clone(),
                                                                         entries.clone(),
                                                                         selected_scope_security_encrypted,
@@ -4389,7 +4389,6 @@ pub fn KanbanPanel(
                                                                         columns,
                                                                         selected_card,
                                                                         state_store,
-                                                                        mls_passphrase_store,
                                                                         board_status,
                                                                     );
                                                                 }
@@ -4489,6 +4488,7 @@ pub fn KanbanPanel(
                                                                         let base = base_url.clone();
                                                                         let space = selected_space.clone();
                                                                         let actor = account_did.clone();
+                                                                        let device = device_id.clone();
                                                                         let current = card.clone();
                                                                         let entries = synthesis_entries.clone();
                                                                         move |_| {
@@ -4497,6 +4497,7 @@ pub fn KanbanPanel(
                                                                                 token,
                                                                                 space.clone(),
                                                                                 actor.clone(),
+                                                                                device.clone(),
                                                                                 current.clone(),
                                                                                 entries.clone(),
                                                                                 selected_scope_security_encrypted,
@@ -4515,7 +4516,6 @@ pub fn KanbanPanel(
                                                                                 columns,
                                                                                 selected_card,
                                                                                 state_store,
-                                                                                mls_passphrase_store,
                                                                                 board_status,
                                                                             );
                                                                         }
@@ -4813,6 +4813,7 @@ pub fn KanbanPanel(
                                                                                                 let base = base_url.clone();
                                                                                                 let space = selected_space.clone();
                                                                                                 let actor = account_did.clone();
+                                                                                                let device = device_id.clone();
                                                                                                 let current = card.clone();
                                                                                                 let entries = synthesis_entries.clone();
                                                                                                 move |_| {
@@ -4821,6 +4822,7 @@ pub fn KanbanPanel(
                                                                                                         token,
                                                                                                         space.clone(),
                                                                                                         actor.clone(),
+                                                                                                        device.clone(),
                                                                                                         current.clone(),
                                                                                                         entries.clone(),
                                                                                                         selected_scope_security_encrypted,
@@ -4839,7 +4841,6 @@ pub fn KanbanPanel(
                                                                                                         columns,
                                                                                                         selected_card,
                                                                                                         state_store,
-                                                                                                        mls_passphrase_store,
                                                                                                         board_status,
                                                                                                     );
                                                                                                 }
@@ -4901,6 +4902,7 @@ pub fn KanbanPanel(
                                                                         let base = base_url.clone();
                                                                         let space = selected_space.clone();
                                                                         let actor = account_did.clone();
+                                                                        let device = device_id.clone();
                                                                         let current = card.clone();
                                                                         let entries = synthesis_entries.clone();
                                                                         move |_| {
@@ -4909,6 +4911,7 @@ pub fn KanbanPanel(
                                                                                 token,
                                                                                 space.clone(),
                                                                                 actor.clone(),
+                                                                                device.clone(),
                                                                                 current.clone(),
                                                                                 entries.clone(),
                                                                                 selected_scope_security_encrypted,
@@ -4927,7 +4930,6 @@ pub fn KanbanPanel(
                                                                                 columns,
                                                                                 selected_card,
                                                                                 state_store,
-                                                                                mls_passphrase_store,
                                                                                 board_status,
                                                                             );
                                                                         }
@@ -4995,6 +4997,7 @@ pub fn KanbanPanel(
                                                             base_url: base_url.clone(),
                                                             plaintext_service_did: plaintext_service_did.clone(),
                                                             account_did: account_did.clone(),
+                                                            device_id: device_id.clone(),
                                                             token,
                                                             selected_space: selected_space.clone(),
                                                             selected_space_scope: selected_space_scope.clone(),
@@ -5772,6 +5775,7 @@ fn save_card_detail_edit(
     token: Signal<String>,
     space_id: String,
     actor_did: String,
+    device_id: String,
     current: KanbanCard,
     synthesis_entries: Vec<CardSynthesisTrackEntry>,
     scope_security_encrypted: bool,
@@ -5790,7 +5794,6 @@ fn save_card_detail_edit(
     columns: Signal<Vec<KanbanColumn>>,
     selected_card: Signal<Option<KanbanCard>>,
     state_store: Signal<LocalStateStore>,
-    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
     board_status: Signal<String>,
 ) {
     card_detail_edit_status.set("Saving...".to_owned());
@@ -5822,6 +5825,7 @@ fn save_card_detail_edit(
         token,
         space_id,
         actor_did,
+        device_id,
         current,
         draft,
         scope_security_encrypted,
@@ -5830,7 +5834,6 @@ fn save_card_detail_edit(
         columns,
         selected_card,
         state_store,
-        mls_passphrase_store,
         board_status,
     ) {
         card_detail_edit_status.set(String::new());
@@ -5950,7 +5953,7 @@ fn card_synthesis_track_entries(
     for (_, entry_id, revision) in raw_operations
         .iter()
         .filter_map(|record| synthesis_revision_from_raw_operation(record, state_store))
-        .filter(|(flow_id, _, _)| flow_id == &card.id)
+        .filter(|(flow_id, ..)| flow_id == &card.id)
     {
         grouped.entry(entry_id).or_default().push(revision);
     }
@@ -6397,85 +6400,6 @@ fn replace_private_patch_values(
     Ok(())
 }
 
-fn bootstrap_kanban_mls_group(
-    space_id: &str,
-    principal_id: &str,
-    device_id: &str,
-) -> Result<contrix_sdk::ContrixMlsGroup, String> {
-    let principal = contrix_sdk::Did::new(principal_id.to_owned())
-        .map_err(|err| format!("invalid MLS principal DID: {err:?}"))?;
-    let device = contrix_sdk::DeviceId::new(device_id.to_owned())
-        .map_err(|err| format!("invalid MLS device DID: {err:?}"))?;
-    let identity = contrix_sdk::ContrixMlsIdentity::new_basic(principal, device)
-        .map_err(|err| format!("MLS identity init failed: {err:?}"))?;
-    identity
-        .create_group(space_id.as_bytes())
-        .map_err(|err| format!("MLS group bootstrap failed: {err}"))
-}
-
-fn run_kanban_local_mls_encrypt_values(
-    mut state_store: Signal<LocalStateStore>,
-    space_id: &str,
-    principal_id: &str,
-    device_id: &str,
-    passphrase: &str,
-    plaintext_values: &[Vec<u8>],
-) -> Result<
-    (
-        contrix_sdk::Hash,
-        Vec<serde_json::Value>,
-        contrix_sdk::MlsCommitEnvelope,
-    ),
-    String,
-> {
-    if passphrase.is_empty() {
-        return Err("Encrypted Kanban writes require an MLS passphrase for this Realm.".to_owned());
-    }
-    if plaintext_values.is_empty() {
-        return Err("internal: no private patch values to encrypt".to_owned());
-    }
-
-    let snapshot = state_store.read().mls_snapshot_for(space_id);
-    let mut group = if let Some(env) = snapshot {
-        crate::mls::persistence::restore_envelope(&env, passphrase, 0)
-            .map_err(|err| format!("MLS snapshot restore failed: {err}"))?
-    } else {
-        bootstrap_kanban_mls_group(space_id, principal_id, device_id)?
-    };
-
-    let commit_envelope = group
-        .self_update_commit()
-        .map_err(|err| format!("MLS self-update commit failed: {err}"))?;
-    let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
-    for plaintext in plaintext_values {
-        let encrypted = group
-            .encrypt_payload(KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE, plaintext)
-            .map_err(|err| format!("MLS patch encryption failed: {err}"))?;
-        encrypted_values.push(
-            serde_json::to_value(&encrypted)
-                .map_err(|err| format!("encrypted patch payload serialization failed: {err}"))?,
-        );
-    }
-    let schedule_hash = group.schedule_hash();
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| format!("MLS state export failed: {err}"))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| format!("MLS state salt generation failed: {err}"))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        space_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &post_state.serialized_state,
-        passphrase,
-        &salt,
-    );
-    state_store
-        .write()
-        .save_mls_snapshot(space_id.to_owned(), new_envelope);
-    Ok((schedule_hash, encrypted_values, commit_envelope))
-}
-
 fn kanban_scope_space_id(scope_id: &str) -> String {
     scope_id
         .strip_prefix("cx:realm:")
@@ -6483,14 +6407,14 @@ fn kanban_scope_space_id(scope_id: &str) -> String {
         .unwrap_or_else(|| scope_id.to_owned())
 }
 
-fn kanban_mls_commit_event(
-    state_store: Signal<LocalStateStore>,
+fn kanban_mls_commit_event_from_store(
+    state_store: &LocalStateStore,
     space_id: &str,
     actor_did: &str,
     schedule_hash: &contrix_sdk::Hash,
     commit_envelope: &contrix_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
-    let anchor_view = state_store.read().anchor_view_for(space_id);
+    let anchor_view = state_store.anchor_view_for(space_id);
     let anchor_ref = anchor_view.move_anchor_ref();
     let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
     let governance_space_id = kanban_scope_space_id(space_id);
@@ -6583,35 +6507,49 @@ fn encrypt_private_card_detail_patch_values(
     patch: Value,
     space_id: &str,
     actor_did: &str,
+    device_id: &str,
     mut state_store: Signal<LocalStateStore>,
-    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
+) -> Result<(Value, Option<crate::operation::EventEnvelope>), String> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let mut store = state_store.write();
+    encrypt_private_card_detail_patch_values_with_store(
+        patch,
+        space_id,
+        actor_did,
+        device_id,
+        &mut store,
+        secure_store.as_ref(),
+    )
+}
+
+fn encrypt_private_card_detail_patch_values_with_store(
+    patch: Value,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    state_store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<(Value, Option<crate::operation::EventEnvelope>), String> {
     let values = collect_encryptable_private_patch_values(&patch)?;
     if values.is_empty() {
         return Ok((patch, None));
     }
-    let passphrase = mls_passphrase_store
-        .read()
-        .get(space_id)
-        .map(str::to_owned)
-        .unwrap_or_default();
-    let identity = state_store
-        .write()
-        .ensure_local_identity()
-        .map_err(|err| format!("identity unavailable for encrypted Kanban write: {err}"))?;
     let plaintext_values = values
         .iter()
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
-    let (schedule_hash, encrypted_values, commit_envelope) = run_kanban_local_mls_encrypt_values(
-        state_store,
-        space_id,
-        actor_did,
-        &identity.device_did,
-        &passphrase,
-        &plaintext_values,
-    )?;
-    let commit_event = kanban_mls_commit_event(
+    let (schedule_hash, _member_dids, encrypted_values, commit_envelope) =
+        crate::mls::runtime::encrypt_values_with_device_snapshot(
+            state_store,
+            secure_store,
+            space_id,
+            actor_did,
+            device_id,
+            KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            &plaintext_values,
+        )
+        .map_err(|err| err.user_message())?;
+    let commit_event = kanban_mls_commit_event_from_store(
         state_store,
         space_id,
         actor_did,
@@ -6630,6 +6568,7 @@ fn dispatch_card_detail_update(
     token: Signal<String>,
     space_id: String,
     actor_did: String,
+    device_id: String,
     current: KanbanCard,
     draft: CardDetailDraft,
     scope_security_encrypted: bool,
@@ -6638,7 +6577,6 @@ fn dispatch_card_detail_update(
     mut columns: Signal<Vec<KanbanColumn>>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: Signal<LocalStateStore>,
-    mls_passphrase_store: Signal<crate::mls::passphrase::MlsPassphraseStore>,
     mut board_status: Signal<String>,
 ) -> bool {
     let patch = match card_detail_update_patch(&current, &draft) {
@@ -6656,8 +6594,8 @@ fn dispatch_card_detail_update(
             patch,
             &space_id,
             &actor_did,
+            &device_id,
             state_store,
-            mls_passphrase_store,
         ) {
             Ok(result) => result,
             Err(msg) => {
@@ -6731,6 +6669,9 @@ fn dispatch_card_detail_update(
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
         .map(|op| op.local_operation_id().to_owned());
+    let should_upload_mls_backup = mls_commit_operation_id.is_some();
+    let actor_for_backup = actor_did.clone();
+    let device_for_backup = device_id.clone();
     spawn(async move {
         if let Some(commit_op) = mls_commit_op {
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
@@ -6772,7 +6713,7 @@ fn dispatch_card_detail_update(
                 }
             }
         }
-        match with_authed_api(&base_url, api_token, |api| async move {
+        match with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.submit_event_envelope(&op).await
         })
         .await
@@ -6796,6 +6737,32 @@ fn dispatch_card_detail_update(
                     "{kind} operation accepted by server (event_id={})",
                     short_protocol_id(&resp.event_id)
                 ));
+                if should_upload_mls_backup {
+                    let snapshot = state_store.read().mls_snapshot_for(&space_id);
+                    if let Some(snapshot) = snapshot {
+                        match with_authed_api(&base_url, api_token.clone(), |api| async move {
+                            crate::mls::runtime::upload_mls_snapshot_backup(
+                                &api,
+                                &snapshot,
+                                &actor_for_backup,
+                                &device_for_backup,
+                            )
+                            .await
+                            .map_err(|err| anyhow::anyhow!(err.user_message()))
+                        })
+                        .await
+                        {
+                            Ok(backup_id) => board_status.set(format!(
+                                "{kind} operation accepted; MLS history backup {} uploaded",
+                                short_protocol_id(&backup_id)
+                            )),
+                            Err(err) => board_status.set(format!(
+                                "{kind} operation accepted; MLS history backup failed: {}",
+                                err.display()
+                            )),
+                        }
+                    }
+                }
             }
             Err(err) => {
                 state_store.write().update_raw_operation_write_state(
@@ -7250,10 +7217,8 @@ struct ColumnNeighbours {
 ///
 /// - Cross-column drop ⇒ `cx.flow.move` Event kind.
 /// - Same-column drop ⇒ `cx.flow.reorder`.
-/// - Both compile to the same
-///   `cx:cell:cx.component.flow.position.v1:<board>:<flow>` cas-register
-///   cell; the difference is whether `effect.list_space_id` equals
-///   `expected.list_space_id`.
+/// - Both compile to the same `cx:cell:cx.component.flow.position.v1:<board>:<flow>` cas-register
+///   cell; the difference is whether `effect.list_space_id` equals `expected.list_space_id`.
 fn dispatch_flow_position_move(
     base_url: String,
     token: Signal<String>,
@@ -8237,6 +8202,17 @@ fn seed_columns() -> Vec<KanbanColumn> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn temp_state_store(name: &str) -> LocalStateStore {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        LocalStateStore::with_path(
+            std::env::temp_dir().join(format!("yougen-kanban-{name}-{stamp}.json")),
+        )
+    }
 
     #[test]
     fn realm_member_roster_reads_r32_wire_shape() {
@@ -9391,6 +9367,104 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
+        let mut state = temp_state_store("missing-mls");
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let patch = json!({
+            "body": {"$op": "set", "value": "private body"},
+        });
+
+        let error = encrypt_private_card_detail_patch_values_with_store(
+            patch,
+            "cx:space:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+            &mut state,
+            &secure,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("MLS Welcome"));
+        assert!(
+            state
+                .mls_snapshot_for("cx:space:01904100-0000-7000-8000-000000000001")
+                .is_none()
+        );
+        assert!(state.load().raw_operations.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
+        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let space = "cx:space:01904100-0000-7000-8000-000000000001";
+        let mut state = temp_state_store("ready-mls");
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let secret =
+            crate::mls::runtime::load_or_create_device_snapshot_secret(&secure, actor, device)
+                .unwrap();
+        let identity = ContrixMlsIdentity::new_basic(
+            Did::new(actor.to_owned()).unwrap(),
+            DeviceId::new(device.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(space.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        let envelope = crate::mls::persistence::encrypt_state(
+            space,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            &secret,
+            b"deterministic-salt",
+        );
+        state.save_mls_snapshot(space, envelope);
+        let patch = json!({
+            "body": {"$op": "set", "value": "private body"},
+        });
+
+        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+            patch, space, actor, device, &mut state, &secure,
+        )
+        .unwrap();
+
+        assert_eq!(
+            patched["body"]["value"]["content_type"],
+            KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
+        );
+        assert!(patched["body"]["value"].get("ciphertext").is_some());
+        let commit = commit.expect("ready MLS snapshot should emit commit event");
+        assert_eq!(commit.kind, "cx.mls.commit");
+        assert!(state.load().raw_operations.is_empty());
+    }
+
+    #[test]
+    fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
+        let mut state = temp_state_store("metadata-only");
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let patch = json!({
+            "summary": {"$op": "set", "value": "metadata summary"},
+        });
+
+        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+            patch.clone(),
+            "cx:space:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "cx:device:01904100-0000-7000-8000-000000000001",
+            &mut state,
+            &secure,
+        )
+        .unwrap();
+
+        assert_eq!(patched, patch);
+        assert!(commit.is_none());
+        assert!(state.local_identity_record().is_none());
+    }
+
+    #[test]
     fn encrypted_scope_allows_structural_flow_position_update() {
         let event = crate::operation::cx_ops::flow_position_update(
             "cx:realm:test",
@@ -9710,9 +9784,8 @@ mod tests {
     /// Move. It MUST:
     ///   1. remove the card from the source column,
     ///   2. assign the new rank,
-    ///   3. insert into the target column such that ascending-rank
-    ///      ordering is preserved (otherwise the next drag uses
-    ///      wrong neighbours for `rank_between`).
+    ///   3. insert into the target column such that ascending-rank ordering is preserved (otherwise
+    ///      the next drag uses wrong neighbours for `rank_between`).
     #[test]
     fn relocate_card_preserves_rank_ordering_after_move() {
         let mut cols = vec![

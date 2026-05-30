@@ -3,27 +3,24 @@
 //! Spec: `contrix-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
 //! What the panel does today:
-//!   * Reads `cx.applet.registration` / `cx.applet.discovery` events out of
-//!     the local raw-operation projection and renders them as registry rows
-//!     so users see which applets the Space already accepts.
-//!   * Surfaces a registration form bound to
-//!     [`crate::operation::cx_ops::applet_registration`] — fills `service_did`,
-//!     `namespace` and `capabilities` and submits via
+//!   * Reads `cx.applet.registration` / `cx.applet.discovery` events out of the local raw-operation
+//!     projection and renders them as registry rows so users see which applets the Space already
+//!     accepts.
+//!   * Surfaces a registration form bound to [`crate::operation::cx_ops::applet_registration`] —
+//!     fills `service_did`, `namespace` and `capabilities` and submits via
 //!     `with_authed_api(api.submit_event_envelope)`.
-//!   * Per-session monitor lists active `protocol_session.start/status` rows
-//!     so an operator can see in-flight applet calls + their bridge errors.
+//!   * Per-session monitor lists active `protocol_session.start/status` rows so an operator can see
+//!     in-flight applet calls + their bridge errors.
 //!
 //! G3.Y4 additions:
-//!   * `applet-list-panel` + per-applet `applet-row` carrying
-//!     `data-applet-id` / `data-applet-manifest-hash` / `data-installed-at`.
-//!   * `applet-install-button` opens an install form with manifest URL /
-//!     JSON paste + signature verification (against
-//!     `cotest/e2e/mocks/mock-applet-registry.mjs` for the verifier
+//!   * `applet-list-panel` + per-applet `applet-row` carrying `data-applet-id` /
+//!     `data-applet-manifest-hash` / `data-installed-at`.
+//!   * `applet-install-button` opens an install form with manifest URL / JSON paste + signature
+//!     verification (against `cotest/e2e/mocks/mock-applet-registry.mjs` for the verifier
 //!     endpoint).
 //!   * `applet-uninstall-button` per row.
-//!   * `applet-accountability-trace-button` opens an audit modal listing
-//!     every event the applet emitted (`applet-accountability-event` rows
-//!     carrying `data-event-id` / `data-emitted-at`).
+//!   * `applet-accountability-trace-button` opens an audit modal listing every event the applet
+//!     emitted (`applet-accountability-event` rows carrying `data-event-id` / `data-emitted-at`).
 //!
 //! Out of scope: applet capability gating at submit time (relies on
 //! server-side soland validation), per-session cancellation. Those
@@ -183,8 +180,8 @@ pub fn AppletsPanel(
     let trace_open_applet_id = trace_open_for();
     let trace_target_service_did = applet_rows
         .iter()
-        .find(|(id, _, _, _, _)| Some(id) == trace_open_applet_id.as_ref())
-        .map(|(_, did, _, _, _)| did.clone());
+        .find(|(id, ..)| Some(id) == trace_open_applet_id.as_ref())
+        .map(|(_, did, ..)| did.clone());
     let trace_events: Vec<_> = match &trace_target_service_did {
         Some(target) => raw_ops
             .iter()

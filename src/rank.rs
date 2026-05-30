@@ -1,5 +1,6 @@
 //! `cx.rank.lexofractional.v1` rank profile per
-//! [`spec/v1/zh/conformance/encoding.md` §9](../../contrix-spec/spec/v1/zh/conformance/encoding.md).
+//! [`spec/v1/zh/conformance/encoding.md`
+//! §9](../../contrix-spec/spec/v1/zh/conformance/encoding.md).
 //!
 //! Ranks are 1..128 ASCII strings drawn from
 //! `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz` (62 chars).

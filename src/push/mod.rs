@@ -458,14 +458,13 @@ fn acquire_platform_push_key() -> String {
 // resolve the platform-specific push token used by `register_device`. The
 // crate ships three concrete impls:
 //
-// * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` +
-//   `pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`
-//   on wasm32 targets. The VAPID `applicationServerKey` is fetched from
-//   soland's push-bridge describe endpoint (cx.push.bridge.describe.v1),
-//   so deploys can rotate without rebuilding the client.
-// * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — feature-gated stubs
-//   for native targets. The trait surface stays stable so a future
-//   `chime-fcm` / `chime-apns` adapter can drop in without churn.
+// * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` + `pushManager.subscribe({
+//   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
+//   `applicationServerKey` is fetched from soland's push-bridge describe endpoint
+//   (cx.push.bridge.describe.v1), so deploys can rotate without rebuilding the client.
+// * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — feature-gated stubs for native targets. The
+//   trait surface stays stable so a future `chime-fcm` / `chime-apns` adapter can drop in without
+//   churn.
 //
 // `set_push_token_provider` installs one process-wide. Any production
 // push token MUST clear `ensure_production_register_request` — the
@@ -481,8 +480,7 @@ fn acquire_platform_push_key() -> String {
 /// and the FCM / APNs paths await OS-level async APIs. The method
 /// returns the platform-specific token string the chime gateway expects:
 ///
-/// * Web Push — JSON-encoded `PushSubscription` body (`endpoint`, `keys.p256dh`,
-///   `keys.auth`).
+/// * Web Push — JSON-encoded `PushSubscription` body (`endpoint`, `keys.p256dh`, `keys.auth`).
 /// * FCM      — registration token returned by `getToken()`.
 /// * APNs     — hex-encoded device token from `application:didRegister...`.
 #[cfg_attr(not(target_arch = "wasm32"), allow(async_fn_in_trait))]
@@ -850,14 +848,12 @@ impl PushTokenProvider for ApnsPushTokenProvider {
 ///
 /// The lookup order:
 /// 1. If the gateway advertises a `webpush` profile via
-///    [`PushBridgeDescribeResponse::provider_capability_by_kind`], the
-///    capability's stable `kind` ack confirms VAPID is in scope and
-///    yougen's deploy MAY rely on environment variable
-///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual
-///    key bytes.
-/// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe
-///    without an `applicationServerKey`, which produces an unencrypted
-///    Web Push subscription and is fine for restricted-origin demos.
+///    [`PushBridgeDescribeResponse::provider_capability_by_kind`], the capability's stable `kind`
+///    ack confirms VAPID is in scope and yougen's deploy MAY rely on environment variable
+///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
+/// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
+///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for
+///    restricted-origin demos.
 pub fn vapid_public_key_from_describe(describe: &PushBridgeDescribeResponse) -> Option<String> {
     // The gateway must at least advertise the webpush profile for VAPID
     // to be relevant.
@@ -928,12 +924,10 @@ pub fn resolve_provider_push_token(
 // wrapping seed (itself stored in the secure-key tier), we get two
 // useful properties:
 //
-//   1. The on-disk form of the token is ChaCha20-Poly1305 ciphertext;
-//      a backup/disk-dump that doesn't include the secure-key tier
-//      cannot recover the plaintext token.
-//   2. Rotating the wrapping seed via [`PushTokenBinding::rotate`]
-//      invalidates every prior ciphertext — useful when device
-//      credentials change or when the user opts to wipe push state
+//   1. The on-disk form of the token is ChaCha20-Poly1305 ciphertext; a backup/disk-dump that
+//      doesn't include the secure-key tier cannot recover the plaintext token.
+//   2. Rotating the wrapping seed via [`PushTokenBinding::rotate`] invalidates every prior
+//      ciphertext — useful when device credentials change or when the user opts to wipe push state
 //      without re-registering.
 //
 // The binding is intentionally narrow: it owns *one* wrapping seed

@@ -4,10 +4,10 @@
 //! This file is the durable contract that backs `_todos.md` Q3. Two layers
 //! enforce it:
 //!
-//! 1. `is_placeholder_push_key()` recognises every literal we hand-rolled in
-//!    `src/push.rs` (`yougen-dev-…`, `placeholder`).
-//! 2. `ensure_production_register_request()` refuses to hand a request that
-//!    still carries one of those placeholders to the gateway.
+//! 1. `is_placeholder_push_key()` recognises every literal we hand-rolled in `src/push.rs`
+//!    (`yougen-dev-…`, `placeholder`).
+//! 2. `ensure_production_register_request()` refuses to hand a request that still carries one of
+//!    those placeholders to the gateway.
 //!
 //! If either check stops firing — because we added another scaffold marker,
 //! or removed the predicate — these tests fail loudly.

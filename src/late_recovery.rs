@@ -10,15 +10,13 @@
 //!
 //! Two extra requirements from spec §4 (Round R2/R3 close-out):
 //!
-//! 1. If the *actor* who would have written the message was already
-//!    revoked / removed before the keys arrived, the server REJECTS the
-//!    decrypt (`late_recovery_rejected_membership`). The client also
-//!    filters defensively — see [`should_filter_recovered_event`] — so a
-//!    misconfigured server can't dribble revoked-actor content into the
-//!    UI.
-//! 2. The banner message is i18n'd; the actual translation lives in
-//!    [`crate::i18n`] under `timeline.late_recovery.banner`. This module
-//!    only owns the projection + the minutes computation.
+//! 1. If the *actor* who would have written the message was already revoked / removed before the
+//!    keys arrived, the server REJECTS the decrypt (`late_recovery_rejected_membership`). The
+//!    client also filters defensively — see [`should_filter_recovered_event`] — so a misconfigured
+//!    server can't dribble revoked-actor content into the UI.
+//! 2. The banner message is i18n'd; the actual translation lives in [`crate::i18n`] under
+//!    `timeline.late_recovery.banner`. This module only owns the projection + the minutes
+//!    computation.
 //!
 //! Round 4 (spec a77b995) — the banner is now sourced from the
 //! `cx.audit.policy_access` event whose `access_kind ==
@@ -127,8 +125,9 @@ pub fn should_filter_recovered_event(event: &LateRecoveredEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::TimeZone;
+
+    use super::*;
 
     fn ev(orig_min: i64, rec_min: i64, revoked: bool) -> LateRecoveredEvent {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();

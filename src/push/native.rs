@@ -10,20 +10,16 @@
 //! API.
 //!
 //! Design notes:
-//! - The struct is intentionally minimal — `title`, `body`, optional
-//!   `app_id`. yougen wires it to the chat / kanban / call paths via a
-//!   plain `From<&NotificationDecision>` builder rather than burying
-//!   the conversion inside the rule engine, so a unit test can build
-//!   a fixture decision and exercise the formatting without pulling in
-//!   the OS bridge.
-//! - The fire path is `cfg(not(target_arch = "wasm32"))`. On wasm we
-//!   return `Err(FireError::Unsupported)` — browser apps should hook
-//!   the rule engine to the `web-sys` Notification API directly
-//!   (`window.Notification`), which has a different permission /
+//! - The struct is intentionally minimal — `title`, `body`, optional `app_id`. yougen wires it to
+//!   the chat / kanban / call paths via a plain `From<&NotificationDecision>` builder rather than
+//!   burying the conversion inside the rule engine, so a unit test can build a fixture decision and
+//!   exercise the formatting without pulling in the OS bridge.
+//! - The fire path is `cfg(not(target_arch = "wasm32"))`. On wasm we return
+//!   `Err(FireError::Unsupported)` — browser apps should hook the rule engine to the `web-sys`
+//!   Notification API directly (`window.Notification`), which has a different permission /
 //!   lifecycle model than the OS bridges.
-//! - The function returns `Result<(), FireError>` so the caller can
-//!   surface the failure into the status bar / telemetry without
-//!   crashing the render loop.
+//! - The function returns `Result<(), FireError>` so the caller can surface the failure into the
+//!   status bar / telemetry without crashing the render loop.
 
 use serde::{Deserialize, Serialize};
 

@@ -6,12 +6,11 @@
 //! timeline reuse, preventing drift across the three call sites.
 //!
 //! Spec sources:
-//! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is
-//!   the source of truth.
-//! - `authz/event-auth-state-resolution.md`: reducer rejections fall into
-//!   `state_mismatch` or `cas_conflict`.
-//! - `governance/content-moderation.md`: quarantined writes remain visible
-//!   but flow through the moderation queue.
+//! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is the source of truth.
+//! - `authz/event-auth-state-resolution.md`: reducer rejections fall into `state_mismatch` or
+//!   `cas_conflict`.
+//! - `governance/content-moderation.md`: quarantined writes remain visible but flow through the
+//!   moderation queue.
 //!
 //! State machine:
 //! ```text

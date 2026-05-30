@@ -3,18 +3,17 @@
 //! The lower-level pieces of the PKCE authorization-code flow already
 //! exist:
 //!
-//! * [`crate::coauth::build_oidc_scaffold_bundle`] / [`persist_oidc_scaffold`]
-//!   mint cryptographic `state` / `nonce` / PKCE verifier and stash them
-//!   in `localStorage` (web) before opening the authorize URL.
-//! * [`crate::coauth::extract_authorization_code_from_callback`] /
-//!   [`extract_state_from_callback`] / [`extract_error_from_callback`] parse
-//!   the redirect-URI query string the IdP hands back.
-//! * [`crate::coauth::CoauthApi::exchange_pkce_code_for_tokens`] does the
-//!   actual `authorization_code` POST against the IdP's token endpoint and
-//!   returns a typed [`OidcTokenResponse`].
-//! * [`crate::api::ContrixApi::exchange_session_grant_at`] swaps a
-//!   coauth-issued audience grant JWT for an authenticated Principal
-//!   Server session (a `DevLoginResponse` with access_token + refresh).
+//! * [`crate::coauth::build_oidc_scaffold_bundle`] / [`persist_oidc_scaffold`] mint cryptographic
+//!   `state` / `nonce` / PKCE verifier and stash them in `localStorage` (web) before opening the
+//!   authorize URL.
+//! * [`crate::coauth::extract_authorization_code_from_callback`] / [`extract_state_from_callback`]
+//!   / [`extract_error_from_callback`] parse the redirect-URI query string the IdP hands back.
+//! * [`crate::coauth::CoauthApi::exchange_pkce_code_for_tokens`] does the actual
+//!   `authorization_code` POST against the IdP's token endpoint and returns a typed
+//!   [`OidcTokenResponse`].
+//! * [`crate::api::ContrixApi::exchange_session_grant_at`] swaps a coauth-issued audience grant JWT
+//!   for an authenticated Principal Server session (a `DevLoginResponse` with access_token +
+//!   refresh).
 //!
 //! Until this module landed there was no glue that ran those steps in
 //! the right order, validated the CSRF state, persisted the resulting
@@ -33,17 +32,15 @@ use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-use crate::{
-    api::{ContrixApi, SessionGrantIntrospectionProof},
-    coauth::{
-        CoauthApi, OidcTokenResponse, PersistedOidcScaffold,
-        build_session_grant_introspection_proof_bundle, extract_authorization_code_from_callback,
-        extract_error_description_from_callback, extract_error_from_callback,
-        extract_state_from_callback,
-    },
-    local_state::{LocalStateStore, OidcTokenBundle},
-    models::DevLoginResponse,
+use crate::api::{ContrixApi, SessionGrantIntrospectionProof};
+use crate::coauth::{
+    CoauthApi, OidcTokenResponse, PersistedOidcScaffold,
+    build_session_grant_introspection_proof_bundle, extract_authorization_code_from_callback,
+    extract_error_description_from_callback, extract_error_from_callback,
+    extract_state_from_callback,
 };
+use crate::local_state::{LocalStateStore, OidcTokenBundle};
+use crate::models::DevLoginResponse;
 
 /// Inputs required to drive a callback through to a persisted token
 /// bundle and (optionally) an audience-grant exchange.
@@ -202,9 +199,9 @@ pub async fn process_callback(
     request: CallbackProcessRequest<'_>,
     state_store: &mut LocalStateStore,
 ) -> CallbackOutcome {
-    // 1. IdP-side errors take precedence — the user may have cancelled
-    //    or the IdP may have rejected the request. We don't try to be
-    //    clever about partial-state recoveries; just surface the error.
+    // 1. IdP-side errors take precedence — the user may have cancelled or the IdP may have rejected
+    //    the request. We don't try to be clever about partial-state recoveries; just surface the
+    //    error.
     if let Some((error, description)) = extract_callback_error(request.callback_url) {
         return CallbackOutcome::IdpError { error, description };
     }
@@ -258,10 +255,9 @@ pub async fn process_callback(
             error,
         };
     }
-    // 5. Persist the token bundle. The `audience_hint` is the
-    //    principal-audience the scaffold was minted for — the bundle
-    //    records it so the 401-retry path in `oidc_lifecycle` knows
-    //    which audience to refresh against.
+    // 5. Persist the token bundle. The `audience_hint` is the principal-audience the scaffold was
+    //    minted for — the bundle records it so the 401-retry path in `oidc_lifecycle` knows which
+    //    audience to refresh against.
     let audience_hint = if request.scaffold.principal_audience.is_empty() {
         None
     } else {

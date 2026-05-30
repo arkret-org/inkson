@@ -15,25 +15,23 @@
 //!
 //! This module is the policy layer for that:
 //!
-//! 1. [`refresh_decision`] inspects the persisted [`PersistedSessionGrant`]
-//!    and decides whether to do nothing, re-exchange now, or surface a
-//!    "must re-login" event.
-//! 2. [`run_refresh`] performs the actual exchange against the principal
-//!    server, persisting the fresh `session_expires_at` and returning
-//!    the new access token.
+//! 1. [`refresh_decision`] inspects the persisted [`PersistedSessionGrant`] and decides whether to
+//!    do nothing, re-exchange now, or surface a "must re-login" event.
+//! 2. [`run_refresh`] performs the actual exchange against the principal server, persisting the
+//!    fresh `session_expires_at` and returning the new access token.
 //!
 //! The split keeps the policy pure (testable without spinning up
 //! reqwest) and the IO thin.
 
 use chrono::{DateTime, Utc};
 
-use crate::{
-    api::{ContrixApi, SessionGrantIntrospectionProof},
-    coauth::{build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem},
-    config::normalize_server_url,
-    local_state::{LocalStateStore, PersistedSessionGrant},
-    models::DevLoginResponse,
+use crate::api::{ContrixApi, SessionGrantIntrospectionProof};
+use crate::coauth::{
+    build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
+use crate::config::normalize_server_url;
+use crate::local_state::{LocalStateStore, PersistedSessionGrant};
+use crate::models::DevLoginResponse;
 
 /// Window before the current `session_expires_at` at which the
 /// background poller proactively re-exchanges the grant.
@@ -181,6 +179,13 @@ pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
         return RefreshPrepared::Done(RefreshOutcome::NoGrant);
     };
 
+    prepare_refresh_grant(store, grant)
+}
+
+fn prepare_refresh_grant(
+    store: &mut LocalStateStore,
+    grant: PersistedSessionGrant,
+) -> RefreshPrepared {
     let signing_key = match session_grant_signing_key_from_pem(&grant.session_private_key_pem) {
         Ok(key) => key,
         Err(error) => {
@@ -221,6 +226,29 @@ pub fn prepare_refresh_for_server(
     }
 
     prepare_refresh(store)
+}
+
+/// Like [`prepare_refresh_for_server`], but forces a re-exchange after the
+/// server has already returned a definitive 401 for the current bearer. Local
+/// expiry metadata can be stale when the Principal Server restarted, rotated
+/// signing keys, or invalidated the session early.
+pub fn prepare_refresh_for_server_after_unauthorized(
+    store: &mut LocalStateStore,
+    principal_server_url: &str,
+) -> RefreshPrepared {
+    let Some(grant) = store.session_grant() else {
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
+    };
+    if !grant_matches_principal_server(&grant, principal_server_url) {
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
+    }
+    if grant_is_dead(&grant) {
+        store.set_session_grant(None);
+        return RefreshPrepared::Done(RefreshOutcome::LoginRequired {
+            reason: "session grant has expired".to_owned(),
+        });
+    }
+    prepare_refresh_grant(store, grant)
 }
 
 /// Pure async exchange. Holds no `LocalStateStore` borrow.
@@ -300,10 +328,9 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
 ///
 /// The endpoint requires:
 ///
-/// * A `DPoP:` header proving possession of the same key that's bound
-///   to the grant's `cnf.jkt` claim (issuance side: G3.S1 / G3.C1).
-/// * The prior grant JWT in the body (single-use: the old grant is
-///   revoked on success).
+/// * A `DPoP:` header proving possession of the same key that's bound to the grant's `cnf.jkt`
+///   claim (issuance side: G3.S1 / G3.C1).
+/// * The prior grant JWT in the body (single-use: the old grant is revoked on success).
 ///
 /// On success the caller persists the rotated grant + access-token
 /// materials and bumps the in-memory token signal. On a 401 / 403 /
@@ -369,11 +396,12 @@ fn terminal_session_grant_message(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn isolated_store(tag: &str) -> LocalStateStore {

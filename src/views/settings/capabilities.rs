@@ -16,12 +16,10 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::{
-    api::ContrixApi,
-    components::{EmptyState, EmptyStateKind, HelpTip},
-    local_state::LocalStateStore,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::api::ContrixApi;
+use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::local_state::LocalStateStore;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -336,8 +334,9 @@ pub fn CapabilitiesSettingsCard(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn decodes_minimal_capability_row() {

@@ -82,6 +82,15 @@ pub fn attach_key_backup_domain_separation(
     });
 }
 
+pub fn attach_key_backup_genesis_series(body: &mut Value) {
+    if let Some(object) = body.as_object_mut() {
+        object
+            .entry("series_id")
+            .or_insert_with(|| json!(format!("cx:backup_series:{}", crate::operation::uuid_v7())));
+        object.entry("series_seq").or_insert_with(|| json!(0));
+    }
+}
+
 pub fn validate_key_backup_put_request(backup_id: &str, body: &Value) -> Result<(), String> {
     validate_key_backup_envelope(body, None)?;
     let body_backup_id = required_str(body, "backup_id")?;
@@ -100,6 +109,13 @@ pub fn validate_key_backup_envelope(
     let backup_id = required_str(body, "backup_id")?;
     if !is_protocol_backup_id(backup_id) {
         return Err("backup_id must be cx:backup:<uuidv7>".to_owned());
+    }
+    let series_id = required_str(body, "series_id")?;
+    if !is_protocol_backup_series_id(series_id) {
+        return Err("series_id must be cx:backup_series:<uuidv7>".to_owned());
+    }
+    if body.get("series_seq").and_then(Value::as_u64).is_none() {
+        return Err("series_seq must be a non-negative integer".to_owned());
     }
     let actor_id = required_str(body, "actor_id")?;
     if !actor_id.starts_with("did:") {
@@ -130,7 +146,10 @@ pub fn validate_key_backup_envelope(
     }
 
     validate_contents(body, class)?;
-    validate_encryption(body)?;
+    validate_encryption(body, class)?;
+    if class == KeyBackupClass::MlsHistory {
+        validate_mls_history_opaque_only(body)?;
+    }
     validate_domain_separation(body, class)?;
 
     let ciphertext = required_str(body, "ciphertext")?;
@@ -195,6 +214,7 @@ pub fn build_recovery_vault_backup_body(
     {
         object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
     }
+    attach_key_backup_genesis_series(&mut body);
     attach_key_backup_domain_separation(&mut body, KeyBackupClass::SecretStorage, "recovery_vault");
     body
 }
@@ -243,6 +263,7 @@ pub fn build_did_recovery_backup_body(
     {
         object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
     }
+    attach_key_backup_genesis_series(&mut body);
     attach_key_backup_domain_separation(&mut body, KeyBackupClass::DidRecovery, "recovery_policy");
     body
 }
@@ -267,7 +288,7 @@ fn validate_contents(body: &Value, class: KeyBackupClass) -> Result<(), String> 
     Ok(())
 }
 
-fn validate_encryption(body: &Value) -> Result<(), String> {
+fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String> {
     let encryption = body
         .get("encryption")
         .ok_or_else(|| "encryption is required".to_owned())?;
@@ -283,14 +304,39 @@ fn validate_encryption(body: &Value) -> Result<(), String> {
     if !is_base64url_token(nonce) || nonce.contains("placeholder") || nonce.contains("demo") {
         return Err("encryption.aead.nonce must be real base64url metadata".to_owned());
     }
-    if method == "passphrase_kdf" {
-        let kdf = encryption
-            .get("kdf")
-            .ok_or_else(|| "passphrase_kdf requires encryption.kdf".to_owned())?;
-        validate_kdf(
-            kdf,
-            body.get("mixed_secret_storage").and_then(Value::as_bool) == Some(true),
-        )?;
+    match method {
+        "passphrase_kdf" => {
+            if class == KeyBackupClass::MlsHistory {
+                return Err("mls_history backups must use device_snapshot_secret".to_owned());
+            }
+            let kdf = encryption
+                .get("kdf")
+                .ok_or_else(|| "passphrase_kdf requires encryption.kdf".to_owned())?;
+            validate_kdf(
+                kdf,
+                body.get("mixed_secret_storage").and_then(Value::as_bool) == Some(true),
+            )?;
+        }
+        "device_snapshot_secret" => {
+            if class != KeyBackupClass::MlsHistory {
+                return Err(
+                    "device_snapshot_secret is only valid for mls_history backups".to_owned(),
+                );
+            }
+            let device_id = required_str(encryption, "recipient_key_ref")?;
+            if !is_protocol_device_id(device_id) {
+                return Err(
+                    "device_snapshot_secret recipient_key_ref must be cx:device:<uuidv7>"
+                        .to_owned(),
+                );
+            }
+            if encryption.get("kdf").is_some() {
+                return Err(
+                    "device_snapshot_secret backups must not carry encryption.kdf".to_owned(),
+                );
+            }
+        }
+        other => return Err(format!("unsupported recipient_method {other}")),
     }
     Ok(())
 }
@@ -386,6 +432,49 @@ fn validate_domain_separation(body: &Value, class: KeyBackupClass) -> Result<(),
     Ok(())
 }
 
+fn validate_mls_history_opaque_only(body: &Value) -> Result<(), String> {
+    fn scan(value: &Value, path: &str) -> Result<(), String> {
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    let key_lower = key.to_ascii_lowercase();
+                    if matches!(
+                        key_lower.as_str(),
+                        "plaintext"
+                            | "plain_text"
+                            | "serialized_state"
+                            | "state_bytes"
+                            | "group_state"
+                            | "passphrase"
+                            | "mls_passphrase"
+                            | "snapshot_secret"
+                    ) {
+                        return Err(format!(
+                            "mls_history backups must not carry plaintext field {path}/{key}"
+                        ));
+                    }
+                    let child_path = if path.is_empty() {
+                        format!("/{key}")
+                    } else {
+                        format!("{path}/{key}")
+                    };
+                    scan(child, &child_path)?;
+                }
+                Ok(())
+            }
+            Value::Array(items) => {
+                for (idx, child) in items.iter().enumerate() {
+                    scan(child, &format!("{path}/{idx}"))?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    scan(body, "")
+}
+
 fn item_type_allowed_for_class(class: KeyBackupClass, item_type: &str) -> bool {
     match class {
         KeyBackupClass::DidRecovery => matches!(item_type, "recovery_key_share"),
@@ -444,6 +533,19 @@ fn is_protocol_backup_id(value: &str) -> bool {
         })
 }
 
+fn is_protocol_backup_series_id(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("cx:backup_series:") else {
+        return false;
+    };
+    rest.len() == 36
+        && rest.chars().enumerate().all(|(idx, ch)| match idx {
+            8 | 13 | 18 | 23 => ch == '-',
+            14 => ch == '7',
+            19 => matches!(ch, '8' | '9' | 'a' | 'b'),
+            _ => ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase(),
+        })
+}
+
 fn is_base64url_token(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -485,6 +587,12 @@ mod tests {
             4,
         );
         assert_eq!(body["backup_class"], "secret_storage");
+        assert!(
+            body["series_id"]
+                .as_str()
+                .is_some_and(is_protocol_backup_series_id)
+        );
+        assert_eq!(body["series_seq"], 0);
         assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
         assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");
         assert_eq!(body["encryption"]["kdf"]["salt"], "U0FMVF9CNjQ");
@@ -523,6 +631,12 @@ mod tests {
         );
 
         assert_eq!(body["backup_class"], "did_recovery");
+        assert!(
+            body["series_id"]
+                .as_str()
+                .is_some_and(is_protocol_backup_series_id)
+        );
+        assert_eq!(body["series_seq"], 0);
         assert_eq!(body["contents"][0]["item_type"], "recovery_key_share");
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
@@ -577,6 +691,72 @@ mod tests {
         let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage))
             .expect_err("domain separation metadata is required");
         assert!(err.contains("domain_separation"));
+    }
+
+    #[test]
+    fn key_backup_validator_rejects_missing_series_fields() {
+        let mut body = build_recovery_vault_backup_body(
+            "cx:backup:01964137-0000-7000-8000-00000000beef",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "AAAA_CIPHERTEXT_B64",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "U0FMVF9CNjQ",
+            "Tk9OQ0VfQjY0XzI0Ynl0ZXM",
+            65_536,
+            3,
+            1,
+        );
+        body.as_object_mut().unwrap().remove("series_id");
+
+        let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage))
+            .expect_err("series_id is mandatory");
+        assert!(err.contains("series_id"));
+    }
+
+    #[test]
+    fn mls_history_rejects_passphrase_kdf() {
+        let mut body = build_recovery_vault_backup_body(
+            "cx:backup:01964137-0000-7000-8000-00000000beef",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+            "AAAA_CIPHERTEXT_B64",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "U0FMVF9CNjQ",
+            "Tk9OQ0VfQjY0XzI0Ynl0ZXM",
+            65_536,
+            3,
+            1,
+        );
+        body["backup_class"] = json!("mls_history");
+        body["contents"][0]["item_type"] = json!("mls_group_state");
+        attach_key_backup_domain_separation(&mut body, KeyBackupClass::MlsHistory, "mls_snapshot");
+
+        let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::MlsHistory))
+            .expect_err("MLS history passphrase KDF backup must be rejected");
+        assert!(err.contains("device_snapshot_secret"));
+    }
+
+    #[test]
+    fn mls_history_rejects_obvious_plaintext_fields() {
+        let envelope = crate::mls::persistence::encrypt_state(
+            "cx:space:demo",
+            "group-a",
+            3,
+            b"not real sdk state",
+            "device-secret",
+            b"salt",
+        );
+        let mut body = envelope.to_key_backup_body(
+            "cx:backup:01964137-0000-7000-8000-00000000beef",
+            "did:web:alice.example",
+            "cx:device:01964137-0000-7000-8000-000000000001",
+        );
+        body["serialized_state"] = json!("plaintext sdk bytes");
+
+        let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::MlsHistory))
+            .expect_err("MLS history backups must stay opaque");
+        assert!(err.contains("plaintext field"));
     }
 
     #[test]

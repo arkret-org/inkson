@@ -1,15 +1,14 @@
 use dioxus::prelude::*;
-use dioxus_router::{Link, hooks::use_navigator};
+use dioxus_router::Link;
+use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::{
-    api::is_auth_expired_error,
-    components::PermissionPillRow,
-    config::LocalConfigStore,
-    local_state::LocalStateStore,
-    routes::Route,
-    views::helpers::{authed_api, persist_config, short_protocol_id},
-};
+use crate::api::is_auth_expired_error;
+use crate::components::PermissionPillRow;
+use crate::config::LocalConfigStore;
+use crate::local_state::LocalStateStore;
+use crate::routes::Route;
+use crate::views::helpers::{authed_api, persist_config, short_protocol_id};
 
 const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
     (

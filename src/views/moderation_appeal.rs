@@ -6,17 +6,15 @@
 //!
 //! - `cx.moderation.appeal.submit`   — user files the appeal
 //! - `cx.moderation.appeal.review`   — reviewer takes the file
-//! - `cx.moderation.appeal.decision` — reviewer decides
-//!   (uphold / overturn / modify)
+//! - `cx.moderation.appeal.decision` — reviewer decides (uphold / overturn / modify)
 //! - `cx.moderation.appeal.close`    — appeal terminal
 //!
 //! This module exposes:
 //!
-//! 1. `AppealState` — UI-side projection of the four wire states the
-//!    user sees (submitted / under_review / decided / closed).
-//! 2. `AppealSubmitter` component — renders the entrypoint button near
-//!    a moderation decision and submits the
-//!    `cx.moderation.appeal.submit` event via the durable event channel.
+//! 1. `AppealState` — UI-side projection of the four wire states the user sees (submitted /
+//!    under_review / decided / closed).
+//! 2. `AppealSubmitter` component — renders the entrypoint button near a moderation decision and
+//!    submits the `cx.moderation.appeal.submit` event via the durable event channel.
 //!
 //! The full reviewer surface (Review/Decision/Close authoring) is admin
 //! scope and lives in `space_admin.rs` once wired. See
@@ -79,12 +77,12 @@ impl AppealState {
 /// [`contrix_sdk::AppealSubmitPayload`] / `cx.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
-/// - `decision_event_id` — the `cx:event:` id of the original moderation
-///   decision being appealed (used as `decision_ref`).
-/// - `target_ref` — opaque pointer to the moderated content
-///   (`cx:event:…` for a message, `cx:flow:…` for a flow, etc.).
-/// - `reason_text_ref` — blob ref or inline string carrying the appeal
-///   narrative (server may require a `cx:blob:…` ref for E2EE Realms).
+/// - `decision_event_id` — the `cx:event:` id of the original moderation decision being appealed
+///   (used as `decision_ref`).
+/// - `target_ref` — opaque pointer to the moderated content (`cx:event:…` for a message,
+///   `cx:flow:…` for a flow, etc.).
+/// - `reason_text_ref` — blob ref or inline string carrying the appeal narrative (server may
+///   require a `cx:blob:…` ref for E2EE Realms).
 pub fn build_appeal_submit_op(
     realm_id: &str,
     appellant: &str,
@@ -148,9 +146,8 @@ pub fn new_appeal_id() -> String {
 /// - `decision_event_id` — the moderation decision being appealed.
 /// - `target_ref` — pointer to the moderated content.
 /// - `base_url` / `api_token` — for the API call.
-/// - `current_state` — projection of the most recent appeal-lifecycle
-///   event so the user sees `Submitted` / `Under review` / `Decided` /
-///   `Closed` once the server roundtrip lands.
+/// - `current_state` — projection of the most recent appeal-lifecycle event so the user sees
+///   `Submitted` / `Under review` / `Decided` / `Closed` once the server roundtrip lands.
 #[component]
 pub fn AppealEntrypoint(
     realm_id: String,

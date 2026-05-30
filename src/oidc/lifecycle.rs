@@ -4,19 +4,15 @@
 //! 401-retry contract that keeps a yougen session alive without
 //! manual re-login:
 //!
-//! 1. **Background refresh** — every 30s a polling task wakes up,
-//!    inspects the persisted [`OidcTokenBundle`], and calls
-//!    [`CoauthApi::refresh_oidc_tokens`] when the access token is
-//!    within `REFRESH_SKEW_SECS` of expiry. The new bundle is written
-//!    back via `LocalStateStore::set_oidc_tokens`. Use
-//!    [`refresh_if_due`] from a `dioxus::use_future` polling loop
-//!    (or a platform-specific scheduler).
-//! 2. **401 retry** — every soland call goes through
-//!    [`with_oidc_retry`]. The first 401 from the wrapped future
-//!    triggers a one-shot refresh; on success the future is retried
-//!    with the fresh access token. If the refresh itself fails
-//!    (refresh_token revoked / expired), the persisted bundle is
-//!    cleared and the caller surfaces [`OidcLifecycleEvent::LoginRequired`].
+//! 1. **Background refresh** — every 30s a polling task wakes up, inspects the persisted
+//!    [`OidcTokenBundle`], and calls [`CoauthApi::refresh_oidc_tokens`] when the access token is
+//!    within `REFRESH_SKEW_SECS` of expiry. The new bundle is written back via
+//!    `LocalStateStore::set_oidc_tokens`. Use [`refresh_if_due`] from a `dioxus::use_future`
+//!    polling loop (or a platform-specific scheduler).
+//! 2. **401 retry** — every soland call goes through [`with_oidc_retry`]. The first 401 from the
+//!    wrapped future triggers a one-shot refresh; on success the future is retried with the fresh
+//!    access token. If the refresh itself fails (refresh_token revoked / expired), the persisted
+//!    bundle is cleared and the caller surfaces [`OidcLifecycleEvent::LoginRequired`].
 //!
 //! The split into pure logic functions (`due_for_refresh`,
 //! `extract_status_code`) plus a thin async harness keeps the
@@ -28,10 +24,8 @@
 
 use chrono::Utc;
 
-use crate::{
-    coauth::{CoauthApi, OidcTokenResponse},
-    local_state::{LocalStateStore, OidcTokenBundle},
-};
+use crate::coauth::{CoauthApi, OidcTokenResponse};
+use crate::local_state::{LocalStateStore, OidcTokenBundle};
 
 /// Window before the access-token's `expires_at_unix` at which the
 /// background polling triggers a refresh. Mirrors the
@@ -360,11 +354,12 @@ pub fn extract_status_code(error: &anyhow::Error) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     /// Build a hermetic `LocalStateStore` rooted at a unique temp file.
     /// Necessary because `LocalStateStore::default()` resolves to the

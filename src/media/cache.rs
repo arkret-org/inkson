@@ -6,20 +6,16 @@
 //!
 //! ## Design
 //!
-//! * **Storage**: one file per cache key under `<root>/<key>.jpg`.
-//!   The key is the hex-encoded `sha256(content_id || version_tag)`,
-//!   so a version bump (e.g. server-side blob revoke + re-upload
-//!   under the same id) produces a distinct key and the stale
-//!   thumbnail is naturally orphaned.
-//! * **Eviction**: classic LRU keyed by file access time. The cache
-//!   tracks `(key, size_bytes, last_access)` in memory; when the
-//!   total bytes exceed `max_bytes`, entries are removed in LRU
+//! * **Storage**: one file per cache key under `<root>/<key>.jpg`. The key is the hex-encoded
+//!   `sha256(content_id || version_tag)`, so a version bump (e.g. server-side blob revoke +
+//!   re-upload under the same id) produces a distinct key and the stale thumbnail is naturally
+//!   orphaned.
+//! * **Eviction**: classic LRU keyed by file access time. The cache tracks `(key, size_bytes,
+//!   last_access)` in memory; when the total bytes exceed `max_bytes`, entries are removed in LRU
 //!   order until under-budget.
-//! * **Thumbnail generation**: [`generate_thumbnail`] uses the
-//!   `image` crate's `Lanczos3` filter to resize to fit within a
-//!   256×256 bounding box, then JPEG-encodes at quality 80. The
-//!   source bytes are decoded once; the output is a single byte
-//!   buffer the caller can persist or stream.
+//! * **Thumbnail generation**: [`generate_thumbnail`] uses the `image` crate's `Lanczos3` filter to
+//!   resize to fit within a 256×256 bounding box, then JPEG-encodes at quality 80. The source bytes
+//!   are decoded once; the output is a single byte buffer the caller can persist or stream.
 //!
 //! ## Why not the SDK's `Thumbnail` type?
 //!
@@ -36,7 +32,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use image::{ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType};
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::{ImageEncoder, ImageReader};
 use sha2::{Digest, Sha256};
 
 /// Maximum bounding-box edge for generated thumbnails. Source images

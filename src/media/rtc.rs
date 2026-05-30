@@ -3,20 +3,19 @@
 //! This module captures the client-side wire contract for the new media
 //! binding profile that landed in contrix-spec round R3:
 //!
-//! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token
-//!   and `participant_binding` from soland's `POST /rtc/token` endpoint
-//!   via the SDK helper [`contrix_sdk::media::call_media_token_exchange`].
-//! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure
-//!   with retry / leave options. No silent fallback to a different focus.
-//! - **MEDIA-1** — SFrame key provider derives keys from the MLS Exporter
-//!   with label `cx-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32).
-//!   Any backend-supplied key is rejected with `e2ee_key_source_unauthorised`.
-//! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be
-//!   cross-checked against `cx.call.state.participants[]`. A mismatch
-//!   fails closed with `participant_identity_unrecognised`.
-//! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations
-//!   that bypass the Contrix authenticated blob upload
-//!   (`recording_artifact_pipeline_bypassed`).
+//! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token and `participant_binding`
+//!   from soland's `POST /rtc/token` endpoint via the SDK helper
+//!   [`contrix_sdk::media::call_media_token_exchange`].
+//! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
+//!   options. No silent fallback to a different focus.
+//! - **MEDIA-1** — SFrame key provider derives keys from the MLS Exporter with label
+//!   `cx-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32). Any backend-supplied key is rejected
+//!   with `e2ee_key_source_unauthorised`.
+//! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be cross-checked against
+//!   `cx.call.state.participants[]`. A mismatch fails closed with
+//!   `participant_identity_unrecognised`.
+//! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations that bypass the Contrix
+//!   authenticated blob upload (`recording_artifact_pipeline_bypassed`).
 //!
 //! The actual SFU integration (LiveKit / mediasoup / janus / contrix-native)
 //! lives in the platform renderer; yougen ships the typed wire contract,
@@ -243,14 +242,12 @@ pub fn validate_recording_destination(
 /// TODO(R3.1): once the SDK exposes a transport-backed helper, replace
 /// this stub with a real `async fn token_exchange` that:
 ///   1. POSTs the request to `/rtc/token`.
-///   2. Verifies `service_signature.kid` against the current
-///      `cx.realm.media_service.service_id`.
-///   3. Validates `participant_binding` (signature, TTL ≤ 600s, all
-///      tuple fields match the call state).
-///   4. Returns `Err(RtcClientError::FocusUnavailableForClient)` when
-///      soland replies with that error code — and the renderer surfaces
-///      the failure with retry + leave-call options, NEVER silently
-///      falling back to a different focus.
+///   2. Verifies `service_signature.kid` against the current `cx.realm.media_service.service_id`.
+///   3. Validates `participant_binding` (signature, TTL ≤ 600s, all tuple fields match the call
+///      state).
+///   4. Returns `Err(RtcClientError::FocusUnavailableForClient)` when soland replies with that
+///      error code — and the renderer surfaces the failure with retry + leave-call options, NEVER
+///      silently falling back to a different focus.
 pub fn token_exchange_request(
     realm_id: &str,
     call_id: &str,

@@ -1,10 +1,8 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    api::{ContrixApi, is_auth_expired_error, normalize_wait_for_sync_token},
-    config::{ClientConfig, LocalConfigStore},
-};
+use crate::api::{ContrixApi, is_auth_expired_error, normalize_wait_for_sync_token};
+use crate::config::{ClientConfig, LocalConfigStore};
 
 /// R3.2 (contrix-spec @ b56cab1) — composer/render-side mention node.
 ///
@@ -202,14 +200,13 @@ pub fn display_name_for_did(
 /// Reason a view-side API call failed. Roughly mirrors `connect()`'s
 /// three-way error split:
 ///
-/// * `Unavailable` — `ContrixApi::new` rejected the base URL (bad
-///   scheme, parse error, etc.). The session is intact; the user
-///   should fix the server URL.
-/// * `AuthExpired` — the server returned a definitive session-death
-///   code (per [`is_auth_expired_error`]). The caller MUST clear the
-///   session and bounce to login, exactly as the connect path does.
-/// * `Failed` — every other error. Caller surfaces to status / last_error
-///   so the user sees a retriable reason without losing the session.
+/// * `Unavailable` — `ContrixApi::new` rejected the base URL (bad scheme, parse error, etc.). The
+///   session is intact; the user should fix the server URL.
+/// * `AuthExpired` — the server returned a definitive session-death code (per
+///   [`is_auth_expired_error`]). The caller MUST clear the session and bounce to login, exactly as
+///   the connect path does.
+/// * `Failed` — every other error. Caller surfaces to status / last_error so the user sees a
+///   retriable reason without losing the session.
 #[derive(Debug)]
 pub enum ApiCallError {
     Unavailable(anyhow::Error),

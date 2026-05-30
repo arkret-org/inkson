@@ -7,9 +7,8 @@
 //! 1. user types `consent_id` + `tag` in the form;
 //! 2. on click, build a `cx.consent.grant` Move via
 //!    [`crate::move_builder::build_consent_grant_move`];
-//! 3. sign with a deterministic placeholder ed25519 key (yougen does
-//!    not yet have OS keychain / WebAuthn / HSM key management — see
-//!    `TODO(real-key-management)` below);
+//! 3. sign with a deterministic placeholder ed25519 key (yougen does not yet have OS keychain /
+//!    WebAuthn / HSM key management — see `TODO(real-key-management)` below);
 //! 4. POST to soland via [`crate::api::ContrixApi::submit_move`];
 //! 5. render the response (`pending` / `rejected` + reason) in the UI.
 //!
@@ -23,10 +22,8 @@
 
 use dioxus::prelude::*;
 
-use crate::{
-    local_state::LocalStateStore,
-    views::helpers::{short_protocol_id, with_authed_api},
-};
+use crate::local_state::LocalStateStore;
+use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
 // build_signed_consent_revoke_v2 / format_submit_response and their
@@ -464,4 +461,5 @@ pub fn RevokeAllConsentCard(
     }
 }
 
-// (Move-flow test module removed; the OrSet/CAS wire shapes are now covered by soland's events.submit handler tests and the contrix-spec fixtures.)
+// (Move-flow test module removed; the OrSet/CAS wire shapes are now covered by soland's
+// events.submit handler tests and the contrix-spec fixtures.)

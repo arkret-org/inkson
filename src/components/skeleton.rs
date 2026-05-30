@@ -7,12 +7,12 @@
 //! `src/styles/claude_design.css` under `.skeleton-*`.
 //!
 //! Why three shapes:
-//!   * [`SkeletonLine`] — single-line text placeholders. Best for list
-//!     rows where each row is one piece of text.
-//!   * [`SkeletonCard`] — multi-line card placeholders with an avatar
-//!     square + two text bars. Matches the feed event-card layout.
-//!   * [`SkeletonList`] — convenience wrapper that renders N
-//!     [`SkeletonCard`] children. Used by agents.rs + key-backup history.
+//!   * [`SkeletonLine`] — single-line text placeholders. Best for list rows where each row is one
+//!     piece of text.
+//!   * [`SkeletonCard`] — multi-line card placeholders with an avatar square + two text bars.
+//!     Matches the feed event-card layout.
+//!   * [`SkeletonList`] — convenience wrapper that renders N [`SkeletonCard`] children. Used by
+//!     agents.rs + key-backup history.
 
 use dioxus::prelude::*;
 

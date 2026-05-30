@@ -425,8 +425,9 @@ impl EventEnvelope {
         // bug fix in the canonical-bytes / detached-JWS path lands in
         // one place (the SDK) instead of being mirrored across coauth,
         // soland, and yougen.
-        use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
         use std::sync::Arc;
+
+        use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
 
         let signer_did = signer_did.into();
         let key_id = key_id.into();
@@ -496,11 +497,12 @@ fn rand_u64() -> u64 {
 
 /// Canonical helper constructors used by the current UI.
 pub mod cx_ops {
+    use serde_json::{Value, json};
+
     use super::{
         Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef,
         scope_id_as_realm_id, uuid_v7,
     };
-    use serde_json::{Value, json};
 
     fn object_patch_payload_value(
         object_ref: &str,
@@ -1815,9 +1817,11 @@ pub mod cx_ops {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::{Value, json};
     use std::path::Path;
+
+    use serde_json::{Value, json};
+
+    use super::*;
 
     fn spec_schema(name: &str) -> serde_json::Value {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

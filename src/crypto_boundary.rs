@@ -30,20 +30,17 @@
 //!
 //! ## (b) Plaintext vs. ciphertext touchpoints
 //!
-//! * `crate::crypto::LocalMlsDevice` (native) drives MLS via
-//!   `MessageCrypto` from the SDK. Plaintext message bytes only ever
-//!   exist inside the Rust process — `encrypt_message` returns
+//! * `crate::crypto::LocalMlsDevice` (native) drives MLS via `MessageCrypto` from the SDK.
+//!   Plaintext message bytes only ever exist inside the Rust process — `encrypt_message` returns
 //!   ciphertext + AAD + payload digest.
-//! * `crate::crypto::compose_local_encrypted_message_inner` on wasm32
-//!   builds an opaque-shape `EncryptedPayload` (still encryption-shape,
-//!   no plaintext leak) until the WASM-side MLS engine lands.
-//! * Move bodies (lattice ops, capability decisions) are NOT encrypted —
-//!   they're canonical-JSON public state. The signing operation hashes
-//!   and signs canonical bytes; nothing here ever needs WebCrypto's
-//!   subtle interface for confidentiality of Move material.
-//! * Push payloads are blind-wakeup (privacy mode `e2ee_blind_wakeup`)
-//!   from the chime gateway describe — the body never leaves the device
-//!   in plaintext.
+//! * `crate::crypto::compose_local_encrypted_message_inner` on wasm32 builds an opaque-shape
+//!   `EncryptedPayload` (still encryption-shape, no plaintext leak) until the WASM-side MLS engine
+//!   lands.
+//! * Move bodies (lattice ops, capability decisions) are NOT encrypted — they're canonical-JSON
+//!   public state. The signing operation hashes and signs canonical bytes; nothing here ever needs
+//!   WebCrypto's subtle interface for confidentiality of Move material.
+//! * Push payloads are blind-wakeup (privacy mode `e2ee_blind_wakeup`) from the chime gateway
+//!   describe — the body never leaves the device in plaintext.
 //!
 //! ## (c) Does signing material ever cross an opaque-to-Rust boundary?
 //!
@@ -54,27 +51,24 @@
 //! the trust boundary uniform across native + browser:
 //!
 //! * Sign / verify  : Rust (ed25519-dalek)         — never crosses to JS.
-//! * Encrypt / decrypt : MLS via Rust SDK on native; on WASM the
-//!   [`WebCryptoBoundary`] below routes through `SubtleCrypto.encrypt /
-//!   decrypt` for AES-GCM bulk crypto **only when the caller explicitly
-//!   opts in** (a future MLS-on-WebCrypto experiment). The default
-//!   [`RustSdkBoundary`] keeps every byte inside Rust.
+//! * Encrypt / decrypt : MLS via Rust SDK on native; on WASM the [`WebCryptoBoundary`] below routes
+//!   through `SubtleCrypto.encrypt / decrypt` for AES-GCM bulk crypto **only when the caller
+//!   explicitly opts in** (a future MLS-on-WebCrypto experiment). The default [`RustSdkBoundary`]
+//!   keeps every byte inside Rust.
 //!
 //! # Trust-boundary trait
 //!
 //! The [`CryptoBoundary`] trait below codifies the four operations the
 //! UI layer cares about. Two implementations ship:
 //!
-//! 1. [`RustSdkBoundary`] — current default. Sign / verify use
-//!    `Ed25519MoveSigner` + `verify_ed25519_move_signature`; encrypt /
-//!    decrypt use the SDK's `MessageCrypto` / a deterministic ChaCha20
-//!    placeholder for the simple AEAD shape (the production AEAD is
-//!    selected by the caller when wiring real MLS / Megolm bytes).
+//! 1. [`RustSdkBoundary`] — current default. Sign / verify use `Ed25519MoveSigner` +
+//!    `verify_ed25519_move_signature`; encrypt / decrypt use the SDK's `MessageCrypto` / a
+//!    deterministic ChaCha20 placeholder for the simple AEAD shape (the production AEAD is selected
+//!    by the caller when wiring real MLS / Megolm bytes).
 //! 2. [`WebCryptoBoundary`] — wasm32 only. Encrypt / decrypt go through
-//!    `window.crypto.subtle.encrypt(...)` with AES-GCM. Signing stays in
-//!    Rust because the SDK's [`MoveSigner`] trait is Rust-native and
-//!    yougen explicitly does not cross the JS boundary for signing
-//!    material (see audit point (c) above).
+//!    `window.crypto.subtle.encrypt(...)` with AES-GCM. Signing stays in Rust because the SDK's
+//!    [`MoveSigner`] trait is Rust-native and yougen explicitly does not cross the JS boundary for
+//!    signing material (see audit point (c) above).
 
 use std::fmt;
 
@@ -401,8 +395,7 @@ async fn web_subtle_aes_gcm(
     aad: Option<&[u8]>,
 ) -> Result<Vec<u8>, CryptoBoundaryError> {
     use js_sys::{Array, Object, Reflect, Uint8Array};
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen::JsValue;
+    use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
     if key.len() != 16 && key.len() != 24 && key.len() != 32 {

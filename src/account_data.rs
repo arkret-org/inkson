@@ -705,8 +705,9 @@ pub fn build_account_data_set(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     // ── F-ACCT-SNAP-1 ────────────────────────────────────────────────
 

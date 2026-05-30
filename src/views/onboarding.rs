@@ -5,35 +5,28 @@
 //! DID/device/recovery decisions into four small steps.
 //!
 //! Spec sources:
-//! - `identity/identity-did.md` §3 — the default principal DID method is
-//!   `did:webvh`; `did:web` is kept for testing/local flows and is not
-//!   recommended for production.
-//! - `identity/identity-handles.md` — handles are only human-readable entry
-//!   points.
-//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant;
-//!   device authorization → cx.device.authorize; device verification →
-//!   cx.key.verification.*.
-//! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS /
-//!   recovery key.
+//! - `identity/identity-did.md` §3 — the default principal DID method is `did:webvh`; `did:web` is
+//!   kept for testing/local flows and is not recommended for production.
+//! - `identity/identity-handles.md` — handles are only human-readable entry points.
+//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant; device
+//!   authorization → cx.device.authorize; device verification → cx.key.verification.*.
+//! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS / recovery key.
 //!
 //! Steps:
-//!   1. Choose a DID method (default: did:webvh; did:web is test/local only;
-//!      placeholder methods are visible but not selectable).
+//!   1. Choose a DID method (default: did:webvh; did:web is test/local only; placeholder methods
+//!      are visible but not selectable).
 //!   2. Bind a handle.
 //!   3. Generate the local device key + cx.device.authorize.
-//!   4. Configure a recovery policy (vault passphrase / SSS guardian /
-//!      recovery key).
+//!   4. Configure a recovery policy (vault passphrase / SSS guardian / recovery key).
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::{
-    api::ContrixApi,
-    identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised},
-    local_state::LocalStateStore,
-    routes::Route,
-    views::helpers::{handle_from_did, short_protocol_id, with_authed_api},
-};
+use crate::api::ContrixApi;
+use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
+use crate::local_state::LocalStateStore;
+use crate::routes::Route;
+use crate::views::helpers::{handle_from_did, short_protocol_id, with_authed_api};
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";

@@ -224,11 +224,12 @@ impl MemberIdentityStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use contrix_sdk::{
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
     use serde_json::json;
+
+    use super::*;
 
     fn sample_payload(actor_id: &str, name: &str) -> Value {
         json!({
