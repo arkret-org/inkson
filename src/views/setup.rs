@@ -1186,16 +1186,34 @@ pub fn SetupPanel(
                                                             }
                                                             Err(error) => {
                                                                 let message = if is_auth_expired_error(&error) {
-                                                                    token.set(String::new());
-                                                                    persist_config(
-                                                                        config_store,
-                                                                        base.clone(),
-                                                                        actor.clone(),
-                                                                        device.clone(),
-                                                                        String::new(),
-                                                                    );
-                                                                    let _ = navigator.push(Route::Login);
-                                                                    "Session expired. Sign in again before creating a Realm.".to_owned()
+                                                                    // The short-lived principal bearer may have
+                                                                    // simply rolled over between background-poller
+                                                                    // ticks. Try the same silent re-mint that
+                                                                    // connect()/chat send use before wiping the
+                                                                    // session and bouncing to login.
+                                                                    if crate::app::refresh_bearer_for_view(
+                                                                        &base,
+                                                                        &actor,
+                                                                        &device,
+                                                                        state_store,
+                                                                        token,
+                                                                    )
+                                                                    .await
+                                                                    .is_some()
+                                                                    {
+                                                                        "Session refreshed — retry creating the Realm.".to_owned()
+                                                                    } else {
+                                                                        token.set(String::new());
+                                                                        persist_config(
+                                                                            config_store,
+                                                                            base.clone(),
+                                                                            actor.clone(),
+                                                                            device.clone(),
+                                                                            String::new(),
+                                                                        );
+                                                                        let _ = navigator.push(Route::Login);
+                                                                        "Session expired. Sign in again before creating a Realm.".to_owned()
+                                                                    }
                                                                 } else {
                                                                     format!("create failed: {error}")
                                                                 };

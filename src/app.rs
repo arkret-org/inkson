@@ -8369,20 +8369,54 @@ pub fn RouterView() -> Element {
                                                                 }
                                                                 Err(error) => {
                                                                     if is_auth_expired_error(&error) {
-                                                                        token.set(String::new());
-                                                                        persist_config(
+                                                                        // The bearer expired between background
+                                                                        // refresh ticks. Try a silent re-mint
+                                                                        // (OIDC refresh_token / session-grant
+                                                                        // exchange) before declaring the session
+                                                                        // dead — clicking "Refresh session" must
+                                                                        // *keep* the user signed in, not bounce
+                                                                        // them to login on a routine token rollover.
+                                                                        if let Some(fresh) = refresh_session_bearer_once(
+                                                                            &base,
+                                                                            &actor,
+                                                                            &device,
+                                                                            state_store,
+                                                                            token,
                                                                             config_store,
-                                                                            base.clone(),
-                                                                            actor.clone(),
-                                                                            device.clone(),
-                                                                            String::new(),
-                                                                        );
-                                                                        status.set("Session expired; sign in again".to_owned());
-                                                                        last_error.set(Some("auth_expired: session expired".to_owned()));
-                                                                        account_session_state.set(
-                                                                            "Session expired. Sign in again.".to_owned()
-                                                                        );
-                                                                        redirect_to_login(navigator);
+                                                                            status,
+                                                                            last_error,
+                                                                        ).await {
+                                                                            let canonical_actor = match ContrixApi::new(&base) {
+                                                                                Ok(api) => api
+                                                                                    .with_bearer(fresh)
+                                                                                    .account_me()
+                                                                                    .await
+                                                                                    .ok()
+                                                                                    .map(|account| account.did)
+                                                                                    .filter(|did| !did.trim().is_empty()),
+                                                                                Err(_) => None,
+                                                                            }
+                                                                            .unwrap_or_else(|| actor.clone());
+                                                                            account_did.set(canonical_actor.clone());
+                                                                            account_session_state.set(format!(
+                                                                                "Session refresh ok: {canonical_actor}"
+                                                                            ));
+                                                                        } else {
+                                                                            token.set(String::new());
+                                                                            persist_config(
+                                                                                config_store,
+                                                                                base.clone(),
+                                                                                actor.clone(),
+                                                                                device.clone(),
+                                                                                String::new(),
+                                                                            );
+                                                                            status.set("Session expired; sign in again".to_owned());
+                                                                            last_error.set(Some("auth_expired: session expired".to_owned()));
+                                                                            account_session_state.set(
+                                                                                "Session expired. Sign in again.".to_owned()
+                                                                            );
+                                                                            redirect_to_login(navigator);
+                                                                        }
                                                                     } else {
                                                                         account_session_state.set(format!(
                                                                             "Session refresh failed: {error}"
@@ -9920,6 +9954,80 @@ async fn refresh_session_bearer_once(
             last_error.set(Some(format!("session refresh after 401 failed: {reason}")));
             None
         }
+    }
+}
+
+/// View-side silent bearer refresh for *operational* paths (chat send,
+/// card actions, anything a leaf view fires on a user gesture) that hit
+/// `auth_expired` mid-action.
+///
+/// The principal bearer is short-lived (minutes). The background refresh
+/// poller usually re-mints it proactively, but it is best-effort: it
+/// no-ops when the OIDC bundle carries no `expires_at_unix`
+/// ([`crate::oidc::lifecycle::due_for_refresh`] returns `false`), and its
+/// `sleep_for` tick is throttled by the browser while the tab is
+/// backgrounded. So a user who acts inside the window where the bearer
+/// has died but the poller hasn't caught up gets a definitive 401.
+///
+/// `connect()` already recovers from that with
+/// [`refresh_session_bearer_once`]; leaf views did not, and instead wiped
+/// the token and bounced to `/login` — the "why did it suddenly ask me to
+/// sign in?" bug. This is the shared recovery primitive they call before
+/// surfacing the 401.
+///
+/// It mirrors the connect-path recovery (OIDC `refresh_token` first, then
+/// the session-grant exchange), updates the live `token` signal +
+/// persisted OIDC/grant state, and returns the fresh bearer. It does
+/// **not** touch `LocalConfigStore`: the live `token` signal is the
+/// in-session source of truth, and a hard reload re-refreshes from the
+/// persisted OIDC bundle / session grant via `connect()`. Returns `None`
+/// only when the session is genuinely dead and the caller must bounce to
+/// login.
+pub(crate) async fn refresh_bearer_for_view(
+    base_url: &str,
+    actor_did: &str,
+    device_id: &str,
+    mut state_store: Signal<LocalStateStore>,
+    mut token: Signal<String>,
+) -> Option<String> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let oidc_bundle = {
+        let store = state_store.read();
+        store.load_oidc_tokens_with_secure_store(actor_did, secure_store.as_ref())
+    };
+    if let Some(bundle) = oidc_bundle
+        && crate::oidc::lifecycle::has_refresh_token(&bundle)
+        && let Ok(next) =
+            refresh_oidc_bearer_for_server(base_url, actor_did, device_id, &bundle).await
+    {
+        let access_token = next.access_token.clone();
+        state_store.write().set_oidc_tokens_with_secure_store(
+            Some(next),
+            actor_did,
+            secure_store.as_ref(),
+        );
+        token.set(access_token.clone());
+        return Some(access_token);
+    }
+
+    let prepared = {
+        let mut store = state_store.write();
+        crate::session_refresh::prepare_refresh_for_server_after_unauthorized(&mut store, base_url)
+    };
+    let outcome = match prepared {
+        crate::session_refresh::RefreshPrepared::Done(outcome) => outcome,
+        crate::session_refresh::RefreshPrepared::Ready { grant, proof } => {
+            let result = crate::session_refresh::exchange_refresh(&grant, &proof).await;
+            let mut store = state_store.write();
+            crate::session_refresh::commit_refresh(&mut store, result)
+        }
+    };
+    match outcome {
+        crate::session_refresh::RefreshOutcome::Refreshed { access_token, .. } => {
+            token.set(access_token.clone());
+            Some(access_token)
+        }
+        _ => None,
     }
 }
 

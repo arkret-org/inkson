@@ -2251,6 +2251,76 @@ async fn submit_chat_operation_with_plaintext_retry(
     }
 }
 
+/// Submit a chat operation and, if the first attempt fails with a
+/// definitive `auth_expired` (the short-lived principal bearer died
+/// between the background refresh ticks), silently re-mint the bearer
+/// and retry once before surfacing the error.
+///
+/// Previously the send paths bounced straight to `/login` on the first
+/// `auth_expired`, which is the source of the "it randomly asks me to
+/// sign in mid-conversation" report: the bearer expires on the order of
+/// minutes and the proactive poller can lag (backgrounded tab, no
+/// `expires_in` on the OIDC token). By trying the same recovery
+/// `connect()` uses ([`crate::app::refresh_bearer_for_view`]) the user
+/// stays signed in across a token rollover; only a genuinely dead session
+/// (refresh material exhausted) still returns an `auth_expired` for the
+/// caller to route to login.
+#[allow(clippy::too_many_arguments)]
+async fn submit_chat_operation_with_auth_refresh(
+    base_url: &str,
+    actor_did: &str,
+    device_id: &str,
+    space_id: &str,
+    access_token: String,
+    wait_for_sync_token: Option<String>,
+    plaintext_visible_services: &[String],
+    operation: &EventEnvelope,
+    state_store: Signal<LocalStateStore>,
+    token: Signal<String>,
+) -> anyhow::Result<SubmitEventResponse> {
+    let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
+    let first = submit_chat_operation_with_plaintext_retry(
+        &api,
+        space_id,
+        actor_did,
+        plaintext_visible_services,
+        operation,
+    )
+    .await;
+    match first {
+        Ok(response) => Ok(response),
+        Err(error) if is_auth_expired_error(&error) => {
+            match crate::app::refresh_bearer_for_view(
+                base_url,
+                actor_did,
+                device_id,
+                state_store,
+                token,
+            )
+            .await
+            {
+                Some(fresh_token) => {
+                    let retry_api =
+                        authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;
+                    submit_chat_operation_with_plaintext_retry(
+                        &retry_api,
+                        space_id,
+                        actor_did,
+                        plaintext_visible_services,
+                        operation,
+                    )
+                    .await
+                }
+                // Refresh material is exhausted — the session is really
+                // dead. Hand the original auth_expired back so the caller
+                // routes to login.
+                None => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[component]
 pub fn ChatPanel(
     base_url: String,
@@ -3552,6 +3622,7 @@ pub fn ChatPanel(
                                                 let service_did = plaintext_service_did.clone();
                                                 let space = msg.space_id.clone();
                                                 let actor = account_did.clone();
+                                                let device = device_id.clone();
                                                 let local_id = msg.id.clone();
                                                 let body = msg.body.clone();
                                                 let flow_id = msg.flow_id.clone();
@@ -3607,68 +3678,56 @@ pub fn ChatPanel(
                                                     let mention_values_for_store = mentions_to_json(&mentions);
                                                     let space_for_record = space.clone();
                                                     let actor_for_retry = actor.clone();
+                                                    let device = device.clone();
                                                     spawn(async move {
-                                                        match authed_api_with_sync(&base, api_token, wait_for) {
-                                                            Ok(api) => match submit_chat_operation_with_plaintext_retry(
-                                                                &api,
-                                                                &space,
-                                                                &actor_for_retry,
-                                                                &plaintext_services,
-                                                                &op,
-                                                            ).await {
-                                                                Ok(resp) => {
-                                                                    {
-                                                                        let mut store = state_store.write();
-                                                                        store.append_raw_operation(
-                                                                            op.local_operation_id().to_owned(),
-                                                                            Some(space_for_record),
-                                                                            json!({
-                                                                                "event_id": resp.event_id.clone(),
-                                                                                "kind": "cx.message.create",
-                                                                                "actor": actor_for_store,
-                                                                                "body": body_for_store,
-                                                                                "flow_id": flow_id_for_store,
-                                                                                "message_id": message_id_for_store,
-                                                                                "mentions": mention_values_for_store,
-                                                                                "reply_to": reply_to_for_store,
-                                                                                "status": resp.status.clone(),
-                                                                            }),
-                                                                        );
-                                                                    }
-                                                                    if let Some(found) = messages
-                                                                        .write()
-                                                                        .iter_mut()
-                                                                        .find(|candidate| candidate.id == message_id_for_lookup)
-                                                                    {
-                                                                        found.id = resp.event_id.clone();
-                                                                        found.pending = false;
-                                                                        found.failed = false;
-                                                                        found.error = None;
-                                                                    }
-                                                                    sync_cursor.set(resp.sync_token.clone());
-                                                                    frontier_state.set(resp.event_id.clone());
-                                                                    status_msg.set("Message sent".to_owned());
+                                                        match submit_chat_operation_with_auth_refresh(
+                                                            &base,
+                                                            &actor_for_retry,
+                                                            &device,
+                                                            &space,
+                                                            api_token,
+                                                            wait_for,
+                                                            &plaintext_services,
+                                                            &op,
+                                                            state_store,
+                                                            token,
+                                                        ).await {
+                                                            Ok(resp) => {
+                                                                {
+                                                                    let mut store = state_store.write();
+                                                                    store.append_raw_operation(
+                                                                        op.local_operation_id().to_owned(),
+                                                                        Some(space_for_record),
+                                                                        json!({
+                                                                            "event_id": resp.event_id.clone(),
+                                                                            "kind": "cx.message.create",
+                                                                            "actor": actor_for_store,
+                                                                            "body": body_for_store,
+                                                                            "flow_id": flow_id_for_store,
+                                                                            "message_id": message_id_for_store,
+                                                                            "mentions": mention_values_for_store,
+                                                                            "reply_to": reply_to_for_store,
+                                                                            "status": resp.status.clone(),
+                                                                        }),
+                                                                    );
                                                                 }
-                                                                Err(error) => {
-                                                                    let auth_expired = is_auth_expired_error(&error);
-                                                                    let message = chat_send_error_message(&error);
-                                                                    if let Some(found) = messages
-                                                                        .write()
-                                                                        .iter_mut()
-                                                                        .find(|candidate| candidate.id == message_id_for_lookup)
-                                                                    {
-                                                                        found.pending = false;
-                                                                        found.failed = true;
-                                                                        found.error = Some(message.clone());
-                                                                    }
-                                                                    status_msg.set(format!("Message send failed: {message}"));
-                                                                    if auth_expired {
-                                                                        let _ = navigator.push(Route::Login);
-                                                                    }
+                                                                if let Some(found) = messages
+                                                                    .write()
+                                                                    .iter_mut()
+                                                                    .find(|candidate| candidate.id == message_id_for_lookup)
+                                                                {
+                                                                    found.id = resp.event_id.clone();
+                                                                    found.pending = false;
+                                                                    found.failed = false;
+                                                                    found.error = None;
                                                                 }
-                                                            },
+                                                                sync_cursor.set(resp.sync_token.clone());
+                                                                frontier_state.set(resp.event_id.clone());
+                                                                status_msg.set("Message sent".to_owned());
+                                                            }
                                                             Err(error) => {
-                                                                let message = format!("Invalid server URL: {error}");
+                                                                let auth_expired = is_auth_expired_error(&error);
+                                                                let message = chat_send_error_message(&error);
                                                                 if let Some(found) = messages
                                                                     .write()
                                                                     .iter_mut()
@@ -3678,7 +3737,10 @@ pub fn ChatPanel(
                                                                     found.failed = true;
                                                                     found.error = Some(message.clone());
                                                                 }
-                                                                status_msg.set(message);
+                                                                status_msg.set(format!("Message send failed: {message}"));
+                                                                if auth_expired {
+                                                                    let _ = navigator.push(Route::Login);
+                                                                }
                                                             }
                                                         }
                                                     });
@@ -5289,6 +5351,7 @@ pub fn ChatPanel(
                             let service_did = plaintext_service_did.clone();
                             let space = selected_space.clone();
                             let actor = account_did.clone();
+                            let device = device_id.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -5434,78 +5497,66 @@ pub fn ChatPanel(
                                     plaintext_services_for_policy(projection.as_ref(), &service_did);
                                 let wait_for = active_sync_token(sync_cursor());
                                 let actor_for_retry = actor.clone();
+                                let device = device.clone();
                                 spawn(async move {
-                                    match authed_api_with_sync(&base, api_token, wait_for) {
-                                        Ok(api) => match submit_chat_operation_with_plaintext_retry(
-                                            &api,
-                                            &space,
-                                            &actor_for_retry,
-                                            &plaintext_services,
-                                            &op,
-                                        ).await {
-                                            Ok(resp) => {
-                                                {
-                                                    let mut store = state_store.write();
-                                                    store.append_raw_operation(
-                                                        op.local_operation_id().to_owned(),
-                                                        Some(space_for_record),
-                                                        json!({
-                                                            "event_id": resp.event_id.clone(),
-                                                            "kind": "cx.message.create",
-                                                            "actor": actor_for_store,
-                                                            "body": body_for_store,
-                                                            "flow_id": flow_id_for_store,
-                                                            "message_id": message_id_for_store,
-                                                            "mentions": mention_values_for_store,
-                                                            "reply_to": reply_to_for_store,
-                                                            "status": resp.status.clone(),
-                                                        }),
-                                                    );
-                                                }
-                                                if let Some(found) = messages
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| candidate.id == local_id)
-                                                {
-                                                    found.id = resp.event_id.clone();
-                                                    found.pending = false;
-                                                    found.failed = false;
-                                                    found.error = None;
-                                                }
-                                                sync_cursor.set(resp.sync_token.clone());
-                                                frontier_state.set(resp.event_id.clone());
-                                                status_msg.set("Message sent".to_owned());
+                                    match submit_chat_operation_with_auth_refresh(
+                                        &base,
+                                        &actor_for_retry,
+                                        &device,
+                                        &space,
+                                        api_token,
+                                        wait_for,
+                                        &plaintext_services,
+                                        &op,
+                                        state_store,
+                                        token,
+                                    ).await {
+                                        Ok(resp) => {
+                                            {
+                                                let mut store = state_store.write();
+                                                store.append_raw_operation(
+                                                    op.local_operation_id().to_owned(),
+                                                    Some(space_for_record),
+                                                    json!({
+                                                        "event_id": resp.event_id.clone(),
+                                                        "kind": "cx.message.create",
+                                                        "actor": actor_for_store,
+                                                        "body": body_for_store,
+                                                        "flow_id": flow_id_for_store,
+                                                        "message_id": message_id_for_store,
+                                                        "mentions": mention_values_for_store,
+                                                        "reply_to": reply_to_for_store,
+                                                        "status": resp.status.clone(),
+                                                    }),
+                                                );
                                             }
-                                            Err(error) => {
-                                                let auth_expired = is_auth_expired_error(&error);
-                                                let membership_denied =
-                                                    is_space_membership_denied_error(&error);
-                                                let message = chat_send_error_message(&error);
-                                                if membership_denied {
-                                                    messages
-                                                        .write()
-                                                        .retain(|candidate| candidate.id != local_id);
-                                                    if chat_draft().trim().is_empty() {
-                                                        chat_draft.set(body_for_restore.clone());
-                                                    }
-                                                } else if let Some(found) = messages
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| candidate.id == local_id)
-                                                {
-                                                    found.pending = false;
-                                                    found.failed = true;
-                                                    found.error = Some(message.clone());
-                                                }
-                                                status_msg.set(format!("Message send failed: {message}"));
-                                                if auth_expired {
-                                                    let _ = navigator.push(Route::Login);
-                                                }
-                                            }
-                                        },
-                                        Err(error) => {
-                                            let message = format!("Invalid server URL: {error}");
                                             if let Some(found) = messages
+                                                .write()
+                                                .iter_mut()
+                                                .find(|candidate| candidate.id == local_id)
+                                            {
+                                                found.id = resp.event_id.clone();
+                                                found.pending = false;
+                                                found.failed = false;
+                                                found.error = None;
+                                            }
+                                            sync_cursor.set(resp.sync_token.clone());
+                                            frontier_state.set(resp.event_id.clone());
+                                            status_msg.set("Message sent".to_owned());
+                                        }
+                                        Err(error) => {
+                                            let auth_expired = is_auth_expired_error(&error);
+                                            let membership_denied =
+                                                is_space_membership_denied_error(&error);
+                                            let message = chat_send_error_message(&error);
+                                            if membership_denied {
+                                                messages
+                                                    .write()
+                                                    .retain(|candidate| candidate.id != local_id);
+                                                if chat_draft().trim().is_empty() {
+                                                    chat_draft.set(body_for_restore.clone());
+                                                }
+                                            } else if let Some(found) = messages
                                                 .write()
                                                 .iter_mut()
                                                 .find(|candidate| candidate.id == local_id)
@@ -5514,7 +5565,10 @@ pub fn ChatPanel(
                                                 found.failed = true;
                                                 found.error = Some(message.clone());
                                             }
-                                            status_msg.set(message);
+                                            status_msg.set(format!("Message send failed: {message}"));
+                                            if auth_expired {
+                                                let _ = navigator.push(Route::Login);
+                                            }
                                         }
                                     }
                                 });
