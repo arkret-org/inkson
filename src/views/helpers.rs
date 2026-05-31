@@ -497,7 +497,7 @@ pub fn handle_claim_rows(
                     .binding_state
                     .map(|s| format!("{s:?}").to_lowercase())
                     .unwrap_or_else(|| "(unset)".to_owned()),
-                created_at: claim.issued_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                created_at: claim.created_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
                 expires_at: claim.expires_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
                 claim_digest: digest,
             }
@@ -662,7 +662,7 @@ mod tests {
             ),
             issuer: Some("did:web:issuer.acme.example".to_owned()),
             binding_state: Some(HandleBindingState::Verified),
-            issued_at: Some(now - chrono::Duration::hours(1)),
+            created_at: Some(now - chrono::Duration::hours(1)),
             expires_at: Some(now + chrono::Duration::days(30)),
             ..Default::default()
         };
@@ -724,7 +724,7 @@ mod tests {
             subject: Some(subject.clone()),
             issuer: Some("did:web:issuer.acme.example".to_owned()),
             binding_state: Some(HandleBindingState::Verified),
-            issued_at: Some(now),
+            created_at: Some(now),
             expires_at: Some(now + chrono::Duration::days(30)),
             ..Default::default()
         };
