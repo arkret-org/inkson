@@ -472,6 +472,13 @@ struct MentionInlinePart {
 /// fallback ladder (each visually degraded) instead of inventing a
 /// handle.
 fn mention_label_from_structured(mention: &StructuredMention) -> Option<String> {
+    if mention.kind == "audience_mention" {
+        return mention
+            .token
+            .strip_prefix('@')
+            .filter(|label| !label.is_empty())
+            .map(ToOwned::to_owned);
+    }
     if mention.kind != "actor" {
         return mention
             .token
@@ -1147,10 +1154,12 @@ fn chat_message_create_operation(
     reply_to: Option<&str>,
 ) -> crate::operation::EventEnvelope {
     let mention_values = mentions_to_json(mentions);
+    let audience_mention_values = audience_mentions_to_json(mentions);
     let mention_relations = mention_relation_json(message_id, mentions);
     let content = json!({
         "kind": "cx.content.text",
         "body": body,
+        "audience_mentions": audience_mention_values.clone(),
     });
     let mut payload = json!({
         "body": body,
@@ -1165,6 +1174,7 @@ fn chat_message_create_operation(
         "kind": channel_kind,
         "message_id": message_id,
         "mentions": mention_values,
+        "audience_mentions": audience_mention_values,
         "mention_relations": mention_relations,
     });
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty())
@@ -1314,21 +1324,24 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                     // `subject_id` (principal DID). Accept the pre-R3.2
                     // `subject` and yougen-legacy `target` as fallbacks
                     // for not-yet-migrated payloads.
-                    let target = item
-                        .get("subject_id")
-                        .and_then(Value::as_str)
-                        .or_else(|| item.get("subject").and_then(Value::as_str))
-                        .or_else(|| item.get("target").and_then(Value::as_str))?;
-                    Some(StructuredMention {
-                        kind: item
-                            .get("kind")
+                    let kind = item.get("kind").and_then(Value::as_str).unwrap_or("ref");
+                    let target = if kind == "audience_mention" {
+                        item.get("audience")
                             .and_then(Value::as_str)
-                            .unwrap_or("ref")
-                            .to_owned(),
+                            .or_else(|| item.get("target").and_then(Value::as_str))?
+                    } else {
+                        item.get("subject_id")
+                            .and_then(Value::as_str)
+                            .or_else(|| item.get("subject").and_then(Value::as_str))
+                            .or_else(|| item.get("target").and_then(Value::as_str))?
+                    };
+                    Some(StructuredMention {
+                        kind: kind.to_owned(),
                         target: target.to_owned(),
                         token: item
                             .get("token")
                             .and_then(Value::as_str)
+                            .or_else(|| item.get("mention_text_original").and_then(Value::as_str))
                             .unwrap_or(target)
                             .to_owned(),
                         // R3.2 audit metadata: v2 field names only (no
@@ -1363,20 +1376,22 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
 }
 
 fn mentions_from_candidates(candidates: &[&Value]) -> Vec<StructuredMention> {
-    candidates
-        .iter()
-        .find_map(|candidate| {
-            candidate
-                .get("mentions")
-                .or_else(|| {
-                    candidate
-                        .get("content")
-                        .and_then(|content| content.get("mentions"))
-                })
-                .map(mentions_from_value)
-                .filter(|mentions| !mentions.is_empty())
-        })
-        .unwrap_or_default()
+    for candidate in candidates {
+        let mut mentions = Vec::new();
+        for key in ["mentions", "audience_mentions"] {
+            if let Some(value) = candidate.get(key).or_else(|| {
+                candidate
+                    .get("content")
+                    .and_then(|content| content.get(key))
+            }) {
+                mentions.extend(mentions_from_value(value));
+            }
+        }
+        if !mentions.is_empty() {
+            return mentions;
+        }
+    }
+    Vec::new()
 }
 
 fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
@@ -5874,6 +5889,7 @@ pub fn ChatPanel(
 fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
     mentions
         .iter()
+        .filter(|mention| mention.kind != "audience_mention")
         .map(|mention| {
             // R3.2 §3.8: emit `subject_id` (the authoritative principal
             // DID) as the actor reference. `handle_at_time` /
@@ -5909,9 +5925,32 @@ fn mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn audience_mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
+    mentions
+        .iter()
+        .filter(|mention| mention.kind == "audience_mention")
+        .map(|mention| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("kind".to_owned(), json!("audience_mention"));
+            obj.insert("audience".to_owned(), json!(mention.target));
+            if !mention.mention_text_original.is_empty() {
+                obj.insert(
+                    "mention_text_original".to_owned(),
+                    json!(mention.mention_text_original),
+                );
+            }
+            if !mention.resolved_at.is_empty() {
+                obj.insert("resolved_at".to_owned(), json!(mention.resolved_at));
+            }
+            Value::Object(obj)
+        })
+        .collect()
+}
+
 fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
     mentions
         .iter()
+        .filter(|mention| mention.kind != "audience_mention")
         .map(|mention| {
             json!({
                 "relation_type": "mentions",
@@ -6057,6 +6096,44 @@ mod tests {
         assert!(op.payload["content"].get("blocks").is_none());
         assert!(op.payload.get("reply_to").is_none());
         assert!(op.payload.get("thread_id").is_none());
+    }
+
+    #[test]
+    fn chat_message_create_operation_emits_audience_mentions_separately() {
+        let mentions = parse_structured_mentions("ping @here and @carol:example.com");
+        let op = chat_message_create_operation(
+            "cx:space:demo",
+            "did:web:alice.example",
+            "cx:flow:demo",
+            "discussion",
+            "cx:message:test-audience",
+            "ping @here and @carol:example.com",
+            &mentions,
+            None,
+        );
+
+        assert_eq!(
+            op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
+            Some("flow_engaged")
+        );
+        assert_eq!(
+            op.payload["audience_mentions"][0]["kind"].as_str(),
+            Some("audience_mention")
+        );
+        assert!(
+            op.payload["mentions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|mention| mention["kind"].as_str() != Some("audience_mention"))
+        );
+        assert!(
+            op.payload["mention_relations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|relation| relation["target"].as_str() != Some("flow_engaged"))
+        );
     }
 
     #[test]

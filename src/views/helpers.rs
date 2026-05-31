@@ -17,7 +17,8 @@ use crate::config::{ClientConfig, LocalConfigStore};
 pub struct StructuredMention {
     pub kind: String,
     /// Authoritative reference. For actor mentions this is the principal
-    /// DID (`subject_id`); for entities the `cx:` id.
+    /// DID (`subject_id`); for entities the `cx:` id; for audience
+    /// mentions the canonical audience token.
     #[serde(alias = "subject_id")]
     pub target: String,
     pub token: String,
@@ -41,6 +42,17 @@ pub struct StructuredMention {
     /// time. Empty when the resolver didn't supply it.
     #[serde(default)]
     pub resolved_at: String,
+}
+
+fn audience_mention_audience_from_token(token: &str) -> Option<&'static str> {
+    match token.trim().to_ascii_lowercase().as_str() {
+        "@all" => Some("effective_scope_members"),
+        "@participants" => Some("flow_participants"),
+        "@watchers" => Some("flow_watchers"),
+        "@here" => Some("flow_engaged"),
+        "@assigned" | "@assignees" => Some("assigned_actors"),
+        _ => None,
+    }
 }
 
 /// Create an authenticated API client from a base URL and optional access token.
@@ -304,6 +316,18 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
             )
         });
         if let Some(handle) = normalized.strip_prefix('@') {
+            if let Some(audience) = audience_mention_audience_from_token(normalized) {
+                mentions.push(StructuredMention {
+                    kind: "audience_mention".to_owned(),
+                    target: audience.to_owned(),
+                    token: normalized.to_owned(),
+                    display_name_at_time: String::new(),
+                    handle_at_time: String::new(),
+                    mention_text_original: normalized.to_owned(),
+                    resolved_at: String::new(),
+                });
+                continue;
+            }
             if !handle.is_empty()
                 && let Some(parsed) = crate::identity_handle::parse_user_handle(handle)
             {
@@ -648,6 +672,19 @@ mod tests {
                 .iter()
                 .any(|mention| mention.target == "topic-demo")
         );
+    }
+
+    #[test]
+    fn parses_audience_mentions_without_presence_online() {
+        let mentions = parse_structured_mentions("notify @here and @all but never @online");
+
+        assert!(mentions.iter().any(|mention| {
+            mention.kind == "audience_mention" && mention.target == "flow_engaged"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.kind == "audience_mention" && mention.target == "effective_scope_members"
+        }));
+        assert!(!mentions.iter().any(|mention| mention.token == "@online"));
     }
 
     #[test]
