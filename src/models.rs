@@ -295,8 +295,7 @@ pub struct DirectoryDescribeResBody {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveRealmResponse {
-    #[serde(alias = "realm_preview")]
-    pub space_preview: SpacePreview,
+    pub realm_preview: SpacePreview,
     #[serde(default)]
     pub stripped_state: Vec<Value>,
     pub join_rule: String,
@@ -639,8 +638,6 @@ pub struct BlobUploadResBody {
     pub size_bytes: usize,
     pub media_type: String,
     pub content_digest: String,
-    #[serde(default)]
-    pub thumbnail_ref: Option<String>,
     pub upload_receipt: Value,
 }
 

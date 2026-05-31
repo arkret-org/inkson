@@ -120,7 +120,7 @@ impl ShareTarget {
     /// flow/message link with no `via`.
     pub fn to_parsed_address(
         &self,
-        via: &[String],
+        _via: &[String],
         action: AddressAction,
         link_type: LinkType,
         token: Option<String>,
@@ -129,7 +129,6 @@ impl ShareTarget {
             realm: RealmRef::parse(self.realm_seg()),
             flow: self.flow_seg().map(str::to_owned),
             message: self.message_seg().map(str::to_owned),
-            via: via.to_vec(),
             action,
             // A stray token on a reference link is dropped by the SDK builder.
             link_type,
@@ -398,11 +397,11 @@ mod tests {
     }
 
     #[test]
-    fn flow_links_carry_via_and_roundtrip() {
+    fn flow_links_ignore_via_and_roundtrip() {
         let target = ShareTarget::flow(&format!("cx:realm:{R}"), &format!("cx:flow:{F}"));
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
         assert!(links.web_contrix.contains(&format!("realm/{R}/flow/{F}")));
-        assert!(links.web_contrix.contains(&format!("via={VIA}")));
+        assert!(!links.web_contrix.contains("via="));
         // Both forms reparse to the same address.
         let from_https = OpenedLink::parse(&links.https_landing).unwrap();
         let from_web = OpenedLink::parse(&links.web_contrix).unwrap();

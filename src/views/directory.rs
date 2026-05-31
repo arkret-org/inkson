@@ -492,7 +492,7 @@ pub fn DirectoryPanel(
                                             .await
                                             {
                                                 Ok(resolved) => {
-                                                    selected_space.set(resolved.space_preview.space_id);
+                                                    selected_space.set(resolved.realm_preview.space_id);
                                                     status.set(format!("resolved {}", resolved.join_rule));
                                                 }
                                                 Err(err) => status.set(format!(

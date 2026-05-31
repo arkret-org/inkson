@@ -5013,7 +5013,7 @@ fn select_join_candidate<'a>(
     resolved: &'a ResolveRealmResponse,
     join_method: &str,
 ) -> anyhow::Result<&'a RealmJoinCandidate> {
-    let realm_id = scope_id_as_realm_id(resolved.space_preview.projection_realm_id());
+    let realm_id = scope_id_as_realm_id(resolved.realm_preview.projection_realm_id());
     resolved
         .join_candidates
         .iter()

@@ -50,7 +50,6 @@ struct BlobAttachment {
     size_bytes: usize,
     media_type: String,
     content_digest: String,
-    thumbnail_ref: Option<String>,
 }
 
 /// Event model for timeline display.
@@ -1746,7 +1745,6 @@ pub fn TimelinePanel(
                                             size_bytes: blob.size_bytes,
                                             media_type: blob.media_type.clone(),
                                             content_digest: blob.content_digest.clone(),
-                                            thumbnail_ref: blob.thumbnail_ref.clone(),
                                         }));
                                         blob_status.set(format!(
                                             "attached {} ({hash_state}; {}; no token in media URL)",
@@ -1773,9 +1771,6 @@ pub fn TimelinePanel(
                         div { class: "muted", "Size: {blob.size_bytes} bytes" }
                         div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
                         div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
-                        if let Some(thumbnail_ref) = &blob.thumbnail_ref {
-                            div { class: "muted", "Thumbnail: {thumbnail_ref}" }
-                        }
                         div { class: "actions",
                             button {
                                 class: "secondary",
