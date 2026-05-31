@@ -273,8 +273,8 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Identity (DID proof + progressive disclosure §16 + C45 accountability grant)
         "cx.did.proof",
         // Round C45: issuer-signed endorsement that a subject DID is
-        // accountable_to the issuer; required to verify
-        // `Actor Profile.accountable_to[]`. See zh/models/actor.md §3.3.1.
+        // accountable to the issuer; required to verify
+        // `Actor Profile.accountable_principal_ids[]`. See zh/models/actor.md §3.3.1.
         "cx.identity.accountability_grant",
         "cx.identity.disclosure_policy",
         "cx.identity.disclosure_receipt",

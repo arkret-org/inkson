@@ -4,6 +4,12 @@ All notable yougen changes are recorded here. Yougen is the Dioxus
 cross-platform Contrix v1 reference client (macOS / Windows / Linux / iOS /
 Android / web).
 
+## R3.4 — Spec sync 2026-05-31 (contrix-spec @ c2848a4)
+
+- Synced protocol-facing names and fixtures to `c2848a4`: event envelope schema naming, `_ids` grant constraints, accountability principal vocabulary, `cx:rtc_participant:` media participants, agent session start fields, and key-backup signature algorithm naming where applicable.
+
+> No version tag, no crates.io / Docker Hub / npm publish — git commit only.
+
 ## R3.3 — Spec sync 2026-05-28 (contrix-spec @ cced4b8)
 
 - CXP-0011: client-side shareable object links. New `src/object_address.rs`

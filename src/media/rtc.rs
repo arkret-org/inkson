@@ -295,16 +295,16 @@ mod tests {
     #[test]
     fn participant_identity_cross_check_fails_closed_on_unknown() {
         let mut known = BTreeSet::new();
-        known.insert("cx:rtcpart:00000000-0000-0000-0000-000000000001".to_owned());
+        known.insert("cx:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
         assert!(
             cross_check_participant_identity(
-                "cx:rtcpart:00000000-0000-0000-0000-000000000001",
+                "cx:rtc_participant:00000000-0000-0000-0000-000000000001",
                 &known
             )
             .is_ok()
         );
         assert_eq!(
-            cross_check_participant_identity("cx:rtcpart:unknown", &known),
+            cross_check_participant_identity("cx:rtc_participant:unknown", &known),
             Err(RtcClientError::ParticipantIdentityUnrecognised)
         );
     }

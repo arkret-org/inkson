@@ -31,7 +31,7 @@ The agent surface lives in `/agents` and is gated by the
 1. Open `/agents` from the sidebar.
 2. Scroll to **Register an automated member**.
 3. Fill in:
-   - **agent_did** — e.g. `assistant:example.com`.
+   - **agent_id** — e.g. `assistant:example.com`.
    - **protocol** — e.g. `cx.agent.v1`.
    - **capabilities** — comma-separated. Use the autocomplete to pick
      from the 14 canonical capabilities.

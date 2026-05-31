@@ -1,6 +1,6 @@
 # yougen
 
-> **Spec target**: [contrix-spec @ cced4b8](../contrix-spec) (R3.3 sync 2026-05-28)
+> **Spec target**: [contrix-spec @ c2848a4](../contrix-spec) (R3.4 sync 2026-05-31)
 
 Cross-platform Contrix client built with Dioxus 0.7.
 

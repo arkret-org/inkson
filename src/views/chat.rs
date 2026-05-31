@@ -771,10 +771,10 @@ fn upsert_participant(
 /// `space_id`. Used to mark `SpaceParticipant::is_agent` so member /
 /// mention / sender rows can render a 🤖 badge.
 ///
-/// Reads the agent DID from `payload.body.agent_did` (per
+/// Reads the agent DID from `payload.body.agent_id` (per
 /// `crate::operation::cx_ops::agent_endpoint`). Returns an empty Vec
 /// when no agent endpoints are registered.
-fn agent_dids_from_raw_operations(
+fn agent_ids_from_raw_operations(
     raw_operations: &[crate::local_state::RawOperationRecord],
     space_id: &str,
 ) -> Vec<String> {
@@ -800,7 +800,7 @@ fn agent_dids_from_raw_operations(
         let did = record
             .payload
             .get("body")
-            .and_then(|b| b.get("agent_did"))
+            .and_then(|b| b.get("agent_id"))
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some(did) = did
@@ -812,14 +812,14 @@ fn agent_dids_from_raw_operations(
     out
 }
 
-/// Mark every participant whose DID appears in `agent_dids` as
+/// Mark every participant whose DID appears in `agent_ids` as
 /// `is_agent = true`. No-op for unknown DIDs.
-fn annotate_agent_participants(participants: &mut [SpaceParticipant], agent_dids: &[String]) {
-    if agent_dids.is_empty() {
+fn annotate_agent_participants(participants: &mut [SpaceParticipant], agent_ids: &[String]) {
+    if agent_ids.is_empty() {
         return;
     }
     for participant in participants.iter_mut() {
-        if agent_dids.iter().any(|did| did == &participant.did) {
+        if agent_ids.iter().any(|did| did == &participant.did) {
             participant.is_agent = true;
         }
     }
@@ -2568,11 +2568,11 @@ pub fn ChatPanel(
     // Source of truth is the local store's `cx.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
     {
-        let agent_dids = agent_dids_from_raw_operations(
+        let agent_ids = agent_ids_from_raw_operations(
             &state_store.read().load().raw_operations,
             &selected_space,
         );
-        annotate_agent_participants(&mut participants, &agent_dids);
+        annotate_agent_participants(&mut participants, &agent_ids);
     }
     let participants_for_messages = participants.clone();
     let account_display_label = account_display_name();
@@ -6300,7 +6300,7 @@ mod tests {
     }
 
     #[test]
-    fn participant_with_agent_did_renders_with_agent_badge() {
+    fn participant_with_agent_id_renders_with_agent_badge() {
         // Three participants in the space: Alice (the local account),
         // Bob (a real human member), and a Researcher Agent registered
         // via `cx.agent.endpoint`. After `annotate_agent_participants`
@@ -6353,7 +6353,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_dids_from_raw_operations_filters_by_space_and_kind() {
+    fn agent_ids_from_raw_operations_filters_by_space_and_kind() {
         use chrono::Utc;
 
         use crate::local_state::RawOperationRecord;
@@ -6369,7 +6369,7 @@ mod tests {
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "cx.agent.endpoint",
-                    "body": { "agent_did": "did:web:researcher-agent.example" }
+                    "body": { "agent_id": "did:web:researcher-agent.example" }
                 }),
             },
             RawOperationRecord {
@@ -6378,7 +6378,7 @@ mod tests {
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "cx.agent.endpoint",
-                    "body": { "agent_did": "did:web:other-agent.example" }
+                    "body": { "agent_id": "did:web:other-agent.example" }
                 }),
             },
             RawOperationRecord {
@@ -6392,9 +6392,9 @@ mod tests {
             },
         ];
 
-        let agent_dids = agent_dids_from_raw_operations(&records, "cx:space:demo");
+        let agent_ids = agent_ids_from_raw_operations(&records, "cx:space:demo");
         assert_eq!(
-            agent_dids,
+            agent_ids,
             vec!["did:web:researcher-agent.example".to_owned()]
         );
     }

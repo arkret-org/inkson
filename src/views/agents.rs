@@ -4,7 +4,7 @@
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:
-//!   * `cx.agent.endpoint` registers an agent_did + invocation protocol + capability_proof
+//!   * `cx.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
 //!     requirement.
 //!   * `cx.agent.protocol_session.{start,status,result}` track agent invocations. The terminal
 //!     `result` event carries a typed result payload + the audit_binding proof so the audit
@@ -250,7 +250,7 @@ enum AuditVerifyStatus {
     /// Signature recomputes against the carried Ed25519 key.
     Valid,
     /// `canonical_subject` field disagrees with the per-field
-    /// (session_id, agent_did, echo, actor) tuple.
+    /// (session_id, agent_id, echo, actor) tuple.
     SubjectMismatch,
     /// Signature decoded but did not verify.
     SignatureMismatch,
@@ -318,7 +318,7 @@ pub fn AgentsPanel(
     selected_space: String,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
-    let mut agent_did = use_signal(String::new);
+    let mut agent_id = use_signal(String::new);
     let mut protocol = use_signal(|| "cx.agent.v1".to_owned());
     let mut capabilities = use_signal(|| "flow.read".to_owned());
     let mut status = use_signal(String::new);
@@ -465,7 +465,7 @@ pub fn AgentsPanel(
                     span { class: "badge", "aria-label": "{endpoints_count} agent endpoints registered", "{endpoints_count} registered" }
                 }
                 div { class: "muted",
-                    "Spec extensions/agent-integration.md §2 — agent endpoints carry agent_did + protocol + capabilities. Each registered agent acts as a delegated principal that needs an explicit capability_proof to invoke."
+                    "Spec extensions/agent-integration.md §2 — agent endpoints carry agent_id + protocol + capabilities. Each registered agent acts as a delegated principal that needs an explicit capability_proof to invoke."
                 }
                 if endpoints.is_empty() {
                     div { class: "muted", "data-testid": "agent-endpoint-empty",
@@ -475,7 +475,7 @@ pub fn AgentsPanel(
                     for e in endpoints {
                         {
                             let did = e.payload.get("body")
-                                .and_then(|b| b.get("agent_did"))
+                                .and_then(|b| b.get("agent_id"))
                                 .and_then(Value::as_str)
                                 .unwrap_or("did:web:?")
                                 .to_owned();
@@ -509,16 +509,16 @@ pub fn AgentsPanel(
                     span { class: "badge", title: "cx.agent.endpoint", "Bot endpoint" }
                 }
                 div { id: "agent-register-form-help", class: "muted",
-                    "Fill in agent_did + protocol + comma-separated capabilities. Submits a cx.agent.endpoint envelope."
+                    "Fill in agent_id + protocol + comma-separated capabilities. Submits a cx.agent.endpoint envelope."
                 }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-register-did",
                         "aria-label": "Agent DID (bot handle)",
                         "aria-describedby": "agent-register-form-help",
-                        value: "{agent_did}",
+                        value: "{agent_id}",
                         placeholder: "bot handle (e.g. assistant:example.com)",
-                        oninput: move |evt| agent_did.set(evt.value()),
+                        oninput: move |evt| agent_id.set(evt.value()),
                     }
                     input {
                         "data-testid": "agent-register-protocol",
@@ -548,7 +548,7 @@ pub fn AgentsPanel(
                                     let base = base.clone();
                                     let space = space.clone();
                                     let actor = actor.clone();
-                                    let did = agent_did().trim().to_owned();
+                                    let did = agent_id().trim().to_owned();
                                     let proto = protocol().trim().to_owned();
                                     let caps_input = capabilities();
                                     let caps: Vec<String> = caps_input
@@ -557,7 +557,7 @@ pub fn AgentsPanel(
                                         .filter(|s| !s.is_empty())
                                         .collect();
                                     if did.is_empty() || proto.is_empty() {
-                                        status.set("agent_did + protocol are required".to_owned());
+                                        status.set("agent_id + protocol are required".to_owned());
                                         return;
                                     }
                                     let api_token = token();
@@ -768,7 +768,7 @@ pub fn AgentsPanel(
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-handoff-target-input",
-                        placeholder: "target agent_did (must match a registered endpoint)",
+                        placeholder: "target agent_id (must match a registered endpoint)",
                         value: "{handoff_target_did}",
                         oninput: move |evt| handoff_target_did.set(evt.value()),
                     }
@@ -786,7 +786,7 @@ pub fn AgentsPanel(
                                 let target = handoff_target_did();
                                 if target.trim().is_empty() {
                                     handoff_status_text
-                                        .set("target agent_did is required".to_owned());
+                                        .set("target agent_id is required".to_owned());
                                     return;
                                 }
                                 handoff_state.set(HandoffState::Pending);
@@ -832,12 +832,9 @@ pub fn AgentsPanel(
                                                 &actor,
                                                 &target,
                                                 &session_id,
+                                                "http_custom",
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
-                                                // Experimental-only surface:
-                                                // default builds hide this panel
-                                                // until soland's agent bridge
-                                                // owns capability grant refs.
-                                                serde_json::Value::Null,
+                                                "cx:grant:01904100-0000-7000-8000-000000000099",
                                             )
                                             .build("yougen");
                                             match with_authed_api(&base, api_token, |api| async move {
@@ -1013,7 +1010,7 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
 #[component]
 pub fn SidecarThreadGuard(
     controller_did: String,
-    agent_did: String,
+    agent_id: String,
     participants: Vec<String>,
     children: Element,
 ) -> Element {
@@ -1022,7 +1019,7 @@ pub fn SidecarThreadGuard(
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty())
         .collect();
-    let mut expected = vec![controller_did.clone(), agent_did.clone()];
+    let mut expected = vec![controller_did.clone(), agent_id.clone()];
     expected.sort();
     let mut found = normalized.clone();
     found.sort();
@@ -1033,7 +1030,7 @@ pub fn SidecarThreadGuard(
                 class: "event",
                 "data-testid": "sidecar-thread-guard-ok",
                 "data-controller-did": "{controller_did}",
-                "data-agent-did": "{agent_did}",
+                "data-agent-did": "{agent_id}",
                 {children}
             }
         } else {
@@ -1048,7 +1045,7 @@ pub fn SidecarThreadGuard(
                     "CXP-0008 §4.5 / CXP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
                 }
                 div { class: "muted",
-                    "Expected controller: {controller_did}; agent: {agent_did}. Observed {normalized.len()} participant(s)."
+                    "Expected controller: {controller_did}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
                 }
             }
         }
@@ -1149,7 +1146,7 @@ pub fn PersonalAgentAdminPanel(
     let mut list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
-    let mut new_agent_did = use_signal(String::new);
+    let mut new_agent_id = use_signal(String::new);
     let mut rotate_vm = use_signal(String::new);
     let mut grant_kind = use_signal(|| "cx.agent.action_request".to_owned());
     let mut grant_scope_json = use_signal(|| "{}".to_owned());
@@ -1220,7 +1217,7 @@ pub fn PersonalAgentAdminPanel(
                     {
                         let agent = agent.clone();
                         let id = agent.agent_principal_id.clone();
-                        let agent_did_label = short_protocol_id(&agent.agent_did);
+                        let agent_id_label = short_protocol_id(&agent.agent_id);
                         let id_label = short_protocol_id(&id);
                         rsx! {
                             div {
@@ -1242,7 +1239,7 @@ pub fn PersonalAgentAdminPanel(
                                         "{agent_state_label(&agent.state)}"
                                     }
                                 }
-                                div { class: "muted", "did: {agent_did_label}" }
+                                div { class: "muted", "did: {agent_id_label}" }
                                 div { class: "muted", "display_name: {agent.display_name}" }
                                 div { class: "actions",
                                     button {
@@ -1317,9 +1314,9 @@ pub fn PersonalAgentAdminPanel(
                     }
                     input {
                         "data-testid": "agent-admin-provision-agent-did",
-                        placeholder: "optional agent_did (server-issued if blank)",
-                        value: "{new_agent_did}",
-                        oninput: move |e| new_agent_did.set(e.value()),
+                        placeholder: "optional agent_id (server-issued if blank)",
+                        value: "{new_agent_id}",
+                        oninput: move |e| new_agent_id.set(e.value()),
                     }
                 }
                 div { class: "actions",
@@ -1334,16 +1331,16 @@ pub fn PersonalAgentAdminPanel(
                                 let controller = controller.clone();
                                 let api_token = token();
                                 let display = new_display_name();
-                                let agent_did_input = new_agent_did();
-                                let agent_did = if agent_did_input.trim().is_empty() {
+                                let agent_id_input = new_agent_id();
+                                let agent_id = if agent_id_input.trim().is_empty() {
                                     None
                                 } else {
-                                    Some(agent_did_input.trim().to_owned())
+                                    Some(agent_id_input.trim().to_owned())
                                 };
                                 let body = AgentProvisionReqBody {
                                     display_name: display,
                                     controller_did: Some(controller),
-                                    agent_did,
+                                    agent_id,
                                     initial_grants: Vec::new(),
                                 };
                                 spawn(async move {
@@ -2032,7 +2029,7 @@ mod personal_agent_tests {
 #[cfg(test)]
 mod tests {
     /// Pin endpoint body shape so the view extractor
-    /// `body.agent_did / body.protocol` keeps matching the
+    /// `body.agent_id / body.protocol` keeps matching the
     /// `cx_ops::agent_endpoint` builder output.
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
@@ -2044,7 +2041,7 @@ mod tests {
             &["flow.read"],
         )
         .build("yougen");
-        assert_eq!(op.payload["agent_did"], "did:web:agent.example");
+        assert_eq!(op.payload["agent_id"], "did:web:agent.example");
         assert_eq!(op.payload["protocol"], "cx.agent.v1");
         assert_eq!(op.payload["capabilities"][0], "flow.read");
     }
@@ -2071,20 +2068,20 @@ mod tests {
 
     fn build_ed25519_result_payload(
         session_id: &str,
-        agent_did: &str,
+        agent_id: &str,
         echo: serde_json::Value,
         actor: &str,
         seed: &[u8; 32],
     ) -> serde_json::Value {
         let signed = contrix_sdk::agent_binding::sign_ed25519_audit_binding(
-            seed, session_id, agent_did, &echo, actor,
+            seed, session_id, agent_id, &echo, actor,
         );
         json!({
             "session_id": session_id,
             "status": "completed",
             "result": {
                 "echo": echo,
-                "agent_did": agent_did,
+                "agent_id": agent_id,
             },
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
@@ -2149,7 +2146,7 @@ mod tests {
         let payload = json!({
             "session_id": "cx:session:v4",
             "status": "completed",
-            "result": {"echo": null, "agent_did": "did:web:agent.example"},
+            "result": {"echo": null, "agent_id": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "future_scheme_v9",
                 "actor_id": "did:web:alice.example",
@@ -2170,7 +2167,7 @@ mod tests {
         let payload = json!({
             "session_id": "cx:session:hmac",
             "status": "completed",
-            "result": {"echo": {"op": "ping"}, "agent_did": "did:web:agent.example"},
+            "result": {"echo": {"op": "ping"}, "agent_id": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "hmac_sha256_v1",
                 "actor_id": "did:web:alice.example",
@@ -2314,16 +2311,16 @@ mod tests {
         // soland in-process echo bridge uses.
         let seed = [21u8; 32];
         let session_id = "cx:session:chain";
-        let agent_did = "did:web:agent.example";
+        let agent_id = "did:web:agent.example";
         let echo = json!({"op": "ping"});
         let actor = "did:web:alice.example";
         let signed = contrix_sdk::agent_binding::sign_ed25519_audit_binding(
-            &seed, session_id, agent_did, &echo, actor,
+            &seed, session_id, agent_id, &echo, actor,
         );
         let result_payload = json!({
             "session_id": session_id,
             "status": "completed",
-            "result": {"echo": echo, "agent_did": agent_did},
+            "result": {"echo": echo, "agent_id": agent_id},
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
                 "actor_id": actor,

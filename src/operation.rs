@@ -1740,21 +1740,23 @@ pub mod cx_ops {
     // the wire shape lets soland and the SDK reducer track which agent
     // owns which session, what status, and what result.
 
-    /// `cx.agent.endpoint` — register an agent service_did + its
-    /// invocation protocol + capability requirements.
+    /// `cx.agent.endpoint` — register an agent id + invocation endpoints.
     pub fn agent_endpoint(
         space_id: &str,
         actor: &str,
-        agent_did: &str,
+        agent_id: &str,
         protocol: &str,
         capabilities: &[&str],
     ) -> OperationBuilder {
+        let endpoints = json!([{
+            "protocol": protocol,
+            "capabilities": capabilities,
+        }]);
         OperationBuilder::new(space_id, actor, "cx.agent.endpoint")
-            .target_ref(agent_did)
+            .target_ref(agent_id)
             .body(json!({
-                "agent_did": agent_did,
-                "protocol": protocol,
-                "capabilities": capabilities,
+                "agent_id": agent_id,
+                "endpoints": endpoints,
             }))
     }
 
@@ -1764,18 +1766,20 @@ pub mod cx_ops {
     pub fn agent_protocol_session_start(
         space_id: &str,
         actor: &str,
-        agent_did: &str,
+        counterparty_agent: &str,
         session_id: &str,
+        protocol: &str,
         params: serde_json::Value,
-        capability_proof: serde_json::Value,
+        capability_grant: &str,
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.start")
             .target_ref(session_id)
             .body(json!({
-                "agent_did": agent_did,
+                "counterparty_agent": counterparty_agent,
                 "session_id": session_id,
+                "protocol": protocol,
                 "params": params,
-                "capability_proof": capability_proof,
+                "capability_grant": capability_grant,
             }))
     }
 
@@ -2727,7 +2731,7 @@ mod tests {
         let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
             .build("node");
         assert_eq!(endpoint.kind, "cx.agent.endpoint");
-        assert_eq!(endpoint.payload["protocol"], "cx.agent.v1");
+        assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "cx.agent.v1");
         assert_eq!(endpoint.local_target_ref(), Some(agent));
 
         let start = cx_ops::agent_protocol_session_start(
@@ -2735,13 +2739,17 @@ mod tests {
             actor,
             agent,
             session_id,
+            "http_custom",
             json!({"query": "summarize"}),
-            json!({"grant_id": "cap-1"}),
+            "cx:grant:01904100-0000-7000-8000-000000000099",
         )
         .build("node");
         assert_eq!(start.kind, "cx.agent.protocol_session.start");
-        assert_eq!(start.payload["agent_did"], agent);
-        assert_eq!(start.payload["capability_proof"]["grant_id"], "cap-1");
+        assert_eq!(start.payload["counterparty_agent"], agent);
+        assert_eq!(
+            start.payload["capability_grant"],
+            "cx:grant:01904100-0000-7000-8000-000000000099"
+        );
 
         let status =
             cx_ops::agent_protocol_session_status(space, actor, session_id, "thinking", json!({}))

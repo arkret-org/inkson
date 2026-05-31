@@ -1143,7 +1143,7 @@ pub struct AgentProvisionReqBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controller_did: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_did: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub initial_grants: Vec<Value>,
 }
@@ -1152,7 +1152,7 @@ pub struct AgentProvisionReqBody {
 pub struct AgentResBody {
     pub agent_principal_id: String,
     pub controller_did: String,
-    pub agent_did: String,
+    pub agent_id: String,
     pub display_name: String,
     pub state: String,
     pub created_at: String,

@@ -1448,7 +1448,7 @@ pub fn SpaceAdminPanel(
                                                 .unwrap_or(true)
                                             && r.payload
                                                 .get("body")
-                                                .and_then(|b| b.get("agent_did"))
+                                                .and_then(|b| b.get("agent_id"))
                                                 .and_then(|d| d.as_str())
                                                 == Some(member.as_str())
                                     });
