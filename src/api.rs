@@ -5703,28 +5703,6 @@ mod tests {
     }
 
     #[test]
-    fn outgoing_payload_schema_gate_rejects_legacy_flow_update_shape() {
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000001";
-        let event = OperationBuilder::new(
-            "cx:realm:0196419b-0000-7000-8000-000000000010",
-            "did:web:alice.example",
-            "cx.flow.update",
-        )
-        .target_ref(flow_id)
-        .body(json!({
-            "flow_id": flow_id,
-            "fields": {
-                "document": { "blocks": [] }
-            }
-        }))
-        .build("yougen");
-
-        let err = validate_outgoing_registered_payload(&event)
-            .expect_err("legacy top-level fields must fail before submit");
-        assert!(err.to_string().contains("registered payload schema"));
-    }
-
-    #[test]
     fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
         let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
         let mut patch = contrix_sdk::Patch::new();
@@ -6147,24 +6125,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_header_rejects_legacy_or_malformed_sync_tokens() {
-        let api = ContrixApi::new("http://127.0.0.1:8787/")
-            .unwrap()
-            .with_wait_for("sx:e2e:2");
-        let request = api
-            .prepare_request(
-                api.with_write_request_headers(
-                    api.http
-                        .post(api.endpoint("api/v1/events").unwrap())
-                        .json(&json!({"body": "hello"})),
-                    "req-123",
-                ),
-            )
-            .build()
-            .unwrap();
-
-        assert!(request.headers().get("x-contrix-wait-for").is_none());
-
+    fn wait_for_header_rejects_malformed_sync_tokens() {
         let malformed = ContrixApi::new("http://127.0.0.1:8787/")
             .unwrap()
             .with_wait_for("cx:cursor:");

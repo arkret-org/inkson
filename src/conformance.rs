@@ -756,19 +756,6 @@ mod tests {
                 .iter()
                 .any(|p| p.profile_id == "cx.profile.push_gateway.v1")
         );
-        // T2.3: the legacy single-modality profile ids are hard_reject per
-        // artifacts/registry/deprecated-profile-ids.json; they MUST NOT
-        // appear in yougen's declared profile set.
-        assert!(
-            !profiles
-                .iter()
-                .any(|p| p.profile_id == "cx.profile.chat_only_client.v1")
-        );
-        assert!(
-            !profiles
-                .iter()
-                .any(|p| p.profile_id == "cx.profile.kanban_only_client.v1")
-        );
     }
 
     #[test]

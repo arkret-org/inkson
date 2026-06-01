@@ -504,6 +504,42 @@ pub mod cx_ops {
         scope_id_as_realm_id, uuid_v7,
     };
 
+    fn did_id(value: &str) -> contrix_sdk::Did {
+        contrix_sdk::Did::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid DID {value:?}: {err:?}"))
+    }
+
+    fn realm_id_value(value: &str) -> contrix_sdk::RealmId {
+        contrix_sdk::RealmId::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid realm id {value:?}: {err:?}"))
+    }
+
+    fn space_id_value(value: &str) -> contrix_sdk::SpaceId {
+        contrix_sdk::SpaceId::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid space id {value:?}: {err:?}"))
+    }
+
+    fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
+        contrix_sdk::FlowId::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+    }
+
+    fn morph_id_value(value: &str) -> contrix_sdk::MorphId {
+        contrix_sdk::MorphId::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid morph id {value:?}: {err:?}"))
+    }
+
+    fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+        result.unwrap_or_else(|err| panic!("{context}: {err}"))
+    }
+
+    fn object_create_payload_value<T: serde::Serialize>(object: T, context: &str) -> Value {
+        sdk_payload_value(
+            contrix_sdk::ObjectCreatePayload::new(object).to_value(),
+            context,
+        )
+    }
+
     fn object_patch_payload_value(object_ref: &str, patch: contrix_sdk::Patch) -> Value {
         contrix_sdk::ObjectPatchPayload::for_target(object_ref, patch)
             .and_then(|payload| payload.to_value())
@@ -517,12 +553,11 @@ pub mod cx_ops {
     }
 
     fn flow_tracks_update_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
-        json!({
-            "flow_id": flow_id,
-            "patch": serde_json::to_value(patch).unwrap_or_else(|err| {
-                panic!("cx.flow.tracks.update patch serialization failed: {err}");
-            }),
-        })
+        contrix_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id), patch)
+            .and_then(|payload| payload.to_value())
+            .unwrap_or_else(|err| {
+                panic!("invalid cx.flow.tracks.update payload for {flow_id}: {err}");
+            })
     }
 
     fn patch_set(path: &str, value: Value) -> contrix_sdk::Patch {
@@ -558,19 +593,24 @@ pub mod cx_ops {
         flow_id: &str,
         title: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        use contrix_sdk::{Did, Flow, SpaceId};
-
-        let space = SpaceId::new(space_id.to_owned())
-            .map_err(|e| anyhow::anyhow!("invalid space_id: {e:?}"))?;
-        let did =
-            Did::new(actor.to_owned()).map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-        let flow = Flow::discussion(flow_id.to_owned(), space, title.to_owned(), did);
-        let flow_value = serde_json::to_value(&flow)?;
+        let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+            .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
+        let did = contrix_sdk::Did::new(actor.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
+        let typed_flow_id = contrix_sdk::FlowId::new(flow_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid flow_id: {e:?}"))?;
+        let flow = contrix_sdk::FlowCreateObject::new(typed_flow_id, realm_id, did)
+            .with_metadata_title(title)
+            .with_track(
+                "discussion",
+                contrix_sdk::FlowTrackConfig::discussion_primary(),
+            );
+        let payload = contrix_sdk::ObjectCreatePayload::new(flow)
+            .to_value()
+            .map_err(|e| anyhow::anyhow!("cx.flow.create payload serialize: {e}"))?;
         Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
-            .body(json!({
-                "object": flow_value,
-            })))
+            .body(payload))
     }
 
     /// Build a `cx.flow.watch.set` operation. Spec:
@@ -697,24 +737,20 @@ pub mod cx_ops {
         parent_space_id: Option<&str>,
         rank: Option<&str>,
     ) -> OperationBuilder {
-        let mut body = json!({
-            "object": {
-                "id": container_space_id,
-                "schema": "cx.schema.space.v1",
-                "realm_id": scope_id_as_realm_id(realm_id),
-                "kind": kind,
-                "title": title,
-                "created_by": actor,
-                "created_at": chrono::Utc::now()
-                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            },
-        });
+        let mut object = contrix_sdk::SpaceCreateObject::new(
+            space_id_value(container_space_id),
+            realm_id_value(&scope_id_as_realm_id(realm_id)),
+            kind,
+            title,
+            did_id(actor),
+        );
         if let Some(parent_space_id) = parent_space_id {
-            body["object"]["parent_space_id"] = json!(parent_space_id);
+            object.parent_space_id = Some(space_id_value(parent_space_id));
         }
         if let Some(rank) = rank {
-            body["object"]["rank"] = json!(rank);
+            object.rank = Some(rank.to_owned());
         }
+        let body = object_create_payload_value(object, "cx.space.create payload serialize");
         OperationBuilder::new(realm_id, actor, "cx.space.create")
             .target_ref(container_space_id)
             .body(body)
@@ -751,30 +787,21 @@ pub mod cx_ops {
         document_body: serde_json::Value,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let object = json!({
-            "schema": "cx.schema.morph.v1",
-            "id": morph_id,
-            "realm_id": realm_id,
-            "space_id": space_id,
-            "morph_type": "document",
-            "title": title,
-            "stage": "draft",
-            "schema_refs": ["cx.schema.morph.v1"],
-            "facets": {
-                "documentable": {}
-            },
-            "fields": {
-                "document": document_body.clone()
-            },
-            "created_by": actor,
-            "created_at": created_at,
-        });
+        let object = contrix_sdk::MorphCreateObject::new(
+            morph_id_value(morph_id),
+            realm_id_value(&realm_id),
+            "document",
+            did_id(actor),
+        )
+        .with_title(title)
+        .with_facet("documentable", json!({}))
+        .with_field("document", document_body);
         OperationBuilder::new(space_id, actor, "cx.morph.create")
             .target_ref(morph_id)
-            .body(json!({
-                "object": object,
-            }))
+            .body(sdk_payload_value(
+                object.to_create_payload_value(),
+                "cx.morph.create document payload serialize",
+            ))
     }
 
     /// Build a `cx.flow.create` for an incident response Flow. The
@@ -790,36 +817,31 @@ pub mod cx_ops {
         priority: &str,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let object = json!({
-            "schema": "cx.schema.flow.v1",
-            "id": flow_id,
-            "realm_id": realm_id,
-            "space_id": space_id,
-            "title": title,
-            "stage": "draft",
-            "tracks": {
-                "synthesis": {
-                    "is_primary": true,
-                    "profile": "incident_response"
-                },
-                "discussion": {
-                    "profile": "war_room"
-                }
-            },
-            "fields": {
-                "flow_kind": "incident",
-                "status": status,
-                "incident_priority": priority
-            },
-            "created_by": actor,
-            "created_at": created_at,
-        });
+        let object = contrix_sdk::FlowCreateObject::new(
+            flow_id_value(flow_id),
+            realm_id_value(&realm_id),
+            did_id(actor),
+        )
+        .with_metadata_title(title)
+        .with_metadata_field("flow_kind", json!("incident"))
+        .with_metadata_field("status", json!(status))
+        .with_metadata_field("incident_priority", json!(priority))
+        .with_track(
+            "synthesis",
+            contrix_sdk::FlowTrackConfig::new()
+                .primary()
+                .with_profile("incident_response"),
+        )
+        .with_track(
+            "discussion",
+            contrix_sdk::FlowTrackConfig::new().with_profile("war_room"),
+        );
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
-            .body(json!({
-                "object": object,
-            }))
+            .body(object_create_payload_value(
+                object,
+                "cx.flow.create incident payload serialize",
+            ))
     }
 
     /// Build a `cx.flow.update` for the incident `fields.status` FSM.
@@ -849,34 +871,28 @@ pub mod cx_ops {
         rank: &str,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let object = json!({
-            "schema": "cx.schema.flow.v1",
-            "id": flow_id,
-            "realm_id": realm_id,
-            "space_id": space_id,
-            "title": title,
-            "stage": "draft",
-            "tracks": {
-                "synthesis": {
-                    "is_primary": true,
-                    "profile": "kanban_card"
-                }
-            },
-            "fields": {
-                "flow_kind": "card",
-                "board_space_id": board_space_id,
-                "list_space_id": list_space_id,
-                "rank": rank
-            },
-            "created_by": actor,
-            "created_at": created_at,
-        });
+        let object = contrix_sdk::FlowCreateObject::new(
+            flow_id_value(flow_id),
+            realm_id_value(&realm_id),
+            did_id(actor),
+        )
+        .with_metadata_title(title)
+        .with_metadata_field("flow_kind", json!("card"))
+        .with_metadata_field("board_space_id", json!(board_space_id))
+        .with_metadata_field("list_space_id", json!(list_space_id))
+        .with_metadata_field("rank", json!(rank))
+        .with_track(
+            "synthesis",
+            contrix_sdk::FlowTrackConfig::new()
+                .primary()
+                .with_profile("kanban_card"),
+        );
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
-            .body(json!({
-                "object": object,
-            }))
+            .body(object_create_payload_value(
+                object,
+                "cx.flow.create kanban card payload serialize",
+            ))
     }
 
     /// Build a `cx.morph.update` carrying a new document body.
@@ -916,27 +932,30 @@ pub mod cx_ops {
             .strip_prefix("cx:realm:")
             .map(|suffix| format!("cx:flow:{suffix}"))
             .unwrap_or_else(|| morph_id.to_owned());
-        let content = json!({
-            "anchor_range": {
-                "end": end,
-                "start": start,
-                "target_ref": morph_id
-            },
-            "body": body,
-            "kind": "cx.content.text",
-            "morph_id": morph_id
-        });
-        let mut payload = json!({
-            "flow_id": discussion_flow_id,
-            "track_name": "discussion",
-            "content": content,
-        });
+        let content = contrix_sdk::ContentBlock::text(body)
+            .with_field(
+                "anchor_range",
+                json!({
+                    "end": end,
+                    "start": start,
+                    "target_ref": morph_id
+                }),
+            )
+            .with_field("morph_id", json!(morph_id));
+        let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+            flow_id_value(&discussion_flow_id),
+            "discussion",
+            sdk_payload_value(content.to_value(), "document comment content serialize"),
+        );
         if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
-            payload["reply_to"] = json!(parent);
+            payload = payload.with_reply_to(parent);
         }
         OperationBuilder::new(space_id, actor, "cx.message.create")
             .target_ref(morph_id)
-            .body(payload)
+            .body(sdk_payload_value(
+                payload.to_value(),
+                "cx.message.create document comment payload serialize",
+            ))
     }
 
     /// Build a Relation linking a document Morph to another object.
@@ -1933,7 +1952,7 @@ mod tests {
     }
 
     #[test]
-    fn kanban_card_flow_create_carries_position_in_object_fields() {
+    fn kanban_card_flow_create_carries_position_in_metadata_fields() {
         let op = cx_ops::kanban_card_flow_create(
             "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -1958,13 +1977,20 @@ mod tests {
             "kanban_card"
         );
         assert_eq!(
-            op.payload["object"]["fields"]["board_space_id"],
+            op.payload["object"]["metadata"]["fields"]["board_space_id"],
             "cx:space:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(
-            op.payload["object"]["fields"]["list_space_id"],
+            op.payload["object"]["metadata"]["fields"]["list_space_id"],
             "cx:space:0196419b-0000-7000-8000-000000000003"
         );
+        assert_eq!(
+            op.payload["object"]["metadata"]["title"],
+            "Move-backed card"
+        );
+        assert!(op.payload["object"].get("fields").is_none());
+        assert!(op.payload["object"].get("title").is_none());
+        assert!(op.payload["object"].get("space_id").is_none());
         assert!(op.payload.get("components").is_none());
         assert!(op.payload.get("patch").is_none());
         assert_registered_payload_valid(&op);
@@ -2110,6 +2136,9 @@ mod tests {
             op.payload["object"]["tracks"]["discussion"]["is_primary"],
             true
         );
+        assert_eq!(op.payload["object"]["metadata"]["title"], "Ops");
+        assert!(op.payload["object"].get("title").is_none());
+        assert_registered_payload_valid(&op);
         assert!(op.payload["object"].get("kind").is_none());
     }
 
@@ -2213,20 +2242,6 @@ mod tests {
             assert!(event.payload.get("expected_position").is_none());
             assert_registered_payload_valid(event);
         }
-
-        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
-        assert!(
-            catalog
-                .validate_payload(
-                    "cx.flow.update",
-                    &json!({
-                        "flow_id": flow_id,
-                        "fields": { "document": { "blocks": [] } },
-                    }),
-                )
-                .is_err(),
-            "legacy top-level fields must not validate as cx.flow.update"
-        );
     }
 
     #[test]

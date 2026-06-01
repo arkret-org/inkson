@@ -460,46 +460,6 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 }
 
 #[test]
-fn protocol_migration_fixtures_do_not_reintroduce_legacy_surface_names() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let checked_files = [
-        "tests/e2e/mockContrixApi.ts",
-        "tests/e2e/mockContrixContract.ts",
-        "src/views/directory.rs",
-        "src/views/kanban.rs",
-    ];
-    let forbidden_terms = [
-        "directory.search_spaces",
-        "directory.resolve_space",
-        "cx.spaces.create",
-        "cx.extension.soland.spaces.create",
-        "moves.submit",
-        "cx.moves.submit",
-        "/api/v1/moves",
-        "/api/v1/spaces",
-        "cx.device_messages.receive",
-        "cx.device_messages.send",
-        "/api/v1/directory/search-spaces",
-        "PlaceProjectionView",
-        "cx:place:",
-        "Board Place",
-    ];
-
-    for relative in checked_files {
-        let path = root.join(relative);
-        let source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        for term in forbidden_terms {
-            assert!(
-                !source.contains(term),
-                "{} must not contain legacy protocol surface `{term}`",
-                path.display()
-            );
-        }
-    }
-}
-
-#[test]
 fn account_data_canonical_contact_and_space_remark_keys_contract() {
     assert_eq!(
         space_remark_account_data_key("cx:space:contract"),

@@ -218,7 +218,16 @@ impl TimelineEvent {
     }
 }
 
-fn text_content(body: &str) -> serde_json::Value {
+fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+}
+
+fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
+    contrix_sdk::FlowId::new(value.to_owned())
+        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+}
+
+fn text_content(body: &str) -> Value {
     // Spec `event-payload.schema.json` `content_block` requires `kind` (a
     // `content_kind` string matching `^cx\.content\.[a-z0-9_]+...` or a
     // reverse-domain id) and `body` (string). Plain timeline text uses
@@ -227,10 +236,10 @@ fn text_content(body: &str) -> serde_json::Value {
     // (`[{kind: "text", text: ...}]`) failed both the `content_kind`
     // pattern (`text` has no dot) and the `body` requirement, so it is
     // dropped here; downstream renderers should read `body` directly.
-    json!({
-        "kind": "cx.content.text",
-        "body": body,
-    })
+    sdk_payload_value(
+        contrix_sdk::ContentBlock::text(body).to_value(),
+        "timeline text content serialize",
+    )
 }
 
 fn incident_priority_wire_value(priority: &str) -> Option<&'static str> {
@@ -270,23 +279,29 @@ pub(crate) fn message_create_operation(
     // for a Realm/Space is `cx:flow:<uuid>` (typed-id re-tag, matching
     // soland's `flow_id_from_space_id`); the default track is "discussion".
     let flow_id = default_flow_id_for_scope(space_id);
-    let mut payload = json!({
-        "flow_id": flow_id,
-        "track_name": "discussion",
-        "content": text_content(body),
-    });
-    if let Some(thread_id) = thread_id {
-        payload["reply_to"] = json!(thread_id);
-    }
+    let mut content = contrix_sdk::ContentBlock::text(body);
     if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
-        payload["content"]["priority"] = json!(priority);
-        payload["content"]["notification"] = json!({
-            "priority": priority,
-            "priority_override": true,
-        });
+        content = content.with_field("priority", json!(priority)).with_field(
+            "notification",
+            json!({
+                "priority": priority,
+                "priority_override": true,
+            }),
+        );
+    }
+    let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+        flow_id_value(&flow_id),
+        "discussion",
+        sdk_payload_value(content.to_value(), "timeline message content serialize"),
+    );
+    if let Some(thread_id) = thread_id {
+        payload = payload.with_reply_to(thread_id);
     }
     OperationBuilder::new(space_id, actor, "cx.message.create")
-        .body(payload)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "timeline cx.message.create payload serialize",
+        ))
         .build("yougen")
 }
 

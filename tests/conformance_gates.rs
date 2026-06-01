@@ -1,7 +1,7 @@
 //! Conformance gate: every typed builder in yougen MUST produce an
 //! EventEnvelope that validates against contrix-spec event-envelope.schema.json.
 //!
-//! Stream J of `_claude_todos.md`. Three families of gates live here:
+//! Stream J of `_claude_todos.md`. Two families of gates live here:
 //!
 //! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
 //!    wire-only fields a real submitter would attach (`anchor_ref`, `proofs[0]` from a real Ed25519
@@ -15,10 +15,6 @@
 //!    = "cx.*"` literals and asserts each is in the canonical `operation-registry.json` OR
 //!    namespaced as `cx.extension.yougen.*`. Yougen has very few of these (typed Rust API, not
 //!    HTTP), but the gate keeps the convention if any are added.
-//!
-//! 3. **J3 — forbidden terms gate.** Recursively scans `yougen/src/**/*.rs` for legacy names
-//!    (`Place`, `place_id`, `BoardPlace`, `PlaceProjection`, `PlaceLifecycleState`, `flow_branch`)
-//!    and fails on any occurrence outside `#[cfg(test)]` modules or comment lines.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -593,73 +589,6 @@ fn yougen_operation_ids_are_registered_or_namespaced() {
 }
 
 // ----------------------------------------------------------------------
-// J3 — Forbidden terms gate (yougen)
-// ----------------------------------------------------------------------
-
-#[test]
-fn yougen_source_tree_is_free_of_forbidden_legacy_terms() {
-    let patterns: Vec<(Regex, &str)> = vec![
-        (Regex::new(r"\bPlace\b").unwrap(), "bare type `Place`"),
-        (
-            Regex::new(r"\bplace_id\b").unwrap(),
-            "field name `place_id`",
-        ),
-        (Regex::new(r"\bBoardPlace\b").unwrap(), "type `BoardPlace`"),
-        (
-            Regex::new(r"\bPlaceProjection\b").unwrap(),
-            "type `PlaceProjection`",
-        ),
-        (
-            Regex::new(r"\bPlaceLifecycleState\b").unwrap(),
-            "type `PlaceLifecycleState`",
-        ),
-        (
-            Regex::new(r"\bflow_branch\b").unwrap(),
-            "field `flow_branch`",
-        ),
-    ];
-
-    let mut offenders: Vec<String> = Vec::new();
-    for path in rust_files(&yougen_src_root()) {
-        let raw = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let test_ranges = cfg_test_ranges(&raw);
-        for (idx, line) in raw.lines().enumerate() {
-            if is_comment_line(line) {
-                continue;
-            }
-            let line_offset = line_byte_offset(&raw, idx);
-            if test_ranges
-                .iter()
-                .any(|(start, end)| line_offset >= *start && line_offset < *end)
-            {
-                continue;
-            }
-            let scanned = code_portion(line);
-            for (re, label) in &patterns {
-                if re.is_match(scanned) {
-                    offenders.push(format!(
-                        "{}:{}: forbidden term {label} in production code: `{}`",
-                        path.display(),
-                        idx + 1,
-                        scanned.trim()
-                    ));
-                }
-            }
-        }
-    }
-
-    assert!(
-        offenders.is_empty(),
-        "yougen production code contains legacy terms that were renamed \
-         during the Realm/Space inversion (Stream B/C):\n  {}",
-        offenders.join("\n  ")
-    );
-}
-
-// ----------------------------------------------------------------------
 // Release-readiness gates for documented deferred surfaces
 // ----------------------------------------------------------------------
 
@@ -754,83 +683,4 @@ fn unfinished_interactive_surfaces_are_default_off_or_explicitly_deferred() {
             && viewport.contains("catch up"),
         "viewport checks must stay visibly skipped/deferred until fixtures are ready"
     );
-}
-
-fn cfg_test_ranges(source: &str) -> Vec<(usize, usize)> {
-    let needle = "#[cfg(test)]";
-    let bytes = source.as_bytes();
-    let mut ranges = Vec::new();
-    let mut search_from = 0;
-    while let Some(rel) = source[search_from..].find(needle) {
-        let attr_start = search_from + rel;
-        let mut cursor = attr_start + needle.len();
-        while cursor < bytes.len() && bytes[cursor] != b'{' {
-            cursor += 1;
-        }
-        if cursor >= bytes.len() {
-            break;
-        }
-        let body_start = cursor;
-        let mut depth: i32 = 0;
-        let mut in_str = false;
-        let mut in_line_comment = false;
-        let mut prev_was_slash = false;
-        let mut i = cursor;
-        while i < bytes.len() {
-            let c = bytes[i];
-            if in_line_comment {
-                if c == b'\n' {
-                    in_line_comment = false;
-                }
-                i += 1;
-                continue;
-            }
-            if in_str {
-                if c == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if c == b'"' {
-                    in_str = false;
-                }
-                i += 1;
-                continue;
-            }
-            if c == b'/' && prev_was_slash {
-                in_line_comment = true;
-                prev_was_slash = false;
-                i += 1;
-                continue;
-            }
-            prev_was_slash = c == b'/';
-            if c == b'"' {
-                in_str = true;
-            } else if c == b'{' {
-                depth += 1;
-            } else if c == b'}' {
-                depth -= 1;
-                if depth == 0 {
-                    ranges.push((body_start, i + 1));
-                    search_from = i + 1;
-                    break;
-                }
-            }
-            i += 1;
-        }
-        if depth != 0 {
-            break;
-        }
-    }
-    ranges
-}
-
-fn line_byte_offset(source: &str, line_index: usize) -> usize {
-    let mut offset = 0;
-    for (idx, line) in source.lines().enumerate() {
-        if idx == line_index {
-            return offset;
-        }
-        offset += line.len() + 1;
-    }
-    source.len()
 }

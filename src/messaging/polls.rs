@@ -372,6 +372,15 @@ fn poll_options_from_content(content: &Value) -> Vec<PollOption> {
         .unwrap_or_default()
 }
 
+fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+}
+
+fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
+    contrix_sdk::FlowId::new(value.to_owned())
+        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+}
+
 /// Build the `cx.content.poll.create` envelope for the wire.
 pub fn build_poll_create_op(
     space_id: &str,
@@ -387,21 +396,23 @@ pub fn build_poll_create_op(
         .enumerate()
         .map(|(idx, label)| json!({"id": format!("opt-{idx}"), "label": label.trim()}))
         .collect();
+    let content = contrix_sdk::ContentBlock::new("cx.content.poll", draft.question.trim())
+        .with_field("poll_id", json!(poll_id))
+        .with_field("question", json!(draft.question.trim()))
+        .with_field("options", Value::Array(options))
+        .with_field("max_selections", json!(draft.max_selections.max(1)));
+    let payload = contrix_sdk::MessageCreatePayload::with_content(
+        flow_id_value(flow_id),
+        "discussion",
+        sdk_payload_value(content.to_value(), "poll create content serialize"),
+    )
+    .with_message_id(poll_id);
     let mut envelope = OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
-        .body(json!({
-            "message_id": poll_id,
-            "flow_id": flow_id,
-            "track_name": "discussion",
-            "content": {
-                "kind": "cx.content.poll",
-                "body": draft.question.trim(),
-                "poll_id": poll_id,
-                "question": draft.question.trim(),
-                "options": options,
-                "max_selections": draft.max_selections.max(1),
-            },
-        }))
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll cx.message.create payload serialize",
+        ))
         .build("yougen");
     let message_ref = envelope.event_id.replacen("cx:event:", "cx:message:", 1);
     envelope.payload["message_id"] = json!(message_ref);
@@ -419,35 +430,39 @@ pub fn build_poll_vote_op(
     option_id: &str,
 ) -> EventEnvelope {
     let flow_id = flow_id_from_space_id(space_id);
+    let content = contrix_sdk::ContentBlock::new("cx.content.poll.response", "poll response")
+        .with_field("poll_id", json!(poll_id))
+        .with_field("choice", json!(option_id));
+    let payload = contrix_sdk::MessageCreatePayload::with_content(
+        flow_id_value(&flow_id),
+        "discussion",
+        sdk_payload_value(content.to_value(), "poll vote content serialize"),
+    );
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(poll_id)
-        .body(json!({
-            "flow_id": flow_id,
-            "track_name": "discussion",
-            "content": {
-                "kind": "cx.content.poll.response",
-                "body": "poll response",
-                "poll_id": poll_id,
-                "choice": option_id,
-            }
-        }))
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll vote cx.message.create payload serialize",
+        ))
         .build("yougen")
 }
 
 /// Build the `cx.content.poll.close` envelope.
 pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
     let flow_id = flow_id_from_space_id(space_id);
+    let content = contrix_sdk::ContentBlock::new("cx.content.poll.close", "poll closed")
+        .with_field("poll_id", json!(poll_id));
+    let payload = contrix_sdk::MessageCreatePayload::with_content(
+        flow_id_value(&flow_id),
+        "discussion",
+        sdk_payload_value(content.to_value(), "poll close content serialize"),
+    );
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(poll_id)
-        .body(json!({
-            "flow_id": flow_id,
-            "track_name": "discussion",
-            "content": {
-                "kind": "cx.content.poll.close",
-                "body": "poll closed",
-                "poll_id": poll_id,
-            }
-        }))
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll close cx.message.create payload serialize",
+        ))
         .build("yougen")
 }
 

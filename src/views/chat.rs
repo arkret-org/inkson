@@ -1238,6 +1238,15 @@ fn schema_message_id_or_new(value: &str) -> String {
     }
 }
 
+fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+    result.unwrap_or_else(|err| panic!("{context}: {err}"))
+}
+
+fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
+    contrix_sdk::FlowId::new(value.to_owned())
+        .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
+}
+
 fn chat_message_create_operation(
     space_id: &str,
     actor: &str,
@@ -1249,36 +1258,28 @@ fn chat_message_create_operation(
     reply_to: Option<&str>,
 ) -> crate::operation::EventEnvelope {
     let audience_mention_values = audience_mentions_to_json(mentions);
-    let mut content = json!({
-        "kind": "cx.content.text",
-        "body": body,
-    });
-    if !audience_mention_values.is_empty()
-        && let Some(content) = content.as_object_mut()
-    {
-        content.insert(
-            "audience_mentions".to_owned(),
-            Value::Array(audience_mention_values),
-        );
+    let mut content = contrix_sdk::ContentBlock::text(body);
+    if !audience_mention_values.is_empty() {
+        content = content.with_field("audience_mentions", Value::Array(audience_mention_values));
     }
-    let mut payload = json!({
-        // T2.3: the legacy `branch` top-level field is forbidden on the
-        // wire (artifacts/registry/forbidden-wire-fields.json,
-        // hard_reject). v1 uses `track_name` — a display-only timeline
-        // segment identifier — instead.
-        "track_name": "discussion",
-        "content": content,
-        "flow_id": flow_id,
-        "message_id": message_id,
-    });
-    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty())
-        && let Some(obj) = payload.as_object_mut()
-    {
-        obj.insert("reply_to".to_owned(), json!(reply_to));
+    // T2.3: the legacy `branch` top-level field is forbidden on the wire
+    // (artifacts/registry/forbidden-wire-fields.json, hard_reject). v1 uses
+    // `track_name` — a display-only timeline segment identifier — instead.
+    let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+        flow_id_value(flow_id),
+        "discussion",
+        sdk_payload_value(content.to_value(), "chat message content serialize"),
+    )
+    .with_message_id(message_id);
+    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
+        payload = payload.with_reply_to(reply_to);
     }
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
-        .body(payload)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "chat cx.message.create payload serialize",
+        ))
         .build("yougen")
 }
 
@@ -5884,17 +5885,22 @@ pub fn ChatPanel(
                                     mentions: Vec::new(),
                                     crypto_state: MessageCryptoState::Plaintext,
                                 });
+                                let message_payload =
+                                    contrix_sdk::MessageCreatePayload::with_encrypted_content(
+                                        flow_id_value(&flow_id),
+                                        "discussion",
+                                        encrypted_payload_json,
+                                    )
+                                    .with_message_id(message_id.clone());
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
                                     "cx.message.create",
                                 )
-                                .body(json!({
-                                    "message_id": message_id,
-                                    "flow_id": flow_id,
-                                    "track_name": "discussion",
-                                    "encrypted_content": encrypted_payload_json,
-                                }))
+                                .body(sdk_payload_value(
+                                    message_payload.to_value(),
+                                    "chat encrypted cx.message.create payload serialize",
+                                ))
                                 .build("yougen");
                                 let base = base.clone();
                                 let space_for_record = space.clone();
