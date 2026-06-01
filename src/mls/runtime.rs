@@ -822,6 +822,67 @@ pub fn encrypt_values_with_device_snapshot(
     ))
 }
 
+/// Encrypt a single message plaintext under the Space MLS group, binding
+/// `aad` into the payload digest, and return the structured
+/// [`contrix_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
+///
+/// The caller assembles the spec-canonical `cx.schema.encrypted_envelope.v1`
+/// wire shape via [`contrix_sdk::EncryptedEnvelopeV1::from_payload`] once it
+/// knows the `cx.mls.commit` event id that bounds this epoch (used as the
+/// envelope `key_ref.group_state_ref`). `aad` MUST be the canonical
+/// `EncryptedEnvelopeAadV1` value, so the digest verification round-trips.
+pub fn encrypt_message_with_device_snapshot(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    content_type: &str,
+    aad: serde_json::Value,
+    plaintext: &[u8],
+) -> Result<
+    (
+        contrix_sdk::Hash,
+        Vec<contrix_sdk::Did>,
+        contrix_sdk::EncryptedPayload,
+        contrix_sdk::MlsCommitEnvelope,
+    ),
+    MlsRuntimeError,
+> {
+    let snapshot = state_store
+        .mls_snapshot_for(space_id)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let commit_envelope = group
+        .self_update_commit()
+        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let encrypted = group
+        .encrypt_payload_with_aad(content_type, Some(aad), plaintext)
+        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    let schedule_hash = group.schedule_hash();
+    let member_dids = group.member_principal_dids();
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let new_envelope = crate::mls::persistence::encrypt_state(
+        space_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        &secret,
+        &salt,
+    );
+    state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
+    Ok((schedule_hash, member_dids, encrypted, commit_envelope))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

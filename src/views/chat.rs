@@ -177,31 +177,43 @@ struct SpaceParticipant {
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) the
 /// helper returns `(None, vec![], None, None)` and the caller aborts the
 /// Send Secure flow.
-#[cfg(not(target_arch = "wasm32"))]
+/// Encrypt a discussion message under the Space MLS group and return the
+/// structured MLS payload + the canonical AAD it was bound to. The caller
+/// wraps these into a spec-conforming `cx.schema.encrypted_envelope.v1` via
+/// [`contrix_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
+/// `cx.mls.commit` event id for `key_ref.group_state_ref`.
+///
+/// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
+/// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
 fn run_local_mls_encrypt(
     mut state_store: Signal<LocalStateStore>,
     space_id: &str,
+    realm_id: &str,
     principal_id: &str,
     device_id: &str,
     plaintext_bytes: &[u8],
 ) -> (
     Option<contrix_sdk::Hash>,
     Vec<contrix_sdk::Did>,
-    Option<serde_json::Value>,
+    Option<(contrix_sdk::EncryptedPayload, contrix_sdk::EncryptedEnvelopeAadV1)>,
     Option<contrix_sdk::MlsCommitEnvelope>,
 ) {
     let empty = (None, Vec::new(), None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let plaintext_values = vec![plaintext_bytes.to_vec()];
-    let Ok((schedule_hash, member_dids, mut payload_values, commit_envelope)) =
-        crate::mls::runtime::encrypt_values_with_device_snapshot(
+    let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
+    let Ok(aad_value) = serde_json::to_value(&aad) else {
+        return empty;
+    };
+    let Ok((schedule_hash, member_dids, payload, commit_envelope)) =
+        crate::mls::runtime::encrypt_message_with_device_snapshot(
             &mut state_store.write(),
             secure_store.as_ref(),
             space_id,
             principal_id,
             device_id,
             "application/vnd.contrix.message+json",
-            &plaintext_values,
+            aad_value,
+            plaintext_bytes,
         )
     else {
         return empty;
@@ -209,7 +221,7 @@ fn run_local_mls_encrypt(
     (
         Some(schedule_hash),
         member_dids,
-        payload_values.pop(),
+        Some((payload, aad)),
         Some(commit_envelope),
     )
 }
@@ -2587,6 +2599,20 @@ pub fn ChatPanel(
         .as_ref()
         .and_then(|channel| channel.security_encrypted)
         .unwrap_or(selected_space_security_encrypted);
+    // In an encrypted channel the default Send must MLS-encrypt, never ship
+    // plaintext. We hide the plaintext send button and promote the MLS send
+    // button to the primary action carrying the `send-chat-button` testid;
+    // in plaintext channels it stays the secondary `send-e2ee-move-button`.
+    let send_secure_class = if selected_channel_security_encrypted {
+        "primary"
+    } else {
+        "secondary"
+    };
+    let send_secure_testid = if selected_channel_security_encrypted {
+        "send-chat-button"
+    } else {
+        "send-e2ee-move-button"
+    };
     let all_messages_snapshot = messages();
     let visible_messages = all_messages_snapshot
         .iter()
@@ -5410,6 +5436,7 @@ pub fn ChatPanel(
                 }
                 }
                 div { class: "actions",
+                    if !selected_channel_security_encrypted {
                     button {
                         class: "primary",
                         "data-testid": "send-chat-button",
@@ -5644,12 +5671,10 @@ pub fn ChatPanel(
                         },
                         {crate::i18n::tr("chat.send")}
                     }
-                    details { class: "compose-security-panel",
-                        summary { "Advanced encryption" }
-                        div { class: "compose-security-grid",
+                    }
                     button {
-                        class: "secondary",
-                        "data-testid": "send-e2ee-move-button",
+                        class: send_secure_class,
+                        "data-testid": send_secure_testid,
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -5683,36 +5708,27 @@ pub fn ChatPanel(
                                 // persists the post-encrypt state. B3d
                                 // (schedule_hash) and B6c (member DIDs) now
                                 // read from the same group instance.
-                                #[cfg(not(target_arch = "wasm32"))]
                                 let (
                                     local_schedule_hash,
                                     local_member_dids,
-                                    encrypted_payload_value,
+                                    encrypted_message,
                                     real_commit_envelope,
                                 ): (
                                     Option<contrix_sdk::Hash>,
                                     Vec<contrix_sdk::Did>,
-                                    Option<serde_json::Value>,
+                                    Option<(
+                                        contrix_sdk::EncryptedPayload,
+                                        contrix_sdk::EncryptedEnvelopeAadV1,
+                                    )>,
                                     Option<contrix_sdk::MlsCommitEnvelope>,
                                 ) = run_local_mls_encrypt(
                                     state_store,
                                     &space,
+                                    &scope_id_as_realm_id(&space),
                                     &actor,
                                     &did,
                                     body.as_bytes(),
                                 );
-                                #[cfg(target_arch = "wasm32")]
-                                let (
-                                    local_schedule_hash,
-                                    local_member_dids,
-                                    encrypted_payload_value,
-                                    real_commit_envelope,
-                                ): (
-                                    Option<contrix_sdk::Hash>,
-                                    Vec<contrix_sdk::Did>,
-                                    Option<serde_json::Value>,
-                                    Option<contrix_sdk::MlsCommitEnvelope>,
-                                ) = (None, Vec::new(), None, None);
 
                                 let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
                                     status_msg.set(
@@ -5720,7 +5736,7 @@ pub fn ChatPanel(
                                     );
                                     return;
                                 };
-                                let Some(encrypted_payload_json) = encrypted_payload_value.clone() else {
+                                let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
                                     status_msg.set(
                                         "Send Secure could not produce an MLS encrypted payload".to_owned(),
                                     );
@@ -5746,6 +5762,35 @@ pub fn ChatPanel(
                                         Err(err) => {
                                             status_msg.set(format!(
                                                 "MLS commit event id invalid: {err:?}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                // Wrap the MLS payload in the spec-canonical
+                                // `cx.schema.encrypted_envelope.v1` wire shape,
+                                // binding key_ref.group_state_ref to the
+                                // cx.mls.commit event that carries this epoch.
+                                let encrypted_envelope =
+                                    match contrix_sdk::EncryptedEnvelopeV1::from_payload(
+                                        &encrypted_payload,
+                                        envelope_aad,
+                                        contrix_sdk::AadVisibility::Hidden,
+                                        &commit_event_id,
+                                    ) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "MLS encrypted envelope build failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                let encrypted_payload_json =
+                                    match serde_json::to_value(&encrypted_envelope) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "MLS encrypted envelope encode failed: {err}"
                                             ));
                                             return;
                                         }
@@ -5816,6 +5861,28 @@ pub fn ChatPanel(
                                     .build("yougen");
                                 commit_envelope.event_id = commit_event_id;
                                 let message_id = new_chat_message_id();
+                                // Optimistic local echo: the sender holds the
+                                // plaintext, so render it immediately while the
+                                // encrypted event round-trips (the synced copy
+                                // reconciles by message_id).
+                                messages.write().push(ChatMessage {
+                                    space_id: space.clone(),
+                                    id: message_id.clone(),
+                                    sender: "yougen".to_owned(),
+                                    body: body.clone(),
+                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                    flow_id: flow_id.clone(),
+                                    reply_to: None,
+                                    reactions: Vec::new(),
+                                    redacted: false,
+                                    edited: false,
+                                    revisions: Vec::new(),
+                                    pending: true,
+                                    failed: false,
+                                    error: None,
+                                    mentions: Vec::new(),
+                                    crypto_state: MessageCryptoState::Plaintext,
+                                });
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
@@ -5948,8 +6015,6 @@ pub fn ChatPanel(
                             }
                         },
                         {crate::i18n::tr("chat.send_secure")}
-                    }
-                        }
                     }
                 }
                 if !embedded && !status_msg().is_empty() {
