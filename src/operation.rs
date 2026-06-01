@@ -756,7 +756,7 @@ pub mod cx_ops {
             "schema": "cx.schema.morph.v1",
             "id": morph_id,
             "realm_id": realm_id,
-            "space_id": realm_id,
+            "space_id": space_id,
             "morph_type": "document",
             "title": title,
             "stage": "draft",

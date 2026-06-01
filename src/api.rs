@@ -1524,8 +1524,8 @@ impl ContrixApi {
         Ok(())
     }
 
-    pub async fn snapshot_head(&self, space_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
-        self.get_json(&format!("api/v1/snapshot/head?realm_id={space_id}"))
+    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
+        self.get_json(&format!("api/v1/snapshot/head?realm_id={realm_id}"))
             .await
     }
 
