@@ -1347,27 +1347,20 @@ pub mod cx_ops {
 
     // ── MLS epoch (per-Realm group ratchet) ─────────────────────────
 
-    /// `cx.mls.commit` event carrying the canonical
-    /// `mls_governance_binding.full.v1` preconditions + effects from the
-    /// SDK governance binding payload. The server reducer enforces the
-    /// binding by matching the precondition / effect tuples and the
-    /// referenced binding hash against the spec shape.
+    /// `cx.mls.commit` event carrying the current wire-schema MLS
+    /// governance binding. The commit bytes themselves are stored out of
+    /// band; the event carries `commit_digest` plus the schema-closed
+    /// epoch and governance binding fields soland validates before
+    /// projection.
     pub fn mls_commit_with_governance(
         realm_id: &str,
         actor: &str,
-        group_id: &str,
-        preconditions: Vec<Value>,
-        effects: Vec<Value>,
-        binding_hash: &str,
+        payload: &contrix_sdk::MlsCommitPayload,
     ) -> OperationBuilder {
+        let group_id = payload.mls_group_id().to_owned();
         OperationBuilder::new(realm_id, actor, "cx.mls.commit")
             .target_ref(group_id)
-            .body(json!({
-                "group_id": group_id,
-                "preconditions": preconditions,
-                "effects": effects,
-                "binding_hash": binding_hash,
-            }))
+            .body(serde_json::to_value(payload).expect("MLS commit payload serializes"))
     }
 
     // ── Conflict repair (admin-only) ────────────────────────────────
@@ -1978,6 +1971,53 @@ mod tests {
         );
         assert!(op.payload.get("components").is_none());
         assert!(op.payload.get("patch").is_none());
+        assert_registered_payload_valid(&op);
+        assert_payload_field_names_are_soland_canonical(&op.payload);
+    }
+
+    #[test]
+    fn mls_commit_builder_matches_registered_payload_schema() {
+        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let group_id = "cx:mls_group:kanban-test";
+        let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
+            contrix_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+            group_id,
+            0,
+            1,
+            vec![
+                contrix_sdk::EventId::new(
+                    "cx:event:0196419b-0000-7000-8000-000000000002".to_owned(),
+                )
+                .unwrap(),
+            ],
+            contrix_sdk::Hash::new(
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                    .to_owned(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let payload = contrix_sdk::MlsCommitPayload::new(
+            group_id,
+            0,
+            "cx:event:0196419b-0000-7000-8000-000000000001",
+            Vec::new(),
+            1,
+            contrix_sdk::Hash::new(
+                "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+                    .to_owned(),
+            )
+            .unwrap(),
+            governance_binding,
+        )
+        .unwrap();
+        let op = cx_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
+            .build("node");
+
+        assert_eq!(op.kind, "cx.mls.commit");
+        assert!(op.payload.get("group_id").is_none());
+        assert!(op.payload.get("preconditions").is_none());
+        assert!(op.payload.get("effects").is_none());
         assert_registered_payload_valid(&op);
         assert_payload_field_names_are_soland_canonical(&op.payload);
     }

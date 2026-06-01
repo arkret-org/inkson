@@ -8,7 +8,9 @@ use crate::components::{
     EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteState, WriteStateIcon,
 };
 use crate::hlc::Hlc;
-use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
+use crate::local_state::{
+    LocalAnchorView, LocalStateStore, MoveSubmissionState, RawOperationRecord,
+};
 use crate::move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_position_cell_id};
 use crate::operation::{scope_id_as_realm_id, uuid_v7};
 use crate::rank::{RankError, rank_for_drop};
@@ -6442,11 +6444,98 @@ fn replace_private_patch_values(
     Ok(())
 }
 
-fn kanban_scope_space_id(scope_id: &str) -> String {
-    scope_id
-        .strip_prefix("cx:realm:")
-        .map(|suffix| format!("cx:space:{suffix}"))
-        .unwrap_or_else(|| scope_id.to_owned())
+fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
+    if let Some(hex) = value.strip_prefix("sha256:")
+        && hex.len() == 64
+        && hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Some(value.to_owned());
+    }
+    for prefix in ["cx:anchor:", "cx:state:"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return kanban_sha256_hash_from_ref(rest);
+        }
+    }
+    None
+}
+
+fn kanban_object_ref_from_anchor_ref(value: &str) -> Option<String> {
+    if value.starts_with("cx:event:") && contrix_sdk::EventId::new(value.to_owned()).is_ok() {
+        return Some(value.to_owned());
+    }
+    if value.starts_with("cx:blob:sha256:")
+        && value
+            .strip_prefix("cx:blob:")
+            .and_then(kanban_sha256_hash_from_ref)
+            .is_some()
+    {
+        return Some(value.to_owned());
+    }
+    if let Some(hash) = kanban_sha256_hash_from_ref(value) {
+        return Some(hash);
+    }
+    None
+}
+
+fn kanban_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> String {
+    anchor_view
+        .frontier
+        .iter()
+        .chain(anchor_view.leaves.iter())
+        .chain(anchor_view.state_root.iter())
+        .find_map(|value| kanban_object_ref_from_anchor_ref(value))
+        .unwrap_or_else(|| {
+            crate::canonical::canonical_sha256(&json!({
+                "kind": "kanban_mls_base_epoch",
+                "space_id": space_id,
+                "epoch": anchor_view.mls_epoch.unwrap_or(0),
+            }))
+            .unwrap_or_else(|_| {
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+            })
+        })
+}
+
+fn kanban_mls_membership_frontier(
+    anchor_view: &LocalAnchorView,
+    fallback_event_id: &contrix_sdk::EventId,
+) -> Vec<contrix_sdk::EventId> {
+    let mut frontier = anchor_view
+        .frontier
+        .iter()
+        .chain(anchor_view.leaves.iter())
+        .filter_map(|value| contrix_sdk::EventId::new(value.clone()).ok())
+        .collect::<Vec<_>>();
+    if frontier.is_empty() {
+        frontier.push(fallback_event_id.clone());
+    }
+    frontier.sort();
+    frontier.dedup();
+    frontier
+}
+
+fn kanban_mls_policy_root(
+    anchor_view: &LocalAnchorView,
+    space_id: &str,
+) -> Result<contrix_sdk::Hash, String> {
+    let hash = anchor_view
+        .state_root
+        .as_deref()
+        .and_then(kanban_sha256_hash_from_ref)
+        .unwrap_or_else(|| {
+            crate::canonical::canonical_sha256(&json!({
+                "kind": "kanban_mls_policy_root",
+                "space_id": space_id,
+                "frontier": anchor_view.frontier,
+                "state_root": anchor_view.state_root,
+            }))
+            .unwrap_or_else(|_| {
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+            })
+        });
+    contrix_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 fn projection_creator_matches_actor(projection: &Value, actor_did: &str) -> bool {
@@ -6512,96 +6601,40 @@ fn kanban_mls_commit_event_from_store(
     state_store: &LocalStateStore,
     space_id: &str,
     actor_did: &str,
-    schedule_hash: &contrix_sdk::Hash,
+    _schedule_hash: &contrix_sdk::Hash,
     commit_envelope: &contrix_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
     let anchor_view = state_store.anchor_view_for(space_id);
-    let anchor_ref = anchor_view.move_anchor_ref();
     let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
-    let governance_space_id = kanban_scope_space_id(space_id);
-    let typed_space_id = contrix_sdk::SpaceId::new(governance_space_id.clone())
-        .map_err(|err| format!("invalid MLS Space id: {err:?}"))?;
-    let anchor_id = contrix_sdk::AnchorId::new(anchor_ref.clone())
-        .map_err(|err| format!("invalid MLS anchor ref: {err:?}"))?;
-    let binding = crate::mls::governance::GovernanceBindingPayload::from_anchor(
+    let event_id = format!("cx:event:{}", uuid_v7());
+    let event_id_typed = contrix_sdk::EventId::new(event_id.clone())
+        .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
+    let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+        .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
+    let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
+        realm_id,
         commit_envelope.group_id.clone(),
-        &typed_space_id,
         prev_epoch,
         commit_envelope.epoch,
-        schedule_hash,
-        &anchor_id,
+        kanban_mls_membership_frontier(&anchor_view, &event_id_typed),
+        kanban_mls_policy_root(&anchor_view, space_id)?,
     )
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
-    let preconditions = binding
-        .preconditions
-        .iter()
-        .filter_map(|precondition| serde_json::to_value(precondition).ok())
-        .collect::<Vec<_>>();
-    let effects = binding
-        .effects
-        .iter()
-        .filter_map(|effect| serde_json::to_value(effect).ok())
-        .collect::<Vec<_>>();
-    let binding_hash = binding
-        .canonical_hash()
-        .map_err(|err| format!("MLS governance binding hash failed: {err}"))?;
-    let mut governance_binding = binding.to_commit_body();
-    if let Some(object) = governance_binding.as_object_mut() {
-        object.insert("binding_version".to_owned(), json!(1));
-        object.insert(
-            "encoding_profile".to_owned(),
-            json!("cbor-deterministic-rfc8949-v1"),
-        );
-        object.insert("realm_id".to_owned(), json!(scope_id_as_realm_id(space_id)));
-        object.insert(
-            "mls_group_id".to_owned(),
-            json!(commit_envelope.group_id.clone()),
-        );
-        object.insert("previous_epoch".to_owned(), json!(prev_epoch));
-        object.insert("next_epoch".to_owned(), json!(commit_envelope.epoch));
-        object.insert(
-            "membership_frontier".to_owned(),
-            json!([anchor_ref.clone()]),
-        );
-        object.insert(
-            "threshold".to_owned(),
-            json!({
-                "k": 1,
-                "n": 1,
-                "signers": [actor_did],
-            }),
-        );
-        object.insert(
-            "signatures".to_owned(),
-            json!([{
-                "signer_did": actor_did,
-                "signature_b64": "eW91Z2VuLW1scy1iaW5kaW5n",
-            }]),
-        );
-        object.insert("binding_hash".to_owned(), json!(binding_hash.clone()));
-    }
-    Ok(
-        crate::operation::OperationBuilder::new(space_id, actor_did, "cx.mls.commit")
-            .target_ref(&commit_envelope.group_id)
-            .body(json!({
-                "group_id": commit_envelope.group_id,
-                "mls_group_id": commit_envelope.group_id,
-                "expected_prev_epoch": prev_epoch,
-                "base_epoch": prev_epoch,
-                "base_epoch_ref": anchor_ref,
-                "proposal_refs": [],
-                "next_epoch": commit_envelope.epoch,
-                "leader_actor_did": actor_did,
-                "commit_bytes_b64": commit_envelope.commit,
-                "commit_digest": commit_envelope.commit_digest.as_str(),
-                "ratchet_tree": commit_envelope.ratchet_tree,
-                "governance_binding": governance_binding,
-                "preconditions": preconditions,
-                "effects": effects,
-                "binding_hash": binding_hash,
-            }))
-            .build("yougen"),
+    let payload = contrix_sdk::MlsCommitPayload::new(
+        commit_envelope.group_id.clone(),
+        prev_epoch,
+        kanban_mls_base_epoch_ref(&anchor_view, space_id),
+        Vec::new(),
+        commit_envelope.epoch,
+        commit_envelope.commit_digest.clone(),
+        governance_binding,
     )
+    .map_err(|err| format!("MLS commit payload failed: {err}"))?;
+    let mut event =
+        crate::operation::cx_ops::mls_commit_with_governance(space_id, actor_did, &payload)
+            .build("yougen");
+    event.event_id = event_id;
+    Ok(event)
 }
 
 fn encrypt_private_card_detail_patch_values(
@@ -8322,6 +8355,19 @@ mod tests {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn assert_registered_payload_valid(event: &crate::operation::EventEnvelope) {
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&event.kind, &event.payload)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{} payload violates registered schema: {err}\npayload: {}",
+                    event.kind,
+                    serde_json::to_string_pretty(&event.payload).unwrap()
+                )
+            });
+    }
+
     #[test]
     fn realm_member_roster_reads_r32_wire_shape() {
         // R3.2 (contrix-spec @ b56cab1): roster v2 entries carry
@@ -9631,6 +9677,27 @@ mod tests {
         assert!(patched["body"]["value"].get("ciphertext").is_some());
         let commit = commit.expect("ready MLS snapshot should emit commit event");
         assert_eq!(commit.kind, "cx.mls.commit");
+        assert_registered_payload_valid(&commit);
+        assert!(commit.payload.get("group_id").is_none());
+        assert!(commit.payload.get("expected_prev_epoch").is_none());
+        assert!(commit.payload.get("commit_bytes_b64").is_none());
+        assert!(commit.payload.get("preconditions").is_none());
+        assert!(commit.payload.get("effects").is_none());
+        assert_eq!(
+            commit.payload["governance_binding"]["realm_id"],
+            json!("cx:realm:01904100-0000-7000-8000-000000000001")
+        );
+        assert_eq!(
+            commit.payload["governance_binding"]["effective_scope"],
+            json!({
+                "kind": "realm",
+                "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+            })
+        );
+        assert_eq!(
+            commit.payload["governance_binding"]["membership_frontier"][0],
+            json!(commit.event_id)
+        );
         assert!(state.load().raw_operations.is_empty());
     }
 

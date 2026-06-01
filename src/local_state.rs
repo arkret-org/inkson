@@ -757,7 +757,7 @@ impl LocalAnchorView {
                     });
                 }
                 // B3c: surface the MLS key schedule hash so the next
-                // commit's `GovernanceBindingPayload` can carry the
+                // commit's SDK MLS governance binding can carry the
                 // SDK-canonical "advance schedule" effect on it.
                 if cell_ref.starts_with("cx:cell:cx.component.key_schedule.v1")
                     && let Some(value) = value_for(status)

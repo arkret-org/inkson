@@ -11,9 +11,9 @@ use crate::api::{
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
-use crate::local_state::{ClientLocalState, LocalStateStore, MoveSubmissionState};
+use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, MoveSubmissionState};
 use crate::models::SubmitEventResponse;
-use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, uuid_v7};
+use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, scope_id_as_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::views::helpers::{
     StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
@@ -167,7 +167,7 @@ struct SpaceParticipant {
 /// device snapshot secret, and return:
 ///
 /// * `Some(schedule_hash)` — the post-encrypt group's `epoch_authenticator`- derived `Hash`, fed
-///   into `GovernanceBindingPayload::from_anchor`.
+///   into the SDK MLS governance binding payload.
 /// * `member_dids` — every principal DID in the group (single-element for solo bootstrap; the full
 ///   member set for a hydrated multi-device group). Replaces the prior single-`device_did`
 ///   audit-receipt fallback.
@@ -212,6 +212,90 @@ fn run_local_mls_encrypt(
         payload_values.pop(),
         Some(commit_envelope),
     )
+}
+
+fn chat_sha256_hash_from_ref(value: &str) -> Option<String> {
+    if let Some(hex) = value.strip_prefix("sha256:")
+        && hex.len() == 64
+        && hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Some(value.to_owned());
+    }
+    for prefix in ["cx:anchor:", "cx:state:"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return chat_sha256_hash_from_ref(rest);
+        }
+    }
+    None
+}
+
+fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> String {
+    anchor_view
+        .frontier
+        .iter()
+        .chain(anchor_view.leaves.iter())
+        .chain(anchor_view.state_root.iter())
+        .find_map(|value| {
+            if value.starts_with("cx:event:") && contrix_sdk::EventId::new(value.clone()).is_ok() {
+                Some(value.clone())
+            } else {
+                chat_sha256_hash_from_ref(value)
+            }
+        })
+        .unwrap_or_else(|| {
+            crate::canonical::canonical_sha256(&json!({
+                "kind": "chat_mls_base_epoch",
+                "space_id": space_id,
+                "epoch": anchor_view.mls_epoch.unwrap_or(0),
+            }))
+            .unwrap_or_else(|_| {
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+            })
+        })
+}
+
+fn chat_mls_membership_frontier(
+    anchor_view: &LocalAnchorView,
+    fallback_event_id: &contrix_sdk::EventId,
+) -> Vec<contrix_sdk::EventId> {
+    let mut frontier = anchor_view
+        .frontier
+        .iter()
+        .chain(anchor_view.leaves.iter())
+        .filter_map(|value| contrix_sdk::EventId::new(value.clone()).ok())
+        .collect::<Vec<_>>();
+    if frontier.is_empty() {
+        frontier.push(fallback_event_id.clone());
+    }
+    frontier.sort();
+    frontier.dedup();
+    frontier
+}
+
+fn chat_mls_policy_root(
+    anchor_view: &LocalAnchorView,
+    space_id: &str,
+    schedule_hash: &contrix_sdk::Hash,
+) -> Result<contrix_sdk::Hash, String> {
+    let hash = anchor_view
+        .state_root
+        .as_deref()
+        .and_then(chat_sha256_hash_from_ref)
+        .unwrap_or_else(|| {
+            crate::canonical::canonical_sha256(&json!({
+                "kind": "chat_mls_policy_root",
+                "space_id": space_id,
+                "frontier": anchor_view.frontier,
+                "state_root": anchor_view.state_root,
+                "schedule_hash": schedule_hash.as_str(),
+            }))
+            .unwrap_or_else(|_| {
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
+            })
+        });
+    contrix_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 fn chat_message_revise_operation(
@@ -5665,64 +5749,82 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 let mls_commit_epoch = real_commit_envelope.epoch;
-
-                                let mls_binding = (|| -> anyhow::Result<
-                                    crate::mls::governance::GovernanceBindingPayload,
-                                > {
-                                    use contrix_sdk::{AnchorId, SpaceId};
-                                    let space_id = SpaceId::new(space.clone()).map_err(|e| {
-                                        anyhow::anyhow!("invalid space id: {e:?}")
-                                    })?;
-                                    let anchor_id = AnchorId::new(anchor_ref.clone())
-                                        .map_err(|e| {
-                                            anyhow::anyhow!("invalid anchor ref: {e:?}")
-                                        })?;
-                                    crate::mls::governance::GovernanceBindingPayload::from_anchor(
-                                        &space,
-                                        &space_id,
-                                        prev_epoch,
-                                        mls_commit_epoch,
-                                        &local_schedule_hash,
-                                        &anchor_id,
-                                    )
-                                })()
-                                .ok();
-                                let Some(binding) = &mls_binding else {
-                                    status_msg.set(
-                                        "Send Secure requires MLS governance binding metadata".to_owned(),
-                                    );
-                                    return;
-                                };
-                                // Spec-canonical write path: cx.mls.commit event via cx.events.submit.
-                                let preconditions: Vec<serde_json::Value> = binding
-                                    .preconditions
-                                    .iter()
-                                    .filter_map(|p| serde_json::to_value(p).ok())
-                                    .collect();
-                                let effects: Vec<serde_json::Value> = binding
-                                    .effects
-                                    .iter()
-                                    .filter_map(|e| serde_json::to_value(e).ok())
-                                    .collect();
-                                let binding_hash = match binding.canonical_hash() {
-                                    Ok(h) => h,
+                                let commit_event_id = format!("cx:event:{}", uuid_v7());
+                                let commit_event_id_typed =
+                                    match contrix_sdk::EventId::new(commit_event_id.clone()) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "MLS commit event id invalid: {err:?}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                let realm_id = match contrix_sdk::RealmId::new(scope_id_as_realm_id(&space)) {
+                                    Ok(value) => value,
                                     Err(err) => {
-                                        status_msg.set(format!(
-                                            "mls governance binding hash failed: {err}"
-                                        ));
+                                        status_msg.set(format!("MLS commit Realm id invalid: {err:?}"));
                                         return;
                                     }
                                 };
-                                let commit_envelope =
+                                let policy_root = match chat_mls_policy_root(
+                                    &anchor_view,
+                                    &space,
+                                    &local_schedule_hash,
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        status_msg.set(err);
+                                        return;
+                                    }
+                                };
+                                let governance_binding =
+                                    match contrix_sdk::MlsGovernanceBindingPayload::realm(
+                                        realm_id,
+                                        real_commit_envelope.group_id.clone(),
+                                        prev_epoch,
+                                        mls_commit_epoch,
+                                        chat_mls_membership_frontier(
+                                            &anchor_view,
+                                            &commit_event_id_typed,
+                                        ),
+                                        policy_root,
+                                    ) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "MLS governance binding failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                let mls_commit_payload =
+                                    match contrix_sdk::MlsCommitPayload::new(
+                                        real_commit_envelope.group_id.clone(),
+                                        prev_epoch,
+                                        chat_mls_base_epoch_ref(&anchor_view, &space),
+                                        Vec::new(),
+                                        mls_commit_epoch,
+                                        real_commit_envelope.commit_digest.clone(),
+                                        governance_binding,
+                                    ) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "MLS commit payload failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    };
+                                // Spec-canonical write path: cx.mls.commit event via cx.events.submit.
+                                let mut commit_envelope =
                                     crate::operation::cx_ops::mls_commit_with_governance(
                                         &space,
                                         &actor,
-                                        &space,
-                                        preconditions,
-                                        effects,
-                                        &binding_hash,
+                                        &mls_commit_payload,
                                     )
                                     .build("yougen");
+                                commit_envelope.event_id = commit_event_id;
                                 let message_id = new_chat_message_id();
                                 let msg_op = OperationBuilder::new(
                                     &space,

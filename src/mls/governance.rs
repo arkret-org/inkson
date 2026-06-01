@@ -11,9 +11,10 @@
 //! 2. set `key_schedule_cell` to the new schedule's content hash.
 //! 3. add the attested governance anchor to `covered_frontier_cell`.
 //!
-//! This module wraps `contrix_sdk::mls_move::*` so yougen's MLS commit path
-//! can produce the canonical precondition / effect tuples and serialize them
-//! as a `governance_binding` payload alongside the commit Move.
+//! This module wraps `contrix_sdk::mls_move::*` so yougen can produce the
+//! canonical Move precondition / effect tuples used by the hardening profile.
+//! It is not the `cx.mls.commit` event payload type; event payloads must use
+//! `contrix_sdk::MlsCommitPayload` and `contrix_sdk::MlsGovernanceBindingPayload`.
 
 use contrix_sdk::mls_move::{
     covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
@@ -21,18 +22,17 @@ use contrix_sdk::mls_move::{
 use contrix_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
 use serde::{Deserialize, Serialize};
 
-/// Serializable view of the MLS Governance Binding payload that travels with
-/// an `cx.mls.commit` event. Keeps yougen call sites typed without forcing
-/// every UI module to depend on `contrix_sdk::Precondition` / `Effect`.
+/// Serializable view of the MLS Governance Binding Move tuple set. Keeps
+/// Move-builder call sites typed without forcing every module to depend on
+/// `contrix_sdk::Precondition` / `Effect`.
 ///
 /// Both the human-readable summary fields (epoch / schedule / anchor /
 /// frontier cell) and the **full SDK Precondition + Effect tuples** are
 /// carried. The summary fields make Audit / Conflict UIs cheap to render;
-/// the tuples are what `cx.mls.commit` events MUST attach so the server
-/// can enforce `mls_governance_binding.full.v1` (spec §10) without the
-/// client re-deriving them. Both flow into `canonical_hash`, so changes
-/// to either fork yield a distinct binding hash — exactly what we want
-/// when threading the binding through Move proof refs.
+/// the tuples are what MLS governance Moves attach so the server can enforce
+/// `mls_governance_binding.full.v1` (spec §10) without the client re-deriving
+/// them. Both flow into `canonical_hash`, so changes to either fork yield a
+/// distinct binding hash when threading the binding through Move proof refs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceBindingPayload {
     /// MLS group id (Space-scoped).
@@ -70,7 +70,7 @@ impl GovernanceBindingPayload {
     ) -> anyhow::Result<Self> {
         let group_id = group_id.into();
         // Capture (do not discard) the SDK's canonical precondition + effect
-        // tuples so the resulting commit body carries them verbatim. The
+        // tuples so the resulting Move body carries them verbatim. The
         // server enforces `mls_governance_binding.full.v1` by checking that
         // the submitted Move's preconditions/effects EXACTLY match these
         // SDK-derived shapes — yougen must not re-derive or shorten them.
@@ -104,16 +104,16 @@ impl GovernanceBindingPayload {
     }
 
     /// Canonical hash of the binding payload, suitable for inclusion in the
-    /// MLS commit event's proof / refs.
+    /// MLS governance Move's proof / refs.
     pub fn canonical_hash(&self) -> anyhow::Result<String> {
         crate::canonical::canonical_sha256(self)
     }
 
-    /// Render the binding as the JSON shape committed alongside a
-    /// `cx.mls.commit` event. The server reads `preconditions` and
-    /// `effects` from this body and refuses commits that do not match
-    /// the SDK's canonical tuples.
-    pub fn to_commit_body(&self) -> serde_json::Value {
+    /// Render the binding as the legacy/internal Move tuple JSON shape.
+    ///
+    /// Do not use this as a `cx.mls.commit` event payload. That wire surface
+    /// is sealed by `contrix_sdk::MlsCommitPayload`.
+    pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
             "group_id": &self.group_id,
             "space_id": &self.space_id,
@@ -185,7 +185,7 @@ mod tests {
         // a tuple the commit MUST fail validation.
         assert_eq!(payload.preconditions.len(), 2);
         assert_eq!(payload.effects.len(), 3);
-        let body = payload.to_commit_body();
+        let body = payload.to_move_binding_body();
         assert_eq!(body["preconditions"].as_array().map(|a| a.len()), Some(2));
         assert_eq!(body["effects"].as_array().map(|a| a.len()), Some(3));
     }
