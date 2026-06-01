@@ -147,6 +147,15 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
 });
 
+test("authenticated login route returns to the workspace", async ({ page }) => {
+  await page.goto("/login", { waitUntil: "domcontentloaded" });
+
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("login-panel")).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test("dashboard summarizes unread notifications from sync projection", async ({ page }) => {
   await refreshServer(page);
 

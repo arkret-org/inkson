@@ -309,7 +309,6 @@ fn message_revise_operation(
         .body(json!({
             "content": text_content(body),
             "target_ref": event_id,
-            "target_event_id": event_id,
         }))
         .build("yougen")
 }
@@ -375,8 +374,7 @@ fn reaction_add_operation(space_id: &str, actor: &str, event_id: &str, key: &str
     OperationBuilder::new(space_id, actor, "cx.reaction.add")
         .target_ref(event_id)
         .body(json!({
-            "actor": actor,
-            "event_id": event_id,
+            "target_ref": event_id,
             "key": key,
         }))
         .build("yougen")
@@ -2318,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn message_revise_operation_carries_schema_target_and_reducer_target() {
+    fn message_revise_operation_carries_schema_target_ref() {
         let op = message_revise_operation(
             "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
@@ -2330,12 +2328,33 @@ mod tests {
             op.payload["target_ref"],
             "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
-        assert_eq!(
-            op.payload["target_event_id"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
-        );
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
+        assert!(op.payload.get("target_event_id").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
+    }
+
+    #[test]
+    fn reaction_add_operation_uses_schema_target_ref() {
+        let op = reaction_add_operation(
+            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "+1",
+        );
+
+        assert_eq!(
+            op.payload["target_ref"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(op.payload["key"], "+1");
+        assert!(op.payload.get("event_id").is_none());
+        assert!(op.payload.get("actor").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 }
