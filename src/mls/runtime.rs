@@ -52,6 +52,7 @@ pub enum MlsRuntimeError {
     MissingWelcome,
     DeviceSecret(SecureKeyStoreError),
     Identity(String),
+    Genesis(String),
     Welcome(String),
     SnapshotRestore(String),
     Commit(String),
@@ -75,7 +76,8 @@ impl MlsRuntimeError {
             Self::SnapshotRestore(reason) => {
                 MlsRuntimeStatus::SnapshotDecryptFailed(reason.clone())
             }
-            Self::Commit(_)
+            Self::Genesis(_)
+            | Self::Commit(_)
             | Self::Encrypt(_)
             | Self::Backup(_)
             | Self::BackupDecode(_)
@@ -92,6 +94,7 @@ impl MlsRuntimeError {
                 self.status().user_message()
             }
             Self::Identity(reason) => format!("MLS identity unavailable: {reason}"),
+            Self::Genesis(reason) => format!("MLS initial group setup failed: {reason}"),
             Self::Welcome(reason) => format!("MLS Welcome could not be applied: {reason}"),
             Self::Commit(reason) => format!("MLS commit failed: {reason}"),
             Self::Encrypt(reason) => format!("MLS payload encryption failed: {reason}"),
@@ -135,6 +138,13 @@ pub struct MlsHistoryRestoreSummary {
     pub group_id: String,
     pub envelope_epoch: u64,
     pub epoch_floor: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InitialMlsSnapshotSummary {
+    pub space_id: String,
+    pub group_id: String,
+    pub epoch: u64,
 }
 
 pub fn build_mls_history_backup_body(
@@ -241,6 +251,63 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     };
     state_store.save_mls_snapshot(envelope.space_id.clone(), envelope);
     Ok(summary)
+}
+
+/// Ensure a Realm/Space creator has the initial local MLS group snapshot.
+///
+/// The creator does not receive a Welcome for the group they create. Without
+/// this genesis snapshot, their first encrypted write would fail with
+/// `MissingWelcome` even though there is no Welcome to wait for.
+pub fn ensure_creator_mls_snapshot(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    let space = space_id.trim();
+    if space.is_empty() {
+        return Err(MlsRuntimeError::Genesis(
+            "space_id is required for initial MLS group setup".to_owned(),
+        ));
+    }
+    if state_store.mls_snapshot_for(space).is_some() {
+        return Ok(None);
+    }
+
+    let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let principal_did = contrix_sdk::Did::new(actor_did.to_owned())
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let device_id_typed = contrix_sdk::DeviceId::new(device_id.to_owned())
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let identity = contrix_sdk::ContrixMlsIdentity::new_basic(principal_did, device_id_typed)
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let group = identity
+        .create_group(space.as_bytes())
+        .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Genesis(format!("export state: {err}")))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Genesis(format!("serialize state: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let snapshot = crate::mls::persistence::encrypt_state(
+        space,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        &secret,
+        &salt,
+    );
+    let summary = InitialMlsSnapshotSummary {
+        space_id: space.to_owned(),
+        group_id: post_state.group_id.clone(),
+        epoch: post_state.epoch,
+    };
+    state_store.save_mls_snapshot(space.to_owned(), snapshot);
+    Ok(Some(summary))
 }
 
 fn require_backup_str(body: &Value, key: &str, expected: &str) -> Result<(), MlsRuntimeError> {
@@ -662,6 +729,13 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
+        let serialized_state = match serde_json::to_vec(&post_state) {
+            Ok(serialized_state) => serialized_state,
+            Err(err) => {
+                outcome.record_failure(format!("serialize state: {err}"));
+                continue;
+            }
+        };
         let mut salt = [0u8; 16];
         if let Err(err) = getrandom::fill(&mut salt) {
             outcome.record_failure(format!("salt: {err}"));
@@ -671,7 +745,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
             space_id,
             &post_state.group_id,
             post_state.epoch,
-            &post_state.serialized_state,
+            &serialized_state,
             &secret,
             &salt,
         );
@@ -727,13 +801,15 @@ pub fn encrypt_values_with_device_snapshot(
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
     let new_envelope = crate::mls::persistence::encrypt_state(
         space_id,
         &post_state.group_id,
         post_state.epoch,
-        &post_state.serialized_state,
+        &serialized_state,
         &secret,
         &salt,
     );
@@ -908,6 +984,48 @@ mod tests {
             message,
             "MLS state is not ready on this device yet; wait for an MLS Welcome or restore this device's encrypted MLS history backup."
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn creator_snapshot_bootstrap_makes_space_encryptable() {
+        let mut state = temp_state_store("creator-bootstrap");
+        let secure = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+
+        let summary =
+            ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
+
+        let summary = summary.expect("missing creator snapshot should be created");
+        assert_eq!(summary.space_id, space);
+        assert_eq!(summary.epoch, 0);
+        assert!(state.mls_snapshot_for(space).is_some());
+        let encrypted = encrypt_values_with_device_snapshot(
+            &mut state,
+            &secure,
+            space,
+            actor,
+            device,
+            "application/vnd.contrix.test+json",
+            &[br#""private""#.to_vec()],
+        )
+        .unwrap();
+        assert_eq!(encrypted.2.len(), 1);
+        assert!(state.mls_snapshot_for(space).unwrap().epoch >= 1);
+        let encrypted_again = encrypt_values_with_device_snapshot(
+            &mut state,
+            &secure,
+            space,
+            actor,
+            device,
+            "application/vnd.contrix.test+json",
+            &[br#""private-again""#.to_vec()],
+        )
+        .unwrap();
+        assert_eq!(encrypted_again.2.len(), 1);
+        assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
     }
 
     #[test]

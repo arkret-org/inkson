@@ -6761,6 +6761,54 @@ pub fn RouterView() -> Element {
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
 
+    // Lower-level API helpers cannot directly mutate app signals, but they
+    // can receive terminal auth errors (notably `session grant is not
+    // active: revoked`) from background pollers. Register one soft-logout
+    // hook so those paths can clear the live bearer and stop retry loops.
+    {
+        let mut invalidator_token = token;
+        let mut invalidator_sync_cursor = sync_cursor;
+        let mut invalidator_selected_space = selected_space;
+        let mut invalidator_spaces = spaces;
+        let mut invalidator_timeline = timeline;
+        let mut invalidator_device_queue = device_queue;
+        let mut invalidator_crypto_state = crypto_state;
+        let mut invalidator_status = status;
+        let mut invalidator_network_state = network_state;
+        let mut invalidator_last_error = last_error;
+        let mut invalidator_state_store = state_store;
+        let invalidator_config_store = config_store;
+        let invalidator_base_url = base_url;
+        let invalidator_account_did = account_did;
+        let invalidator_device_id = device_id;
+        let mut invalidator_sync_generation = sync_generation;
+        let invalidator_navigator = navigator.clone();
+        use_hook(move || {
+            crate::session::register_session_invalidator(move |reason| {
+                invalidator_state_store.write().set_session_grant(None);
+                invalidator_token.set(String::new());
+                persist_config(
+                    invalidator_config_store,
+                    invalidator_base_url(),
+                    invalidator_account_did(),
+                    invalidator_device_id(),
+                    String::new(),
+                );
+                invalidator_sync_cursor.set("-".to_owned());
+                invalidator_selected_space.set(String::new());
+                invalidator_spaces.set(Vec::new());
+                invalidator_timeline.set(Vec::new());
+                invalidator_device_queue.set(0);
+                invalidator_crypto_state.set("Session expired".to_owned());
+                invalidator_status.set("Session expired; sign in again".to_owned());
+                invalidator_network_state.set("online".to_owned());
+                invalidator_last_error.set(Some(reason));
+                invalidator_sync_generation.set(invalidator_sync_generation() + 1);
+                let _ = invalidator_navigator.push(Route::Login);
+            });
+        });
+    }
+
     // Single-source-of-truth for the sidebar. Anything that wants to
     // change the visible Space list writes to
     // `state_store.space_projections` (sync engine, connect()'s initial
@@ -9913,6 +9961,10 @@ async fn remint_principal_bearer(
                 access_token.clone(),
             );
             Some(access_token)
+        }
+        crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
+            crate::session::invalidate_current_session(reason);
+            None
         }
         _ => None,
     }

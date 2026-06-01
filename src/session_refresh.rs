@@ -286,10 +286,8 @@ pub fn commit_refresh(
         Err(error) => {
             if is_grant_dead_error(&error) {
                 store.set_session_grant(None);
-                RefreshOutcome::Transient {
-                    reason: format!(
-                        "session grant cannot refresh principal bearer and was cleared: {error}"
-                    ),
+                RefreshOutcome::LoginRequired {
+                    reason: format!("session grant cannot refresh principal bearer: {error}"),
                 }
             } else {
                 RefreshOutcome::Transient {
@@ -363,6 +361,9 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     // chain mentions `auth_expired` / `invalid_grant` we treat it as
     // terminal.
     if crate::api::is_auth_expired_error(error) {
+        return true;
+    }
+    if crate::api::is_terminal_session_grant_error(error) {
         return true;
     }
     if let Some(api_error) = error.downcast_ref::<crate::api::ContrixApiError>() {
@@ -501,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_clears_grant_without_forcing_login_when_principal_reports_revoked_session_grant() {
+    fn commit_clears_grant_and_requires_login_when_principal_reports_revoked_session_grant() {
         let mut store = isolated_store("revoked-grant");
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
         let error: anyhow::Error = crate::api::ContrixApiError {
@@ -515,7 +516,7 @@ mod tests {
 
         let outcome = commit_refresh(&mut store, Err(error));
 
-        assert!(matches!(outcome, RefreshOutcome::Transient { .. }));
+        assert!(matches!(outcome, RefreshOutcome::LoginRequired { .. }));
         assert!(store.session_grant().is_none());
     }
 

@@ -2913,11 +2913,20 @@ async fn run_device_revoke_from_snapshot(
                 ));
                 return;
             }
+            let serialized_state = match serde_json::to_vec(&post_state) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    status.set(format!(
+                        "submit accepted but MLS state serialize failed: {err}; re-encrypt deferred"
+                    ));
+                    return;
+                }
+            };
             let new_envelope = crate::mls::persistence::encrypt_state(
                 &space_id,
                 &post_state.group_id,
                 post_state.epoch,
-                &post_state.serialized_state,
+                &serialized_state,
                 &snapshot_secret,
                 &salt,
             );

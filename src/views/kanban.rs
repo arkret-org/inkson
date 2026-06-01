@@ -799,6 +799,17 @@ fn sort_board_space_options(options: &mut Vec<BoardSpaceOption>) {
     options.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
 }
 
+fn generated_board_fallback_title(board_id: &str) -> String {
+    format!("Board {}", short_protocol_id(board_id))
+}
+
+fn should_replace_projected_container_title(existing_title: &str, container_id: &str) -> bool {
+    let title = existing_title.trim();
+    title.is_empty()
+        || title == container_id
+        || title == generated_board_fallback_title(container_id)
+}
+
 fn board_space_options_from_projection(
     containers: &[crate::api::SpaceContainerProjectionView],
 ) -> Vec<BoardSpaceOption> {
@@ -833,7 +844,7 @@ fn board_space_options_from_projection(
         }
         options.push(BoardSpaceOption {
             id: parent_space_id.to_owned(),
-            title: format!("Board {}", short_protocol_id(parent_space_id)),
+            title: generated_board_fallback_title(parent_space_id),
             state: SpaceContainerLifecycleState::Active,
         });
     }
@@ -895,7 +906,7 @@ fn overlay_local_board_space_options(
             .iter_mut()
             .find(|option| option.id == local_create.id)
         {
-            if existing.title.trim().is_empty() || existing.title == existing.id {
+            if should_replace_projected_container_title(&existing.title, &existing.id) {
                 existing.title = local_create.title;
             }
             if existing.state == SpaceContainerLifecycleState::Tombstoned {
@@ -924,7 +935,10 @@ fn containers_with_local_space_creates(
             .iter_mut()
             .find(|view| view.container_space_id == local_create.id)
         {
-            if existing.title.trim().is_empty() || existing.title == existing.container_space_id {
+            if should_replace_projected_container_title(
+                &existing.title,
+                &existing.container_space_id,
+            ) {
                 existing.title = local_create.title;
             }
             continue;
@@ -1461,16 +1475,31 @@ fn flow_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecor
         .collect()
 }
 
+fn space_create_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
+    events
+        .iter()
+        .filter_map(space_create_operation_from_event)
+        .collect()
+}
+
 fn flow_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+    raw_operation_from_event(event, "cx.flow.update")
+}
+
+fn space_create_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+    raw_operation_from_event(event, "cx.space.create")
+}
+
+fn raw_operation_from_event(event: &Value, expected_kind: &str) -> Option<RawOperationRecord> {
     let kind = json_path_string(Some(event), &["event_kind"])
         .or_else(|| json_path_string(Some(event), &["kind"]))?;
-    if kind != "cx.flow.update" {
+    if kind != expected_kind {
         return None;
     }
     let body = event.get("payload")?.clone();
     let operation_id = json_path_string(Some(event), &["operation_id"])
         .or_else(|| json_path_string(Some(event), &["event_id"]))
-        .unwrap_or_else(|| "remote-flow-update".to_owned());
+        .unwrap_or_else(|| format!("remote-{expected_kind}"));
     let actor_id = json_path_string(Some(event), &["actor_id"])
         .or_else(|| json_path_string(Some(event), &["sender"]))
         .or_else(|| json_path_string(Some(&body), &["actor_id"]))
@@ -1486,7 +1515,8 @@ fn flow_update_operation_from_event(event: &Value) -> Option<RawOperationRecord>
     Some(RawOperationRecord {
         operation_id: operation_id.clone(),
         space_id: json_path_string(Some(event), &["space_id"])
-            .or_else(|| json_path_string(Some(event), &["realm_id"])),
+            .or_else(|| json_path_string(Some(event), &["realm_id"]))
+            .or_else(|| json_path_string(Some(&body), &["object", "realm_id"])),
         received_at,
         payload: json!({
             "kind": kind,
@@ -2295,10 +2325,17 @@ pub fn KanbanPanel(
                             .map(|resp| resp.items)
                             .unwrap_or_default();
                         let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
-                        let remote_update_operations = events_res
-                            .ok()
-                            .map(|resp| flow_update_operations_from_events(&resp.events))
-                            .unwrap_or_default();
+                        let event_items =
+                            events_res.ok().map(|resp| resp.events).unwrap_or_default();
+                        let remote_update_operations =
+                            flow_update_operations_from_events(&event_items);
+                        let remote_space_create_operations =
+                            space_create_operations_from_events(&event_items);
+                        let container_items = containers_with_local_space_creates(
+                            &container_items,
+                            &remote_space_create_operations,
+                            &lifecycle_local_realm_id,
+                        );
                         lifecycle_container_projection.set(container_items.clone());
                         lifecycle_flow_projection.set(flow_items.clone());
                         let current_board = selected_board_space_id();
@@ -2403,10 +2440,15 @@ pub fn KanbanPanel(
                     .map(|resp| resp.items)
                     .unwrap_or_default();
                 let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
-                let remote_update_operations = events_res
-                    .ok()
-                    .map(|resp| flow_update_operations_from_events(&resp.events))
-                    .unwrap_or_default();
+                let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
+                let remote_update_operations = flow_update_operations_from_events(&event_items);
+                let remote_space_create_operations =
+                    space_create_operations_from_events(&event_items);
+                let container_items = containers_with_local_space_creates(
+                    &container_items,
+                    &remote_space_create_operations,
+                    &lifecycle_local_realm_id,
+                );
                 lifecycle_container_projection.set(container_items.clone());
                 lifecycle_flow_projection.set(flow_items.clone());
                 let current_board = selected_board_space_id();
@@ -6407,6 +6449,65 @@ fn kanban_scope_space_id(scope_id: &str) -> String {
         .unwrap_or_else(|| scope_id.to_owned())
 }
 
+fn projection_creator_matches_actor(projection: &Value, actor_did: &str) -> bool {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return false;
+    }
+    for source in [
+        projection,
+        projection.get("summary").unwrap_or(&Value::Null),
+        projection.get("object").unwrap_or(&Value::Null),
+        projection.get("realm").unwrap_or(&Value::Null),
+        projection.get("metadata").unwrap_or(&Value::Null),
+    ] {
+        for key in [
+            "owner",
+            "created_by",
+            "created_by_principal",
+            "creator",
+            "creator_did",
+        ] {
+            if json_path_string(Some(source), &[key]).as_deref() == Some(actor) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn ensure_creator_mls_snapshot_for_encrypted_scope(
+    state_store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+) -> Result<bool, String> {
+    if state_store.mls_snapshot_for(space_id).is_some() {
+        return Ok(false);
+    }
+    let state = state_store.load();
+    let Some(projection) =
+        crate::security_state::security_projection_for_scope_id(&state.space_projections, space_id)
+    else {
+        return Ok(false);
+    };
+    if !crate::security_state::realm_projection_is_encrypted(projection)
+        || !projection_creator_matches_actor(projection, actor_did)
+    {
+        return Ok(false);
+    }
+    crate::mls::runtime::ensure_creator_mls_snapshot(
+        state_store,
+        secure_store,
+        space_id,
+        actor_did,
+        device_id,
+    )
+    .map(|summary| summary.is_some())
+    .map_err(|err| err.user_message())
+}
+
 fn kanban_mls_commit_event_from_store(
     state_store: &LocalStateStore,
     space_id: &str,
@@ -6538,6 +6639,13 @@ fn encrypt_private_card_detail_patch_values_with_store(
         .iter()
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
+    ensure_creator_mls_snapshot_for_encrypted_scope(
+        state_store,
+        secure_store,
+        space_id,
+        actor_did,
+        device_id,
+    )?;
     let (schedule_hash, _member_dids, encrypted_values, commit_envelope) =
         crate::mls::runtime::encrypt_values_with_device_snapshot(
             state_store,
@@ -9002,6 +9110,54 @@ mod tests {
     }
 
     #[test]
+    fn remote_space_create_backfill_restores_board_title_when_projection_only_has_list() {
+        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000000";
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let list_id = "cx:space:0196419b-0000-7000-8000-000000000002";
+        let events = vec![json!({
+            "event_id": "cx:event:0196419b-0000-7000-8000-000000000101",
+            "event_kind": "cx.space.create",
+            "realm_id": realm_id,
+            "actor_id": "did:web:alice.example",
+            "created_at": "2026-05-31T00:00:00Z",
+            "payload": {
+                "object": {
+                    "id": board_id,
+                    "schema": "cx.schema.space.v1",
+                    "realm_id": realm_id,
+                    "kind": "board",
+                    "title": "Board"
+                }
+            }
+        })];
+        let remote_operations = space_create_operations_from_events(&events);
+        let containers = vec![crate::api::SpaceContainerProjectionView {
+            container_space_id: list_id.to_owned(),
+            realm_id: realm_id.to_owned(),
+            kind: "list".to_owned(),
+            title: "Todos".to_owned(),
+            state: "active".to_owned(),
+            rank: Some("U".to_owned()),
+            parent_space_id: Some(board_id.to_owned()),
+        }];
+
+        let (columns, options, selected_board) = columns_from_lifecycle_projection_with_local(
+            &containers,
+            &[],
+            board_id,
+            &remote_operations,
+            realm_id,
+        );
+
+        assert_eq!(selected_board.as_deref(), Some(board_id));
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id, board_id);
+        assert_eq!(options[0].title, "Board");
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].title, "Todos");
+    }
+
+    #[test]
     fn local_space_create_state_becomes_synced_once_projection_contains_target() {
         let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
         let raw_operations = vec![RawOperationRecord {
@@ -9391,6 +9547,43 @@ mod tests {
                 .is_none()
         );
         assert!(state.load().raw_operations.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let mut state = temp_state_store("creator-bootstrap-mls");
+        state.save_space_projection(
+            space,
+            json!({
+                "__kind": "realm",
+                "owner": actor,
+                "summary": {
+                    "title": "Encrypted Realm",
+                    "encryption_profile": "mls_rfc9420",
+                    "owner": actor,
+                }
+            }),
+        );
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let patch = json!({
+            "body": {"$op": "set", "value": "private body"},
+        });
+
+        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+            patch, space, actor, device, &mut state, &secure,
+        )
+        .unwrap();
+
+        assert!(state.mls_snapshot_for(space).is_some());
+        assert_eq!(
+            patched["body"]["value"]["content_type"],
+            KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
+        );
+        assert!(commit.is_some());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
