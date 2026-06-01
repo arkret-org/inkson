@@ -273,17 +273,12 @@ pub(crate) fn message_create_operation(
     let mut payload = json!({
         "flow_id": flow_id,
         "track": "discussion",
-        "body": body,
         "content": text_content(body),
-        "encrypted": false,
     });
     if let Some(thread_id) = thread_id {
-        payload["thread_id"] = json!(thread_id);
+        payload["reply_to"] = json!(thread_id);
     }
     if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
-        payload["priority"] = json!(priority);
-        payload["notification_priority"] = json!(priority);
-        payload["priority_override"] = json!(true);
         payload["content"]["priority"] = json!(priority);
         payload["content"]["notification"] = json!({
             "priority": priority,
@@ -2278,6 +2273,11 @@ mod tests {
         );
         assert_eq!(op.payload["track"], "discussion");
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert!(op.payload.get("body").is_none());
+        assert!(op.payload.get("encrypted").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]
@@ -2294,13 +2294,17 @@ mod tests {
             op.payload["flow_id"],
             "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
-        assert_eq!(op.payload["priority"], "critical");
-        assert_eq!(op.payload["notification_priority"], "critical");
-        assert_eq!(op.payload["priority_override"], true);
+        assert!(op.payload.get("priority").is_none());
+        assert!(op.payload.get("notification_priority").is_none());
+        assert!(op.payload.get("priority_override").is_none());
+        assert_eq!(op.payload["content"]["priority"], "critical");
         assert_eq!(
             op.payload["content"]["notification"]["priority"],
             "critical"
         );
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]

@@ -17,7 +17,7 @@
 
 use serde_json::{Value, json};
 
-use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+use crate::operation::{EventEnvelope, OperationBuilder, scope_id_as_realm_id, uuid_v7};
 
 /// Whether the local UI should expose the discussion promote modal.
 pub fn discussion_promote_enabled() -> bool {
@@ -80,14 +80,24 @@ pub fn build_child_space_create_op(
     ids: &PromoteIds,
     title: &str,
 ) -> EventEnvelope {
+    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     OperationBuilder::new(parent_space_id, actor, "cx.space.create")
         .target_ref(&ids.child_space_id)
         .body(json!({
-            "space_id": ids.child_space_id,
-            "title": title.trim(),
-            "parent_space_id": parent_space_id,
-            "discoverability": "listed",
-            "join_rule": "invite",
+            "object": {
+                "id": ids.child_space_id,
+                "schema": "cx.schema.space.v1",
+                "realm_id": scope_id_as_realm_id(parent_space_id),
+                "kind": "space",
+                "title": title.trim(),
+                "parent_space_id": parent_space_id,
+                "created_by": actor,
+                "created_at": created_at,
+                "fields": {
+                    "discoverability": "listed",
+                    "join_rule": "invite"
+                }
+            }
         }))
         .build("yougen")
 }
@@ -137,15 +147,11 @@ pub fn build_flow_discussion_ref_op(
         .unwrap_or_else(|err| {
             panic!("invalid cx.patch.v1 discussion_space_ref patch: {err}");
         });
-    let mut payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+    let payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
         .and_then(|payload| payload.to_value())
         .unwrap_or_else(|err| {
             panic!("invalid cx.flow.update object_patch_payload: {err}");
         });
-    payload
-        .as_object_mut()
-        .expect("object_patch_payload serializes as an object")
-        .insert("flow_id".to_owned(), json!(flow_id));
 
     OperationBuilder::new(parent_space_id, actor, "cx.flow.update")
         .target_ref(flow_id)

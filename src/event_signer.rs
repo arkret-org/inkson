@@ -547,8 +547,10 @@ mod tests {
 
         signer.sign_envelope(&mut event).expect("sign");
 
-        // Recompute the canonical bytes the same way `sign_envelope`
-        // did — strip proofs + unsigned — and verify the JWS.
+        // Recompute the canonical event digest, then verify the JWS
+        // over the spec proof-binding object. Event proofs sign
+        // `{event_digest, actor_id, verification_method, created_at}`,
+        // not the full event bytes directly.
         let mut canonical = serde_json::to_value(&event).unwrap();
         if let Value::Object(obj) = &mut canonical {
             obj.remove("proofs");
@@ -556,6 +558,17 @@ mod tests {
         }
         let canonical_bytes = canonical_json_bytes(&canonical).unwrap();
         let proof = event.proofs.first().unwrap();
+        assert_eq!(
+            proof.event_digest,
+            crate::canonical::sha256_digest(&canonical_bytes).as_str()
+        );
+        let proof_binding_bytes = canonical_json_bytes(&json!({
+            "event_digest": proof.event_digest.as_str(),
+            "actor_id": event.actor_id.as_str(),
+            "verification_method": proof.verification_method.as_str(),
+            "created_at": proof.created_at.as_str(),
+        }))
+        .unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -565,7 +578,7 @@ mod tests {
 
         let verifier = Ed25519DetachedJwsVerifier::new();
         verifier
-            .verify(&canonical_bytes, &sig, &public_key)
+            .verify(&proof_binding_bytes, &sig, &public_key)
             .expect("SDK verifier accepts the proof");
     }
 

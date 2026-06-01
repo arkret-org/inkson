@@ -766,6 +766,21 @@ test("notifications are derived from index projections and respect per-space mut
 
   await page.getByTestId("topbar-notifications-button").click();
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
+  const acceptInvite = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/v1/events") &&
+      request.method() === "POST",
+  );
+  await page
+    .getByTestId("notification-item")
+    .filter({ hasText: "You were invited to review Demo Space" })
+    .getByTestId("notification-action")
+    .click();
+  const acceptBody = await acceptInvite.then((request) => request.postDataJSON());
+  expect(acceptBody.kind).toBe("cx.member.state");
+  expect(acceptBody.payload.invite_ref).toBe("cx:invite:01904100-0000-7000-8000-000000000099");
+  expect(acceptBody.payload).not.toHaveProperty("invite_id");
+  await expect(page.getByTestId("notifications-status")).toContainText("Joined Realm");
 });
 
 test("setup, onboarding, and space timeline flow works", async ({ page }) => {

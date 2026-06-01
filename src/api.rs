@@ -4360,7 +4360,7 @@ pub fn build_member_state_invite_accept_event(
         "join",
         "invite_accept",
     )?;
-    envelope.payload["invite_id"] = json!(invite_id);
+    envelope.payload["invite_ref"] = json!(invite_id);
     Ok(envelope)
 }
 
@@ -5605,7 +5605,7 @@ mod tests {
     }
 
     #[test]
-    fn member_state_invite_accept_event_carries_invite_id() {
+    fn member_state_invite_accept_event_carries_invite_ref() {
         let event = build_member_state_invite_accept_event(
             "cx:space:0196419b-0000-7000-8000-000000000010",
             "did:web:bob.example",
@@ -5623,9 +5623,10 @@ mod tests {
         assert_eq!(event.payload["membership"], "join");
         assert_eq!(event.payload["reason"], "invite_accept");
         assert_eq!(
-            event.payload["invite_id"],
+            event.payload["invite_ref"],
             "cx:invite:0196419b-0000-7000-8000-000000000020"
         );
+        assert!(event.payload.get("invite_id").is_none());
         assert_eq!(event.payload["delivery_status"], "unroutable");
         assert_eq!(event.preconditions.len(), 1);
         assert_eq!(
@@ -5693,14 +5694,10 @@ mod tests {
                 contrix_sdk::PatchOp::set(json!({ "blocks": [] })),
             )
             .unwrap();
-        let mut payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+        let payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
             .unwrap()
             .to_value()
             .unwrap();
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert("flow_id".to_owned(), json!(flow_id));
         let event = OperationBuilder::new(
             "cx:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",

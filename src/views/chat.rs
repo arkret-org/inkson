@@ -1147,41 +1147,39 @@ fn chat_message_create_operation(
     space_id: &str,
     actor: &str,
     flow_id: &str,
-    channel_kind: &str,
+    _channel_kind: &str,
     message_id: &str,
     body: &str,
     mentions: &[StructuredMention],
     reply_to: Option<&str>,
 ) -> crate::operation::EventEnvelope {
-    let mention_values = mentions_to_json(mentions);
     let audience_mention_values = audience_mentions_to_json(mentions);
-    let mention_relations = mention_relation_json(message_id, mentions);
-    let content = json!({
+    let mut content = json!({
         "kind": "cx.content.text",
         "body": body,
-        "audience_mentions": audience_mention_values.clone(),
     });
+    if !audience_mention_values.is_empty()
+        && let Some(content) = content.as_object_mut()
+    {
+        content.insert(
+            "audience_mentions".to_owned(),
+            Value::Array(audience_mention_values),
+        );
+    }
     let mut payload = json!({
-        "body": body,
         // T2.3: the legacy `branch` top-level field is forbidden on the
         // wire (artifacts/registry/forbidden-wire-fields.json,
         // hard_reject). v1 uses `track` — a display-only timeline
         // segment identifier — instead.
         "track": "discussion",
         "content": content,
-        "encrypted": false,
         "flow_id": flow_id,
-        "kind": channel_kind,
         "message_id": message_id,
-        "mentions": mention_values,
-        "audience_mentions": audience_mention_values,
-        "mention_relations": mention_relations,
     });
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty())
         && let Some(obj) = payload.as_object_mut()
     {
         obj.insert("reply_to".to_owned(), json!(reply_to));
-        obj.insert("thread_id".to_owned(), json!(reply_to));
     }
     OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
@@ -5457,8 +5455,12 @@ pub fn ChatPanel(
                                             &space,
                                             &mention_dids,
                                         );
-                                    if let Some(obj) = op.payload.as_object_mut() {
-                                        obj.insert(
+                                    if let Some(content) = op
+                                        .payload
+                                        .get_mut("content")
+                                        .and_then(Value::as_object_mut)
+                                    {
+                                        content.insert(
                                             "mention_sidecar_hash".to_owned(),
                                             serde_json::Value::Array(
                                                 hashes
@@ -5597,17 +5599,6 @@ pub fn ChatPanel(
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
-                                let covered_frontier = anchor_view
-                                    .covered_frontier
-                                    .clone()
-                                    .unwrap_or_else(|| {
-                                        // Fallback: bind to the
-                                        // sha256(empty) sentinel — soland
-                                        // surfaces a `covered_frontier`
-                                        // mismatch which the Move tracker
-                                        // maps to pending_mls_binding.
-                                        "cx:state:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-                                    });
                                 let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
                                 let did = device_id.clone();
                                 // 1) MLS commit event bumps the epoch +
@@ -5732,7 +5723,6 @@ pub fn ChatPanel(
                                         &binding_hash,
                                     )
                                     .build("yougen");
-                                let encrypted_epoch = mls_commit_epoch;
                                 let message_id = new_chat_message_id();
                                 let msg_op = OperationBuilder::new(
                                     &space,
@@ -5743,13 +5733,6 @@ pub fn ChatPanel(
                                     "message_id": message_id,
                                     "flow_id": flow_id,
                                     "track": "discussion",
-                                    "body": format!("[encrypted epoch {encrypted_epoch}]"),
-                                    "content": {
-                                        "kind": "cx.content.text",
-                                        "body": format!("[encrypted epoch {encrypted_epoch}]"),
-                                    },
-                                    "encrypted": true,
-                                    "covered_frontier": covered_frontier.clone(),
                                     "encrypted_payload": encrypted_payload_json,
                                 }))
                                 .build("yougen");
@@ -5947,20 +5930,6 @@ fn audience_mentions_to_json(mentions: &[StructuredMention]) -> Vec<serde_json::
         .collect()
 }
 
-fn mention_relation_json(source: &str, mentions: &[StructuredMention]) -> Vec<serde_json::Value> {
-    mentions
-        .iter()
-        .filter(|mention| mention.kind != "audience_mention")
-        .map(|mention| {
-            json!({
-                "relation_type": "mentions",
-                "source": source,
-                "target": mention.target,
-            })
-        })
-        .collect()
-}
-
 fn scroll_chat_feed_to_latest() {
     let script = r#"
 setTimeout(() => {
@@ -6071,19 +6040,25 @@ mod tests {
     #[test]
     fn chat_message_create_operation_emits_schema_canonical_content() {
         let op = chat_message_create_operation(
-            "cx:space:demo",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:demo",
+            "cx:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:test-1",
+            "cx:message:01904100-0000-7000-8000-000000000001",
             "hello from chat",
             &[],
             None,
         );
 
         assert_eq!(op.kind, "cx.message.create");
-        assert_eq!(op.payload["message_id"].as_str(), Some("cx:message:test-1"));
-        assert_eq!(op.payload["flow_id"].as_str(), Some("cx:flow:demo"));
+        assert_eq!(
+            op.payload["message_id"].as_str(),
+            Some("cx:message:01904100-0000-7000-8000-000000000001")
+        );
+        assert_eq!(
+            op.payload["flow_id"].as_str(),
+            Some("cx:flow:01904100-0000-7000-8000-000000000001")
+        );
         assert_eq!(op.payload["track"].as_str(), Some("discussion"));
         assert_eq!(
             op.payload["content"]["kind"].as_str(),
@@ -6094,19 +6069,28 @@ mod tests {
             Some("hello from chat")
         );
         assert!(op.payload["content"].get("blocks").is_none());
+        assert!(op.payload.get("body").is_none());
+        assert!(op.payload.get("encrypted").is_none());
+        assert!(op.payload.get("kind").is_none());
+        assert!(op.payload.get("mentions").is_none());
+        assert!(op.payload.get("audience_mentions").is_none());
+        assert!(op.payload.get("mention_relations").is_none());
         assert!(op.payload.get("reply_to").is_none());
         assert!(op.payload.get("thread_id").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]
-    fn chat_message_create_operation_emits_audience_mentions_separately() {
+    fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
         let mentions = parse_structured_mentions("ping @here and @carol:example.com");
         let op = chat_message_create_operation(
-            "cx:space:demo",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:demo",
+            "cx:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:test-audience",
+            "cx:message:01904100-0000-7000-8000-000000000002",
             "ping @here and @carol:example.com",
             &mentions,
             None,
@@ -6116,41 +6100,35 @@ mod tests {
             op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
             Some("flow_engaged")
         );
-        assert_eq!(
-            op.payload["audience_mentions"][0]["kind"].as_str(),
-            Some("audience_mention")
-        );
-        assert!(
-            op.payload["mentions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|mention| mention["kind"].as_str() != Some("audience_mention"))
-        );
-        assert!(
-            op.payload["mention_relations"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|relation| relation["target"].as_str() != Some("flow_engaged"))
-        );
+        assert!(op.payload.get("audience_mentions").is_none());
+        assert!(op.payload.get("mentions").is_none());
+        assert!(op.payload.get("mention_relations").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]
     fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         let op = chat_message_create_operation(
-            "cx:space:demo",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:demo",
+            "cx:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:test-reply",
+            "cx:message:01904100-0000-7000-8000-000000000003",
             "reply body",
             &[],
-            Some("cx:message:parent"),
+            Some("cx:message:01904100-0000-7000-8000-000000000004"),
         );
 
-        assert_eq!(op.payload["reply_to"].as_str(), Some("cx:message:parent"));
-        assert_eq!(op.payload["thread_id"].as_str(), Some("cx:message:parent"));
+        assert_eq!(
+            op.payload["reply_to"].as_str(),
+            Some("cx:message:01904100-0000-7000-8000-000000000004")
+        );
+        assert!(op.payload.get("thread_id").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]

@@ -11,8 +11,8 @@
 //! `chat-advanced.md` spec — the server must be able to route a
 //! notification to the mentioned actor without learning that actor's
 //! DID in plaintext. We compute `SHA256(salt || did)` and surface it
-//! as `mention_sidecar_hash` on the outgoing `cx.message.create`
-//! payload.
+//! as `content.mention_sidecar_hash` inside the outgoing
+//! `cx.message.create` payload.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -110,7 +110,7 @@ impl MentionPickerState {
 /// Per `discovery/push-notifications.md §4.5`, when the Space is
 /// encrypted the client MUST NOT put `mentions: [did, ...]` on the
 /// outer event in plaintext — the server only sees a list of opaque
-/// hashes (`mention_sidecar_hash`) it can match against per-actor
+/// hashes (`content.mention_sidecar_hash`) it can match against per-actor
 /// inbox subscriptions without learning the mentioned DID.
 ///
 /// `salt` is the per-Space mention salt issued by soland; until that

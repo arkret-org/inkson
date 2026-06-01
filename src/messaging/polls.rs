@@ -390,9 +390,7 @@ pub fn build_poll_create_op(
     let mut envelope = OperationBuilder::new(space_id, actor, "cx.message.create")
         .target_ref(flow_id)
         .body(json!({
-            "body": format!("[poll] {}", draft.question.trim()),
             "message_id": poll_id,
-            "poll_id": poll_id,
             "flow_id": flow_id,
             "track": "discussion",
             "content": {
@@ -403,7 +401,6 @@ pub fn build_poll_create_op(
                 "options": options,
                 "max_selections": draft.max_selections.max(1),
             },
-            "encrypted": false,
         }))
         .build("yougen");
     let message_ref = envelope.event_id.replacen("cx:event:", "cx:message:", 1);
@@ -432,8 +429,7 @@ pub fn build_poll_vote_op(
                 "body": "poll response",
                 "poll_id": poll_id,
                 "choice": option_id,
-            },
-            "encrypted": false,
+            }
         }))
         .build("yougen")
 }
@@ -450,8 +446,7 @@ pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventE
                 "kind": "cx.content.poll.close",
                 "body": "poll closed",
                 "poll_id": poll_id,
-            },
-            "encrypted": false,
+            }
         }))
         .build("yougen")
 }
@@ -534,13 +529,16 @@ mod tests {
         draft.set_option(0, "yes".into());
         draft.set_option(1, "no".into());
         let op = build_poll_create_op(
-            "cx:space:1",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:1",
+            "cx:flow:01904100-0000-7000-8000-000000000011",
             "poll-x",
             &draft,
         );
         assert_eq!(op.kind, "cx.message.create");
+        assert!(op.payload.get("body").is_none());
+        assert!(op.payload.get("encrypted").is_none());
+        assert!(op.payload.get("poll_id").is_none());
         let options = op
             .payload
             .get("content")
@@ -548,6 +546,9 @@ mod tests {
             .and_then(|v| v.as_array())
             .unwrap();
         assert_eq!(options.len(), 2);
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 
     #[test]

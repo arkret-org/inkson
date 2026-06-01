@@ -115,9 +115,9 @@ impl ShareTarget {
     }
 
     /// Lower the target into a [`ParsedAddress`] with the supplied routing
-    /// hints. `via` MUST be non-empty for flow/message targets — a global
-    /// flow_id is never guessable, so the SDK fails closed when reparsing a
-    /// flow/message link with no `via`.
+    /// hints. Current SDK grammar treats Flow and Message ids as globally
+    /// typed targets under their Realm path, so relay `via` hints are not
+    /// serialized into reference links.
     pub fn to_parsed_address(
         &self,
         _via: &[String],
@@ -144,8 +144,8 @@ impl ShareTarget {
     ///
     /// `landing` is the configured HTTPS landing host (e.g.
     /// `https://share.contrix.example`); the target + token always live in the
-    /// fragment so the host never sees them. `via` is the routing-service DID
-    /// hint set; for flow/message links it MUST contain at least one entry.
+    /// fragment so the host never sees them. `via` is accepted for older
+    /// callers but is not serialized by the current SDK address grammar.
     pub fn build_links(
         &self,
         landing: &str,
@@ -518,8 +518,7 @@ mod tests {
     fn parse_fails_closed_on_garbage() {
         assert!(OpenedLink::parse("not-a-link").is_err());
         assert!(OpenedLink::parse(&format!("web+contrix:space/{R}")).is_err());
-        // Flow link with no via fails closed (no guessable global flow_id).
-        assert!(OpenedLink::parse(&format!("web+contrix:realm/{R}/flow/{F}")).is_err());
+        assert!(OpenedLink::parse(&format!("web+contrix:realm/{R}/flow/{F}")).is_ok());
     }
 
     #[test]

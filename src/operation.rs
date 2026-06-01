@@ -504,25 +504,25 @@ pub mod cx_ops {
         scope_id_as_realm_id, uuid_v7,
     };
 
-    fn object_patch_payload_value(
-        object_ref: &str,
-        legacy_id_field: &str,
-        patch: contrix_sdk::Patch,
-    ) -> Value {
-        let mut payload = contrix_sdk::ObjectPatchPayload::for_target(object_ref, patch)
+    fn object_patch_payload_value(object_ref: &str, patch: contrix_sdk::Patch) -> Value {
+        contrix_sdk::ObjectPatchPayload::for_target(object_ref, patch)
             .and_then(|payload| payload.to_value())
             .unwrap_or_else(|err| {
                 panic!("invalid object_patch_payload for {object_ref}: {err}");
-            });
-        payload
-            .as_object_mut()
-            .expect("object_patch_payload serializes as an object")
-            .insert(legacy_id_field.to_owned(), json!(object_ref));
-        payload
+            })
     }
 
     fn flow_object_patch_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
-        object_patch_payload_value(flow_id, "flow_id", patch)
+        object_patch_payload_value(flow_id, patch)
+    }
+
+    fn flow_tracks_update_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
+        json!({
+            "flow_id": flow_id,
+            "patch": serde_json::to_value(patch).unwrap_or_else(|err| {
+                panic!("cx.flow.tracks.update patch serialization failed: {err}");
+            }),
+        })
     }
 
     fn patch_set(path: &str, value: Value) -> contrix_sdk::Patch {
@@ -567,12 +567,8 @@ pub mod cx_ops {
         let flow = Flow::discussion(flow_id.to_owned(), space, title.to_owned(), did);
         let flow_value = serde_json::to_value(&flow)?;
         Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
-            .target_ref(space_id)
+            .target_ref(flow_id)
             .body(json!({
-                "space_id": space_id,
-                "flow_id": flow_id,
-                "title": title,
-                "rank": "r0",
                 "object": flow_value,
             })))
     }
@@ -643,7 +639,7 @@ pub mod cx_ops {
         let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.flow.tracks.update")
             .target_ref(flow_id)
-            .body(flow_object_patch_payload_value(flow_id, patch))
+            .body(flow_tracks_update_payload_value(flow_id, patch))
     }
 
     /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
@@ -777,7 +773,6 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.morph.create")
             .target_ref(morph_id)
             .body(json!({
-                "morph_id": morph_id,
                 "object": object,
             }))
     }
@@ -823,10 +818,6 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
             .body(json!({
-                "space_id": space_id,
-                "flow_id": flow_id,
-                "title": title,
-                "rank": "r0",
                 "object": object,
             }))
     }
@@ -859,8 +850,6 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
         let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let position_cell_id =
-            format!("cx:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}");
         let object = json!({
             "schema": "cx.schema.flow.v1",
             "id": flow_id,
@@ -886,21 +875,7 @@ pub mod cx_ops {
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
             .body(json!({
-                "space_id": space_id,
-                "flow_id": flow_id,
-                "title": title,
-                "rank": rank,
                 "object": object,
-                "components": [
-                    {
-                        "family": "cx.component.flow.position.v1",
-                        "cell_id": position_cell_id,
-                        "board_space_id": board_space_id,
-                        "flow_id": flow_id,
-                        "list_space_id": list_space_id,
-                        "rank": rank
-                    }
-                ]
             }))
     }
 
@@ -941,7 +916,7 @@ pub mod cx_ops {
             .strip_prefix("cx:realm:")
             .map(|suffix| format!("cx:flow:{suffix}"))
             .unwrap_or_else(|| morph_id.to_owned());
-        let mut content = json!({
+        let content = json!({
             "anchor_range": {
                 "end": end,
                 "start": start,
@@ -951,17 +926,17 @@ pub mod cx_ops {
             "kind": "cx.content.text",
             "morph_id": morph_id
         });
+        let mut payload = json!({
+            "flow_id": discussion_flow_id,
+            "track": "discussion",
+            "content": content,
+        });
         if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
-            content["reply_to"] = json!(parent);
+            payload["reply_to"] = json!(parent);
         }
         OperationBuilder::new(space_id, actor, "cx.message.create")
             .target_ref(morph_id)
-            .body(json!({
-                "flow_id": discussion_flow_id,
-                "thread_id": morph_id,
-                "track": "discussion",
-                "content": content,
-            }))
+            .body(payload)
     }
 
     /// Build a Relation linking a document Morph to another object.
@@ -1014,7 +989,7 @@ pub mod cx_ops {
         let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.morph.update")
             .target_ref(morph_id)
-            .body(object_patch_payload_value(morph_id, "morph_id", patch))
+            .body(object_patch_payload_value(morph_id, patch))
     }
 
     /// Build a `cx.policy.update` patch operation. The reducer-side
@@ -1084,12 +1059,10 @@ pub mod cx_ops {
         realm_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(patch);
         OperationBuilder::new(space_id, actor, "cx.realm.update")
             .target_ref(realm_id)
-            .body(json!({
-                "realm_id": realm_id,
-                "patch": patch,
-            }))
+            .body(object_patch_payload_value(realm_id, patch))
     }
 
     /// Build a `cx.space.update` patch operation for structural Space
@@ -1101,13 +1074,10 @@ pub mod cx_ops {
         space_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
+        let patch = patch_from_value(patch);
         OperationBuilder::new(realm_id, actor, "cx.space.update")
             .target_ref(space_id)
-            .body(json!({
-                "space_id": space_id,
-                "target_ref": space_id,
-                "patch": patch,
-            }))
+            .body(object_patch_payload_value(space_id, patch))
     }
 
     /// Build a `cx.moderation.report.submit` operation. Note: this is
@@ -1484,7 +1454,7 @@ pub mod cx_ops {
         let patch = patch_from_value(value);
         OperationBuilder::new(realm_id, actor, "cx.realm.update")
             .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, "realm_id", patch))
+            .body(object_patch_payload_value(realm_id, patch))
     }
 
     /// Legacy flow position update (kanban card position).
@@ -1539,25 +1509,15 @@ pub mod cx_ops {
         let effect_rank = position_field(&effect_position, "rank");
 
         let Some(effect_space) = effect_space else {
-            let mut payload =
+            let payload =
                 flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            let object = payload
-                .as_object_mut()
-                .expect("object_patch_payload serializes as an object");
-            object.insert("board_space_id".to_owned(), json!(board_space_id));
-            object.insert("expected_position".to_owned(), expected_position);
             return OperationBuilder::new(realm_id, actor, "cx.flow.update")
                 .target_ref(flow_id)
                 .body(payload);
         };
         let Some(effect_rank) = effect_rank else {
-            let mut payload =
+            let payload =
                 flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            let object = payload
-                .as_object_mut()
-                .expect("object_patch_payload serializes as an object");
-            object.insert("board_space_id".to_owned(), json!(board_space_id));
-            object.insert("expected_position".to_owned(), expected_position);
             return OperationBuilder::new(realm_id, actor, "cx.flow.update")
                 .target_ref(flow_id)
                 .body(payload);
@@ -1969,9 +1929,10 @@ mod tests {
 
         assert_eq!(op.kind, "cx.morph.create");
         assert_eq!(
-            op.payload["morph_id"],
+            op.payload["object"]["id"],
             "cx:morph:0196419b-0000-7000-8000-000000000002"
         );
+        assert!(op.payload.get("morph_id").is_none());
         assert_eq!(op.payload["object"]["morph_type"], "document");
         assert_eq!(
             op.payload["object"]["fields"]["document"]["blocks"][0]["kind"],
@@ -1983,7 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn kanban_card_flow_create_carries_position_component() {
+    fn kanban_card_flow_create_carries_position_in_object_fields() {
         let op = cx_ops::kanban_card_flow_create(
             "cx:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -2008,13 +1969,14 @@ mod tests {
             "kanban_card"
         );
         assert_eq!(
-            op.payload["components"][0]["family"],
-            "cx.component.flow.position.v1"
+            op.payload["object"]["fields"]["board_space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(
-            op.payload["components"][0]["cell_id"],
-            "cx:cell:cx.component.flow.position.v1:cx:space:0196419b-0000-7000-8000-000000000002:cx:flow:0196419b-0000-7000-8000-000000000004"
+            op.payload["object"]["fields"]["list_space_id"],
+            "cx:space:0196419b-0000-7000-8000-000000000003"
         );
+        assert!(op.payload.get("components").is_none());
         assert!(op.payload.get("patch").is_none());
         assert_registered_payload_valid(&op);
         assert_payload_field_names_are_soland_canonical(&op.payload);
@@ -2032,13 +1994,10 @@ mod tests {
 
         assert_eq!(op.kind, "cx.morph.update");
         assert_eq!(
-            op.payload["morph_id"],
-            "cx:morph:0196419b-0000-7000-8000-000000000002"
-        );
-        assert_eq!(
             op.payload["target_ref"],
             "cx:morph:0196419b-0000-7000-8000-000000000002"
         );
+        assert!(op.payload.get("morph_id").is_none());
         assert!(op.payload["patch"]["fields"]["value"]["document"]["blocks"].is_array());
         assert_registered_payload_valid(&op);
         assert_payload_field_names_are_soland_canonical(&op.payload);
@@ -2080,7 +2039,8 @@ mod tests {
         .build("node");
 
         assert_eq!(op.kind, "cx.flow.update");
-        assert_eq!(op.payload["flow_id"], flow_id);
+        assert_eq!(op.payload["target_ref"], flow_id);
+        assert!(op.payload.get("flow_id").is_none());
         assert!(op.payload["patch"].get("fields.status").is_none());
         assert_eq!(
             op.payload["patch"]["fields"]["value"]["status"],
@@ -2102,9 +2062,10 @@ mod tests {
         .build("node");
         assert_eq!(op.kind, "cx.flow.create");
         assert_eq!(
-            op.payload["flow_id"],
+            op.payload["object"]["id"],
             "cx:flow:0196419b-0000-7000-8000-000000000001"
         );
+        assert!(op.payload.get("flow_id").is_none());
         assert_eq!(
             op.payload["object"]["tracks"]["discussion"]["profile"],
             "discussion"
@@ -2153,7 +2114,8 @@ mod tests {
         .build("node");
         assert_eq!(op.kind, "cx.flow.update");
         assert_eq!(op.local_target_ref(), Some(flow_id));
-        assert_eq!(op.payload["flow_id"], flow_id);
+        assert_eq!(op.payload["target_ref"], flow_id);
+        assert!(op.payload.get("flow_id").is_none());
         assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
         assert!(op.payload.get("fields").is_none());
     }
@@ -2207,8 +2169,12 @@ mod tests {
         for event in &events {
             assert_eq!(event.kind, "cx.flow.update");
             assert!(event.payload.get("patch").is_some());
+            assert_eq!(event.payload["target_ref"], flow_id);
+            assert!(event.payload.get("flow_id").is_none());
             assert!(event.payload.get("fields").is_none());
             assert!(event.payload.get("position").is_none());
+            assert!(event.payload.get("board_space_id").is_none());
+            assert!(event.payload.get("expected_position").is_none());
             assert_registered_payload_valid(event);
         }
 
@@ -2262,7 +2228,12 @@ mod tests {
 
         for event in &events {
             assert!(event.payload.get("patch").is_some(), "{}", event.kind);
-            assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
+            if event.kind == "cx.flow.tracks.update" {
+                assert_eq!(event.payload["flow_id"], flow_id);
+                assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
+            } else {
+                assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
+            }
             assert_registered_payload_valid(event);
         }
     }

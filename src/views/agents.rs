@@ -2028,9 +2028,8 @@ mod personal_agent_tests {
 
 #[cfg(test)]
 mod tests {
-    /// Pin endpoint body shape so the view extractor
-    /// `body.agent_id / body.protocol` keeps matching the
-    /// `cx_ops::agent_endpoint` builder output.
+    /// Pin endpoint body shape so the builder stays aligned with
+    /// event-payload.schema.json#/$defs/agent_endpoint_payload.
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
         let op = crate::operation::cx_ops::agent_endpoint(
@@ -2042,8 +2041,10 @@ mod tests {
         )
         .build("yougen");
         assert_eq!(op.payload["agent_id"], "did:web:agent.example");
-        assert_eq!(op.payload["protocol"], "cx.agent.v1");
-        assert_eq!(op.payload["capabilities"][0], "flow.read");
+        assert_eq!(op.payload["endpoints"][0]["protocol"], "cx.agent.v1");
+        assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "flow.read");
+        assert!(op.payload.get("protocol").is_none());
+        assert!(op.payload.get("capabilities").is_none());
     }
 
     #[test]
@@ -2081,7 +2082,7 @@ mod tests {
             "status": "completed",
             "result": {
                 "echo": echo,
-                "agent_id": agent_id,
+                "agent_principal_id": agent_id,
             },
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
@@ -2146,7 +2147,7 @@ mod tests {
         let payload = json!({
             "session_id": "cx:session:v4",
             "status": "completed",
-            "result": {"echo": null, "agent_id": "did:web:agent.example"},
+            "result": {"echo": null, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "future_scheme_v9",
                 "actor_id": "did:web:alice.example",
@@ -2167,7 +2168,7 @@ mod tests {
         let payload = json!({
             "session_id": "cx:session:hmac",
             "status": "completed",
-            "result": {"echo": {"op": "ping"}, "agent_id": "did:web:agent.example"},
+            "result": {"echo": {"op": "ping"}, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
                 "binding_kind": "hmac_sha256_v1",
                 "actor_id": "did:web:alice.example",
@@ -2320,7 +2321,7 @@ mod tests {
         let result_payload = json!({
             "session_id": session_id,
             "status": "completed",
-            "result": {"echo": echo, "agent_id": agent_id},
+            "result": {"echo": echo, "agent_principal_id": agent_id},
             "audit_binding": {
                 "binding_kind": "ed25519_v1",
                 "actor_id": actor,

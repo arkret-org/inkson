@@ -793,6 +793,7 @@ export async function mockContrixApi(page: Page) {
           {
             kind: "cx.notification",
             notification_id: "notif-invite-1",
+            invite_id: "cx:invite:01904100-0000-7000-8000-000000000099",
             title: "New invite",
             body: "You were invited to review Demo Space",
             space_id: DEMO_SPACE,
@@ -884,7 +885,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/directory/resolve-realm") {
       return json(route, {
-        space_preview: spacePreview(),
+        realm_preview: spacePreview(),
         stripped_state: [],
         join_rule: "public",
         join_candidates: [joinCandidate()],
@@ -1161,7 +1162,7 @@ function joinCandidate() {
     service_did: "did:web:server.local",
     service_type: "principal_server",
     role: "primary",
-    endpoint: "http://server",
+    endpoint: null,
     operations: ["cx.events.submit"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
