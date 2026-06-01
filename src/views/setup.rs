@@ -1165,7 +1165,7 @@ pub fn SetupPanel(
                                                                     &encryption_profile,
                                                                 ) {
                                                                     let secure = crate::secure_key_store::default_secure_key_store("yougen");
-                                                                    let snapshot = {
+                                                                    let (snapshot, creator_genesis_summary) = {
                                                                         let mut store = state_store.write();
                                                                         match crate::mls::runtime::ensure_creator_mls_snapshot(
                                                                             &mut store,
@@ -1174,8 +1174,8 @@ pub fn SetupPanel(
                                                                             &actor,
                                                                             &device,
                                                                         ) {
-                                                                            Ok(Some(_)) | Ok(None) => {
-                                                                                store.mls_snapshot_for(&space.space_id)
+                                                                            Ok(summary) => {
+                                                                                (store.mls_snapshot_for(&space.space_id), summary)
                                                                             }
                                                                             Err(err) => {
                                                                                 let message = format!(
@@ -1189,6 +1189,59 @@ pub fn SetupPanel(
                                                                             }
                                                                         }
                                                                     };
+                                                                    // Emit the one-time cx.mls.genesis for the
+                                                                    // freshly-created creator group at epoch 0,
+                                                                    // BEFORE any cx.mls.commit can bump the epoch.
+                                                                    // A duplicate (mls_genesis_already_exists) is
+                                                                    // treated as success. Failure is non-fatal:
+                                                                    // soland lazily defaults a never-seen group to
+                                                                    // epoch 0, so commits still work; we just leave
+                                                                    // the genesis_emitted flag unset to retry later
+                                                                    // via the kanban encrypted-write path.
+                                                                    let genesis_event = creator_genesis_summary
+                                                                        .as_ref()
+                                                                        .and_then(|genesis_summary| {
+                                                                            let store = state_store.read();
+                                                                            if store.mls_genesis_emitted_for(&space.space_id) {
+                                                                                return None;
+                                                                            }
+                                                                            match crate::views::kanban::build_creator_mls_genesis_event(
+                                                                                &store,
+                                                                                &space.space_id,
+                                                                                &actor,
+                                                                                &device,
+                                                                                Some(genesis_summary),
+                                                                            ) {
+                                                                                Ok(event) => event,
+                                                                                Err(err) => {
+                                                                                    tracing::warn!(
+                                                                                        error = %err,
+                                                                                        space = %space.space_id,
+                                                                                        "building cx.mls.genesis event failed",
+                                                                                    );
+                                                                                    None
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    if let Some(genesis_event) = genesis_event {
+                                                                        match api.submit_event_envelope(&genesis_event).await {
+                                                                            Ok(_) => {
+                                                                                state_store.write().mark_mls_genesis_emitted(space.space_id.clone());
+                                                                            }
+                                                                            Err(err) => {
+                                                                                let text = err.to_string();
+                                                                                if text.contains("mls_genesis_already_exists") {
+                                                                                    state_store.write().mark_mls_genesis_emitted(space.space_id.clone());
+                                                                                } else {
+                                                                                    tracing::warn!(
+                                                                                        error = %text,
+                                                                                        space = %space.space_id,
+                                                                                        "cx.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                                    );
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
                                                                     if let Some(snapshot) = snapshot {
                                                                         match crate::mls::runtime::upload_mls_snapshot_backup(
                                                                             &api,

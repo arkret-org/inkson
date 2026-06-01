@@ -1041,7 +1041,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
- "contrix-api",
+ "contrix-contracts",
  "contrix-core",
  "contrix-crypto",
  "contrix-ffi",
@@ -1068,7 +1068,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "contrix-api"
+name = "contrix-contracts"
 version = "1.0.0"
 dependencies = [
  "chrono",
@@ -1175,7 +1175,7 @@ name = "contrix-testing"
 version = "1.0.0"
 dependencies = [
  "chrono",
- "contrix-api",
+ "contrix-contracts",
  "contrix-core",
  "contrix-crypto",
  "contrix-ffi",

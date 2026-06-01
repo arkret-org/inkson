@@ -6736,6 +6736,12 @@ pub fn RouterView() -> Element {
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
     let needs_mls_unlock = use_signal(|| false);
+    // Mirror of `needs_mls_unlock` (task X3): set by the detection effects when
+    // this account has used encryption (a local account MLS secret exists) but
+    // the server holds NO `mls_account_secret` backup yet — so a fresh browser
+    // would lose history. Consumed by `MlsBackupPrompt`. Mutually exclusive
+    // with `needs_mls_unlock`: restore (unlock) always wins.
+    let needs_mls_backup = use_signal(|| false);
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -7018,6 +7024,7 @@ pub fn RouterView() -> Element {
     {
         let mut seen_detection_key = mls_unlock_detection_key_seen;
         let mut needs_mls_unlock = needs_mls_unlock;
+        let mut needs_mls_backup = needs_mls_backup;
         let mut restore_payload_cache = mls_restore_payload_cache;
         let state_store_for_detection = state_store;
         use_effect(move || {
@@ -7028,6 +7035,7 @@ pub fn RouterView() -> Element {
             let generation = sync_generation();
             if session.trim().is_empty() {
                 needs_mls_unlock.set(false);
+                needs_mls_backup.set(false);
                 restore_payload_cache.set(None);
                 return;
             }
@@ -7063,12 +7071,24 @@ pub fn RouterView() -> Element {
                                 &device,
                             )
                         };
+                        // Mutual exclusion (task X3): restore (unlock) always
+                        // wins. Only evaluate the backup prompt when restore is
+                        // not required.
                         if should_unlock {
                             restore_payload_cache.set(Some(payload));
                             needs_mls_unlock.set(true);
+                            needs_mls_backup.set(false);
                         } else {
                             restore_payload_cache.set(None);
                             needs_mls_unlock.set(false);
+                            let should_backup =
+                                crate::mls::account_recovery::mls_backup_prompt_required(
+                                    &payload,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    &device,
+                                );
+                            needs_mls_backup.set(should_backup);
                         }
                     }
                     Err(error) => {
@@ -7159,6 +7179,7 @@ pub fn RouterView() -> Element {
         let crypto_state_for_bootstrap = crypto_state;
         let last_error_for_bootstrap = last_error;
         let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
+        let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         use_effect(move || {
             let selected = selected_space();
@@ -7257,9 +7278,23 @@ pub fn RouterView() -> Element {
                                 &detect_device,
                             )
                         };
+                        // Mutual exclusion (task X3): restore (unlock) wins.
+                        // Otherwise, if the user just created an encrypted
+                        // realm (local secret now exists) but has no server
+                        // backup, flag the one-time backup prompt instead.
                         if should_unlock {
                             restore_payload_cache_for_bootstrap.set(Some(payload));
                             needs_mls_unlock_for_bootstrap.set(true);
+                            needs_mls_backup_for_bootstrap.set(false);
+                        } else {
+                            let should_backup =
+                                crate::mls::account_recovery::mls_backup_prompt_required(
+                                    &payload,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    &detect_device,
+                                );
+                            needs_mls_backup_for_bootstrap.set(should_backup);
                         }
                     }
                     Err(error) => {
@@ -7622,6 +7657,16 @@ pub fn RouterView() -> Element {
                 state_store,
                 needs_mls_unlock,
                 restore_payload_cache: mls_restore_payload_cache,
+            }
+            // Task X3 — one-time account-secret BACKUP prompt (mirror of the
+            // unlock banner). Renders nothing unless detection flagged
+            // `needs_mls_backup` (local secret exists, no server backup yet).
+            crate::components::MlsBackupPrompt {
+                base_url,
+                token,
+                actor_did: account_did,
+                device_id,
+                needs_mls_backup,
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 button {

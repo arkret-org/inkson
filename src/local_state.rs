@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs,
@@ -1004,6 +1004,13 @@ pub struct ClientLocalState {
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Spaces whose `cx.mls.genesis` event has already been submitted to
+    /// soland. Tracked per-space so genesis is emitted exactly once for a
+    /// locally-created creator group (the server also rejects a duplicate
+    /// genesis with `mls_genesis_already_exists`, but this avoids the
+    /// needless round-trip on every encrypted write after the first).
+    #[serde(default)]
+    pub mls_genesis_emitted: BTreeSet<String>,
     /// Actor-private Space remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1239,6 +1246,7 @@ impl Default for ClientLocalState {
             session_grant: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
+            mls_genesis_emitted: BTreeSet::new(),
             space_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
@@ -2964,6 +2972,20 @@ impl LocalStateStore {
     pub fn drop_mls_snapshot(&mut self, space_id: &str) {
         self.ensure_cached_loaded();
         if self.cached.mls_snapshots.remove(space_id).is_some() {
+            let _ = self.flush();
+        }
+    }
+
+    /// True once a `cx.mls.genesis` event has been submitted for this space.
+    pub fn mls_genesis_emitted_for(&self, space_id: &str) -> bool {
+        self.load().mls_genesis_emitted.contains(space_id)
+    }
+
+    /// Record that a `cx.mls.genesis` event has been submitted for this
+    /// space so it is never re-emitted (idempotent).
+    pub fn mark_mls_genesis_emitted(&mut self, space_id: impl Into<String>) {
+        self.ensure_cached_loaded();
+        if self.cached.mls_genesis_emitted.insert(space_id.into()) {
             let _ = self.flush();
         }
     }

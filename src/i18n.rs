@@ -646,6 +646,40 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_suffix", "encrypted space(s).");
     dict.set("mls_unlock.status.failed_suffix", "failed");
 
+    // One-time account-MLS-secret BACKUP prompt (mirror of mls_unlock).
+    dict.set("mls_backup.aria_label", "Back up encrypted history");
+    dict.set("mls_backup.title", "Protect your encrypted history");
+    dict.set("mls_backup.subtitle", "account MLS secret");
+    dict.set(
+        "mls_backup.description",
+        "You're using encryption but haven't set a recovery passphrase yet. Without one, switching browsers or devices will lose your encrypted history. Set a passphrase to back up your account secret.",
+    );
+    dict.set(
+        "mls_backup.warning.passphrase_loss",
+        "Important: this passphrase is never stored. If you lose it you cannot recover encrypted history on a new device (devices already set up keep working).",
+    );
+    dict.set("mls_backup.placeholder", "Recovery passphrase");
+    dict.set("mls_backup.placeholder_confirm", "Confirm passphrase");
+    dict.set("mls_backup.button_idle", "Create backup");
+    dict.set("mls_backup.button_busy", "Backing up...");
+    dict.set("mls_backup.button_dismiss", "Remind me later");
+    dict.set(
+        "mls_backup.hint.too_weak",
+        "Choose a stronger passphrase: use 24+ characters or several random words (minimum strength is Good, 3/5).",
+    );
+    dict.set("mls_backup.hint.mismatch", "Passphrases don't match.");
+    dict.set(
+        "mls_backup.status.enter_passphrase",
+        "Enter a recovery passphrase to back up your account secret.",
+    );
+    dict.set("mls_backup.status.mismatch", "Passphrases don't match.");
+    dict.set(
+        "mls_backup.status.too_weak",
+        "Choose a stronger passphrase (minimum strength is Good, 3/5).",
+    );
+    dict.set("mls_backup.status.uploading", "Encrypting and uploading backup...");
+    dict.set("mls_backup.status.created", "Backup created.");
+
     // Space-admin view (section labels)
     dict.set("space_admin.title", "Space Settings");
     dict.set("space_admin.governance", "Governance");
@@ -1576,6 +1610,40 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "已恢复");
     dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
     dict.set("mls_unlock.status.failed_suffix", "个失败");
+
+    // 一次性账号 MLS secret 备份提示（mls_unlock 的镜像）。
+    dict.set("mls_backup.aria_label", "备份加密历史");
+    dict.set("mls_backup.title", "保护你的加密历史");
+    dict.set("mls_backup.subtitle", "账号 MLS secret");
+    dict.set(
+        "mls_backup.description",
+        "你已在使用加密，但还没有设置恢复口令。一旦更换浏览器或设备，加密历史将无法恢复。请设置恢复口令以备份账号 secret。",
+    );
+    dict.set(
+        "mls_backup.warning.passphrase_loss",
+        "重要：此口令不会被保存在任何地方。一旦遗失，将无法在新设备上恢复加密历史（已设置好的设备仍可继续使用）。",
+    );
+    dict.set("mls_backup.placeholder", "恢复口令");
+    dict.set("mls_backup.placeholder_confirm", "确认口令");
+    dict.set("mls_backup.button_idle", "创建备份");
+    dict.set("mls_backup.button_busy", "正在备份…");
+    dict.set("mls_backup.button_dismiss", "稍后提醒");
+    dict.set(
+        "mls_backup.hint.too_weak",
+        "请选择更强的口令：使用 24 个以上字符或若干随机单词（最低强度为良好，3/5）。",
+    );
+    dict.set("mls_backup.hint.mismatch", "两次输入的口令不一致。");
+    dict.set(
+        "mls_backup.status.enter_passphrase",
+        "输入恢复口令以备份你的账号 secret。",
+    );
+    dict.set("mls_backup.status.mismatch", "两次输入的口令不一致。");
+    dict.set(
+        "mls_backup.status.too_weak",
+        "请选择更强的口令（最低强度为良好，3/5）。",
+    );
+    dict.set("mls_backup.status.uploading", "正在加密并上传备份…");
+    dict.set("mls_backup.status.created", "备份已创建。");
 
     // Space-admin view
     dict.set("space_admin.title", "Space 设置");

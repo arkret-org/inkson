@@ -145,6 +145,14 @@ pub struct InitialMlsSnapshotSummary {
     pub space_id: String,
     pub group_id: String,
     pub epoch: u64,
+    /// Base64 TLS-serialized ratchet tree of the freshly created group —
+    /// used to seed the `cx.mls.genesis` event's `ratchet_tree_digest`.
+    pub ratchet_tree: String,
+    /// `sha256:<hex>` digest over the group's current key schedule (epoch
+    /// authenticator). Used as the genesis `group_info_digest`.
+    pub schedule_hash: String,
+    /// String form of the MLS ciphersuite the group was created with.
+    pub cipher_suite: String,
 }
 
 pub fn build_mls_history_backup_body(
@@ -286,6 +294,11 @@ pub fn ensure_creator_mls_snapshot(
     let group = identity
         .create_group(space.as_bytes())
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
+    let ratchet_tree = group
+        .ratchet_tree()
+        .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
+    let schedule_hash = group.schedule_hash().to_string();
+    let cipher_suite = format!("{:?}", contrix_sdk::CONTRIX_MLS_CIPHERSUITE);
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export state: {err}")))?;
@@ -305,9 +318,58 @@ pub fn ensure_creator_mls_snapshot(
         space_id: space.to_owned(),
         group_id: post_state.group_id.clone(),
         epoch: post_state.epoch,
+        ratchet_tree,
+        schedule_hash,
+        cipher_suite,
     };
     state_store.save_mls_snapshot(space.to_owned(), snapshot);
     Ok(Some(summary))
+}
+
+/// Build the canonical `cx.mls.genesis` payload for a freshly-created creator
+/// group.
+///
+/// `governance_binding` MUST be a realm/circle binding at epoch `0 -> 0`
+/// (genesis installs epoch 0); its serialized `effective_scope` is mirrored
+/// into the top-level `effective_scope` field so the two stay in lockstep
+/// (soland and strict client schema validators both compare them).
+///
+/// Digest field derivation (deterministic, leak-free):
+/// - `group_info_digest`  = the group's `schedule_hash()` (`sha256:` over the
+///   RFC 9420 epoch authenticator) — a stable per-epoch group-state digest.
+/// - `ratchet_tree_digest` = `sha256:` over the base64 TLS-serialized ratchet
+///   tree bytes.
+///
+/// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
+/// builder stamps on `EventEnvelope::created_at`.
+pub fn build_mls_genesis_payload(
+    summary: &InitialMlsSnapshotSummary,
+    actor_did: &str,
+    device_id: &str,
+    governance_binding: &contrix_sdk::MlsGovernanceBindingPayload,
+) -> Result<Value, MlsRuntimeError> {
+    let binding_value = serde_json::to_value(governance_binding)
+        .map_err(|err| MlsRuntimeError::Genesis(format!("serialize governance binding: {err}")))?;
+    let effective_scope = binding_value
+        .get("effective_scope")
+        .cloned()
+        .ok_or_else(|| {
+            MlsRuntimeError::Genesis("governance binding missing effective_scope".to_owned())
+        })?;
+    let ratchet_tree_digest = crate::canonical::sha256_digest(summary.ratchet_tree.as_bytes());
+    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    Ok(serde_json::json!({
+        "mls_group_id": summary.group_id,
+        "effective_scope": effective_scope,
+        "epoch": 0,
+        "creator_principal_id": actor_did,
+        "creator_device_id": device_id,
+        "cipher_suite": summary.cipher_suite,
+        "group_info_digest": summary.schedule_hash,
+        "ratchet_tree_digest": ratchet_tree_digest,
+        "governance_binding": binding_value,
+        "created_at": created_at,
+    }))
 }
 
 fn require_backup_str(body: &Value, key: &str, expected: &str) -> Result<(), MlsRuntimeError> {
@@ -1088,6 +1150,89 @@ mod tests {
         .unwrap();
         assert_eq!(encrypted_again.2.len(), 1);
         assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
+    }
+
+    fn genesis_governance_binding(group_id: &str) -> contrix_sdk::MlsGovernanceBindingPayload {
+        let realm_id =
+            contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let frontier =
+            vec![contrix_sdk::EventId::new("cx:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
+        let policy_root = contrix_sdk::Hash::new(
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        .unwrap();
+        // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
+        contrix_sdk::MlsGovernanceBindingPayload::realm(
+            realm_id, group_id, 0, 0, frontier, policy_root,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn build_mls_genesis_payload_has_required_fields() {
+        let mut state = temp_state_store("genesis-payload");
+        let secure = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+
+        let summary = ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
+            .unwrap()
+            .expect("creator snapshot should be created");
+        let binding = genesis_governance_binding(&summary.group_id);
+        let payload = build_mls_genesis_payload(&summary, actor, device, &binding).unwrap();
+
+        // epoch MUST be the literal 0 the schema/reducer require.
+        assert_eq!(payload["epoch"].as_u64(), Some(0));
+        assert_eq!(payload["creator_principal_id"].as_str(), Some(actor));
+        assert_eq!(payload["creator_device_id"].as_str(), Some(device));
+        assert_eq!(
+            payload["mls_group_id"].as_str(),
+            Some(summary.group_id.as_str())
+        );
+        // cipher_suite is the SDK ciphersuite string form — non-empty.
+        assert!(!payload["cipher_suite"].as_str().unwrap_or("").is_empty());
+        // governance_binding present and carries the genesis 0 -> 0 epochs.
+        assert!(payload.get("governance_binding").is_some());
+        assert_eq!(payload["governance_binding"]["previous_epoch"].as_u64(), Some(0));
+        assert_eq!(payload["governance_binding"]["next_epoch"].as_u64(), Some(0));
+        // effective_scope mirrors the governance binding's.
+        assert_eq!(
+            payload["effective_scope"],
+            payload["governance_binding"]["effective_scope"]
+        );
+        // group_info / ratchet_tree digest fields present and sha256-shaped.
+        let group_info_digest = payload["group_info_digest"].as_str().unwrap();
+        let ratchet_tree_digest = payload["ratchet_tree_digest"].as_str().unwrap();
+        assert!(group_info_digest.starts_with("sha256:"));
+        assert!(ratchet_tree_digest.starts_with("sha256:"));
+        assert_eq!(group_info_digest, summary.schedule_hash);
+        // created_at present.
+        assert!(payload["created_at"].as_str().unwrap_or("").contains('T'));
+
+        // Validate against the registered canonical `mls_genesis_payload`
+        // schema so the full payload passes strict client/server validation.
+        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        if catalog
+            .missing_payload_validators_for(std::iter::once("cx.mls.genesis"))
+            .is_empty()
+        {
+            catalog
+                .validate_payload("cx.mls.genesis", &payload)
+                .expect("genesis payload must satisfy the registered schema");
+        }
+    }
+
+    #[test]
+    fn mls_genesis_emitted_flag_is_idempotent() {
+        let mut state = temp_state_store("genesis-idempotent");
+        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+        assert!(!state.mls_genesis_emitted_for(space));
+        state.mark_mls_genesis_emitted(space);
+        assert!(state.mls_genesis_emitted_for(space));
+        // Re-marking is a no-op / stays true.
+        state.mark_mls_genesis_emitted(space);
+        assert!(state.mls_genesis_emitted_for(space));
     }
 
     #[test]

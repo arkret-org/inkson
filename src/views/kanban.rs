@@ -6569,20 +6569,20 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
     space_id: &str,
     actor_did: &str,
     device_id: &str,
-) -> Result<bool, String> {
+) -> Result<Option<crate::mls::runtime::InitialMlsSnapshotSummary>, String> {
     if state_store.mls_snapshot_for(space_id).is_some() {
-        return Ok(false);
+        return Ok(None);
     }
     let state = state_store.load();
     let Some(projection) =
         crate::security_state::security_projection_for_scope_id(&state.space_projections, space_id)
     else {
-        return Ok(false);
+        return Ok(None);
     };
     if !crate::security_state::realm_projection_is_encrypted(projection)
         || !projection_creator_matches_actor(projection, actor_did)
     {
-        return Ok(false);
+        return Ok(None);
     }
     crate::mls::runtime::ensure_creator_mls_snapshot(
         state_store,
@@ -6591,8 +6591,73 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
         actor_did,
         device_id,
     )
-    .map(|summary| summary.is_some())
     .map_err(|err| err.user_message())
+}
+
+/// Build the `cx.mls.genesis` [`EventEnvelope`] for a creator group that has a
+/// local snapshot but whose genesis has not yet been submitted to soland.
+///
+/// Returns `None` when genesis was already emitted for this space (idempotent —
+/// see [`LocalStateStore::mls_genesis_emitted_for`]) or when there is no local
+/// snapshot. `fresh_summary` carries the just-created group's epoch-0 ratchet
+/// tree / schedule hash captured by `ensure_creator_mls_snapshot`; genesis MUST
+/// describe the group at epoch 0, so this builder only emits when that fresh
+/// epoch-0 material is available (the normal create-then-first-write path).
+///
+/// The genesis governance binding installs epoch `0 -> 0` and mirrors the
+/// commit path's realm_id / membership_frontier / policy_root derivation.
+pub(crate) fn build_creator_mls_genesis_event(
+    state_store: &LocalStateStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+) -> Result<Option<crate::operation::EventEnvelope>, String> {
+    if state_store.mls_genesis_emitted_for(space_id) {
+        return Ok(None);
+    }
+    // Genesis describes the group at epoch 0. We can only build a
+    // contract-correct genesis from the just-created epoch-0 material; once the
+    // group has committed past epoch 0 the epoch-0 ratchet tree is gone. The
+    // server lazily defaults a never-seen group to epoch 0 anyway, so missing
+    // this window is non-fatal (commits still work).
+    let Some(summary) = fresh_summary else {
+        return Ok(None);
+    };
+    if summary.space_id != space_id {
+        return Ok(None);
+    }
+    let anchor_view = state_store.anchor_view_for(space_id);
+    let event_id = format!("cx:event:{}", uuid_v7());
+    let event_id_typed = contrix_sdk::EventId::new(event_id.clone())
+        .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
+    let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+        .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
+    let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
+        realm_id,
+        summary.group_id.clone(),
+        0,
+        0,
+        kanban_mls_membership_frontier(&anchor_view, &event_id_typed),
+        kanban_mls_policy_root(&anchor_view, space_id)?,
+    )
+    .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
+    let payload = crate::mls::runtime::build_mls_genesis_payload(
+        summary,
+        actor_did,
+        device_id,
+        &governance_binding,
+    )
+    .map_err(|err| err.user_message())?;
+    let mut event = crate::operation::cx_ops::mls_genesis_with_governance(
+        space_id,
+        actor_did,
+        &summary.group_id,
+        &payload,
+    )
+    .build("yougen");
+    event.event_id = event_id;
+    Ok(Some(event))
 }
 
 fn kanban_mls_commit_event_from_store(
@@ -6603,7 +6668,15 @@ fn kanban_mls_commit_event_from_store(
     commit_envelope: &contrix_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
     let anchor_view = state_store.anchor_view_for(space_id);
-    let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
+    // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
+    // `next_epoch == base_epoch + 1` invariant holds by construction.
+    // `commit_envelope.epoch` is the POST-commit epoch (`self_update_commit`
+    // merges the pending commit before reading it), so the pre-commit epoch is
+    // exactly one less. Deriving `base_epoch` from `anchor_view.mls_epoch`
+    // instead — which only refreshes on `/sync` — drifts whenever the local
+    // snapshot has advanced past the last server-confirmed epoch, which is what
+    // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
+    let prev_epoch = commit_envelope.epoch.saturating_sub(1);
     let event_id = format!("cx:event:{}", uuid_v7());
     let event_id_typed = contrix_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
@@ -6635,13 +6708,23 @@ fn kanban_mls_commit_event_from_store(
     Ok(event)
 }
 
+/// The MLS events an encrypted write must submit, in submit order: the
+/// one-time `cx.mls.genesis` (if not yet emitted) MUST precede the
+/// `cx.mls.commit` so the server has the group at epoch 0 before the commit
+/// bumps it to 1.
+#[derive(Default, Debug)]
+struct EncryptedWriteMlsEvents {
+    genesis: Option<crate::operation::EventEnvelope>,
+    commit: Option<crate::operation::EventEnvelope>,
+}
+
 fn encrypt_private_card_detail_patch_values(
     patch: Value,
     space_id: &str,
     actor_did: &str,
     device_id: &str,
     mut state_store: Signal<LocalStateStore>,
-) -> Result<(Value, Option<crate::operation::EventEnvelope>), String> {
+) -> Result<(Value, EncryptedWriteMlsEvents), String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let mut store = state_store.write();
     encrypt_private_card_detail_patch_values_with_store(
@@ -6661,21 +6744,29 @@ fn encrypt_private_card_detail_patch_values_with_store(
     device_id: &str,
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> Result<(Value, Option<crate::operation::EventEnvelope>), String> {
+) -> Result<(Value, EncryptedWriteMlsEvents), String> {
     let values = collect_encryptable_private_patch_values(&patch)?;
     if values.is_empty() {
-        return Ok((patch, None));
+        return Ok((patch, EncryptedWriteMlsEvents::default()));
     }
     let plaintext_values = values
         .iter()
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
-    ensure_creator_mls_snapshot_for_encrypted_scope(
+    let fresh_summary = ensure_creator_mls_snapshot_for_encrypted_scope(
         state_store,
         secure_store,
         space_id,
         actor_did,
         device_id,
+    )?;
+    // Build genesis BEFORE the first commit mutates the group past epoch 0.
+    let genesis_event = build_creator_mls_genesis_event(
+        state_store,
+        space_id,
+        actor_did,
+        device_id,
+        fresh_summary.as_ref(),
     )?;
     let (schedule_hash, _member_dids, encrypted_values, commit_envelope) =
         crate::mls::runtime::encrypt_values_with_device_snapshot(
@@ -6698,7 +6789,13 @@ fn encrypt_private_card_detail_patch_values_with_store(
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
     let mut encrypted_patch = patch;
     replace_private_patch_values(&mut encrypted_patch, &paths, encrypted_values)?;
-    Ok((encrypted_patch, Some(commit_event)))
+    Ok((
+        encrypted_patch,
+        EncryptedWriteMlsEvents {
+            genesis: genesis_event,
+            commit: Some(commit_event),
+        },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6728,7 +6825,7 @@ fn dispatch_card_detail_update(
     let effective_security_encrypted = current
         .security_encrypted
         .unwrap_or(scope_security_encrypted);
-    let (patch, mls_commit_op) = if effective_security_encrypted {
+    let (patch, mls_events) = if effective_security_encrypted {
         match encrypt_private_card_detail_patch_values(
             patch,
             &space_id,
@@ -6743,8 +6840,12 @@ fn dispatch_card_detail_update(
             }
         }
     } else {
-        (patch, None)
+        (patch, EncryptedWriteMlsEvents::default())
     };
+    let EncryptedWriteMlsEvents {
+        genesis: mls_genesis_op,
+        commit: mls_commit_op,
+    } = mls_events;
 
     let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
         .build("yougen");
@@ -6812,6 +6913,44 @@ fn dispatch_card_detail_update(
     let actor_for_backup = actor_did.clone();
     let device_for_backup = device_id.clone();
     spawn(async move {
+        // Genesis MUST land before the first commit so the server has the
+        // group at epoch 0 before the commit bumps it to 1. A duplicate
+        // genesis (`mls_genesis_already_exists`) is treated as success.
+        if let Some(genesis_op) = mls_genesis_op {
+            let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.submit_event_envelope(&genesis_op).await
+            })
+            .await;
+            match genesis_result {
+                Ok(_) => {
+                    state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                }
+                Err(err) => {
+                    let err_text = err.display().to_string();
+                    if err_text.contains("mls_genesis_already_exists") {
+                        // Already installed server-side — record locally and proceed.
+                        state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                    } else {
+                        state_store.write().update_raw_operation_write_state(
+                            &operation_id,
+                            "failed",
+                            None,
+                            Some(err_text.clone()),
+                        );
+                        set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                        let selected = selected_card.read().clone();
+                        if let Some(mut card) = selected
+                            && card.id == flow_id
+                        {
+                            card.state = CardState::SoftFailed;
+                            selected_card.set(Some(card));
+                        }
+                        board_status.set(format!("MLS genesis event failed: {err_text}"));
+                        return;
+                    }
+                }
+            }
+        }
         if let Some(commit_op) = mls_commit_op {
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 api.submit_event_envelope(&commit_op).await
@@ -9617,7 +9756,7 @@ mod tests {
             "body": {"$op": "set", "value": "private body"},
         });
 
-        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+        let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
             patch, space, actor, device, &mut state, &secure,
         )
         .unwrap();
@@ -9627,7 +9766,17 @@ mod tests {
             patched["body"]["value"]["content_type"],
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
         );
-        assert!(commit.is_some());
+        assert!(mls_events.commit.is_some());
+        // A freshly-created creator group must also produce a one-time
+        // cx.mls.genesis event (submitted before the commit).
+        let genesis = mls_events
+            .genesis
+            .expect("freshly-created creator group should emit genesis");
+        assert_eq!(genesis.kind, "cx.mls.genesis");
+        assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
+        assert_eq!(genesis.payload["creator_principal_id"].as_str(), Some(actor));
+        assert!(genesis.payload.get("governance_binding").is_some());
+        assert_registered_payload_valid(&genesis);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -9663,7 +9812,7 @@ mod tests {
             "body": {"$op": "set", "value": "private body"},
         });
 
-        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+        let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
             patch, space, actor, device, &mut state, &secure,
         )
         .unwrap();
@@ -9673,7 +9822,12 @@ mod tests {
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
         );
         assert!(patched["body"]["value"].get("ciphertext").is_some());
-        let commit = commit.expect("ready MLS snapshot should emit commit event");
+        // The snapshot already existed (not freshly created here), so there is
+        // no fresh epoch-0 material and genesis is not emitted on this path.
+        assert!(mls_events.genesis.is_none());
+        let commit = mls_events
+            .commit
+            .expect("ready MLS snapshot should emit commit event");
         assert_eq!(commit.kind, "cx.mls.commit");
         assert_registered_payload_valid(&commit);
         assert!(commit.payload.get("group_id").is_none());
@@ -9707,7 +9861,7 @@ mod tests {
             "summary": {"$op": "set", "value": "metadata summary"},
         });
 
-        let (patched, commit) = encrypt_private_card_detail_patch_values_with_store(
+        let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
             patch.clone(),
             "cx:space:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -9718,7 +9872,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(patched, patch);
-        assert!(commit.is_none());
+        assert!(mls_events.commit.is_none());
+        assert!(mls_events.genesis.is_none());
         assert!(state.local_identity_record().is_none());
     }
 

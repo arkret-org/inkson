@@ -1378,6 +1378,26 @@ pub mod cx_ops {
             .body(serde_json::to_value(payload).expect("MLS commit payload serializes"))
     }
 
+    /// `cx.mls.genesis` event installing an MLS group at epoch 0. Emitted
+    /// once when a creator's local group is first observed by the server so
+    /// the canonical audit record + creator/covered_frontier seed exist and
+    /// the server epoch starts in lockstep with the local snapshot before
+    /// the first `cx.mls.commit` bumps it to 1.
+    ///
+    /// `payload` is the full canonical `mls_genesis_payload` Value (see
+    /// [`crate::mls::runtime::build_mls_genesis_payload`]); `group_id` is the
+    /// genesis target ref.
+    pub fn mls_genesis_with_governance(
+        realm_id: &str,
+        actor: &str,
+        group_id: &str,
+        payload: &Value,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "cx.mls.genesis")
+            .target_ref(group_id.to_owned())
+            .body(payload.clone())
+    }
+
     // ── Conflict repair (admin-only) ────────────────────────────────
 
     /// `cx.conflict.repair` event for bottom=expose cells. Admin / moderator

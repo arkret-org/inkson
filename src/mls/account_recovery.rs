@@ -538,6 +538,83 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     })
 }
 
+/// Decide whether the app should prompt the user to set a recovery passphrase
+/// and back up their account MLS secret.
+///
+/// This is the mirror of [`mls_restore_prompt_required`]: it fires when the
+/// user HAS used encryption (a local account MLS secret exists) but the server
+/// holds NO `mls_account_secret` backup yet, so switching browsers would lose
+/// their history. Normal users never reach the explicit recovery-setup screen,
+/// so without this nudge their account secret stays purely local.
+///
+/// Returns `false` when a server backup already exists (nothing to do), and
+/// `false` when there is no local account secret (the user never used
+/// encryption — don't nag).
+pub fn mls_backup_prompt_required(
+    list_payload: &Value,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+) -> bool {
+    let _ = device_id;
+    if select_mls_account_secret_backup(list_payload).is_some() {
+        return false;
+    }
+    matches!(
+        crate::mls::runtime::load_account_mls_secret(secure_store, actor_did),
+        Ok(Some(_))
+    )
+}
+
+/// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
+/// upload it to soland's `secret_storage` endpoint.
+///
+/// This is the upload half of the backup-prompt flow (the inverse of
+/// [`auto_restore_mls_history_with_passphrase`]). It re-uses any prior
+/// account-secret backup's `backup_id`/series so the upload stays in the same
+/// rotation series. Returns the `backup_id` it wrote.
+pub async fn upload_mls_account_secret_backup_with_passphrase(
+    api: &crate::api::ContrixApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    passphrase: &[u8],
+) -> Result<String> {
+    if passphrase_is_blank(passphrase) {
+        return Err(anyhow!(
+            "recovery passphrase is required to back up the account MLS secret"
+        ));
+    }
+
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
+        .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
+
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let previous_account_backup = select_mls_account_secret_backup(&list_payload);
+    let account_backup_id = previous_account_backup
+        .as_ref()
+        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+
+    let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
+    let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
+        &account_backup_id,
+        actor_did,
+        device_id,
+        &kek,
+        &stored.secret,
+        stored.version,
+    )?;
+    apply_next_series(previous_account_backup.as_ref(), &mut account_body);
+    api.put_key_backup(&account_backup_id, account_body)
+        .await
+        .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
+
+    Ok(account_backup_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,6 +912,36 @@ mod tests {
         );
         assert_eq!(loaded.secret, ACCOUNT_SECRET);
         assert!(state.mls_snapshot_for(space).is_some());
+    }
+
+    #[test]
+    fn backup_prompt_not_required_when_no_local_secret() {
+        // User never used encryption: no local account secret, server has no
+        // backup either. Don't nag.
+        let store = MemorySecureKeyStore::new();
+        let payload = serde_json::json!({ "backups": [] });
+        assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    }
+
+    #[test]
+    fn backup_prompt_required_when_local_secret_and_no_server_backup() {
+        // User has used encryption (local secret present) but never backed it
+        // up to the server -> prompt them to set a recovery passphrase.
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+        let payload = serde_json::json!({
+            "backups": [ { "backup_id": "cx:backup:a", "backup_class": "mls_history" } ]
+        });
+        assert!(mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    }
+
+    #[test]
+    fn backup_prompt_not_required_when_server_backup_present() {
+        // Server already holds the account-secret backup: nothing to upload.
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+        let payload = serde_json::json!({ "backups": [wrap()] });
+        assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
     }
 
     #[test]

@@ -25,6 +25,10 @@ pub mod error_boundary;
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
 pub mod mls_unlock;
+/// One-time account-MLS-secret BACKUP prompt — the mirror of `mls_unlock`.
+/// Mounted once near the app shell; renders only when boot/per-space
+/// detection flags `needs_mls_backup` (local secret exists, no server backup).
+pub mod mls_backup_prompt;
 /// P3B.5 — "Pending N" badge that surfaces the offline-queue depth
 /// next to the connection status indicator.
 pub mod offline_pending_badge;
@@ -59,6 +63,7 @@ pub use circle_scope_picker::{
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use error_boundary::{ErrorBoundary, RetryableError};
+pub use mls_backup_prompt::MlsBackupPrompt;
 pub use mls_unlock::MlsUnlockPrompt;
 pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{

@@ -5700,7 +5700,6 @@ pub fn ChatPanel(
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
-                                let prev_epoch = anchor_view.mls_epoch.unwrap_or(0);
                                 let did = device_id.clone();
                                 // 1) MLS commit event bumps the epoch +
                                 //    records covered_frontier.
@@ -5757,6 +5756,14 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 let mls_commit_epoch = real_commit_envelope.epoch;
+                                // base_epoch MUST be the SDK group's PRE-commit
+                                // epoch so next_epoch == base_epoch + 1 holds by
+                                // construction. `real_commit_envelope.epoch` is the
+                                // POST-commit epoch (self_update_commit merges the
+                                // pending commit); the anchor view only refreshes on
+                                // /sync and drifts behind the local snapshot, which
+                                // tripped the next_epoch == base_epoch + 1 violation.
+                                let prev_epoch = mls_commit_epoch.saturating_sub(1);
                                 let commit_event_id = format!("cx:event:{}", uuid_v7());
                                 let commit_event_id_typed =
                                     match contrix_sdk::EventId::new(commit_event_id.clone()) {
