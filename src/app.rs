@@ -6769,10 +6769,10 @@ pub fn RouterView() -> Element {
                 // Freshness gate — only re-mint when the active credential
                 // is actually near expiry. We key off *both* signals and
                 // refresh if either is due:
-                //   * the OIDC access token's own `expires_at` (when the
-                //     IdP advertised `expires_in`), and
-                //   * the session grant's `session_expires_at`, which
-                //     tracks the short-lived principal bearer itself.
+                //   * the OIDC access token's own `expires_at` (when the IdP advertised
+                //     `expires_in`), and
+                //   * the session grant's `session_expires_at`, which tracks the short-lived
+                //     principal bearer itself.
                 // The grant signal is what saves IdPs that omit
                 // `expires_in` (where `due_for_refresh` can never fire) —
                 // we still proactively refresh before the principal bearer

@@ -11,8 +11,8 @@
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries a
 //!   `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_id, status, last_seen?}`
-//!   with status ∈ {`online`, `away`, `dnd`, `offline`}.
+//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_id, status, last_seen?}` with
+//!   status ∈ {`online`, `away`, `dnd`, `offline`}.
 //! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_id, flow_id,
 //!   started_at}`.
 //!

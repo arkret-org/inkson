@@ -11,10 +11,10 @@
 //! and most of them got it subtly wrong (bounced straight to login, or
 //! didn't refresh at all). This module is the single source of truth:
 //!
-//! * The app root registers one refresher closure ([`register_session_refresher`])
-//!   that captures the session signals and knows how to mint a fresh bearer.
-//! * Every auth-expired handler anywhere reaches it through
-//!   [`refresh_current_bearer`] — no signal threading, no duplicated policy.
+//! * The app root registers one refresher closure ([`register_session_refresher`]) that captures
+//!   the session signals and knows how to mint a fresh bearer.
+//! * Every auth-expired handler anywhere reaches it through [`refresh_current_bearer`] — no signal
+//!   threading, no duplicated policy.
 //!
 //! Concurrent callers **coalesce onto a single in-flight refresh**. A
 //! short-lived bearer rolling over while several requests are in flight

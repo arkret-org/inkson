@@ -257,8 +257,9 @@ pub fn AppealEntrypoint(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn appeal_state_from_kind_recognises_all_four_wire_kinds() {

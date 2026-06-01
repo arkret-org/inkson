@@ -885,8 +885,9 @@ pub fn encrypt_message_with_device_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use std::collections::BTreeMap;
+
+    use serde_json::json;
 
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;

@@ -8,8 +8,8 @@
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`],
-//!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
+//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`], then
+//!   rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST

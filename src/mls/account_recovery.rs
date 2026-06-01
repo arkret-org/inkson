@@ -408,9 +408,9 @@ pub fn restore_mls_history_with_passphrase_from_payload(
 /// Auto-restore MLS history for a fresh device using the recovery passphrase.
 ///
 /// Flow:
-///   1. Fetch the server's `mls_account_secret` backup when present, decrypt
-///      it with `passphrase`, and replace the local account key with it. This
-///      also repairs stale local secrets left by incomplete bootstraps.
+///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
+///      and replace the local account key with it. This also repairs stale local secrets left by
+///      incomplete bootstraps.
 ///   2. List every `mls_history` backup and restore each one via
 ///      [`crate::mls::runtime::restore_mls_history_backup_with_device_snapshot`].
 ///
@@ -646,8 +646,8 @@ mod tests {
         // passes for every random ciphertext (no `+`/`/` ever appear).
         let body = wrap();
 
-        // 1. The three wire fields are base64url (only `[A-Za-z0-9-_]`),
-        //    never STANDARD-base64 `+`/`/`.
+        // 1. The three wire fields are base64url (only `[A-Za-z0-9-_]`), never STANDARD-base64
+        //    `+`/`/`.
         for (label, field) in [
             ("ciphertext", body["ciphertext"].as_str().unwrap()),
             ("salt", body["encryption"]["kdf"]["salt"].as_str().unwrap()),
@@ -665,8 +665,8 @@ mod tests {
             );
         }
 
-        // 2. The body validates under the exact validator soland-mirroring
-        //    clients run (the same one `mls_history` backups must pass).
+        // 2. The body validates under the exact validator soland-mirroring clients run (the same
+        //    one `mls_history` backups must pass).
         validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage)).expect(
             "mls_account_secret backup must validate as a secret_storage envelope (base64url-clean)",
         );
