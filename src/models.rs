@@ -1181,7 +1181,7 @@ pub struct AgentLifecycleResBody {
     pub ok: bool,
     pub agent_principal_id: String,
     pub state: String,
-    pub at: String,
+    pub status_changed_at: String,
     #[serde(default)]
     pub todos: Vec<String>,
 }

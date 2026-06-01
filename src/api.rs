@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -3161,6 +3161,7 @@ impl ContrixApi {
 
     /// `GET /api/v1/agents/{id}` — `cx.agent.get`.
     pub async fn agent_get(&self, agent_principal_id: &str) -> anyhow::Result<AgentResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.get_json(&format!("api/v1/agents/{agent_principal_id}"))
             .await
     }
@@ -3173,6 +3174,7 @@ impl ContrixApi {
         agent_principal_id: &str,
         body: &AgentLifecycleReqBody,
     ) -> anyhow::Result<AgentLifecycleResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/pause"),
             serde_json::to_value(body)?,
@@ -3186,6 +3188,7 @@ impl ContrixApi {
         agent_principal_id: &str,
         body: &AgentLifecycleReqBody,
     ) -> anyhow::Result<AgentLifecycleResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/resume"),
             serde_json::to_value(body)?,
@@ -3203,6 +3206,7 @@ impl ContrixApi {
         agent_principal_id: &str,
         body: &AgentLifecycleReqBody,
     ) -> anyhow::Result<AgentLifecycleResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/deactivate"),
             serde_json::to_value(body)?,
@@ -3217,6 +3221,7 @@ impl ContrixApi {
         agent_principal_id: &str,
         body: &AgentRotateKeyReqBody,
     ) -> anyhow::Result<AgentRotateKeyResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/rotate-key"),
             serde_json::to_value(body)?,
@@ -3232,6 +3237,7 @@ impl ContrixApi {
         agent_principal_id: &str,
         body: &AgentGrantAttachReqBody,
     ) -> anyhow::Result<AgentGrantResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/grants"),
             serde_json::to_value(body)?,
@@ -3246,6 +3252,8 @@ impl ContrixApi {
         agent_principal_id: &str,
         grant_id: &str,
     ) -> anyhow::Result<AgentGrantDetachResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
+        let grant_id = path_component(grant_id);
         self.delete_json(&format!(
             "api/v1/agents/{agent_principal_id}/grants/{grant_id}"
         ))
@@ -3268,6 +3276,7 @@ impl ContrixApi {
         if body.home_policy.trim().is_empty() {
             body.home_policy = sidecar_home_policy_default().to_owned();
         }
+        let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
             &format!("api/v1/agents/{agent_principal_id}/sidecar-thread/ensure"),
             serde_json::to_value(&body)?,
@@ -4860,6 +4869,18 @@ fn query_component(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+fn path_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(&mut encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
 fn safe_blob_filename_header(filename: &str) -> Option<String> {
     let basename = filename
         .rsplit(['/', '\\'])
@@ -5140,6 +5161,18 @@ mod tests {
         assert_eq!(
             url,
             "http://127.0.0.1:8787/api/v1/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
+        );
+    }
+
+    #[test]
+    fn path_component_percent_encodes_did_as_path_segment() {
+        assert_eq!(
+            path_component("did:web:agent.example"),
+            "did%3Aweb%3Aagent.example"
+        );
+        assert_eq!(
+            path_component("did:web:example.com:agents/alice"),
+            "did%3Aweb%3Aexample.com%3Aagents%2Falice"
         );
     }
 

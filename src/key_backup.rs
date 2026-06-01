@@ -367,8 +367,11 @@ fn validate_kdf(kdf: &Value, mixed_secret_storage: bool) -> Result<(), String> {
         }
         "pbkdf2" => {
             let iterations = required_u64(params, "iterations")?;
-            let hash = required_str(params, "hash")?;
-            if iterations < 600_000 || !matches!(hash, "sha256" | "sha384" | "sha512") {
+            if params.get("hash").is_some() {
+                return Err("pbkdf2 params.hash is forbidden; use digest_algorithm".to_owned());
+            }
+            let digest_algorithm = required_str(params, "digest_algorithm")?;
+            if iterations < 600_000 || !matches!(digest_algorithm, "sha256" | "sha384" | "sha512") {
                 return Err("pbkdf2 parameters below degraded profile floor".to_owned());
             }
             if kdf
