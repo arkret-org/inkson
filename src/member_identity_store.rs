@@ -37,7 +37,7 @@ pub struct ActorKey {
 /// Stored `cx.member.identity.update` event record. Carries the parsed
 /// SDK payload + the raw envelope (so we can re-hash it for replacement
 /// edge verification). `decryption_pending` is set when the carrier was
-/// an `encrypted_payload` we couldn't decrypt yet (missing MLS epoch).
+/// an `encrypted_content` envelope we couldn't decrypt yet (missing MLS epoch).
 #[derive(Clone, Debug)]
 pub struct StoredIdentityEvent {
     pub event_id: String,
@@ -93,7 +93,7 @@ impl MemberIdentityStore {
             };
             // MID-4 hook: the carrier can be plaintext or encrypted. We
             // try to decode as `MemberIdentityUpdatePayload`; if the
-            // `identity_payload` is an `encrypted_payload` we still get
+            // `identity_payload` is an `encrypted_content` envelope we still get
             // a valid typed value back (the `untagged` enum picks the
             // right arm), but the inner `MemberIdentity` is unavailable.
             let Ok(payload) =
@@ -103,7 +103,7 @@ impl MemberIdentityStore {
             };
             let decryption_pending = matches!(
                 payload.identity_payload,
-                IdentityPayloadCarrier::EncryptedPayload { .. },
+                IdentityPayloadCarrier::EncryptedContent { .. },
             );
             self.insert(
                 ActorKey {
@@ -288,7 +288,7 @@ mod tests {
                 "actor_id": actor,
                 "segment": "member_identity",
                 "identity_payload": {
-                    "encrypted_payload": {
+                    "encrypted_content": {
                         "group_id": "mls:group:opaque",
                         "epoch": 7,
                         "ciphertext": "AAAA"

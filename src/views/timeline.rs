@@ -2122,10 +2122,7 @@ fn timeline_events_from_sync_spaces(
             // audit-accessed emitter (later in this component) can try a
             // local MLS decrypt against it and fire `cx.audit.accessed`
             // on every successful decrypt.
-            let encrypted_payload = content
-                .get("encrypted_content")
-                .or_else(|| content.get("encrypted_payload"))
-                .cloned();
+            let encrypted_payload = content.get("encrypted_content").cloned();
             events.push(TimelineEvent {
                 space_id: Some(space_id.clone()),
                 id: event_id.clone(),

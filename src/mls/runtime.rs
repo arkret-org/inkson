@@ -797,7 +797,7 @@ pub fn encrypt_values_with_device_snapshot(
         );
     }
     let schedule_hash = group.schedule_hash();
-    let member_dids = group.member_principal_dids();
+    let member_dids = group.member_principal_ids();
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -863,7 +863,7 @@ pub fn encrypt_message_with_device_snapshot(
         .encrypt_payload_with_aad(content_type, Some(aad), plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
     let schedule_hash = group.schedule_hash();
-    let member_dids = group.member_principal_dids();
+    let member_dids = group.member_principal_ids();
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;

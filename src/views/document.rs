@@ -347,7 +347,7 @@ fn cursors_from_projection(value: &Value) -> Vec<RemoteCursor> {
                 .iter()
                 .filter_map(|cursor| {
                     let actor_did = cursor
-                        .get("actor_did")
+                        .get("actor_id")
                         .or_else(|| cursor.get("actor"))
                         .and_then(Value::as_str)?
                         .to_owned();

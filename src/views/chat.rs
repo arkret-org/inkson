@@ -66,18 +66,18 @@ struct FlowScopeCircle {
 
 /// T7.4: end-to-end encryption decryption state for a message.
 ///
-/// Derived from the presence of `content.encrypted_payload` on the
+/// Derived from the presence of `content.encrypted_content` on the
 /// envelope plus what the local MLS group can currently do with it.
 /// `Plaintext` is the default; encrypted messages cycle
 /// `Decrypting → (Plaintext | KeyMissing | NeedsVerification)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum MessageCryptoState {
-    /// Body is already plaintext (no `encrypted_payload`).
+    /// Body is already plaintext (no `encrypted_content`).
     Plaintext,
-    /// We see an `encrypted_payload` and the MLS group exists, but a
+    /// We see an `encrypted_content` envelope and the MLS group exists, but a
     /// decrypt round-trip hasn't completed for this event yet.
     Decrypting,
-    /// `encrypted_payload` present but no local MLS group / no key
+    /// `encrypted_content` present but no local MLS group / no key
     /// package received yet — Welcome is pending.
     KeyMissing,
     /// Sender device hasn't been verified (cross-signing missing or
@@ -109,7 +109,7 @@ struct ChatMessage {
     error: Option<String>,
     mentions: Vec<StructuredMention>,
     /// T7.4: E2EE decrypt status for this message. Defaults to
-    /// `Plaintext`; messages with `content.encrypted_payload` start at
+    /// `Plaintext`; messages with `content.encrypted_content` start at
     /// `Decrypting` until the audit-emitter future resolves them.
     crypto_state: MessageCryptoState,
 }
@@ -195,7 +195,10 @@ fn run_local_mls_encrypt(
 ) -> (
     Option<contrix_sdk::Hash>,
     Vec<contrix_sdk::Did>,
-    Option<(contrix_sdk::EncryptedPayload, contrix_sdk::EncryptedEnvelopeAadV1)>,
+    Option<(
+        contrix_sdk::EncryptedPayload,
+        contrix_sdk::EncryptedEnvelopeAadV1,
+    )>,
     Option<contrix_sdk::MlsCommitEnvelope>,
 ) {
     let empty = (None, Vec::new(), None, None);
@@ -1539,14 +1542,9 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
     // projection happened to expose a body.
     let has_encrypted_payload = candidates.iter().any(|candidate| {
         candidate.get("encrypted_content").is_some()
-            || candidate.get("encrypted_payload").is_some()
             || candidate
                 .get("content")
-                .and_then(|content| {
-                    content
-                        .get("encrypted_content")
-                        .or_else(|| content.get("encrypted_payload"))
-                })
+                .and_then(|content| content.get("encrypted_content"))
                 .is_some()
     });
     // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`

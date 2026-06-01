@@ -5532,7 +5532,7 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
             }
         }
         Value::Object(map) => {
-            let did = ["actor_id", "did", "actor_did", "principal_did", "id"]
+            let did = ["actor_id", "did", "principal_id", "id"]
                 .into_iter()
                 .find_map(|key| map.get(key).and_then(|child| child.as_str()))
                 .map(str::trim)
@@ -5675,13 +5675,11 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
         }
         for path in [
             &["body", "actor_id"][..],
-            &["body", "actor_did"][..],
             &["body", "sender"][..],
             &["body", "author"][..],
             &["body", "created_by"][..],
             &["payload", "actor_id"][..],
             &["actor_id"][..],
-            &["actor_did"][..],
         ] {
             if let Some(did) = json_path_string(Some(payload), path) {
                 dids.insert(did);
@@ -6190,10 +6188,9 @@ fn value_is_plaintext_private_content(value: &Value) -> bool {
             let encrypted_profile = object
                 .get("profile")
                 .and_then(Value::as_str)
-                .is_some_and(|profile| profile == "cx.profile.encrypted_payload.v1");
+                .is_some_and(|profile| profile == "cx.profile.encrypted_envelope.v1");
             !(encrypted_profile
                 || object.contains_key("encrypted_content")
-                || object.contains_key("encrypted_payload")
                 || object.contains_key("ciphertext"))
         }
         Value::Bool(_) | Value::Number(_) => true,
