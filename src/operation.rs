@@ -1160,7 +1160,7 @@ pub mod cx_ops {
     pub fn invite_accept(space_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.invite.accept")
             .target_ref(invite_id)
-            .body(json!({"state": "accepted"}))
+            .body(json!({"invite_id": invite_id}))
     }
 
     pub fn invite_cancel(
@@ -1171,7 +1171,7 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.invite.cancel")
             .target_ref(invite_id)
-            .body(json!({"state": "canceled", "reason": reason}))
+            .body(json!({"invite_id": invite_id, "reason": reason}))
     }
 
     /// Build a `cx.space.archive` operation against a container Space. The
@@ -1205,17 +1205,13 @@ pub mod cx_ops {
     /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
     /// and `common-fields.md §5.1`; payload shape is the
     /// `object_lifecycle_payload` from
-    /// `artifacts/schemas/event-payload.schema.json`, which requires one of
-    /// `target_ref` / `object_ref` / `status`. SDK reducer rejects with
+    /// `artifacts/schemas/event-payload.schema.json`, which requires
+    /// `target_ref`. SDK reducer rejects with
     /// `flow_not_active` when source state is not `active`.
     pub fn flow_archive(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.flow.archive")
             .target_ref(flow_id)
-            // Spec-canonical payload field is `target_ref`. `flow_id` is
-            // retained as a non-normative alias for in-flight servers that
-            // still read it; remove once soland's `apply_flow_lifecycle`
-            // and `FLOW_LIFECYCLE_REQUIREMENTS` stop accepting it.
-            .body(json!({ "target_ref": flow_id, "flow_id": flow_id }))
+            .body(json!({ "target_ref": flow_id }))
     }
 
     /// Build a `cx.flow.restore` operation. Reverses [`flow_archive`]
@@ -1225,7 +1221,7 @@ pub mod cx_ops {
     pub fn flow_restore(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(space_id, actor, "cx.flow.restore")
             .target_ref(flow_id)
-            .body(json!({ "target_ref": flow_id, "flow_id": flow_id }))
+            .body(json!({ "target_ref": flow_id }))
     }
 
     // ── Consent (OrSet cell `cx.component.consent.grant.v1`) ─────────
@@ -2551,16 +2547,17 @@ mod tests {
 
     #[test]
     fn invite_helpers_emit_canonical_kinds() {
+        let invite_id = "cx:invite:01904100-0000-7000-8000-000000000001";
         let create = cx_ops::invite_create_structured(
-            "cx:space:test",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:invite:test",
+            invite_id,
             "did:web:bob.example",
             Some("member"),
         )
         .build("node");
         assert_eq!(create.kind, "cx.invite.create");
-        assert_eq!(create.payload["invite_id"], "cx:invite:test");
+        assert_eq!(create.payload["invite_id"], invite_id);
         assert_eq!(create.payload["invitee"], "did:web:bob.example");
         assert_eq!(create.payload["x_role"], "member");
         assert!(
@@ -2573,21 +2570,31 @@ mod tests {
         assert!(create.payload.get("target").is_none());
         assert!(create.payload.get("role").is_none());
         assert!(create.payload.get("state").is_none());
+        assert_registered_payload_valid(&create);
 
-        let accept =
-            cx_ops::invite_accept("cx:space:test", "did:web:bob.example", "cx:invite:test")
-                .build("node");
+        let accept = cx_ops::invite_accept(
+            "cx:space:01904100-0000-7000-8000-000000000010",
+            "did:web:bob.example",
+            invite_id,
+        )
+        .build("node");
         assert_eq!(accept.kind, "cx.invite.accept");
+        assert_eq!(accept.payload["invite_id"], invite_id);
+        assert!(accept.payload.get("state").is_none());
+        assert_registered_payload_valid(&accept);
 
         let cancel = cx_ops::invite_cancel(
-            "cx:space:test",
+            "cx:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:invite:test",
+            invite_id,
             Some("expired"),
         )
         .build("node");
         assert_eq!(cancel.kind, "cx.invite.cancel");
+        assert_eq!(cancel.payload["invite_id"], invite_id);
         assert_eq!(cancel.payload["reason"], "expired");
+        assert!(cancel.payload.get("state").is_none());
+        assert_registered_payload_valid(&cancel);
     }
 
     #[test]
@@ -2622,14 +2629,18 @@ mod tests {
         let archive =
             cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(archive.kind, "cx.flow.archive");
-        assert_eq!(archive.payload["flow_id"], flow_id);
+        assert_eq!(archive.payload["target_ref"], flow_id);
+        assert!(archive.payload.get("flow_id").is_none());
         assert_eq!(archive.local_target_ref(), Some(flow_id));
+        assert_registered_payload_valid(&archive);
 
         let restore =
             cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(restore.kind, "cx.flow.restore");
-        assert_eq!(restore.payload["flow_id"], flow_id);
+        assert_eq!(restore.payload["target_ref"], flow_id);
+        assert!(restore.payload.get("flow_id").is_none());
         assert_eq!(restore.local_target_ref(), Some(flow_id));
+        assert_registered_payload_valid(&restore);
     }
 
     /// Pin the canonical op_type + target_ref + body shape for every

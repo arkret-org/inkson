@@ -22,9 +22,9 @@
 
 use chrono::Utc;
 use dioxus::prelude::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::operation::OperationBuilder;
+use crate::operation::{OperationBuilder, scope_id_as_realm_id};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// User-facing projection of the four moderation appeal wire states.
@@ -96,8 +96,11 @@ pub fn build_appeal_submit_op(
     // enforces the `cx:appeal:<uuidv7>` shape.
     let typed_appeal_id = contrix_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
+    let realm_id = scope_id_as_realm_id(realm_id);
     let payload = contrix_sdk::AppealSubmitPayload {
         appeal_id: typed_appeal_id.clone(),
+        realm_id: contrix_sdk::RealmId::new(realm_id.clone())
+            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
         decision_ref: contrix_sdk::EventId::new(decision_event_id)
             .map_err(|err| anyhow::anyhow!("invalid decision_event_id: {err}"))?,
         target_ref: target_ref.to_owned(),
@@ -115,18 +118,9 @@ pub fn build_appeal_submit_op(
 
     let body = serde_json::to_value(&payload)?;
     Ok(
-        OperationBuilder::new(realm_id, appellant, "cx.moderation.appeal.submit")
+        OperationBuilder::new(&realm_id, appellant, "cx.moderation.appeal.submit")
             .target_ref(decision_event_id)
-            .body(json!({
-                "schema": contrix_sdk::ModerationAppealPayload::SCHEMA,
-                "appeal_id": body["appeal_id"],
-                "decision_ref": body["decision_ref"],
-                "target_ref": body["target_ref"],
-                "appellant": body["appellant"],
-                "reason_text_ref": body["reason_text_ref"],
-                "evidence_refs": body["evidence_refs"],
-                "created_at": body["created_at"],
-            })),
+            .body(body),
     )
 }
 
@@ -264,6 +258,7 @@ pub fn AppealEntrypoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn appeal_state_from_kind_recognises_all_four_wire_kinds() {
@@ -303,8 +298,21 @@ mod tests {
         .expect("build appeal op")
         .build("test-node");
         assert_eq!(op.kind, "cx.moderation.appeal.submit");
-        assert_eq!(op.payload["schema"], "cx.schema.moderation_appeal.v1");
+        assert_eq!(
+            op.payload["realm_id"],
+            "cx:realm:01904100-0000-7000-8000-000000000001"
+        );
         assert!(op.payload["appeal_id"].is_string());
+        assert!(op.payload.get("schema").is_none());
+        let registry = contrix_sdk::schema::schema_registry_from_default_spec_artifacts()
+            .unwrap()
+            .unwrap();
+        registry
+            .validate_value(
+                "cx.schema.moderation_appeal.v1#/$defs/submit_payload",
+                &op.payload,
+            )
+            .unwrap();
     }
 
     #[test]

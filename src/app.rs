@@ -53,6 +53,10 @@ button, input, textarea, select { font: inherit; }
 .auth-shell.theme-night .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
 .auth-primary, .auth-secondary { width: 100%; margin-top: 4px; }
 .auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
+.auth-restore { gap: 16px; }
+.auth-restore-indicator { width: 100%; height: 4px; border-radius: 999px; overflow: hidden; background: rgba(100, 116, 139, 0.18); }
+.auth-restore-indicator::before { content: ""; display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f59e0b, #fb7185); animation: auth-restore-slide 1.1s ease-in-out infinite; }
+@keyframes auth-restore-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
 .shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
 .shell.rtl .sidebar { grid-column: 3; }
@@ -6451,6 +6455,54 @@ fn session_grant_access_token_boot_usable(
         .is_some_and(|expires_at| now_unix + BOOT_ACCESS_TOKEN_SKEW_SECS < expires_at.timestamp())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionBootState {
+    Checking,
+    Restoring,
+    Authenticated,
+    Unauthenticated,
+}
+
+impl SessionBootState {
+    fn from_boot_material(session_token: &str, can_restore_session: bool) -> Self {
+        if !session_token.trim().is_empty() {
+            Self::Checking
+        } else if can_restore_session {
+            Self::Restoring
+        } else {
+            Self::Unauthenticated
+        }
+    }
+
+    fn is_pending(self) -> bool {
+        matches!(self, Self::Checking | Self::Restoring)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthSurface {
+    AppShell,
+    Login,
+    Callback,
+    Restoring,
+}
+
+fn auth_surface_for_route(
+    route: &Route,
+    has_session: bool,
+    boot_state: SessionBootState,
+) -> AuthSurface {
+    if matches!(route, Route::AuthCallback) {
+        AuthSurface::Callback
+    } else if has_session {
+        AuthSurface::AppShell
+    } else if boot_state.is_pending() {
+        AuthSurface::Restoring
+    } else {
+        AuthSurface::Login
+    }
+}
+
 fn initial_session_token_from_state(
     local_state: &ClientLocalState,
     config: &ClientConfig,
@@ -6475,9 +6527,18 @@ fn initial_session_token_from_state(
     config.session_token.clone()
 }
 
-fn has_bootstrap_refresh_material(store: &LocalStateStore, principal_server_url: &str) -> bool {
+fn has_bootstrap_refresh_material(
+    store: &LocalStateStore,
+    principal_server_url: &str,
+    actor_did: &str,
+) -> bool {
     let state = store.load();
-    if state.oidc_tokens.is_some() {
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    if store
+        .load_oidc_tokens_with_secure_store(actor_did, secure_store.as_ref())
+        .as_ref()
+        .is_some_and(crate::oidc::lifecycle::has_refresh_token)
+    {
         return true;
     }
     state.session_grant.as_ref().is_some_and(|grant| {
@@ -6496,6 +6557,13 @@ pub fn RouterView() -> Element {
         &initial_config,
         chrono::Utc::now().timestamp(),
     );
+    let initial_can_restore_session = has_bootstrap_refresh_material(
+        &initial_state_store,
+        &initial_config.server_url,
+        &initial_config.account_did,
+    );
+    let initial_session_boot_state =
+        SessionBootState::from_boot_material(&initial_session_token, initial_can_restore_session);
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
@@ -6520,6 +6588,7 @@ pub fn RouterView() -> Element {
     let mut account_did = use_signal(move || initial_account_did);
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_token);
+    let mut session_boot_state = use_signal(move || initial_session_boot_state);
 
     // Install the app-wide, single-flight bearer refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
@@ -6693,6 +6762,7 @@ pub fn RouterView() -> Element {
         let state_store = state_store;
         let account_did = account_did;
         let token = token;
+        let mut session_boot_state = session_boot_state;
         move || async move {
             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
             loop {
@@ -6725,10 +6795,12 @@ pub fn RouterView() -> Element {
                 if due {
                     if token().trim().is_empty() {
                         status.set("Restoring session...".to_owned());
+                        session_boot_state.set(SessionBootState::Restoring);
                     }
                     match crate::session::refresh_current_bearer().await {
                         Some(_) => {
                             status.set("Online".to_owned());
+                            session_boot_state.set(SessionBootState::Authenticated);
                             last_error.set(None);
                         }
                         None => {
@@ -6800,6 +6872,7 @@ pub fn RouterView() -> Element {
             let stale_for_selected_server = !has_oidc_bundle && stale_for_selected_server;
             if stale_for_selected_server {
                 token.set(String::new());
+                session_boot_state.set(SessionBootState::Unauthenticated);
                 persist_config(
                     config_store,
                     base.clone(),
@@ -6812,11 +6885,15 @@ pub fn RouterView() -> Element {
         }
         let can_restore_session = {
             let store = state_store.read();
-            has_bootstrap_refresh_material(&store, &base)
+            has_bootstrap_refresh_material(&store, &base, &account_did())
         };
         if !base.trim().is_empty() && (!session.trim().is_empty() || can_restore_session) {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
+            session_boot_state.set(SessionBootState::from_boot_material(
+                &session,
+                can_restore_session,
+            ));
             connect(
                 base,
                 account_did(),
@@ -6841,9 +6918,12 @@ pub fn RouterView() -> Element {
                     theme,
                     sync_generation,
                     sync_bootstrap_complete,
+                    session_boot_state,
                     navigator,
                 },
             );
+        } else if !base.trim().is_empty() {
+            session_boot_state.set(SessionBootState::Unauthenticated);
         }
     }
 
@@ -6977,6 +7057,17 @@ pub fn RouterView() -> Element {
         .map(|description| description.service_did.as_str().to_owned())
         .unwrap_or_default();
     let has_session = !token().trim().is_empty();
+    let boot_state = session_boot_state();
+    let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
+    {
+        let redirect_route = route.clone();
+        let redirect_navigator = navigator;
+        use_effect(move || {
+            if matches!(redirect_route, Route::Login) && !token().trim().is_empty() {
+                let _ = redirect_navigator.push(Route::Dashboard);
+            }
+        });
+    }
     let active_server_label = normalize_server_url(&base_url());
     let account_did_value = account_did();
     let device_id_value = device_id();
@@ -7261,8 +7352,7 @@ pub fn RouterView() -> Element {
             ""
         }
     );
-    let is_auth_route = matches!(&route, Route::Login | Route::AuthCallback);
-    if !has_session || is_auth_route {
+    if !matches!(auth_surface, AuthSurface::AppShell) {
         let auth_class = format!(
             "auth-shell {}{}",
             match active_theme.as_str() {
@@ -7278,6 +7368,10 @@ pub fn RouterView() -> Element {
         );
         let login_navigator = navigator;
         let callback_navigator = navigator;
+        let mut login_bootstrap_pending = bootstrap_pending;
+        let mut callback_bootstrap_pending = bootstrap_pending;
+        let mut login_session_boot_state = session_boot_state;
+        let mut callback_session_boot_state = session_boot_state;
 
         return rsx! {
             style { "{STYLE}" }
@@ -7293,8 +7387,8 @@ pub fn RouterView() -> Element {
                 "data-theme": theme_attr,
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
-                    match &route {
-                        Route::AuthCallback => rsx! {
+                    match auth_surface {
+                        AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {
                                 base_url,
                                 account_did,
@@ -7304,10 +7398,35 @@ pub fn RouterView() -> Element {
                                 config_store,
                                 state_store,
                                 auto_capture_callback: true,
-                                on_login: move |_| { let _ = callback_navigator.push(Route::Dashboard); },
+                                on_login: move |_| {
+                                    callback_bootstrap_pending.set(true);
+                                    callback_session_boot_state.set(SessionBootState::Checking);
+                                    let _ = callback_navigator.push(Route::Dashboard);
+                                },
                             }
                         },
-                        _ => rsx! {
+                        AuthSurface::Restoring => rsx! {
+                            section {
+                                class: "auth-panel auth-restore",
+                                "data-testid": "session-restore-panel",
+                                role: "status",
+                                "aria-live": "polite",
+                                div { class: "auth-brand",
+                                    div { class: "auth-logo", "C" }
+                                    div {
+                                        h1 { "Restoring session" }
+                                        p { "Contrix" }
+                                    }
+                                }
+                                div { class: "auth-restore-indicator", "aria-hidden": "true" }
+                                div {
+                                    class: "auth-status",
+                                    "data-testid": "session-restore-status",
+                                    "{status()}"
+                                }
+                            }
+                        },
+                        AuthSurface::Login | AuthSurface::AppShell => rsx! {
                             crate::views::login::LoginPanel {
                                 base_url,
                                 account_did,
@@ -7317,7 +7436,11 @@ pub fn RouterView() -> Element {
                                 config_store,
                                 state_store,
                                 auto_capture_callback: false,
-                                on_login: move |_| { let _ = login_navigator.push(Route::Dashboard); },
+                                on_login: move |_| {
+                                    login_bootstrap_pending.set(true);
+                                    login_session_boot_state.set(SessionBootState::Checking);
+                                    let _ = login_navigator.push(Route::Dashboard);
+                                },
                             }
                         },
                     }
@@ -7325,6 +7448,12 @@ pub fn RouterView() -> Element {
             }
         };
     }
+
+    let content_route = if matches!(&route, Route::Login) && has_session {
+        Route::Dashboard
+    } else {
+        route.clone()
+    };
 
     rsx! {
         style { "{STYLE}" }
@@ -7527,6 +7656,7 @@ pub fn RouterView() -> Element {
                                     theme,
                                     sync_generation,
                                     sync_bootstrap_complete,
+                                    session_boot_state,
                                     navigator,
                                 },
                             )
@@ -7692,6 +7822,7 @@ pub fn RouterView() -> Element {
                                                         theme,
                                                         sync_generation,
                                                         sync_bootstrap_complete,
+                                                        session_boot_state,
                                                         navigator,
                                                     },
                                                 );
@@ -8371,6 +8502,7 @@ pub fn RouterView() -> Element {
                                                                             account_session_state.set(
                                                                                 "Session expired. Sign in again.".to_owned()
                                                                             );
+                                                                            session_boot_state.set(SessionBootState::Unauthenticated);
                                                                             redirect_to_login(navigator);
                                                                         }
                                                                     } else {
@@ -8432,6 +8564,7 @@ pub fn RouterView() -> Element {
                                                 selected_space.set(String::new());
                                                 device_queue.set(0);
                                                 last_error.set(None);
+                                                session_boot_state.set(SessionBootState::Unauthenticated);
                                                 // Bump the SyncEngine generation so any
                                                 // in-flight long-poll exits on its next
                                                 // iteration check instead of applying a
@@ -8484,7 +8617,7 @@ pub fn RouterView() -> Element {
                     }
                 }
                 div { class: "workspace-body",
-                match route {
+                match content_route {
                     Route::Login => rsx! {
                         crate::views::login::LoginPanel {
                             base_url,
@@ -9948,6 +10081,7 @@ struct ConnectContext {
     /// The background SyncEngine waits for this so it does not race the
     /// first full account-subscribe snapshot on the same render.
     sync_bootstrap_complete: Signal<bool>,
+    session_boot_state: Signal<SessionBootState>,
     navigator: Navigator,
 }
 
@@ -9977,7 +10111,13 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut server_probe_status = ctx.server_probe_status;
         let mut theme = ctx.theme;
         let navigator = ctx.navigator;
+        let mut session_boot_state = ctx.session_boot_state;
 
+        session_boot_state.set(if token().trim().is_empty() {
+            SessionBootState::Restoring
+        } else {
+            SessionBootState::Checking
+        });
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
         last_error.set(None);
@@ -10000,6 +10140,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             last_error.set(Some(message.clone()));
                             server_probe_status.set(message);
                             server_description.set(None);
+                            session_boot_state.set(if token().trim().is_empty() {
+                                SessionBootState::Unauthenticated
+                            } else {
+                                SessionBootState::Authenticated
+                            });
                             sync_bootstrap_complete.set(true);
                             return;
                         }
@@ -10051,6 +10196,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 if session_token.trim().is_empty() {
                     if let Some(refreshed) = crate::session::refresh_current_bearer().await {
                         session_token = refreshed;
+                        session_boot_state.set(SessionBootState::Checking);
                     } else {
                         let probe_label = description
                             .as_ref()
@@ -10070,6 +10216,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             device.clone(),
                             String::new(),
                         );
+                        session_boot_state.set(SessionBootState::Unauthenticated);
                         sync_bootstrap_complete.set(true);
                         return;
                     }
@@ -10130,6 +10277,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     network_state.set("online".to_owned());
                                     last_error
                                         .set(Some("auth_expired: session expired".to_owned()));
+                                    session_boot_state.set(SessionBootState::Unauthenticated);
                                     redirect_to_login(navigator);
                                     sync_bootstrap_complete.set(true);
                                     return;
@@ -10153,6 +10301,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             status.set("Session expired; sign in again".to_owned());
                             network_state.set("online".to_owned());
                             last_error.set(Some("auth_expired: session expired".to_owned()));
+                            session_boot_state.set(SessionBootState::Unauthenticated);
                             redirect_to_login(navigator);
                             sync_bootstrap_complete.set(true);
                             return;
@@ -10470,6 +10619,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         status.set("Session expired; sign in again".to_owned());
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
+                        session_boot_state.set(SessionBootState::Unauthenticated);
                         redirect_to_login(navigator);
                         sync_bootstrap_complete.set(true);
                         return;
@@ -10547,6 +10697,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         status.set("Session expired; sign in again".to_owned());
                         network_state.set("online".to_owned());
                         last_error.set(Some("auth_expired: session expired".to_owned()));
+                        session_boot_state.set(SessionBootState::Unauthenticated);
                         redirect_to_login(navigator);
                         sync_bootstrap_complete.set(true);
                         return;
@@ -10567,6 +10718,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 server_description.set(None);
             }
         }
+        session_boot_state.set(if token().trim().is_empty() {
+            SessionBootState::Unauthenticated
+        } else {
+            SessionBootState::Authenticated
+        });
         sync_bootstrap_complete.set(true);
     });
 }
@@ -11077,7 +11233,11 @@ mod tests {
         state.oidc_tokens = Some(oidc_bundle("sx-expired", Some(1)));
         store.save(state);
 
-        assert!(has_bootstrap_refresh_material(&store, "https://local.host"));
+        assert!(has_bootstrap_refresh_material(
+            &store,
+            "https://local.host",
+            "did:web:alice.example"
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -11086,7 +11246,11 @@ mod tests {
         let mut store = isolated_store("bootstrap-grant");
         store.set_session_grant(Some(session_grant(-1, 3600)));
 
-        assert!(has_bootstrap_refresh_material(&store, "https://local.host"));
+        assert!(has_bootstrap_refresh_material(
+            &store,
+            "https://local.host",
+            "did:web:alice.example"
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -11099,8 +11263,53 @@ mod tests {
 
         assert!(!has_bootstrap_refresh_material(
             &store,
-            "https://local.host"
+            "https://local.host",
+            "did:web:alice.example"
         ));
+    }
+
+    #[test]
+    fn boot_state_restores_when_refresh_material_exists_without_token() {
+        assert_eq!(
+            SessionBootState::from_boot_material("", true),
+            SessionBootState::Restoring
+        );
+        assert_eq!(
+            SessionBootState::from_boot_material("sx-live", true),
+            SessionBootState::Checking
+        );
+        assert_eq!(
+            SessionBootState::from_boot_material("", false),
+            SessionBootState::Unauthenticated
+        );
+    }
+
+    #[test]
+    fn auth_surface_hides_login_while_session_is_restoring() {
+        assert_eq!(
+            auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring),
+            AuthSurface::Restoring
+        );
+        assert_eq!(
+            auth_surface_for_route(&Route::Login, false, SessionBootState::Restoring),
+            AuthSurface::Restoring
+        );
+        assert_eq!(
+            auth_surface_for_route(&Route::Login, false, SessionBootState::Unauthenticated),
+            AuthSurface::Login
+        );
+    }
+
+    #[test]
+    fn auth_surface_routes_authenticated_login_to_app_shell() {
+        assert_eq!(
+            auth_surface_for_route(&Route::Login, true, SessionBootState::Authenticated),
+            AuthSurface::AppShell
+        );
+        assert_eq!(
+            auth_surface_for_route(&Route::AuthCallback, true, SessionBootState::Authenticated),
+            AuthSurface::Callback
+        );
     }
 
     #[test]

@@ -228,7 +228,6 @@ fn chat_message_revise_operation(
                 "body": body,
             },
             "target_ref": event_id,
-            "target_event_id": event_id,
         }))
         .build("yougen")
 }
@@ -257,8 +256,7 @@ fn chat_reaction_add_operation(
     OperationBuilder::new(space_id, actor, "cx.reaction.add")
         .target_ref(event_id)
         .body(json!({
-            "actor": actor,
-            "event_id": event_id,
+            "target_ref": event_id,
             "key": key,
         }))
         .build("yougen")
@@ -2976,13 +2974,6 @@ pub fn ChatPanel(
                                         ) {
                                             Ok(builder) => {
                                                 let mut op = builder.build("yougen");
-                                                op.payload["category"] = json!(category.clone());
-                                                op.payload["create_card"] = json!(create_card);
-                                                if !op.payload.get("fields").is_some_and(|fields| fields.is_object()) {
-                                                    op.payload["fields"] = json!({});
-                                                }
-                                                op.payload["fields"]["category"] = json!(category.clone());
-                                                op.payload["fields"]["has_synthesis"] = json!(create_card);
                                                 if !op.payload["object"]
                                                     .get("fields")
                                                     .is_some_and(|fields| fields.is_object())
@@ -2993,9 +2984,8 @@ pub fn ChatPanel(
                                                     json!(category.clone());
                                                 op.payload["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
-                                                op.payload["rank"] = json!(rank.clone());
+                                                op.payload["object"]["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
-                                                    op.payload["summary"] = json!(summary.clone());
                                                     op.payload["object"]["summary"] = json!(summary.clone());
                                                 }
                                                 if !create_card
@@ -6624,7 +6614,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_message_revise_operation_uses_schema_content_and_target_ref() {
+    fn chat_message_revise_operation_uses_schema_target_ref() {
         let op = chat_message_revise_operation(
             "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
@@ -6636,12 +6626,33 @@ mod tests {
             op.payload["target_ref"],
             "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
-        assert_eq!(
-            op.payload["target_event_id"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
-        );
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
+        assert!(op.payload.get("target_event_id").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
+    }
+
+    #[test]
+    fn chat_reaction_add_operation_uses_schema_target_ref() {
+        let op = chat_reaction_add_operation(
+            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "did:web:bob.example",
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "+1",
+        );
+
+        assert_eq!(
+            op.payload["target_ref"],
+            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        );
+        assert_eq!(op.payload["key"], "+1");
+        assert!(op.payload.get("event_id").is_none());
+        assert!(op.payload.get("actor").is_none());
+        contrix_sdk::schema::event_payload_validator_catalog()
+            .validate_payload(&op.kind, &op.payload)
+            .unwrap();
     }
 }
