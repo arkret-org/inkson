@@ -6192,6 +6192,7 @@ fn value_is_plaintext_private_content(value: &Value) -> bool {
                 .and_then(Value::as_str)
                 .is_some_and(|profile| profile == "cx.profile.encrypted_payload.v1");
             !(encrypted_profile
+                || object.contains_key("encrypted_content")
                 || object.contains_key("encrypted_payload")
                 || object.contains_key("ciphertext"))
         }

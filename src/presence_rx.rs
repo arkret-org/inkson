@@ -88,22 +88,29 @@ pub struct PresenceEvent {
 pub struct ReadMarkerEvent {
     pub realm_id: String,
     pub actor_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_id: Option<String>,
+    pub device_id: String,
     pub read_scope: ReadScopeEvent,
     pub position: ReadCursorPositionEvent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadScopeEvent {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "track_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_scope: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadCursorPositionEvent {
     pub event_id: String,
     pub hlc: String,
@@ -200,10 +207,7 @@ pub fn parse_read_cursor(
     Ok(ReadMarkerEvent {
         realm_id: required_str(payload, "cx.read_cursor.advance", "realm_id")?.to_owned(),
         actor_id: required_str(payload, "cx.read_cursor.advance", "actor_id")?.to_owned(),
-        device_id: payload
-            .get("device_id")
-            .and_then(|value| value.as_str())
-            .map(ToOwned::to_owned),
+        device_id: required_str(payload, "cx.read_cursor.advance", "device_id")?.to_owned(),
         read_scope,
         position,
     })
@@ -341,7 +345,11 @@ fn read_scope_key(read_scope: &ReadScopeEvent) -> String {
         "{}\n{}\n{}",
         read_scope.kind.as_str(),
         read_scope.object_ref.as_deref().unwrap_or(""),
-        read_scope.track.as_deref().unwrap_or("")
+        read_scope
+            .track
+            .as_deref()
+            .or(read_scope.track_scope.as_deref())
+            .unwrap_or("")
     )
 }
 
@@ -443,7 +451,7 @@ mod tests {
                 "read_scope": {
                     "kind": "flow",
                     "ref": "cx:flow:01904100-0000-7000-8000-000000000001",
-                    "track": "discussion"
+                    "track_name": "discussion"
                 },
                 "position": {
                     "event_id": "cx:event:01904100-0000-7000-8000-000000000042",
@@ -519,11 +527,12 @@ mod tests {
         agg.ingest_read_cursor(ReadMarkerEvent {
             realm_id: "cx:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             actor_id: "did:web:alice".to_owned(),
-            device_id: Some("cx:device:01904100-0000-7000-8000-000000000001".to_owned()),
+            device_id: "cx:device:01904100-0000-7000-8000-000000000001".to_owned(),
             read_scope: ReadScopeEvent {
                 kind: "flow".to_owned(),
                 object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
                 track: Some("discussion".to_owned()),
+                track_scope: None,
             },
             position: ReadCursorPositionEvent {
                 event_id: "cx:event:01904100-0000-7000-8000-000000000042".to_owned(),
@@ -536,6 +545,7 @@ mod tests {
             kind: "flow".to_owned(),
             object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
             track: Some("discussion".to_owned()),
+            track_scope: None,
         };
         let marker = agg
             .read_cursor(

@@ -171,8 +171,8 @@ struct SpaceParticipant {
 /// * `member_dids` — every principal DID in the group (single-element for solo bootstrap; the full
 ///   member set for a hydrated multi-device group). Replaces the prior single-`device_did`
 ///   audit-receipt fallback.
-/// * `encrypted_payload` — the typed SDK `EncryptedPayload` serialised as `serde_json::Value` ready
-///   to drop into `content.encrypted_payload`.
+/// * encrypted content — the typed SDK `EncryptedPayload` serialised as `serde_json::Value` ready
+///   to drop into the message's `encrypted_content`.
 ///
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) the
 /// helper returns `(None, vec![], None, None)` and the caller aborts the
@@ -1251,9 +1251,9 @@ fn chat_message_create_operation(
     let mut payload = json!({
         // T2.3: the legacy `branch` top-level field is forbidden on the
         // wire (artifacts/registry/forbidden-wire-fields.json,
-        // hard_reject). v1 uses `track` — a display-only timeline
+        // hard_reject). v1 uses `track_name` — a display-only timeline
         // segment identifier — instead.
-        "track": "discussion",
+        "track_name": "discussion",
         "content": content,
         "flow_id": flow_id,
         "message_id": message_id,
@@ -1524,14 +1524,19 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
         .to_owned();
     // T7.4: detect end-to-end encrypted payload. Body decoding above
     // already prefers plaintext when both forms are present; if the
-    // candidates carry an `encrypted_payload` block at all, we surface
+    // candidates carry an `encrypted_content` block at all, we surface
     // the decryption state to the renderer even when the timeline
     // projection happened to expose a body.
     let has_encrypted_payload = candidates.iter().any(|candidate| {
-        candidate.get("encrypted_payload").is_some()
+        candidate.get("encrypted_content").is_some()
+            || candidate.get("encrypted_payload").is_some()
             || candidate
                 .get("content")
-                .and_then(|content| content.get("encrypted_payload"))
+                .and_then(|content| {
+                    content
+                        .get("encrypted_content")
+                        .or_else(|| content.get("encrypted_payload"))
+                })
                 .is_some()
     });
     // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`
@@ -2140,11 +2145,11 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
     }
     if !flow_create_has_discussion_track(&candidates)
         && !candidates.iter().any(|candidate| {
-            // T2.3: the v1 wire uses `track`; legacy `branch` is a
+            // T2.3: the v1 wire uses `track_name`; legacy `branch` is a
             // hard_reject field per forbidden-wire-fields.json, so writers
             // MUST NOT emit it. Readers fall back to `category` only for
             // payloads that pre-date the track concept entirely.
-            value_string_at(candidate, &["track"]) == Some("discussion")
+            value_string_at(candidate, &["track_name"]) == Some("discussion")
                 || value_string_at(candidate, &["category"]) == Some("discussion")
         })
     {
@@ -5824,8 +5829,8 @@ pub fn ChatPanel(
                                 .body(json!({
                                     "message_id": message_id,
                                     "flow_id": flow_id,
-                                    "track": "discussion",
-                                    "encrypted_payload": encrypted_payload_json,
+                                    "track_name": "discussion",
+                                    "encrypted_content": encrypted_payload_json,
                                 }))
                                 .build("yougen");
                                 let base = base.clone();
@@ -6151,7 +6156,7 @@ mod tests {
             op.payload["flow_id"].as_str(),
             Some("cx:flow:01904100-0000-7000-8000-000000000001")
         );
-        assert_eq!(op.payload["track"].as_str(), Some("discussion"));
+        assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
         assert_eq!(
             op.payload["content"]["kind"].as_str(),
             Some("cx.content.text")
@@ -6708,7 +6713,7 @@ mod tests {
                 "type": "cx.message.create",
                 "body": "[encrypted]",
                 "flow_id": "cx:flow:1",
-                "encrypted_payload": {"ciphertext": "blob"},
+                "encrypted_content": {"ciphertext": "blob"},
             }
         });
         let msg = chat_message_from_event("cx:space:demo", &event).expect("message");

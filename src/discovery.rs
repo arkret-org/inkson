@@ -229,7 +229,7 @@ pub struct ReadMarker {
     pub actor_id: String,
     /// Device ID that set this marker.
     pub device_id: String,
-    /// Read scope `{kind, ref?, track?}`.
+    /// Read scope `{kind, ref?, track_name?}`.
     pub read_scope: ReadMarkerScope,
     /// Last read position.
     pub position: ReadMarkerPosition,
@@ -240,15 +240,23 @@ pub struct ReadMarker {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadMarkerScope {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "track_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_scope: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadMarkerPosition {
     pub event_id: String,
     pub hlc: Hlc,
@@ -338,7 +346,11 @@ fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
         "{}\n{}\n{}",
         scope.kind.as_str(),
         scope.object_ref.as_deref().unwrap_or(""),
-        scope.track.as_deref().unwrap_or("")
+        scope
+            .track
+            .as_deref()
+            .or(scope.track_scope.as_deref())
+            .unwrap_or("")
     )
 }
 
@@ -610,6 +622,7 @@ mod tests {
             kind: "flow".to_owned(),
             object_ref: Some("cx:flow:test".to_owned()),
             track: Some("discussion".to_owned()),
+            track_scope: None,
         }
     }
 

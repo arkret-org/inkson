@@ -392,7 +392,7 @@ pub fn build_poll_create_op(
         .body(json!({
             "message_id": poll_id,
             "flow_id": flow_id,
-            "track": "discussion",
+            "track_name": "discussion",
             "content": {
                 "kind": "cx.content.poll",
                 "body": draft.question.trim(),
@@ -423,7 +423,7 @@ pub fn build_poll_vote_op(
         .target_ref(poll_id)
         .body(json!({
             "flow_id": flow_id,
-            "track": "discussion",
+            "track_name": "discussion",
             "content": {
                 "kind": "cx.content.poll.response",
                 "body": "poll response",
@@ -441,7 +441,7 @@ pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventE
         .target_ref(poll_id)
         .body(json!({
             "flow_id": flow_id,
-            "track": "discussion",
+            "track_name": "discussion",
             "content": {
                 "kind": "cx.content.poll.close",
                 "body": "poll closed",

@@ -885,7 +885,7 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   expect(chatBody.kind).toBe("cx.message.create");
   expect(chatBody.payload.message_id).toMatch(/^cx:message:/);
   expect(chatBody.payload.flow_id).toContain("cx:flow:");
-  expect(chatBody.payload.track).toBe("discussion");
+  expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("cx.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #cx:task:123");
   expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();

@@ -75,8 +75,8 @@ pub struct TimelineEvent {
     pub pending: bool,
     pub failed: bool,
     pub error: Option<String>,
-    /// When present, this message carries an `encrypted_payload`
-    /// object that the local MLS group may be able to decrypt.
+    /// When present, this message carries encrypted message content
+    /// that the local MLS group may be able to decrypt.
     /// Timeline's audit-accessed emitter watches this field
     /// — on successful decrypt, fires a single `cx.audit.accessed` for
     /// `id` per session (de-duplicated by `audit_accessed_emitted`).
@@ -266,13 +266,13 @@ pub(crate) fn message_create_operation(
     incident_priority: Option<&str>,
 ) -> EventEnvelope {
     // Spec `event-payload.schema.json` `message_create_payload` requires
-    // `flow_id` and `track` (`flow-and-message.md` §2). The default Flow
+    // `flow_id` and `track_name` (`flow-and-message.md` §2). The default Flow
     // for a Realm/Space is `cx:flow:<uuid>` (typed-id re-tag, matching
     // soland's `flow_id_from_space_id`); the default track is "discussion".
     let flow_id = default_flow_id_for_scope(space_id);
     let mut payload = json!({
         "flow_id": flow_id,
-        "track": "discussion",
+        "track_name": "discussion",
         "content": text_content(body),
     });
     if let Some(thread_id) = thread_id {
@@ -509,7 +509,7 @@ pub fn TimelinePanel(
     // but doesn't distinguish decrypt-success from "user clicked the
     // button". This
     // future scans the current `timeline()` snapshot for events
-    // carrying `encrypted_payload`, attempts a local MLS decrypt via
+    // carrying encrypted content, attempts a local MLS decrypt via
     // the persisted snapshot for the Space, and on each new success
     // emits a single `cx.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
@@ -2118,11 +2118,14 @@ fn timeline_events_from_sync_spaces(
                 })
                 .unwrap_or("[message]")
                 .to_owned();
-            // B7: carry the raw `encrypted_payload` block forward so the
+            // B7: carry the raw `encrypted_content` block forward so the
             // audit-accessed emitter (later in this component) can try a
             // local MLS decrypt against it and fire `cx.audit.accessed`
             // on every successful decrypt.
-            let encrypted_payload = content.get("encrypted_payload").cloned();
+            let encrypted_payload = content
+                .get("encrypted_content")
+                .or_else(|| content.get("encrypted_payload"))
+                .cloned();
             events.push(TimelineEvent {
                 space_id: Some(space_id.clone()),
                 id: event_id.clone(),
@@ -2213,7 +2216,7 @@ fn plaintext_visible_service(base_url: &str) -> String {
         .unwrap_or_else(|| "configured server".to_owned())
 }
 
-/// Attempt a local MLS decrypt of an `encrypted_payload` JSON object
+/// Attempt a local MLS decrypt of an encrypted message-content JSON object
 /// emitted by chat.rs
 /// Send Secure. Returns `Some(plaintext_bytes)` on successful decrypt,
 /// `None` for every soft failure (no snapshot, snapshot can't be
@@ -2269,7 +2272,7 @@ mod tests {
             op.payload["flow_id"],
             "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
-        assert_eq!(op.payload["track"], "discussion");
+        assert_eq!(op.payload["track_name"], "discussion");
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("encrypted").is_none());

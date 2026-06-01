@@ -1037,7 +1037,9 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
         .unwrap_or_else(|| notification_type.clone());
     let is_e2ee = value_bool(value, "is_e2ee")
         .or_else(|| value_bool(value, "encrypted"))
-        .unwrap_or_else(|| value.get("encrypted_payload").is_some());
+        .unwrap_or_else(|| {
+            value.get("encrypted_content").is_some() || value.get("encrypted_payload").is_some()
+        });
     let priority = value_string(value, &["priority", "notification_priority"])
         .map(|value| value.to_ascii_lowercase());
     let priority_override = value_bool(value, "priority_override").unwrap_or_else(|| {

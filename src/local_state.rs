@@ -73,15 +73,23 @@ pub struct MemberHandleCacheEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadScope {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "track_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_scope: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadCursorPosition {
     pub event_id: String,
     pub hlc: String,
@@ -3131,16 +3139,19 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
             kind: "thread".to_owned(),
             object_ref: Some(topic.to_owned()),
             track: None,
+            track_scope: None,
         },
         Some(topic) if topic.starts_with("cx:flow:") => ReadScope {
             kind: "flow".to_owned(),
             object_ref: Some(topic.to_owned()),
             track: Some("discussion".to_owned()),
+            track_scope: None,
         },
         _ => ReadScope {
             kind: "flow".to_owned(),
             object_ref: Some(default_flow_id_for_realm(realm_id)),
             track: Some("discussion".to_owned()),
+            track_scope: None,
         },
     }
 }
@@ -3159,7 +3170,11 @@ fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {
         realm_id,
         read_scope.kind.as_str(),
         read_scope.object_ref.as_deref().unwrap_or(""),
-        read_scope.track.as_deref().unwrap_or("")
+        read_scope
+            .track
+            .as_deref()
+            .or(read_scope.track_scope.as_deref())
+            .unwrap_or("")
     )
 }
 
@@ -3754,7 +3769,7 @@ mod tests {
                     "read_scope": {
                         "kind": "flow",
                         "ref": "cx:flow:demo",
-                        "track": "discussion"
+                        "track_name": "discussion"
                     },
                     "position": {
                         "event_id": "cx:event:read-1",

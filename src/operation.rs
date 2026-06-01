@@ -928,7 +928,7 @@ pub mod cx_ops {
         });
         let mut payload = json!({
             "flow_id": discussion_flow_id,
-            "track": "discussion",
+            "track_name": "discussion",
             "content": content,
         });
         if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {

@@ -69,10 +69,15 @@ fn security_state_token(token: &str) -> Option<bool> {
 }
 
 fn direct_security_state(value: &Value) -> Option<bool> {
-    if value.get("encrypted_payload").is_some()
+    if value.get("encrypted_content").is_some()
+        || value.get("encrypted_payload").is_some()
         || value
             .get("content")
-            .and_then(|content| content.get("encrypted_payload"))
+            .and_then(|content| {
+                content
+                    .get("encrypted_content")
+                    .or_else(|| content.get("encrypted_payload"))
+            })
             .is_some()
     {
         return Some(true);
