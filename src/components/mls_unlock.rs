@@ -7,7 +7,7 @@ use crate::views::helpers::{ApiCallError, with_authed_api};
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
 /// is `true` — which the boot-time detection in `App` sets when this device
-/// has no local account MLS secret yet but the server holds an
+/// is missing usable local MLS history and the server holds an
 /// `mls_account_secret` backup. The user supplies their recovery passphrase
 /// and we call
 /// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]
