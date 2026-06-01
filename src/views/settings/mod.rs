@@ -1532,7 +1532,7 @@ pub fn SettingsPanel(
                                 // separate scoped backups by future flows.
                                 let payload_plaintext = serde_json::json!({
                                     "schema_version": 1,
-                                    "actor_did": actor,
+                                    "actor_id": actor,
                                     "device_id": device,
                                     "minted_at": chrono::Utc::now().to_rfc3339(),
                                     "source": "settings.encryption.store_backup",
@@ -1980,16 +1980,16 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let principal_did = account_did();
+                                    let principal_id = account_did();
                                     let mut local_store = state_store.read().clone();
                                     spawn(async move {
-                                        let principal_did = (!principal_did.trim().is_empty())
-                                            .then_some(principal_did);
+                                        let principal_id =
+                                            (!principal_id.trim().is_empty()).then_some(principal_id);
                                         let context = crate::push::registration::RegisterContext {
                                             principal_server_url: base,
                                             floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
-                                            principal_did,
+                                            principal_id,
                                             bearer_token: Some(api_token),
                                             session_grant: None,
                                             active_circle_id: None,

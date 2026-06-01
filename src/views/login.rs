@@ -484,7 +484,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         ));
     }
 
-    let principal_did = login
+    let principal_id = login
         .viewer
         .as_ref()
         .map(|viewer| viewer.did.clone())
@@ -493,7 +493,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
             (!scaffold.principal_actor_did.trim().is_empty())
                 .then(|| scaffold.principal_actor_did.clone())
         })
-        .ok_or_else(|| "Server sign-in did not return a principal DID.".to_owned())?;
+        .ok_or_else(|| "Server sign-in did not return a principal ID.".to_owned())?;
     let grant = login.session_grant.as_ref();
     let principal_target = grant
         .and_then(|grant| grant.principal_server.as_ref())
@@ -538,7 +538,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         {
             Ok(account) => {
                 let actor = if account.did.trim().is_empty() {
-                    principal_did
+                    principal_id
                 } else {
                     account.did
                 };
@@ -615,7 +615,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .exchange_session_grant_at_with_proof(
             &bridge.auth.session_grant_exchange_path,
             &grant.grant_jwt,
-            &principal_did,
+            &principal_id,
             &device,
             Some(&proof),
         )
@@ -690,7 +690,7 @@ fn persisted_session_grant_from_parts(
         session_private_key_pem: grant.session_private_key_pem.clone(),
         grant_id: grant_id.to_owned(),
         audience: audience.to_owned(),
-        principal_did: actor.to_owned(),
+        principal_id: actor.to_owned(),
         device_id: device_id.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
         session_grant_exchange_path: session_grant_exchange_path.to_owned(),
@@ -733,7 +733,7 @@ mod tests {
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
             audience: "https://principal.example/api".to_owned(),
-            principal_did: "did:web:alice.example".to_owned(),
+            principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(persisted.session_private_key_pem, "private-key-pem");
         assert_eq!(persisted.grant_id, "grant-1");
         assert_eq!(persisted.audience, "https://local.host/api");
-        assert_eq!(persisted.principal_did, "did:web:alice.example");
+        assert_eq!(persisted.principal_id, "did:web:alice.example");
         assert_eq!(
             persisted.device_id,
             "cx:device:01964137-0000-7000-8000-000000000001"

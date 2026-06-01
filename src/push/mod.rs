@@ -167,7 +167,7 @@ pub fn build_register_request(device_id: &str) -> anyhow::Result<RegisterDeviceR
 
 pub fn build_register_request_for_actor(
     device_id: &str,
-    principal_did: Option<&str>,
+    principal_id: Option<&str>,
 ) -> anyhow::Result<RegisterDeviceRequest> {
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
@@ -175,7 +175,7 @@ pub fn build_register_request_for_actor(
     let binding = default_gateway_binding();
     let idempotency_key = format!("yougen-push-register-{device_id}");
     let config = PushDeviceConfig {
-        principal_did,
+        principal_id,
         device_id,
         push_key: Some(&push_key),
         platform: Some(platform),
@@ -202,7 +202,7 @@ pub fn build_unregister_request(
         .and_then(|state| state.app_id.as_deref())
         .unwrap_or(APP_ID);
     let config = PushDeviceConfig {
-        principal_did: existing.and_then(|state| state.principal_did.as_deref()),
+        principal_id: existing.and_then(|state| state.principal_id.as_deref()),
         device_id,
         push_key: None,
         platform: Some(platform),
@@ -1131,10 +1131,10 @@ impl std::fmt::Debug for PushTokenBinding {
 /// [`crate::secure_key_store::default_secure_key_store`].
 pub fn build_register_request_with_secure_store(
     device_id: &str,
-    principal_did: Option<&str>,
+    principal_id: Option<&str>,
     store: &Arc<dyn SecureKeyStore>,
 ) -> anyhow::Result<RegisterDeviceRequest> {
-    let request = build_register_request_for_actor(device_id, principal_did)?;
+    let request = build_register_request_for_actor(device_id, principal_id)?;
     let binding = PushTokenBinding::new(store.clone(), device_id);
     // Best-effort persist. A backend failure here should not block
     // registration — log and continue. The persisted token is only

@@ -11,9 +11,9 @@
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries a
 //!   `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_did, status, last_seen?}`
+//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_id, status, last_seen?}`
 //!   with status ∈ {`online`, `away`, `dnd`, `offline`}.
-//! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_did, flow_id,
+//! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_id, flow_id,
 //!   started_at}`.
 //!
 //! The parsers are deliberately permissive at the field level — they
@@ -64,7 +64,7 @@ impl PresenceStatus {
 /// `cx.typing` event parsed from the wire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypingEvent {
-    pub actor_did: String,
+    pub actor_id: String,
     pub flow_id: String,
     /// Optional Unix-seconds timestamp the typing notification was
     /// issued at. None when the server didn't include one — the
@@ -76,7 +76,7 @@ pub struct TypingEvent {
 /// `cx.presence` event parsed from the wire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresenceEvent {
-    pub actor_did: String,
+    pub actor_id: String,
     pub status: PresenceStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen: Option<i64>,
@@ -153,7 +153,7 @@ pub fn parse_typing(
     require_kind(&envelope.kind, "cx.typing")?;
     let payload = &envelope.payload;
     Ok(TypingEvent {
-        actor_did: required_str(payload, "cx.typing", "actor_did")?.to_owned(),
+        actor_id: required_str(payload, "cx.typing", "actor_id")?.to_owned(),
         flow_id: required_str(payload, "cx.typing", "flow_id")?.to_owned(),
         started_at: payload.get("started_at").and_then(|v| v.as_i64()),
     })
@@ -167,7 +167,7 @@ pub fn parse_presence(
     let payload = &envelope.payload;
     let status_str = required_str(payload, "cx.presence", "status")?;
     Ok(PresenceEvent {
-        actor_did: required_str(payload, "cx.presence", "actor_did")?.to_owned(),
+        actor_id: required_str(payload, "cx.presence", "actor_id")?.to_owned(),
         status: PresenceStatus::from_wire(status_str),
         last_seen: payload.get("last_seen").and_then(|v| v.as_i64()),
     })
@@ -255,7 +255,7 @@ fn required_value<'a>(
 #[derive(Clone, Debug, Default)]
 pub struct PresenceAggregate {
     presence: HashMap<String, PresenceEvent>,
-    /// `(actor_did, flow_id) -> received_unix_seconds`.
+    /// `(actor_id, flow_id) -> received_unix_seconds`.
     typing: HashMap<(String, String), i64>,
     /// `(realm_id, actor_id, read_scope) -> ReadMarkerEvent`.
     read_cursors: HashMap<(String, String, String), ReadMarkerEvent>,
@@ -270,12 +270,12 @@ impl PresenceAggregate {
     }
 
     pub fn ingest_typing(&mut self, event: TypingEvent, now_unix: i64) {
-        let key = (event.actor_did, event.flow_id);
+        let key = (event.actor_id, event.flow_id);
         self.typing.insert(key, now_unix);
     }
 
     pub fn ingest_presence(&mut self, event: PresenceEvent) {
-        self.presence.insert(event.actor_did.clone(), event);
+        self.presence.insert(event.actor_id.clone(), event);
     }
 
     pub fn ingest_read_cursor(&mut self, event: ReadMarkerEvent) {
@@ -303,8 +303,8 @@ impl PresenceAggregate {
             .collect()
     }
 
-    pub fn presence_for(&self, actor_did: &str) -> Option<&PresenceEvent> {
-        self.presence.get(actor_did)
+    pub fn presence_for(&self, actor_id: &str) -> Option<&PresenceEvent> {
+        self.presence.get(actor_id)
     }
 
     pub fn read_cursor(
@@ -388,10 +388,10 @@ mod tests {
     fn parse_typing_extracts_actor_and_flow() {
         let env = envelope(
             "cx.typing",
-            json!({"actor_did": "did:web:alice", "flow_id": "cx:flow:1", "started_at": 1716000000}),
+            json!({"actor_id": "did:web:alice", "flow_id": "cx:flow:1", "started_at": 1716000000}),
         );
         let parsed = parse_typing(&env).expect("parse");
-        assert_eq!(parsed.actor_did, "did:web:alice");
+        assert_eq!(parsed.actor_id, "did:web:alice");
         assert_eq!(parsed.flow_id, "cx:flow:1");
         assert_eq!(parsed.started_at, Some(1716000000));
     }
@@ -400,7 +400,7 @@ mod tests {
     fn parse_typing_started_at_is_optional() {
         let env = envelope(
             "cx.typing",
-            json!({"actor_did": "did:web:alice", "flow_id": "cx:flow:1"}),
+            json!({"actor_id": "did:web:alice", "flow_id": "cx:flow:1"}),
         );
         let parsed = parse_typing(&env).expect("parse");
         assert_eq!(parsed.started_at, None);
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn parse_typing_rejects_missing_required_field() {
-        let env = envelope("cx.typing", json!({"actor_did": "did:web:alice"}));
+        let env = envelope("cx.typing", json!({"actor_id": "did:web:alice"}));
         match parse_typing(&env) {
             Err(PresenceRxError::MissingField { field, .. }) => {
                 assert_eq!(field, "flow_id");
@@ -433,7 +433,7 @@ mod tests {
     fn parse_presence_falls_back_to_offline_for_unknown_status() {
         let env = envelope(
             "cx.presence",
-            json!({"actor_did": "did:web:alice", "status": "bogus"}),
+            json!({"actor_id": "did:web:alice", "status": "bogus"}),
         );
         let parsed = parse_presence(&env).expect("parse");
         assert_eq!(parsed.status, PresenceStatus::Offline);
@@ -499,7 +499,7 @@ mod tests {
         let mut agg = PresenceAggregate::new();
         agg.ingest_typing(
             TypingEvent {
-                actor_did: "did:web:alice".to_owned(),
+                actor_id: "did:web:alice".to_owned(),
                 flow_id: "cx:flow:1".to_owned(),
                 started_at: Some(1000),
             },
@@ -520,7 +520,7 @@ mod tests {
     fn aggregate_presence_and_read_cursor_round_trip() {
         let mut agg = PresenceAggregate::new();
         agg.ingest_presence(PresenceEvent {
-            actor_did: "did:web:alice".to_owned(),
+            actor_id: "did:web:alice".to_owned(),
             status: PresenceStatus::Away,
             last_seen: Some(1000),
         });

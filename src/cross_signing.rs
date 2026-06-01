@@ -182,7 +182,7 @@ impl CrossSigningSetupPlan {
     ) -> Result<Self, ResetBlockedReason> {
         if !policy.permits_reset(principal_id) {
             return Err(ResetBlockedReason {
-                principal_did: principal_id.to_owned(),
+                principal_id: principal_id.to_owned(),
                 hint: policy.enrollment_hint.clone(),
             });
         }
@@ -317,9 +317,9 @@ impl ResetAuditPolicy {
         })
     }
 
-    /// Whether `principal_did` is permitted to issue a reset now.
-    pub fn permits_reset(&self, principal_did: &str) -> bool {
-        !self.enrollment_required || self.enrolled_principals.contains(principal_did)
+    /// Whether `principal_id` is permitted to issue a reset now.
+    pub fn permits_reset(&self, principal_id: &str) -> bool {
+        !self.enrollment_required || self.enrolled_principals.contains(principal_id)
     }
 }
 
@@ -328,7 +328,7 @@ impl ResetAuditPolicy {
 /// can render an actionable message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResetBlockedReason {
-    pub principal_did: String,
+    pub principal_id: String,
     pub hint: Option<String>,
 }
 
@@ -338,12 +338,12 @@ impl std::fmt::Display for ResetBlockedReason {
             Some(h) => write!(
                 f,
                 "{} is not enrolled in the cross-signing reset audit policy: {h}",
-                self.principal_did
+                self.principal_id
             ),
             None => write!(
                 f,
                 "{} is not enrolled in the cross-signing reset audit policy",
-                self.principal_did
+                self.principal_id
             ),
         }
     }
@@ -665,7 +665,7 @@ impl CrossSigningExecutor {
             self_signing_key: SignedCrossSigningKey {
                 key: ssk_record.clone(),
                 binding: CrossSigningBinding {
-                    signed_by: psk_kid.clone(),
+                    verification_method: psk_kid.clone(),
                     alg: "EdDSA".to_owned(),
                     signature: String::new(),
                 },
@@ -673,7 +673,7 @@ impl CrossSigningExecutor {
             user_signing_key: SignedCrossSigningKey {
                 key: usk_record.clone(),
                 binding: CrossSigningBinding {
-                    signed_by: psk_kid.clone(),
+                    verification_method: psk_kid.clone(),
                     alg: "EdDSA".to_owned(),
                     signature: String::new(),
                 },
@@ -702,7 +702,7 @@ impl CrossSigningExecutor {
             self_signing_key: SignedCrossSigningKey {
                 key: draft.self_signing_key.key,
                 binding: CrossSigningBinding {
-                    signed_by: psk_kid.clone(),
+                    verification_method: psk_kid.clone(),
                     alg: "EdDSA".to_owned(),
                     signature: B64.encode(ssk_sig.to_bytes()),
                 },
@@ -710,7 +710,7 @@ impl CrossSigningExecutor {
             user_signing_key: SignedCrossSigningKey {
                 key: draft.user_signing_key.key,
                 binding: CrossSigningBinding {
-                    signed_by: psk_kid,
+                    verification_method: psk_kid,
                     alg: "EdDSA".to_owned(),
                     signature: B64.encode(usk_sig.to_bytes()),
                 },
@@ -812,7 +812,7 @@ mod tests {
         let err =
             CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 2, &policy)
                 .expect_err("alice is not enrolled");
-        assert_eq!(err.principal_did, "did:web:alice");
+        assert_eq!(err.principal_id, "did:web:alice");
         assert_eq!(err.hint.as_deref(), Some("Apply via /security/reset"));
         assert!(format!("{err}").contains("not enrolled"));
     }
@@ -868,7 +868,7 @@ mod tests {
 
         // SDK validation runs inside `run()`; reaching here means the
         // publish content already passed the structural check (distinct
-        // SSK / USK keys, non-empty kids, binding.signed_by matches PSK
+        // SSK / USK keys, non-empty kids, binding.verification_method matches PSK
         // kid, generation >= 1). Additionally verify the signatures
         // cryptographically using the PSK's verifying key — this is the
         // exact computation the server will run to accept the publish.

@@ -556,7 +556,7 @@ pub fn RecoveryPanel(
                                 };
                                 let payload_plaintext = serde_json::json!({
                                     "schema_version": 1,
-                                    "actor_did": actor,
+                                    "actor_id": actor,
                                     "device_id": device,
                                     "recovery_key_fingerprint": recovery_key_fp(),
                                     "minted_at": chrono::Utc::now().to_rfc3339(),

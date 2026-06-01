@@ -22,7 +22,7 @@ pub fn ConsentSettingsCard(
     let mut new_ttl = use_signal(|| "30d".to_owned());
     let mut selected_cell_id = use_signal(String::new);
     let mut detail_scope = use_signal(|| "message".to_owned());
-    let mut detail_valid_until = use_signal(String::new);
+    let mut detail_expires_at = use_signal(String::new);
     let mut status = use_signal(String::new);
 
     {
@@ -69,8 +69,8 @@ pub fn ConsentSettingsCard(
                                     move |_| {
                                         selected_cell_id.set(cell.cell_id.clone());
                                         detail_scope.set(cell.scope.clone());
-                                        detail_valid_until.set(
-                                            cell.valid_until.clone().unwrap_or_else(|| {
+                                        detail_expires_at.set(
+                                            cell.expires_at.clone().unwrap_or_else(|| {
                                                 (Utc::now() + Duration::days(30)).to_rfc3339()
                                             }),
                                         );
@@ -90,9 +90,9 @@ pub fn ConsentSettingsCard(
                                         option { value: "call", "call" }
                                     }
                                     input {
-                                        "data-testid": "consent-valid-until-input",
-                                        value: "{detail_valid_until}",
-                                        oninput: move |evt| detail_valid_until.set(evt.value()),
+                                        "data-testid": "consent-expires-at-input",
+                                        value: "{detail_expires_at}",
+                                        oninput: move |evt| detail_expires_at.set(evt.value()),
                                     }
                                     button {
                                         class: "primary",
@@ -107,14 +107,14 @@ pub fn ConsentSettingsCard(
                                                 let holder = holder.clone();
                                                 let peer = peer.clone();
                                                 let scope = detail_scope();
-                                                let valid_until = normalize_valid_until(&detail_valid_until());
+                                                let expires_at = normalize_expires_at(&detail_expires_at());
                                                 spawn(async move {
                                                     match with_authed_api(&base, api_token, |api| async move {
                                                         api.grant_consent_cell(
                                                             &holder,
                                                             &peer,
                                                             &scope,
-                                                            valid_until.as_deref(),
+                                                            expires_at.as_deref(),
                                                         )
                                                         .await
                                                     })
@@ -139,7 +139,7 @@ pub fn ConsentSettingsCard(
                         {
                             let peer_label = short_protocol_id(&cell.peer_did);
                             let expiry_label = cell
-                                .valid_until
+                                .expires_at
                                 .clone()
                                 .unwrap_or_else(|| "no expiry".to_owned());
                             rsx! {
@@ -231,14 +231,14 @@ pub fn ConsentSettingsCard(
                                 let holder = holder.clone();
                                 let peer = new_grantee().trim().to_owned();
                                 let scope = new_scope().trim().to_owned();
-                                let valid_until = normalize_valid_until(&new_ttl());
+                                let expires_at = normalize_expires_at(&new_ttl());
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.grant_consent_cell(
                                             &holder,
                                             &peer,
                                             &scope,
-                                            valid_until.as_deref(),
+                                            expires_at.as_deref(),
                                         )
                                         .await
                                     })
@@ -286,7 +286,7 @@ fn refresh_consent_cells(
     });
 }
 
-fn normalize_valid_until(raw: &str) -> Option<String> {
+fn normalize_expires_at(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;

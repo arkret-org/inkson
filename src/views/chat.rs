@@ -401,7 +401,6 @@ fn participant_id_from_value(value: &Value) -> Option<String> {
     [
         "did",
         "account_did",
-        "actor_did",
         "member",
         "user",
         "actor",
@@ -424,7 +423,6 @@ fn participant_id_from_member_value(value: &Value) -> Option<String> {
     [
         "did",
         "account_did",
-        "actor_did",
         "member",
         "user",
         "actor",
@@ -1762,7 +1760,7 @@ fn typing_actors_from_sync_spaces(
                 continue;
             };
             for entry in entries {
-                let actor = value_string_at(entry, &["actor", "actor_did", "actor_id"])
+                let actor = value_string_at(entry, &["actor", "actor_id"])
                     .unwrap_or_default()
                     .trim();
                 if !actor.is_empty() && actor != account_did {

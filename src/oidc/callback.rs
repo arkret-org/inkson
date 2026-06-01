@@ -78,7 +78,7 @@ pub struct AudienceGrantExchange<'a> {
     pub grant_id: &'a str,
     pub grant_jwt: &'a str,
     pub audience: &'a str,
-    pub principal_did: &'a str,
+    pub principal_id: &'a str,
     pub device_id: &'a str,
     pub device_signing_key: &'a ed25519_dalek::SigningKey,
 }
@@ -264,17 +264,17 @@ pub async fn process_callback(
         Some(request.scaffold.principal_audience.as_str())
     };
     let token_bundle = token_response.to_persisted_bundle(audience_hint);
-    // When the audience_grant leg carries a `principal_did`, route the
+    // When the audience_grant leg carries a `principal_id`, route the
     // bundle through the SecureKeyStore helper so the `refresh_token`
-    // field lands in `coauth.refresh_token.<principal_did>` instead of
-    // plain `state.json`. Without an explicit actor DID at this stage,
+    // field lands in `coauth.refresh_token.<principal_id>` instead of
+    // plain `state.json`. Without an explicit actor ID at this stage,
     // store the non-audience bundle in state.json; there is no principal
     // namespace for a secure-store key yet.
     if let Some(audience_grant) = request.audience_grant.as_ref() {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         state_store.set_oidc_tokens_with_secure_store(
             Some(token_bundle.clone()),
-            audience_grant.principal_did,
+            audience_grant.principal_id,
             secure_store.as_ref(),
         );
     } else {
@@ -303,7 +303,7 @@ pub async fn process_callback(
                 .exchange_session_grant_at_with_proof(
                     audience_grant.session_grant_exchange_path,
                     audience_grant.grant_jwt,
-                    audience_grant.principal_did,
+                    audience_grant.principal_id,
                     audience_grant.device_id,
                     Some(&proof),
                 )

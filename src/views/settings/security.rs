@@ -217,7 +217,7 @@ pub fn SettingsSecurityPanel(
                                         spawn(async move {
                                             let payload = serde_json::json!({
                                                 "schema_version": 1,
-                                                "actor_did": actor_for_payload,
+                                                "actor_id": actor_for_payload,
                                                 "device_id": device_for_payload,
                                                 "minted_at": chrono::Utc::now().to_rfc3339(),
                                                 "source": "settings.security.trigger_backup",

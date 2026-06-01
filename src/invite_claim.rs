@@ -122,13 +122,13 @@ impl InviteTerminalState {
 /// `cx.invite.claim`. The signature is detached EdDSA over the canonical
 /// JSON of [`InviteSubjectProofBody`].
 ///
-/// `signed_by` is the DID-URL pointing at the device verification method;
+/// `verification_method` is the DID-URL pointing at the device verification method;
 /// reducers verify the signature with that key before accepting the
 /// claim. `alg` is the standard JWS / multibase tag (currently always
 /// `EdDSA`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InviteSubjectProof {
-    pub signed_by: String,
+    pub verification_method: String,
     pub alg: String,
     pub signature: String,
 }
@@ -208,7 +208,7 @@ pub fn build_invite_claim_body(
     let proof_bytes = proof_body.canonical_bytes()?;
     let sig = device_signing_key.sign(&proof_bytes);
     let subject_proof = InviteSubjectProof {
-        signed_by: device_kid.to_owned(),
+        verification_method: device_kid.to_owned(),
         alg: "EdDSA".to_owned(),
         signature: base64::engine::general_purpose::STANDARD_NO_PAD.encode(sig.to_bytes()),
     };
@@ -290,7 +290,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            body["subject_proof"]["signed_by"],
+            body["subject_proof"]["verification_method"],
             "did:web:alice.example#device-0001"
         );
         assert_eq!(body["subject_proof"]["alg"], "EdDSA");

@@ -260,7 +260,7 @@ pub async fn exchange_refresh(
     api.exchange_session_grant_at_with_proof(
         &grant.session_grant_exchange_path,
         &grant.grant_jwt,
-        &grant.principal_did,
+        &grant.principal_id,
         &grant.device_id,
         Some(proof),
     )
@@ -428,7 +428,7 @@ mod tests {
                 .to_owned(),
             grant_id: "grant-1".to_owned(),
             audience: "https://principal.example/api".to_owned(),
-            principal_did: "did:web:alice.example".to_owned(),
+            principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),

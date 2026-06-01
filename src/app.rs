@@ -11139,7 +11139,7 @@ mod tests {
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
             audience: "https://local.host/api".to_owned(),
-            principal_did: "did:web:alice.example".to_owned(),
+            principal_id: "did:web:alice.example".to_owned(),
             device_id: "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
             principal_server_url: "https://local.host".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),

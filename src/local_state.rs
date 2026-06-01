@@ -1162,8 +1162,8 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Audience the grant is bound to (typically the principal-server URL).
     pub audience: String,
-    /// Principal DID the grant authorizes.
-    pub principal_did: String,
+    /// Principal ID the grant authorizes.
+    pub principal_id: String,
     /// Device id bound to the grant.
     pub device_id: String,
     /// Principal-server base URL where the grant is exchanged.
@@ -3834,7 +3834,7 @@ mod tests {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_push_registration(PushRegistrationState {
             schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
-            principal_did: None,
+            principal_id: None,
             registration_id: Some("cx:push:local".to_owned()),
             device_id: "dev_yougen".to_owned(),
             platform: Some("desktop".to_owned()),
@@ -4146,7 +4146,7 @@ mod tests {
             session_private_key_pem: "pem".to_owned(),
             grant_id: "g-alice".to_owned(),
             audience: "https://principal.example/api".to_owned(),
-            principal_did: "did:web:alice.example".to_owned(),
+            principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),

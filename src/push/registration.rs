@@ -27,7 +27,7 @@
 //!     principal_server_url: "https://principal.example".into(),
 //!     floria_gateway_url: "https://push.example/api/v1/push/notify".into(),
 //!     device_id: "dev-yougen".into(),
-//!     principal_did: Some("did:web:alice.example".into()),
+//!     principal_id: Some("did:web:alice.example".into()),
 //!     bearer_token: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,
@@ -113,7 +113,7 @@ impl std::fmt::Display for PushRegistrationError {
 impl std::error::Error for PushRegistrationError {}
 
 /// Inputs to [`register_via_chime`]. Tracked as a struct (vs a 6-arg
-/// fn) so call sites stay readable when `principal_did` / `bearer_token`
+/// fn) so call sites stay readable when `principal_id` / `bearer_token`
 /// flip from `None` to `Some` after coauth lands.
 #[derive(Clone, Debug)]
 pub struct RegisterContext {
@@ -130,7 +130,7 @@ pub struct RegisterContext {
     pub device_id: String,
     /// Owning actor DID. `None` for the pre-login boot path; populated
     /// once OIDC / coauth resolves.
-    pub principal_did: Option<String>,
+    pub principal_id: Option<String>,
     /// API access token (chime client posts `Authorization: Bearer …`).
     pub bearer_token: Option<String>,
     /// X-Contrix-Session-Grant header (coauth-issued grant). `None`
@@ -245,8 +245,8 @@ fn resolve_chime_session_grant(
             ),
         });
     }
-    if ctx.principal_did.is_none() {
-        ctx.principal_did = Some(grant.principal_did.clone());
+    if ctx.principal_id.is_none() {
+        ctx.principal_id = Some(grant.principal_id.clone());
     }
 
     let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
@@ -366,7 +366,7 @@ fn build_request(
     };
     let platform = current_platform_str();
     let config = PushDeviceConfig {
-        principal_did: ctx.principal_did.as_deref(),
+        principal_id: ctx.principal_id.as_deref(),
         device_id: ctx.device_id.as_str(),
         push_key: Some(push_key),
         platform: Some(platform),
@@ -444,7 +444,7 @@ mod tests {
             principal_server_url: "https://principal.example".to_owned(),
             floria_gateway_url: "https://push.example/api/v1/push/notify".to_owned(),
             device_id: device.to_owned(),
-            principal_did: Some("did:web:alice.example".to_owned()),
+            principal_id: Some("did:web:alice.example".to_owned()),
             bearer_token: Some("session-secret".to_owned()),
             session_grant: None,
             active_circle_id: None,
@@ -462,7 +462,7 @@ mod tests {
             session_private_key_pem: pem,
             grant_id: "cx:grant:push-local".to_owned(),
             audience: "https://principal.example/".to_owned(),
-            principal_did: "did:web:alice.example".to_owned(),
+            principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
             principal_server_url: "https://principal.example/".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
@@ -524,7 +524,7 @@ mod tests {
         let mut store = isolated_store("grant-headers");
         store.set_session_grant(Some(persisted_grant("dev_yougen")));
         let mut context = ctx("dev_yougen");
-        context.principal_did = None;
+        context.principal_id = None;
 
         let headers = resolve_chime_session_grant(&mut context, &store).expect("grant headers");
 
@@ -532,7 +532,7 @@ mod tests {
         assert!(headers.challenge.as_deref().is_some_and(|v| !v.is_empty()));
         assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
         assert_eq!(
-            context.principal_did.as_deref(),
+            context.principal_id.as_deref(),
             Some("did:web:alice.example")
         );
     }

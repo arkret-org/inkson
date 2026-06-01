@@ -40,7 +40,7 @@ pub struct PrincipalAuthBridgeAuthDescriptor {
     pub dev_login_path: String,
     pub session_grant_exchange_path: String,
     pub bearer_auth_scheme: String,
-    pub principal_did_body_field: String,
+    pub principal_id_body_field: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -48,7 +48,7 @@ pub struct PrincipalAuthBridgePushDescriptor {
     pub register_device_path: String,
     pub unregister_device_path: String,
     pub session_grant_header: String,
-    pub principal_did_body_field: String,
+    pub principal_id_body_field: String,
     pub register_device_mode: String,
 }
 
@@ -756,10 +756,10 @@ impl ContrixApi {
         &self,
         path: &str,
         grant_jwt: &str,
-        principal_did: &str,
+        principal_id: &str,
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
-        self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_did, device_id, None)
+        self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
 
@@ -767,13 +767,13 @@ impl ContrixApi {
         &self,
         path: &str,
         grant_jwt: &str,
-        principal_did: &str,
+        principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
     ) -> anyhow::Result<DevLoginResponse> {
         let mut body = json!({
             "grant_jwt": grant_jwt,
-            "principal_did": principal_did,
+            "principal_id": principal_id,
             "device_id": device_id,
             "display_name": "yougen session-grant bridge",
         });
@@ -786,13 +786,13 @@ impl ContrixApi {
     pub async fn exchange_session_grant(
         &self,
         grant_jwt: &str,
-        principal_did: &str,
+        principal_id: &str,
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
         self.exchange_session_grant_at(
             "api/v1/auth/session-grant/exchange",
             grant_jwt,
-            principal_did,
+            principal_id,
             device_id,
         )
         .await
@@ -902,7 +902,7 @@ impl ContrixApi {
         holder: &str,
         peer: &str,
         scope: &str,
-        valid_until: Option<&str>,
+        expires_at: Option<&str>,
     ) -> anyhow::Result<ConsentCellResponse> {
         self.post_json(
             &format!(
@@ -912,7 +912,7 @@ impl ContrixApi {
             json!({
                 "peer_did": peer,
                 "scope": scope,
-                "valid_until": valid_until,
+                "expires_at": expires_at,
             }),
         )
         .await
@@ -3537,7 +3537,6 @@ pub fn build_typing_envelope(
         expires_at,
         json!({
             "actor_id": actor_did,
-            "actor_did": actor_did,
             "realm_id": realm_id_wire,
             "scope_id": realm_id,
             "typing": typing,
@@ -3595,7 +3594,7 @@ pub fn build_presence_envelope(
     let actor = contrix_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
-    payload.insert("actor_did".into(), Value::String(actor_did.to_owned()));
+    payload.insert("actor_id".into(), Value::String(actor_did.to_owned()));
     payload.insert("status".into(), Value::String(status.to_owned()));
     if let Some(ts) = last_active_at {
         payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
@@ -5333,7 +5332,7 @@ mod tests {
             envelope.payload["realm_id"],
             "cx:realm:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(envelope.payload["actor_did"], "did:web:alice.example");
+        assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
         assert_eq!(envelope.payload["typing"], true);
         assert!(
             !serde_json::to_value(&envelope)

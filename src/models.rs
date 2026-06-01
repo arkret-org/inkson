@@ -91,7 +91,7 @@ pub struct ConsentCellResponse {
     pub scope: String,
     pub state: String,
     #[serde(default)]
-    pub valid_until: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub requested_at: Option<String>,
     pub updated_at: String,
