@@ -253,11 +253,57 @@ pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
         .collect()
 }
 
+fn mls_history_backup_needs_restore(
+    body: &Value,
+    state_store: &crate::local_state::LocalStateStore,
+    local_secret: &str,
+) -> bool {
+    let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body) else {
+        return false;
+    };
+    let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.space_id) else {
+        return true;
+    };
+    if local_snapshot.group_id != envelope.group_id || local_snapshot.epoch < envelope.epoch {
+        return true;
+    }
+    crate::mls::persistence::decrypt_envelope(&local_snapshot, local_secret).is_err()
+}
+
+/// Decide whether the app should ask the user for their recovery passphrase to
+/// unlock MLS history.
+///
+/// A local account secret alone is not enough readiness proof: an earlier
+/// incomplete bootstrap can leave a stale/random local secret without any
+/// usable per-Space MLS snapshot. In that state encrypted writes still fail
+/// with `MissingWelcome`, so the prompt must stay available whenever the
+/// server has account-secret recovery material and local history is missing,
+/// stale, or undecryptable.
+pub fn mls_restore_prompt_required(
+    list_payload: &Value,
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+) -> bool {
+    if select_mls_account_secret_backup(list_payload).is_none() {
+        return false;
+    }
+    let local_secret =
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id).ok();
+    let Some(local_secret) = local_secret.filter(|secret| !secret.trim().is_empty()) else {
+        return true;
+    };
+    select_mls_history_backups(list_payload)
+        .iter()
+        .any(|body| mls_history_backup_needs_restore(body, state_store, &local_secret))
+}
+
 /// Counts returned by [`auto_restore_mls_history_with_passphrase`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RestoreReport {
-    /// Whether the account MLS secret was freshly imported from the server
-    /// backup on this call (false if a local account secret already existed).
+    /// Whether the account MLS secret was imported or refreshed from the
+    /// server backup on this call.
     pub account_secret_imported: bool,
     /// Number of `mls_history` backups successfully restored into the state store.
     pub restored: usize,
@@ -310,27 +356,30 @@ pub fn restore_mls_history_with_passphrase_from_payload(
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
 
-    // Step 1: ensure a local account secret exists. If absent, import it from
-    // the server's account-secret backup (decrypted with the passphrase).
+    // Step 1: refresh the local account secret from the server backup when it
+    // exists. This deliberately runs even if a local secret is present: a
+    // previous incomplete bootstrap may have generated a stale/random secret,
+    // which would make every history restore fail with a secret mismatch.
     let has_local_secret =
         crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id)
             .is_ok();
-    if !has_local_secret {
-        let secret_body = select_mls_account_secret_backup(list_payload).ok_or_else(|| {
-            anyhow!("no mls_account_secret backup on server; cannot recover MLS history")
-        })?;
+    if let Some(secret_body) = select_mls_account_secret_backup(list_payload) {
         let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
         let version = mls_account_secret_backup_version(&secret_body);
-        crate::mls::runtime::store_account_mls_secret_version(
+        crate::mls::runtime::replace_account_mls_secret_version(
             secure_store,
             actor_did,
             version,
             &secret,
         )
-        .map_err(|err| anyhow!("store account MLS secret: {err}"))?;
+        .map_err(|err| anyhow!("replace account MLS secret: {err}"))?;
         report.account_secret_imported = true;
+    } else if !has_local_secret {
+        return Err(anyhow!(
+            "no mls_account_secret backup on server; cannot recover MLS history"
+        ));
     }
 
     // Step 2: restore every mls_history backup. A failure on one backup is
@@ -359,9 +408,9 @@ pub fn restore_mls_history_with_passphrase_from_payload(
 /// Auto-restore MLS history for a fresh device using the recovery passphrase.
 ///
 /// Flow:
-///   1. If a local account MLS secret already exists, skip the import step.
-///      Otherwise fetch the server's `mls_account_secret` backup, decrypt it
-///      with `passphrase`, and store it under the account key.
+///   1. Fetch the server's `mls_account_secret` backup when present, decrypt
+///      it with `passphrase`, and replace the local account key with it. This
+///      also repairs stale local secrets left by incomplete bootstraps.
 ///   2. List every `mls_history` backup and restore each one via
 ///      [`crate::mls::runtime::restore_mls_history_backup_with_device_snapshot`].
 ///
@@ -493,6 +542,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
 mod tests {
     use super::*;
     use crate::key_backup::{KeyBackupClass, validate_key_backup_envelope};
+    use crate::secure_key_store::MemorySecureKeyStore;
 
     const BACKUP_ID: &str = "cx:backup:01964137-0000-7000-8000-00000000beef";
     const ACTOR: &str = "did:web:alice.example";
@@ -510,6 +560,38 @@ mod tests {
             ACCOUNT_SECRET,
         )
         .unwrap()
+    }
+
+    fn temp_state_store(name: &str) -> crate::local_state::LocalStateStore {
+        let path = std::env::temp_dir().join(format!(
+            "yougen-mls-account-recovery-{name}-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        crate::local_state::LocalStateStore::with_path(path)
+    }
+
+    fn history_envelope(
+        space_id: &str,
+        group_id: &str,
+        epoch: u64,
+        secret: &str,
+    ) -> crate::mls::persistence::MlsSnapshotEnvelope {
+        crate::mls::persistence::encrypt_state(
+            space_id,
+            group_id,
+            epoch,
+            b"opaque sdk state bytes",
+            secret,
+            b"deterministic-salt",
+        )
+    }
+
+    fn history_body(envelope: &crate::mls::persistence::MlsSnapshotEnvelope) -> Value {
+        envelope.to_key_backup_body(
+            "cx:backup:01964137-0000-7000-8000-00000000feed",
+            ACTOR,
+            DEVICE,
+        )
     }
 
     #[test]
@@ -668,6 +750,91 @@ mod tests {
         let found = select_mls_account_secret_backup(&payload).expect("account secret present");
 
         assert_eq!(found["backup_id"], newer["backup_id"]);
+    }
+
+    #[test]
+    fn prompt_required_when_local_secret_exists_but_history_is_missing() {
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "stale-local-secret").unwrap();
+        let state = temp_state_store("prompt-missing-history");
+        let envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let payload = serde_json::json!({
+            "backups": [wrap(), history_body(&envelope)]
+        });
+
+        assert!(mls_restore_prompt_required(
+            &payload, &state, &store, ACTOR, DEVICE
+        ));
+    }
+
+    #[test]
+    fn prompt_not_required_when_local_history_is_current_and_decryptable() {
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+        let mut state = temp_state_store("prompt-current-history");
+        let envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        state.save_mls_snapshot(envelope.space_id.clone(), envelope.clone());
+        let payload = serde_json::json!({
+            "backups": [wrap(), history_body(&envelope)]
+        });
+
+        assert!(!mls_restore_prompt_required(
+            &payload, &state, &store, ACTOR, DEVICE
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn restore_replaces_stale_local_secret_before_history_replay() {
+        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+
+        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
+        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = ContrixMlsIdentity::new_basic(
+            Did::new(ACTOR.to_owned()).unwrap(),
+            DeviceId::new(device_a.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(space.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        let envelope = crate::mls::persistence::encrypt_state(
+            space,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            ACCOUNT_SECRET,
+            b"deterministic-salt",
+        );
+        let payload = serde_json::json!({
+            "backups": [wrap(), history_body(&envelope)]
+        });
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret_version(
+            &store,
+            ACTOR,
+            crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION + 1,
+            "stale-local-secret",
+        )
+        .unwrap();
+        let mut state = temp_state_store("restore-stale-secret");
+
+        let report = restore_mls_history_with_passphrase_from_payload(
+            &payload, &mut state, &store, ACTOR, DEVICE, PASSPHRASE,
+        )
+        .unwrap();
+
+        assert!(report.account_secret_imported);
+        assert_eq!(report.restored, 1);
+        assert_eq!(report.failed, 0);
+        let loaded = crate::mls::runtime::load_account_mls_secret(&store, ACTOR)
+            .unwrap()
+            .expect("secret present");
+        assert_eq!(
+            loaded.version,
+            crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
+        );
+        assert_eq!(loaded.secret, ACCOUNT_SECRET);
+        assert!(state.mls_snapshot_for(space).is_some());
     }
 
     #[test]

@@ -6833,6 +6833,54 @@ pub fn RouterView() -> Element {
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
 
+    // Lower-level API helpers cannot directly mutate app signals, but they
+    // can receive terminal auth errors (notably `session grant is not
+    // active: revoked`) from background pollers. Register one soft-logout
+    // hook so those paths can clear the live bearer and stop retry loops.
+    {
+        let mut invalidator_token = token;
+        let mut invalidator_sync_cursor = sync_cursor;
+        let mut invalidator_selected_space = selected_space;
+        let mut invalidator_spaces = spaces;
+        let mut invalidator_timeline = timeline;
+        let mut invalidator_device_queue = device_queue;
+        let mut invalidator_crypto_state = crypto_state;
+        let mut invalidator_status = status;
+        let mut invalidator_network_state = network_state;
+        let mut invalidator_last_error = last_error;
+        let mut invalidator_state_store = state_store;
+        let invalidator_config_store = config_store;
+        let invalidator_base_url = base_url;
+        let invalidator_account_did = account_did;
+        let invalidator_device_id = device_id;
+        let mut invalidator_sync_generation = sync_generation;
+        let invalidator_navigator = navigator.clone();
+        use_hook(move || {
+            crate::session::register_session_invalidator(move |reason| {
+                invalidator_state_store.write().set_session_grant(None);
+                invalidator_token.set(String::new());
+                persist_config(
+                    invalidator_config_store,
+                    invalidator_base_url(),
+                    invalidator_account_did(),
+                    invalidator_device_id(),
+                    String::new(),
+                );
+                invalidator_sync_cursor.set("-".to_owned());
+                invalidator_selected_space.set(String::new());
+                invalidator_spaces.set(Vec::new());
+                invalidator_timeline.set(Vec::new());
+                invalidator_device_queue.set(0);
+                invalidator_crypto_state.set("Session expired".to_owned());
+                invalidator_status.set("Session expired; sign in again".to_owned());
+                invalidator_network_state.set("online".to_owned());
+                invalidator_last_error.set(Some(reason));
+                invalidator_sync_generation.set(invalidator_sync_generation() + 1);
+                let _ = invalidator_navigator.push(Route::Login);
+            });
+        });
+    }
+
     // Single-source-of-truth for the sidebar. Anything that wants to
     // change the visible Space list writes to
     // `state_store.space_projections` (sync engine, connect()'s initial
@@ -6971,6 +7019,7 @@ pub fn RouterView() -> Element {
         let mut seen_detection_key = mls_unlock_detection_key_seen;
         let mut needs_mls_unlock = needs_mls_unlock;
         let mut restore_payload_cache = mls_restore_payload_cache;
+        let state_store_for_detection = state_store;
         use_effect(move || {
             let base = base_url();
             let session = token();
@@ -6996,27 +7045,25 @@ pub fn RouterView() -> Element {
             seen_detection_key.set(Some(detection_key));
 
             spawn(async move {
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                let has_local_secret = crate::mls::runtime::load_device_snapshot_secret(
-                    secure_store.as_ref(),
-                    &actor,
-                    &device,
-                )
-                .is_ok();
-                if has_local_secret {
-                    needs_mls_unlock.set(false);
-                    restore_payload_cache.set(None);
-                    return;
-                }
                 match crate::views::helpers::with_authed_api(&base, session, |api| async move {
                     crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
                 })
                 .await
                 {
                     Ok(payload) => {
-                        if crate::mls::account_recovery::select_mls_account_secret_backup(&payload)
-                            .is_some()
-                        {
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("yougen");
+                        let should_unlock = {
+                            let store = state_store_for_detection.read();
+                            crate::mls::account_recovery::mls_restore_prompt_required(
+                                &payload,
+                                &store,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                            )
+                        };
+                        if should_unlock {
                             restore_payload_cache.set(Some(payload));
                             needs_mls_unlock.set(true);
                         } else {
@@ -7154,6 +7201,7 @@ pub fn RouterView() -> Element {
             let detect_session = session.clone();
             let detect_actor = actor.clone();
             let detect_device = device.clone();
+            let state_store_for_probe = state_store_for_bootstrap;
             spawn(async move {
                 match bootstrap_mls_welcome_for_space(
                     base,
@@ -7183,41 +7231,42 @@ pub fn RouterView() -> Element {
                 }
 
                 // Step-3 detection: if this device has no local account MLS
-                // secret yet AND the server holds an account-secret backup,
-                // flag the unlock prompt. Detection errors must NOT block or
-                // fail boot — log and leave the flag false.
-                let has_local_secret = crate::mls::runtime::load_device_snapshot_secret(
-                    crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
-                    &detect_actor,
-                    &detect_device,
+                // secret yet OR local MLS history is missing/stale, and the
+                // server holds recovery material, flag the unlock prompt.
+                // Detection errors must NOT block or fail boot — log and
+                // leave the flag false.
+                match crate::views::helpers::with_authed_api(
+                    &detect_base,
+                    detect_session,
+                    |api| async move {
+                        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                    },
                 )
-                .is_ok();
-                if !has_local_secret {
-                    match crate::views::helpers::with_authed_api(
-                        &detect_base,
-                        detect_session,
-                        |api| async move {
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
-                        },
-                    )
-                    .await
-                    {
-                        Ok(payload) => {
-                            if crate::mls::account_recovery::select_mls_account_secret_backup(
+                .await
+                {
+                    Ok(payload) => {
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("yougen");
+                        let should_unlock = {
+                            let store = state_store_for_probe.read();
+                            crate::mls::account_recovery::mls_restore_prompt_required(
                                 &payload,
+                                &store,
+                                secure_store.as_ref(),
+                                &detect_actor,
+                                &detect_device,
                             )
-                            .is_some()
-                            {
-                                restore_payload_cache_for_bootstrap.set(Some(payload));
-                                needs_mls_unlock_for_bootstrap.set(true);
-                            }
+                        };
+                        if should_unlock {
+                            restore_payload_cache_for_bootstrap.set(Some(payload));
+                            needs_mls_unlock_for_bootstrap.set(true);
                         }
-                        Err(error) => {
-                            tracing::warn!(
-                                error = %error.display(),
-                                "MLS account-secret unlock detection failed"
-                            );
-                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error.display(),
+                            "MLS account-secret unlock detection failed"
+                        );
                     }
                 }
             });
@@ -10045,6 +10094,10 @@ async fn remint_principal_bearer(
                 access_token.clone(),
             );
             Some(access_token)
+        }
+        crate::session_refresh::RefreshOutcome::LoginRequired { reason } => {
+            crate::session::invalidate_current_session(reason);
+            None
         }
         _ => None,
     }

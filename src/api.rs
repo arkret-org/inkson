@@ -381,10 +381,10 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 
 /// True when the server has *definitively* told us the session is dead.
 ///
-/// We require both:
-///   - HTTP 401 Unauthorized, AND
-///   - an explicit error envelope code that names session loss (`auth_expired`, `M_UNKNOWN_TOKEN`,
-///     `invalid_token`, `token_expired`).
+/// We require an explicit error envelope code that names session loss
+/// (`auth_expired`, `M_UNKNOWN_TOKEN`, `invalid_token`, `token_expired`)
+/// on HTTP 401, or a session-grant-specific terminal denial such as
+/// `capability_denied` / `session grant is not active: revoked`.
 ///
 /// A bare 401 with no structured envelope is treated as a transient denial
 /// — the caller should surface it to the user and let them retry rather
@@ -394,6 +394,9 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 /// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
 /// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
+    if is_terminal_session_grant_error(error) {
+        return true;
+    }
     error
         .downcast_ref::<ContrixApiError>()
         .is_some_and(|api_error| {
@@ -410,6 +413,44 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
                     | "token_expired"
             )
         })
+}
+
+/// True when the error envelope says the persisted coauth session grant
+/// itself is terminal (revoked, expired, locked, suspended, or otherwise
+/// not active). Soland currently maps these through `capability_denied`
+/// because the failure happens in the session-grant capability bridge, but
+/// the client must treat them as session loss, not as an ordinary Space/
+/// Flow capability denial.
+pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ContrixApiError>()
+        .is_some_and(is_terminal_session_grant_api_error)
+}
+
+fn is_terminal_session_grant_api_error(api_error: &ContrixApiError) -> bool {
+    let code = api_error.error.code();
+    if matches!(
+        code,
+        "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
+    ) {
+        return true;
+    }
+    let message = api_error.error.message().to_ascii_lowercase();
+    (api_error.status == StatusCode::FORBIDDEN || api_error.status == StatusCode::UNAUTHORIZED)
+        && (code == "capability_denied"
+            || code.ends_with(".capability_denied")
+            || code == "unauthenticated"
+            || code == "auth_expired")
+        && terminal_session_grant_message(&message)
+}
+
+fn terminal_session_grant_message(message: &str) -> bool {
+    message.contains("session grant")
+        && (message.contains("revoked")
+            || message.contains("not active")
+            || message.contains("expired")
+            || message.contains("locked")
+            || message.contains("suspended"))
 }
 
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the
@@ -5972,6 +6013,30 @@ mod tests {
         }
         .into();
         assert!(!is_auth_expired_error(&forbidden));
+
+        let revoked_session_grant: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
+            ),
+        }
+        .into();
+        assert!(is_terminal_session_grant_error(&revoked_session_grant));
+        assert!(is_auth_expired_error(&revoked_session_grant));
+
+        let unrelated_capability_denied: anyhow::Error = ContrixApiError {
+            status: StatusCode::FORBIDDEN,
+            error: decode_contrix_error(
+                StatusCode::FORBIDDEN,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"}}"#,
+            ),
+        }
+        .into();
+        assert!(!is_terminal_session_grant_error(
+            &unrelated_capability_denied
+        ));
+        assert!(!is_auth_expired_error(&unrelated_capability_denied));
     }
 
     #[test]

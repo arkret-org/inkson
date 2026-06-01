@@ -39,7 +39,7 @@ use serde_json::Value;
 
 use crate::api::{
     AccountSubscribeSnapshotOutcome, ContrixApi, is_auth_expired_error, is_invalid_cursor_error,
-    rate_limited_retry_after, sleep_for,
+    is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
@@ -292,6 +292,10 @@ async fn run_iteration(
                 reconnect_after_ms,
                 reason,
             }
+        }
+        Err(error) if is_terminal_session_grant_error(&error) => {
+            crate::session::invalidate_current_session("session grant is no longer active");
+            IterationOutcome::AuthExpired
         }
         Err(error) if is_auth_expired_error(&error) => IterationOutcome::AuthExpired,
         Err(error) if let Some(retry_after_ms) = rate_limited_retry_after(&error) => {

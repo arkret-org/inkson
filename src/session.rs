@@ -43,8 +43,15 @@ pub type LocalRefreshFuture = Pin<Box<dyn Future<Output = Option<String>>>>;
 /// invoked (so a later rollover can refresh again).
 type RefreshFn = Rc<dyn Fn() -> LocalRefreshFuture>;
 
+/// Registered soft-logout hook. The app root owns the actual Dioxus
+/// signals, so lower layers call this when they receive a terminal
+/// session-grant denial and need live pollers to stop using the old
+/// bearer.
+type InvalidateFn = Rc<RefCell<dyn FnMut(String)>>;
+
 thread_local! {
     static REFRESHER: RefCell<Option<RefreshFn>> = const { RefCell::new(None) };
+    static INVALIDATOR: RefCell<Option<InvalidateFn>> = const { RefCell::new(None) };
     static IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
     static LAST_RESULT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -70,6 +77,24 @@ impl Drop for InFlightGuard {
 /// re-mint, updating the live `token` signal + persisted config on success.
 pub fn register_session_refresher(refresher: RefreshFn) {
     REFRESHER.with(|slot| *slot.borrow_mut() = Some(refresher));
+}
+
+/// Install the app-wide soft-logout hook. Called from the app root after
+/// the session/config signals exist.
+pub fn register_session_invalidator(invalidator: impl FnMut(String) + 'static) {
+    INVALIDATOR.with(|slot| *slot.borrow_mut() = Some(Rc::new(RefCell::new(invalidator))));
+}
+
+/// Clear the active UI session through the registered app hook. Safe to
+/// call from lower-level API helpers; if the hook has not been installed
+/// yet, this is a no-op.
+pub fn invalidate_current_session(reason: impl Into<String>) {
+    let reason = reason.into();
+    INVALIDATOR.with(|slot| {
+        if let Some(invalidator) = slot.borrow().as_ref() {
+            invalidator.borrow_mut()(reason);
+        }
+    });
 }
 
 /// Re-mint the principal bearer, coalescing concurrent callers onto a
@@ -140,6 +165,24 @@ mod tests {
             CALLS.with(Cell::get),
             1,
             "concurrent callers must coalesce onto a single refresh"
+        );
+    }
+
+    #[test]
+    fn invalidator_invokes_registered_hook() {
+        thread_local! {
+            static REASON: RefCell<Option<String>> = const { RefCell::new(None) };
+        }
+        REASON.with(|slot| *slot.borrow_mut() = None);
+        register_session_invalidator(|reason| {
+            REASON.with(|slot| *slot.borrow_mut() = Some(reason));
+        });
+
+        invalidate_current_session("session grant revoked");
+
+        assert_eq!(
+            REASON.with(|slot| slot.borrow().clone()),
+            Some("session grant revoked".to_owned())
         );
     }
 }

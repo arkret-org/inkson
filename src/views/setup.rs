@@ -1160,6 +1160,58 @@ pub fn SetupPanel(
                                                                     }),
                                                                 );
 
+                                                                let mut initial_mls_backup_id = None;
+                                                                if crate::security_state::encryption_profile_is_encrypted(
+                                                                    &encryption_profile,
+                                                                ) {
+                                                                    let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                                                    let snapshot = {
+                                                                        let mut store = state_store.write();
+                                                                        match crate::mls::runtime::ensure_creator_mls_snapshot(
+                                                                            &mut store,
+                                                                            secure.as_ref(),
+                                                                            &space.space_id,
+                                                                            &actor,
+                                                                            &device,
+                                                                        ) {
+                                                                            Ok(Some(_)) | Ok(None) => {
+                                                                                store.mls_snapshot_for(&space.space_id)
+                                                                            }
+                                                                            Err(err) => {
+                                                                                let message = format!(
+                                                                                    "created {}; MLS initial group setup failed: {}",
+                                                                                    space.space_id,
+                                                                                    err.user_message()
+                                                                                );
+                                                                                space_state.set(message.clone());
+                                                                                status.set(message);
+                                                                                return;
+                                                                            }
+                                                                        }
+                                                                    };
+                                                                    if let Some(snapshot) = snapshot {
+                                                                        match crate::mls::runtime::upload_mls_snapshot_backup(
+                                                                            &api,
+                                                                            &snapshot,
+                                                                            &actor,
+                                                                            &device,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(backup_id) => {
+                                                                                initial_mls_backup_id = Some(backup_id);
+                                                                            }
+                                                                            Err(err) => {
+                                                                                tracing::warn!(
+                                                                                    error = %err.user_message(),
+                                                                                    space = %space.space_id,
+                                                                                    "initial MLS history backup upload failed"
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+
                                                                 let mut steps = vec![format!("created {}", space.space_id)];
                                                                 if invitees.is_empty() {
                                                                     steps.push("seeded owner only".to_owned());
@@ -1177,6 +1229,16 @@ pub fn SetupPanel(
                                                                         "plaintext services {}",
                                                                         plaintext_services.len()
                                                                     ));
+                                                                }
+                                                                if let Some(backup_id) = initial_mls_backup_id {
+                                                                    steps.push(format!(
+                                                                        "MLS ready; history backup {}",
+                                                                        short_protocol_id(&backup_id)
+                                                                    ));
+                                                                } else if crate::security_state::encryption_profile_is_encrypted(
+                                                                    &encryption_profile,
+                                                                ) {
+                                                                    steps.push("MLS ready locally".to_owned());
                                                                 }
 
                                                                 let message = steps.join(" · ");

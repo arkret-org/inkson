@@ -1,7 +1,10 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ContrixApi, is_auth_expired_error, normalize_wait_for_sync_token};
+use crate::api::{
+    ContrixApi, is_auth_expired_error, is_terminal_session_grant_error,
+    normalize_wait_for_sync_token,
+};
 use crate::config::{ClientConfig, LocalConfigStore};
 
 /// R3.2 (contrix-spec @ b56cab1) — composer/render-side mention node.
@@ -271,14 +274,16 @@ where
     F: FnOnce(ContrixApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
+    if access_token.trim().is_empty() {
+        return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
+            "missing authenticated session"
+        )));
+    }
     let api = authed_api(base_url, access_token).map_err(ApiCallError::Unavailable)?;
-    f(api).await.map_err(|err| {
-        if is_auth_expired_error(&err) {
-            ApiCallError::AuthExpired(err)
-        } else {
-            ApiCallError::Failed(err)
-        }
-    })
+    match f(api).await {
+        Ok(value) => Ok(value),
+        Err(err) => Err(classify_api_call_error(err).await),
+    }
 }
 
 /// Same as [`with_authed_api`] but also forwards a sync-cursor token to
@@ -295,15 +300,33 @@ where
     F: FnOnce(ContrixApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
+    if access_token.trim().is_empty() {
+        return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
+            "missing authenticated session"
+        )));
+    }
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token)
         .map_err(ApiCallError::Unavailable)?;
-    f(api).await.map_err(|err| {
-        if is_auth_expired_error(&err) {
-            ApiCallError::AuthExpired(err)
-        } else {
-            ApiCallError::Failed(err)
-        }
-    })
+    match f(api).await {
+        Ok(value) => Ok(value),
+        Err(err) => Err(classify_api_call_error(err).await),
+    }
+}
+
+async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
+    if is_terminal_session_grant_error(&err) {
+        crate::session::invalidate_current_session("session grant is no longer active");
+        return ApiCallError::AuthExpired(err);
+    }
+    if is_auth_expired_error(&err) {
+        // Run the single-flight remint path so views that ignore the
+        // returned AuthExpired error still converge on a fresh token (or
+        // a cleared session on terminal failure) before their next poll.
+        let _ = crate::session::refresh_current_bearer().await;
+        ApiCallError::AuthExpired(err)
+    } else {
+        ApiCallError::Failed(err)
+    }
 }
 
 pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
