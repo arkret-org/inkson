@@ -91,12 +91,15 @@ pub fn build_appeal_submit_op(
     target_ref: &str,
     reason_text_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
+    let realm_id = crate::operation::scope_id_as_realm_id(realm_id);
     // Round R2/R3: typed appeal id binding. Validate the input rather than
     // forwarding free-form strings to the wire — the SDK's TypedAppealId
     // enforces the `cx:appeal:<uuidv7>` shape.
     let typed_appeal_id = contrix_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
     let payload = contrix_sdk::AppealSubmitPayload {
+        realm_id: contrix_sdk::RealmId::new(realm_id.clone())
+            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
         appeal_id: typed_appeal_id.clone(),
         decision_ref: contrix_sdk::EventId::new(decision_event_id)
             .map_err(|err| anyhow::anyhow!("invalid decision_event_id: {err}"))?,
@@ -115,10 +118,11 @@ pub fn build_appeal_submit_op(
 
     let body = serde_json::to_value(&payload)?;
     Ok(
-        OperationBuilder::new(realm_id, appellant, "cx.moderation.appeal.submit")
+        OperationBuilder::new(&realm_id, appellant, "cx.moderation.appeal.submit")
             .target_ref(decision_event_id)
             .body(json!({
                 "schema": contrix_sdk::ModerationAppealPayload::SCHEMA,
+                "realm_id": body["realm_id"],
                 "appeal_id": body["appeal_id"],
                 "decision_ref": body["decision_ref"],
                 "target_ref": body["target_ref"],
@@ -304,6 +308,10 @@ mod tests {
         .build("test-node");
         assert_eq!(op.kind, "cx.moderation.appeal.submit");
         assert_eq!(op.payload["schema"], "cx.schema.moderation_appeal.v1");
+        assert_eq!(
+            op.payload["realm_id"],
+            "cx:realm:01904100-0000-7000-8000-000000000001"
+        );
         assert!(op.payload["appeal_id"].is_string());
     }
 
