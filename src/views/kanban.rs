@@ -4032,7 +4032,7 @@ pub fn KanbanPanel(
                     let synthesis_entries = {
                         let store = state_store.read();
                         let snapshot = store.load();
-                        card_synthesis_track_entries(&card, &snapshot.raw_operations, &store)
+                        card_synthesis_track_entries(card, &snapshot.raw_operations, &store)
                     };
                     let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();
@@ -4126,7 +4126,7 @@ pub fn KanbanPanel(
                                             }
                                             h2 { "{card.title}" }
                                             div { class: "card-detail-title-meta",
-                                                WriteStateBadge { state: displayed_card_state(&card, &projected_flow_ids) }
+                                                WriteStateBadge { state: displayed_card_state(card, &projected_flow_ids) }
                                                 for label in &card.labels {
                                                     span { class: "badge", "{label}" }
                                                 }
@@ -5376,8 +5376,7 @@ fn member_display_label(
     if let Some(handle) = member_inline_handle_label(row) {
         return handle;
     }
-    if let Some(handle) =
-        cached_primary_handle.and_then(|raw| crate::identity_handle::parse_user_handle(raw))
+    if let Some(handle) = cached_primary_handle.and_then(crate::identity_handle::parse_user_handle)
     {
         return handle.display;
     }
@@ -5770,9 +5769,7 @@ fn synthesis_body_after_entry_edit(
             }
         })
         .collect::<Vec<_>>();
-    if target_entry_id.is_none() && !replacement.is_empty() {
-        bodies.push(replacement.to_owned());
-    } else if target_entry_id.is_some() && !found_target && !replacement.is_empty() {
+    if !replacement.is_empty() && (target_entry_id.is_none() || !found_target) {
         bodies.push(replacement.to_owned());
     }
     join_synthesis_entry_bodies(bodies)
@@ -8163,7 +8160,7 @@ fn submit_flow_position_cas_move_with_attempt(
                     .iter_mut()
                     .find(|r| r.move_id == move_for_track)
                 {
-                    record.state = card_state.clone();
+                    record.state = card_state;
                     record.note = format!("events.submit failed: {err_text}");
                 }
                 set_card_state_in_columns(&mut columns, &flow_id, card_state);

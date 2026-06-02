@@ -185,6 +185,18 @@ struct SpaceParticipant {
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
+type LocalEncryptedMessage = (
+    contrix_sdk::EncryptedPayload,
+    contrix_sdk::EncryptedEnvelopeAadV1,
+);
+
+type LocalMlsEncryptResult = (
+    Option<contrix_sdk::Hash>,
+    Vec<contrix_sdk::Did>,
+    Option<LocalEncryptedMessage>,
+    Option<contrix_sdk::MlsCommitEnvelope>,
+);
+
 fn run_local_mls_encrypt(
     mut state_store: Signal<LocalStateStore>,
     space_id: &str,
@@ -192,15 +204,7 @@ fn run_local_mls_encrypt(
     principal_id: &str,
     device_id: &str,
     plaintext_bytes: &[u8],
-) -> (
-    Option<contrix_sdk::Hash>,
-    Vec<contrix_sdk::Did>,
-    Option<(
-        contrix_sdk::EncryptedPayload,
-        contrix_sdk::EncryptedEnvelopeAadV1,
-    )>,
-    Option<contrix_sdk::MlsCommitEnvelope>,
-) {
+) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
@@ -5714,15 +5718,7 @@ pub fn ChatPanel(
                                     local_member_dids,
                                     encrypted_message,
                                     real_commit_envelope,
-                                ): (
-                                    Option<contrix_sdk::Hash>,
-                                    Vec<contrix_sdk::Did>,
-                                    Option<(
-                                        contrix_sdk::EncryptedPayload,
-                                        contrix_sdk::EncryptedEnvelopeAadV1,
-                                    )>,
-                                    Option<contrix_sdk::MlsCommitEnvelope>,
-                                ) = run_local_mls_encrypt(
+                                ): LocalMlsEncryptResult = run_local_mls_encrypt(
                                     state_store,
                                     &space,
                                     &scope_id_as_realm_id(&space),

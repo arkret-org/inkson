@@ -8,8 +8,8 @@
 //! - `cx.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
 //!   reducers MUST NOT use it as state input). Round 4 v2 wire shape; carries `device_id` + `proof`
 //!   + `payload.{call_id, signal_type, seq}`. Receivers use [`CallSignalReceiver`] to reject
-//!   replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on a
-//!   rollback.
+//!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
+//!     a rollback.
 //! - `cx.call.state` — durable call state transitions (start / answer / end).
 //! - `cx.call.recording.start` — durable opt-in recording marker.
 

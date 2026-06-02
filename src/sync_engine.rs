@@ -22,7 +22,7 @@
 //! * **Backoff**: transient network errors double the sleep (capped at `MAX_BACKOFF_SECS`); a
 //!   successful response resets it. Auth-expired errors stop the engine and let the refresh poller
 //!   + login flow take over. Cursor-invalid errors clear the cursor and immediately retry as a full
-//!   sync.
+//!     sync.
 //!
 //! The engine deliberately does NOT trigger session refresh inline —
 //! that's owned by [`crate::session_refresh`] which runs in parallel.

@@ -6517,9 +6517,11 @@ fn initial_session_token_from_state(
         }
     }
     if let Some(grant) = local_state.session_grant.as_ref() {
-        return session_grant_access_token_boot_usable(grant, &config.session_token, now_unix)
-            .then(|| config.session_token.clone())
-            .unwrap_or_default();
+        return if session_grant_access_token_boot_usable(grant, &config.session_token, now_unix) {
+            config.session_token.clone()
+        } else {
+            String::new()
+        };
     }
     if local_state.oidc_tokens.is_some() {
         return String::new();
@@ -6860,7 +6862,7 @@ pub fn RouterView() -> Element {
         let invalidator_account_did = account_did;
         let invalidator_device_id = device_id;
         let mut invalidator_sync_generation = sync_generation;
-        let invalidator_navigator = navigator.clone();
+        let invalidator_navigator = navigator;
         use_hook(move || {
             crate::session::register_session_invalidator(move |reason| {
                 invalidator_state_store.write().set_session_grant(None);
@@ -11207,8 +11209,10 @@ mod tests {
     #[test]
     fn boot_session_token_uses_fresh_oidc_access_token() {
         let now = 1_000;
-        let mut state = ClientLocalState::default();
-        state.oidc_tokens = Some(oidc_bundle("sx-fresh", Some(now + 120)));
+        let state = ClientLocalState {
+            oidc_tokens: Some(oidc_bundle("sx-fresh", Some(now + 120))),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11225,8 +11229,10 @@ mod tests {
     #[test]
     fn boot_session_token_ignores_expired_oidc_access_token() {
         let now = 1_000;
-        let mut state = ClientLocalState::default();
-        state.oidc_tokens = Some(oidc_bundle("sx-expired", Some(now - 1)));
+        let state = ClientLocalState {
+            oidc_tokens: Some(oidc_bundle("sx-expired", Some(now - 1))),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11240,11 +11246,13 @@ mod tests {
     #[test]
     fn boot_session_token_ignores_nearly_expired_oidc_access_token() {
         let now = 1_000;
-        let mut state = ClientLocalState::default();
-        state.oidc_tokens = Some(oidc_bundle(
-            "sx-nearly-expired",
-            Some(now + BOOT_ACCESS_TOKEN_SKEW_SECS),
-        ));
+        let state = ClientLocalState {
+            oidc_tokens: Some(oidc_bundle(
+                "sx-nearly-expired",
+                Some(now + BOOT_ACCESS_TOKEN_SKEW_SECS),
+            )),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11274,8 +11282,10 @@ mod tests {
     #[test]
     fn boot_session_token_uses_fresh_session_grant_bearer() {
         let now = chrono::Utc::now().timestamp();
-        let mut state = ClientLocalState::default();
-        state.session_grant = Some(session_grant(120, 3600));
+        let state = ClientLocalState {
+            session_grant: Some(session_grant(120, 3600)),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11292,9 +11302,11 @@ mod tests {
     #[test]
     fn boot_session_token_falls_back_to_session_grant_when_oidc_is_expired() {
         let now = chrono::Utc::now().timestamp();
-        let mut state = ClientLocalState::default();
-        state.oidc_tokens = Some(oidc_bundle("sx-expired-oidc", Some(now - 1)));
-        state.session_grant = Some(session_grant(120, 3600));
+        let state = ClientLocalState {
+            oidc_tokens: Some(oidc_bundle("sx-expired-oidc", Some(now - 1))),
+            session_grant: Some(session_grant(120, 3600)),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11311,8 +11323,10 @@ mod tests {
     #[test]
     fn boot_session_token_ignores_expired_session_grant_bearer() {
         let now = chrono::Utc::now().timestamp();
-        let mut state = ClientLocalState::default();
-        state.session_grant = Some(session_grant(-1, 3600));
+        let state = ClientLocalState {
+            session_grant: Some(session_grant(-1, 3600)),
+            ..Default::default()
+        };
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
@@ -11327,8 +11341,10 @@ mod tests {
     #[test]
     fn bootstrap_can_start_with_oidc_refresh_material_without_bearer() {
         let mut store = isolated_store("bootstrap-oidc");
-        let mut state = ClientLocalState::default();
-        state.oidc_tokens = Some(oidc_bundle("sx-expired", Some(1)));
+        let state = ClientLocalState {
+            oidc_tokens: Some(oidc_bundle("sx-expired", Some(1))),
+            ..Default::default()
+        };
         store.save(state);
 
         assert!(has_bootstrap_refresh_material(

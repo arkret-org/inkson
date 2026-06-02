@@ -651,7 +651,7 @@ pub fn prepare_account_mls_secret_rotation(
                     .map_err(MlsRuntimeError::DeviceSecret)?;
                 load_account_mls_secret(store, actor)
                     .map_err(MlsRuntimeError::DeviceSecret)?
-                    .ok_or_else(|| MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?
+                    .ok_or(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?
             }
         };
     let new_version = previous_secret
