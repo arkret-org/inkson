@@ -45,11 +45,19 @@ pub fn build_audit_accessed(
     target_event_id: &str,
     device_id: &str,
 ) -> OperationBuilder {
+    // The registered `audit_payload` schema (cx.schema.event_payload.v1
+    // #/$defs/audit_payload) is strict `additionalProperties:false` and only
+    // permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The reader
+    // device is carried inside `purpose` (a free-form string) rather than as an
+    // illegal top-level `reader_device` field, which the server rejects with
+    // schema_violation.
     OperationBuilder::new(space_id, actor, "cx.audit.accessed")
         .target_ref(target_event_id)
         .body(json!({
-            "target_event_id": target_event_id,
-            "reader_device": device_id,
+            "target_ref": target_event_id,
+            "actor_id": actor,
+            "purpose": format!("e2ee_read;reader_device={device_id}"),
+            "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         }))
 }
 
@@ -61,11 +69,24 @@ pub fn build_audit_ryw_receipt(
     source_event_id: &str,
     delivered_to_devices: Vec<String>,
 ) -> OperationBuilder {
+    // The registered `audit_payload` schema is strict `additionalProperties:false`
+    // and only permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The
+    // source event is carried as `target_ref`; the delivered-device set is folded
+    // into `purpose` (free-form string) rather than illegal top-level
+    // `source_event_id` / `delivered_to_devices` fields, which the server rejects
+    // with `schema_violation`.
+    let purpose = if delivered_to_devices.is_empty() {
+        "ryw_receipt".to_owned()
+    } else {
+        format!("ryw_receipt;delivered_to={}", delivered_to_devices.join(","))
+    };
     OperationBuilder::new(space_id, actor, "cx.audit.ryw_receipt")
         .target_ref(source_event_id)
         .body(json!({
-            "source_event_id": source_event_id,
-            "delivered_to_devices": delivered_to_devices,
+            "target_ref": source_event_id,
+            "actor_id": actor,
+            "purpose": purpose,
+            "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         }))
 }
 
@@ -143,8 +164,17 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "cx.audit.accessed");
-        assert_eq!(op.payload["target_event_id"], "cx:event:abc");
-        assert_eq!(op.payload["reader_device"], "did:key:zDevice");
+        assert_eq!(op.payload["target_ref"], "cx:event:abc");
+        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert!(
+            op.payload["purpose"]
+                .as_str()
+                .is_some_and(|p| p.contains("reader_device=did:key:zDevice"))
+        );
+        assert!(op.payload["accessed_at"].is_string());
+        // No illegal top-level fields under the strict audit_payload schema.
+        assert!(op.payload.get("reader_device").is_none());
+        assert!(op.payload.get("target_event_id").is_none());
     }
 
     #[test]
@@ -157,7 +187,17 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "cx.audit.ryw_receipt");
-        assert_eq!(op.payload["delivered_to_devices"][1], "did:key:zB");
+        assert_eq!(op.payload["target_ref"], "cx:event:abc");
+        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert!(
+            op.payload["purpose"]
+                .as_str()
+                .is_some_and(|p| p.contains("did:key:zA") && p.contains("did:key:zB"))
+        );
+        assert!(op.payload["accessed_at"].is_string());
+        // No illegal top-level fields under the strict audit_payload schema.
+        assert!(op.payload.get("delivered_to_devices").is_none());
+        assert!(op.payload.get("source_event_id").is_none());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{RECOVERY_PASSPHRASE_MIN_STRENGTH, estimate_passphrase_strength};
 use crate::views::helpers::with_authed_api;
 
@@ -20,6 +21,7 @@ pub fn MlsBackupPrompt(
     token: Signal<String>,
     actor_did: Signal<String>,
     device_id: Signal<String>,
+    state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
 ) -> Element {
     let mut passphrase = use_signal(String::new);
@@ -61,10 +63,23 @@ pub fn MlsBackupPrompt(
         let session = token();
         let actor = actor_did();
         let device = device_id();
+        // X5.3 — snapshot the local-plaintext sidecar so we can also back it up
+        // cross-device after the account secret upload succeeds. Read it here
+        // (synchronously, before the spawn) so we don't borrow the store across
+        // the network awaits.
+        let sidecar_json = if state_store.read().private_plaintext_is_empty() {
+            None
+        } else {
+            Some(state_store.read().private_plaintext_snapshot_json())
+        };
         let mut needs_mls_backup = needs_mls_backup;
         busy.set(true);
         status.set(crate::i18n::tr("mls_backup.status.uploading"));
         spawn(async move {
+            let actor_for_sidecar = actor.clone();
+            let device_for_sidecar = device.clone();
+            let base_for_sidecar = base.clone();
+            let session_for_sidecar = session.clone();
             let result = with_authed_api(&base, session, |api| async move {
                 let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase(
@@ -80,6 +95,31 @@ pub fn MlsBackupPrompt(
             busy.set(false);
             match result {
                 Ok(_backup_id) => {
+                    // X5.3 — best-effort: also back up the encrypted sidecar so a
+                    // fresh browser recovers the author's own content. Failure
+                    // only logs (the account secret backup already succeeded).
+                    if let Some(sidecar_json) = sidecar_json {
+                        let actor = actor_for_sidecar;
+                        let device = device_for_sidecar;
+                        let outcome = with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
+                            let secure_store =
+                                crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                &api,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                                &sidecar_json,
+                            )
+                            .await
+                        })
+                        .await;
+                        // Best-effort: the account secret backup already
+                        // succeeded, so a sidecar failure must not block the
+                        // success path. Swallow it (the next encrypted write or
+                        // the kanban write-path trigger will retry the upload).
+                        let _ = outcome;
+                    }
                     passphrase.set(String::new());
                     confirm.set(String::new());
                     status.set(crate::i18n::tr("mls_backup.status.created"));

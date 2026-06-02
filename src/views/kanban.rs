@@ -967,6 +967,7 @@ fn containers_with_local_space_creates(
 /// Position rank, when present, drives stable ordering inside a column.
 fn collection_projection_to_columns(
     projection: &contrix_sdk::CollectionProjectionResBody,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     projection
         .groups
@@ -975,7 +976,11 @@ fn collection_projection_to_columns(
             id: group.group_id.clone(),
             title: group.title.clone(),
             rank: group.rank.clone().unwrap_or_default(),
-            cards: group.items.iter().map(card_from_projection_item).collect(),
+            cards: group
+                .items
+                .iter()
+                .map(|item| card_from_projection_item(item, decrypt_ctx))
+                .collect(),
             state: SpaceContainerLifecycleState::Active,
         })
         .collect()
@@ -985,7 +990,10 @@ fn collection_projection_to_columns(
 /// is honoured: `visibility="locked"` produces a [`LockedFlow`] with an
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
-fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> KanbanCard {
+fn card_from_projection_item(
+    item: &contrix_sdk::CollectionProjectionItem,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> KanbanCard {
     let id = item
         .object
         .get("id")
@@ -1081,17 +1089,27 @@ fn card_from_projection_item(item: &contrix_sdk::CollectionProjectionItem) -> Ka
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned(),
-        body: flow_body_display_text(item.object.get("body").or_else(|| {
-            item.object
-                .get("fields")
-                .and_then(|fields| fields.get("body"))
-        })),
-        synthesis: flow_body_display_text(item.object.get("synthesis").or_else(|| {
-            item.object
-                .get("tracks")
-                .and_then(|tracks| tracks.get("synthesis"))
-                .and_then(|track| track.get("body"))
-        })),
+        body: private_flow_field_text(
+            decrypt_ctx,
+            &primary_flow_id,
+            "body",
+            item.object.get("body").or_else(|| {
+                item.object
+                    .get("fields")
+                    .and_then(|fields| fields.get("body"))
+            }),
+        ),
+        synthesis: private_flow_field_text(
+            decrypt_ctx,
+            &primary_flow_id,
+            "synthesis",
+            item.object.get("synthesis").or_else(|| {
+                item.object
+                    .get("tracks")
+                    .and_then(|tracks| tracks.get("synthesis"))
+                    .and_then(|track| track.get("body"))
+            }),
+        ),
         created_by,
         created_at,
         updated_at,
@@ -1136,6 +1154,7 @@ fn columns_from_lifecycle_projection(
     containers: &[crate::api::SpaceContainerProjectionView],
     flows: &[crate::api::FlowProjectionView],
     preferred_board_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let board_options = board_space_options_from_projection(containers);
     let selected_board_id = if !preferred_board_id.trim().is_empty()
@@ -1186,7 +1205,7 @@ fn columns_from_lifecycle_projection(
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
-            column.cards.push(card_from_flow_projection(flow));
+            column.cards.push(card_from_flow_projection(flow, decrypt_ctx));
         }
     }
 
@@ -1203,10 +1222,11 @@ fn columns_from_lifecycle_projection_with_local(
     preferred_board_id: &str,
     raw_operations: &[RawOperationRecord],
     realm_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let merged_containers =
         containers_with_local_space_creates(containers, raw_operations, realm_id);
-    columns_from_lifecycle_projection(&merged_containers, flows, preferred_board_id)
+    columns_from_lifecycle_projection(&merged_containers, flows, preferred_board_id, decrypt_ctx)
 }
 
 fn sort_kanban_cards(cards: &mut [KanbanCard]) {
@@ -1331,7 +1351,120 @@ fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
     }
 }
 
-fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCard {
+/// Borrowed decrypt context threaded into the pure card builders so an
+/// encrypted realm's private patch values (`body` / `synthesis` /
+/// `description`) can be decrypted on read. All fields are cheap borrows
+/// captured from `KanbanPanel` (`state_store.read()`, `account_did`,
+/// `device_id`, and the realm/space id). `None` (the common, unencrypted
+/// case, and every test) means "render plaintext values as-is".
+#[derive(Clone, Copy)]
+struct MlsDecryptCtx<'a> {
+    state_store: &'a LocalStateStore,
+    space_id: &'a str,
+    actor_did: &'a str,
+    device_id: &'a str,
+}
+
+/// Cheap key-only check: is `value` an MLS-encrypted envelope (the shape
+/// `encrypt_values_with_device_snapshot` writes into a private patch
+/// value)? We avoid any crypto work unless this returns true, so
+/// unencrypted realms pay nothing.
+fn value_is_mls_envelope(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.get("scheme").and_then(Value::as_str) == Some("mls-rfc9420") {
+        return true;
+    }
+    object.contains_key("ciphertext") && object.contains_key("content_type")
+}
+
+/// Decrypt a single private flow patch value if (and only if) it is an MLS
+/// envelope. Returns the decrypted plaintext patch value parsed as JSON
+/// (e.g. a string `"…body text…"` or an object `{"body":"…"}`), or `None`
+/// when `value` is not an envelope or the decrypt softly fails (no
+/// snapshot / wrong device secret / payload that doesn't decrypt). On
+/// `None` the caller keeps the original value (plaintext realms) or falls
+/// back to a blank field (encrypted-but-locked).
+fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value) -> Option<Value> {
+    if !value_is_mls_envelope(value) {
+        return None;
+    }
+    let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
+        ctx.state_store,
+        ctx.space_id,
+        ctx.actor_did,
+        ctx.device_id,
+        value,
+    )?;
+    serde_json::from_slice::<Value>(&plaintext).ok()
+}
+
+/// Render `value` as display text, transparently decrypting it first when
+/// it is an MLS envelope and a decrypt context is available. When the
+/// value is an envelope but decryption is not possible (no `ctx`, no
+/// snapshot, wrong key), the field renders blank rather than leaking the
+/// raw envelope JSON through `flow_body_display_text`.
+fn private_flow_display_text(ctx: Option<&MlsDecryptCtx<'_>>, value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    if value_is_mls_envelope(value) {
+        return match ctx.and_then(|ctx| decrypt_private_flow_value(ctx, value)) {
+            Some(plaintext) => flow_body_display_text(Some(&plaintext)),
+            // Encrypted but un-decryptable: render blank instead of the
+            // raw envelope. Do NOT crash.
+            None => String::new(),
+        };
+    }
+    flow_body_display_text(Some(value))
+}
+
+/// X5.2 — resolve the display text for an author-private flow field
+/// (`body` / `synthesis`) with a 3-tier precedence:
+///
+/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the
+///    author's own content, the ONLY source the author can ever see for
+///    their own encrypted fields (OpenMLS refuses to decrypt the author's
+///    own ciphertext). Stored as the JSON-serialized patch value, so we
+///    parse it back and run it through `flow_body_display_text` exactly as
+///    the decrypt tier would, keeping write+read symmetric.
+/// 2. **Decrypt** (`private_flow_display_text`) — for ciphertext written by
+///    *other* members / other leaves synced in, which we *can* decrypt.
+/// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
+///
+/// `field_path` MUST match the token the writer stored under (the patch
+/// key from `collect_encryptable_private_patch_values`: `"body"` /
+/// `"synthesis"`).
+fn private_flow_field_text(
+    ctx: Option<&MlsDecryptCtx<'_>>,
+    flow_id: &str,
+    field_path: &str,
+    value: Option<&Value>,
+) -> String {
+    // Tier 1: author's own plaintext sidecar (local-only).
+    if let Some(ctx) = ctx
+        && let Some(plaintext) = ctx
+            .state_store
+            .private_plaintext_for(ctx.space_id, flow_id, field_path)
+    {
+        // Stored shape is the JSON-serialized patch value; parse it back
+        // and render identically to the decrypt tier.
+        if let Ok(parsed) = serde_json::from_str::<Value>(&plaintext) {
+            return flow_body_display_text(Some(&parsed));
+        }
+        // Fall back to the raw string if it wasn't valid JSON (defensive;
+        // the writer always stores serialized JSON).
+        return plaintext;
+    }
+    // Tiers 2 + 3: decrypt another member's ciphertext, else blank.
+    private_flow_display_text(ctx, value)
+}
+
+fn card_from_flow_projection(
+    flow: &crate::api::FlowProjectionView,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> KanbanCard {
     let title = if flow.title.trim().is_empty() {
         flow.flow_id.clone()
     } else {
@@ -1372,13 +1505,23 @@ fn card_from_flow_projection(flow: &crate::api::FlowProjectionView) -> KanbanCar
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: flow_body_display_text(flow.body.as_ref().or_else(|| flow.fields.get("body"))),
-        synthesis: flow_body_display_text(flow.fields.get("synthesis").or_else(|| {
-            flow.fields
-                .get("tracks")
-                .and_then(|tracks| tracks.get("synthesis"))
-                .and_then(|track| track.get("body"))
-        })),
+        body: private_flow_field_text(
+            decrypt_ctx,
+            &flow.flow_id,
+            "body",
+            flow.body.as_ref().or_else(|| flow.fields.get("body")),
+        ),
+        synthesis: private_flow_field_text(
+            decrypt_ctx,
+            &flow.flow_id,
+            "synthesis",
+            flow.fields.get("synthesis").or_else(|| {
+                flow.fields
+                    .get("tracks")
+                    .and_then(|tracks| tracks.get("synthesis"))
+                    .and_then(|track| track.get("body"))
+            }),
+        ),
         created_by: flow
             .created_by
             .clone()
@@ -1949,12 +2092,16 @@ pub fn KanbanPanel(
         let state = state_store.read().load();
         let initial_columns =
             if initial_columns.is_empty() && !initial_board_space_id.trim().is_empty() {
+                // Empty server projections here (local raw-op overlay
+                // only): no encrypted flow cards are produced, so no
+                // decrypt context is required.
                 let (local_columns, ..) = columns_from_lifecycle_projection_with_local(
                     &[],
                     &[],
                     &initial_board_space_id,
                     &state.raw_operations,
                     &local_realm_id,
+                    None,
                 );
                 local_columns
             } else {
@@ -2086,6 +2233,9 @@ pub fn KanbanPanel(
     {
         let routed_board_id = route_board_id(&route);
         let route_local_realm_id = local_realm_id.clone();
+        let decrypt_space_id = selected_space.clone();
+        let decrypt_actor = account_did.clone();
+        let decrypt_device = device_id.clone();
         use_effect(move || {
             let Some(board_id) = routed_board_id.clone() else {
                 return;
@@ -2100,6 +2250,13 @@ pub fn KanbanPanel(
             if containers.is_empty() && flows.is_empty() && raw_operations.is_empty() {
                 return;
             }
+            let decrypt_store = state_store.read();
+            let decrypt_ctx = MlsDecryptCtx {
+                state_store: &decrypt_store,
+                space_id: &decrypt_space_id,
+                actor_did: &decrypt_actor,
+                device_id: &decrypt_device,
+            };
             let (projected_columns, options, projected_board_id) =
                 columns_from_lifecycle_projection_with_local(
                     &containers,
@@ -2107,7 +2264,9 @@ pub fn KanbanPanel(
                     &board_id,
                     &raw_operations,
                     &route_local_realm_id,
+                    Some(&decrypt_ctx),
                 );
+            drop(decrypt_store);
             if projected_board_id.as_deref() == Some(board_id.as_str()) {
                 if !options.is_empty() {
                     board_space_options.set(options);
@@ -2136,6 +2295,9 @@ pub fn KanbanPanel(
     {
         let routed_flow_id = route_card_flow_id(&route);
         let route_local_realm_id = local_realm_id.clone();
+        let decrypt_space_id = selected_space.clone();
+        let decrypt_actor = account_did.clone();
+        let decrypt_device = device_id.clone();
         use_effect(move || {
             let Some(flow_id) = routed_flow_id.clone() else {
                 return;
@@ -2158,6 +2320,13 @@ pub fn KanbanPanel(
             let flows = flow_items.clone();
             drop(flow_items);
             let raw_operations = state_store.read().load().raw_operations;
+            let decrypt_store = state_store.read();
+            let decrypt_ctx = MlsDecryptCtx {
+                state_store: &decrypt_store,
+                space_id: &decrypt_space_id,
+                actor_did: &decrypt_actor,
+                device_id: &decrypt_device,
+            };
             let (projected_columns, options, projected_board_id) =
                 columns_from_lifecycle_projection_with_local(
                     &containers,
@@ -2165,7 +2334,9 @@ pub fn KanbanPanel(
                     &flow_board,
                     &raw_operations,
                     &route_local_realm_id,
+                    Some(&decrypt_ctx),
                 );
+            drop(decrypt_store);
             if let Some(board_id) = projected_board_id {
                 if !options.is_empty() {
                     board_space_options.set(options);
@@ -2198,8 +2369,14 @@ pub fn KanbanPanel(
     let auto_token = token;
     let auto_seed_fallback_allowed = seed_fallback_allowed;
     let auto_board_view_id = board_view_id;
+    let auto_decrypt_space_id = selected_space.clone();
+    let auto_decrypt_actor = account_did.clone();
+    let auto_decrypt_device = device_id.clone();
     use_future(move || {
         let base = auto_base.clone();
+        let decrypt_space_id = auto_decrypt_space_id.clone();
+        let decrypt_actor = auto_decrypt_actor.clone();
+        let decrypt_device = auto_decrypt_device.clone();
         async move {
             if bootstrapped() {
                 return;
@@ -2220,11 +2397,20 @@ pub fn KanbanPanel(
             .await
             {
                 Ok(projection) => {
-                    let cols = overlay_local_card_creates(
-                        collection_projection_to_columns(&projection),
-                        &state_store.read(),
-                        &selected_board_space_id(),
-                    );
+                    let cols = {
+                        let decrypt_store = state_store.read();
+                        let decrypt_ctx = MlsDecryptCtx {
+                            state_store: &decrypt_store,
+                            space_id: &decrypt_space_id,
+                            actor_did: &decrypt_actor,
+                            device_id: &decrypt_device,
+                        };
+                        overlay_local_card_creates(
+                            collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                            &decrypt_store,
+                            &selected_board_space_id(),
+                        )
+                    };
                     if !cols.is_empty() {
                         columns.set(cols);
                     }
@@ -2267,10 +2453,16 @@ pub fn KanbanPanel(
     let live_board_view_id = board_view_id;
     let live_lifecycle_realm_id = local_realm_id.clone();
     let live_lifecycle_local_realm_id = local_realm_id.clone();
+    let live_decrypt_space_id = selected_space.clone();
+    let live_decrypt_actor = account_did.clone();
+    let live_decrypt_device = device_id.clone();
     use_future(move || {
         let base = live_base.clone();
         let lifecycle_realm_id = live_lifecycle_realm_id.clone();
         let lifecycle_local_realm_id = live_lifecycle_local_realm_id.clone();
+        let decrypt_space_id = live_decrypt_space_id.clone();
+        let decrypt_actor = live_decrypt_actor.clone();
+        let decrypt_device = live_decrypt_device.clone();
         async move {
             // Defer the first poll so the bootstrap fetch finishes
             // first and we don't double-fire on mount.
@@ -2285,11 +2477,20 @@ pub fn KanbanPanel(
                     })
                     .await
                     {
-                        let cols = overlay_local_card_creates(
-                            collection_projection_to_columns(&projection),
-                            &state_store.read(),
-                            &selected_board_space_id(),
-                        );
+                        let cols = {
+                            let decrypt_store = state_store.read();
+                            let decrypt_ctx = MlsDecryptCtx {
+                                state_store: &decrypt_store,
+                                space_id: &decrypt_space_id,
+                                actor_did: &decrypt_actor,
+                                device_id: &decrypt_device,
+                            };
+                            overlay_local_card_creates(
+                                collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                                &decrypt_store,
+                                &selected_board_space_id(),
+                            )
+                        };
                         // Only overwrite when the server actually
                         // returned a non-empty projection — an empty
                         // response shouldn't wipe a locally-queued
@@ -2342,6 +2543,13 @@ pub fn KanbanPanel(
                         lifecycle_flow_projection.set(flow_items.clone());
                         let current_board = selected_board_space_id();
                         let raw_operations = state_store.read().load().raw_operations;
+                        let decrypt_store = state_store.read();
+                        let decrypt_ctx = MlsDecryptCtx {
+                            state_store: &decrypt_store,
+                            space_id: &decrypt_space_id,
+                            actor_did: &decrypt_actor,
+                            device_id: &decrypt_device,
+                        };
                         let (projected_columns, options, projected_board_id) =
                             columns_from_lifecycle_projection_with_local(
                                 &container_items,
@@ -2349,7 +2557,9 @@ pub fn KanbanPanel(
                                 &current_board,
                                 &raw_operations,
                                 &lifecycle_local_realm_id,
+                                Some(&decrypt_ctx),
                             );
+                        drop(decrypt_store);
                         if let Some(board_id) = projected_board_id {
                             if !options.is_empty() && board_space_options() != options {
                                 board_space_options.set(options);
@@ -2408,6 +2618,9 @@ pub fn KanbanPanel(
         let lifecycle_token = token;
         let lifecycle_routed_flow_id = lifecycle_routed_flow_id.clone();
         let lifecycle_local_realm_id = local_realm_id.clone();
+        let decrypt_space_id = selected_space.clone();
+        let decrypt_actor = account_did.clone();
+        let decrypt_device = device_id.clone();
         spawn(async move {
             let realm_id = lifecycle_realm_id.clone();
             let api_token = lifecycle_token();
@@ -2472,6 +2685,13 @@ pub fn KanbanPanel(
                     current_board
                 };
                 let raw_operations = state_store.read().load().raw_operations;
+                let decrypt_store = state_store.read();
+                let decrypt_ctx = MlsDecryptCtx {
+                    state_store: &decrypt_store,
+                    space_id: &decrypt_space_id,
+                    actor_did: &decrypt_actor,
+                    device_id: &decrypt_device,
+                };
                 let (projected_columns, options, projected_board_id) =
                     columns_from_lifecycle_projection_with_local(
                         &container_items,
@@ -2479,7 +2699,9 @@ pub fn KanbanPanel(
                         &current_board,
                         &raw_operations,
                         &lifecycle_local_realm_id,
+                        Some(&decrypt_ctx),
                     );
+                drop(decrypt_store);
                 if let Some(board_id) = projected_board_id {
                     if !options.is_empty() {
                         board_space_options.set(options);
@@ -2710,6 +2932,8 @@ pub fn KanbanPanel(
                             {
                                 let board_route_space_id_for_select = board_route_space_id.clone();
                                 let local_realm_id_for_select = local_realm_id.clone();
+                                let account_did_for_select = account_did.clone();
+                                let device_id_for_select = device_id.clone();
                                 rsx! {
                                     select {
                                         class: "board-select-native",
@@ -2731,6 +2955,8 @@ pub fn KanbanPanel(
                                                 board_space_options,
                                                 projection_source,
                                                 state_store,
+                                                account_did_for_select.clone(),
+                                                device_id_for_select.clone(),
                                             );
                                         },
                                         option {
@@ -2774,6 +3000,8 @@ pub fn KanbanPanel(
                                     {
                                         let board_route_space_id_for_empty = board_route_space_id.clone();
                                         let local_realm_id_for_empty = local_realm_id.clone();
+                                        let account_did_for_empty = account_did.clone();
+                                        let device_id_for_empty = device_id.clone();
                                         rsx! {
                                             button {
                                                 class: if selected_board_space_id().trim().is_empty() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
@@ -2795,6 +3023,8 @@ pub fn KanbanPanel(
                                                         board_space_options,
                                                         projection_source,
                                                         state_store,
+                                                        account_did_for_empty.clone(),
+                                                        device_id_for_empty.clone(),
                                                     );
                                                 },
                                                 UiIcon { name: "board" }
@@ -2809,6 +3039,8 @@ pub fn KanbanPanel(
                                             let option_is_active = selected_board_space_id() == option_id;
                                             let board_route_space_id_for_option = board_route_space_id.clone();
                                             let local_realm_id_for_option = local_realm_id.clone();
+                                            let account_did_for_option = account_did.clone();
+                                            let device_id_for_option = device_id.clone();
                                             rsx! {
                                                 button {
                                                     class: if option_is_active { "board-select-menu-item is-active" } else { "board-select-menu-item" },
@@ -2817,6 +3049,8 @@ pub fn KanbanPanel(
                                                     title: "{option_title}",
                                                     onclick: {
                                                         let option_id = option_id.clone();
+                                                        let account_did_for_option = account_did_for_option.clone();
+                                                        let device_id_for_option = device_id_for_option.clone();
                                                         move |_| {
                                                             select_kanban_board(
                                                                 option_id.clone(),
@@ -2833,6 +3067,8 @@ pub fn KanbanPanel(
                                                                 board_space_options,
                                                                 projection_source,
                                                                 state_store,
+                                                                account_did_for_option.clone(),
+                                                                device_id_for_option.clone(),
                                                             );
                                                         }
                                                     },
@@ -3058,6 +3294,9 @@ pub fn KanbanPanel(
                                             // POST /api/v1/views/:id/projection. Demo seed is
                                             // opt-in so normal boards never show fake cards.
                                             let base = base_url.clone();
+                                            let onclick_decrypt_space_id = selected_space.clone();
+                                            let onclick_decrypt_actor = account_did.clone();
+                                            let onclick_decrypt_device = device_id.clone();
                                             move |_| {
                                                 let base = base.clone();
                                                 let api_token = token();
@@ -3070,6 +3309,9 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                                 board_popover.set(BoardToolbarPopover::None);
+                                                let decrypt_space_id = onclick_decrypt_space_id.clone();
+                                                let decrypt_actor = onclick_decrypt_actor.clone();
+                                                let decrypt_device = onclick_decrypt_device.clone();
                                                 spawn(async move {
                                                     match with_authed_api(&base, api_token, |api| async move {
                                                         api.collection_projection(&view).await
@@ -3077,11 +3319,20 @@ pub fn KanbanPanel(
                                                     .await
                                                     {
                                                         Ok(projection) => {
-                                                            let cols = overlay_local_card_creates(
-                                                                collection_projection_to_columns(&projection),
-                                                                &state_store.read(),
-                                                                &selected_board_space_id(),
-                                                            );
+                                                            let cols = {
+                                                                let decrypt_store = state_store.read();
+                                                                let decrypt_ctx = MlsDecryptCtx {
+                                                                    state_store: &decrypt_store,
+                                                                    space_id: &decrypt_space_id,
+                                                                    actor_did: &decrypt_actor,
+                                                                    device_id: &decrypt_device,
+                                                                };
+                                                                overlay_local_card_creates(
+                                                                    collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                                                                    &decrypt_store,
+                                                                    &selected_board_space_id(),
+                                                                )
+                                                            };
                                                             if !cols.is_empty() {
                                                                 columns.set(cols);
                                                             }
@@ -6718,6 +6969,7 @@ struct EncryptedWriteMlsEvents {
 fn encrypt_private_card_detail_patch_values(
     patch: Value,
     space_id: &str,
+    flow_id: &str,
     actor_did: &str,
     device_id: &str,
     mut state_store: Signal<LocalStateStore>,
@@ -6727,6 +6979,7 @@ fn encrypt_private_card_detail_patch_values(
     encrypt_private_card_detail_patch_values_with_store(
         patch,
         space_id,
+        flow_id,
         actor_did,
         device_id,
         &mut store,
@@ -6737,6 +6990,7 @@ fn encrypt_private_card_detail_patch_values(
 fn encrypt_private_card_detail_patch_values_with_store(
     patch: Value,
     space_id: &str,
+    flow_id: &str,
     actor_did: &str,
     device_id: &str,
     state_store: &mut LocalStateStore,
@@ -6783,6 +7037,20 @@ fn encrypt_private_card_detail_patch_values_with_store(
         &schedule_hash,
         &commit_envelope,
     )?;
+    // X5.1 — encryption succeeded. Persist the author's own plaintext into
+    // the local-only sidecar so a later re-projection (refresh / board
+    // switch / live poll) can render the author's own content, which can
+    // never be recovered by decrypting the author's own MLS ciphertext.
+    // The stored value is the JSON-serialized patch *value* (the same
+    // `plaintext_values` bytes that were just encrypted) as a UTF-8 string;
+    // the read path parses it back with `serde_json::from_str` and feeds it
+    // to `flow_body_display_text`, keeping write+read symmetric. This is
+    // local-only and NEVER enters the op / `append_raw_operation` payload.
+    for (path, plaintext_bytes) in &values {
+        if let Ok(plaintext_str) = std::str::from_utf8(plaintext_bytes) {
+            state_store.save_private_plaintext(space_id, flow_id, path, plaintext_str);
+        }
+    }
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
     let mut encrypted_patch = patch;
     replace_private_patch_values(&mut encrypted_patch, &paths, encrypted_values)?;
@@ -6826,6 +7094,7 @@ fn dispatch_card_detail_update(
         match encrypt_private_card_detail_patch_values(
             patch,
             &space_id,
+            &current.id,
             &actor_did,
             &device_id,
             state_store,
@@ -6909,6 +7178,9 @@ fn dispatch_card_detail_update(
     let should_upload_mls_backup = mls_commit_operation_id.is_some();
     let actor_for_backup = actor_did.clone();
     let device_for_backup = device_id.clone();
+    // X5.3 — clones for the private-plaintext sidecar re-upload (trigger c).
+    let actor_for_sidecar = actor_did.clone();
+    let device_for_sidecar = device_id.clone();
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
@@ -6920,13 +7192,17 @@ fn dispatch_card_detail_update(
             .await;
             match genesis_result {
                 Ok(_) => {
-                    state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                    state_store
+                        .write()
+                        .mark_mls_genesis_emitted(space_id.clone());
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
                     if err_text.contains("mls_genesis_already_exists") {
                         // Already installed server-side — record locally and proceed.
-                        state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                        state_store
+                            .write()
+                            .mark_mls_genesis_emitted(space_id.clone());
                     } else {
                         state_store.write().update_raw_operation_write_state(
                             &operation_id,
@@ -7037,6 +7313,52 @@ fn dispatch_card_detail_update(
                             )),
                         }
                     }
+                    // X5.3 (trigger c) — re-upload the encrypted local-plaintext
+                    // sidecar so the content just written is recoverable on a new
+                    // browser. GATE: only when recovery is already configured
+                    // (the server holds an `mls_account_secret` backup); first-time
+                    // users have no account-secret backup yet and the X3
+                    // `MlsBackupPrompt` handles their initial upload (incl. the
+                    // sidecar). DECISION: always re-upload on each encrypted write
+                    // (series_seq++) rather than tracking a dirty hash — every
+                    // encrypted write mutated the sidecar via `save_private_plaintext`
+                    // just above, so the content is materially new each time. This
+                    // is the simplest correct version (the plan explicitly permits
+                    // always-upload for v1). Best-effort + non-blocking: errors are
+                    // swallowed and never disturb the accepted-write status.
+                    let sidecar_json = if state_store.read().private_plaintext_is_empty() {
+                        None
+                    } else {
+                        Some(state_store.read().private_plaintext_snapshot_json())
+                    };
+                    if let Some(sidecar_json) = sidecar_json {
+                        let recovery_configured = with_authed_api(
+                            &base_url,
+                            api_token.clone(),
+                            |api| async move {
+                                crate::mls::account_recovery::fetch_mls_account_secret_backup(&api)
+                                    .await
+                            },
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some();
+                        if recovery_configured {
+                            let _ = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                                let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                    &api,
+                                    secure.as_ref(),
+                                    &actor_for_sidecar,
+                                    &device_for_sidecar,
+                                    &sidecar_json,
+                                )
+                                .await
+                            })
+                            .await;
+                        }
+                    }
                 }
             }
             Err(err) => {
@@ -7061,6 +7383,7 @@ fn dispatch_card_detail_update(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 fn select_kanban_board(
     board_id: String,
     mut selected_board_space_id: Signal<String>,
@@ -7076,6 +7399,8 @@ fn select_kanban_board(
     mut board_space_options: Signal<Vec<BoardSpaceOption>>,
     mut projection_source: Signal<BoardProjectionSource>,
     state_store: Signal<LocalStateStore>,
+    decrypt_actor: String,
+    decrypt_device: String,
 ) {
     selected_board_space_id.set(board_id.clone());
     board_popover.set(BoardToolbarPopover::None);
@@ -7099,6 +7424,13 @@ fn select_kanban_board(
             replace_kanban_board_url(&board_route_space_id, &board_id);
             return;
         }
+        let decrypt_store = state_store.read();
+        let decrypt_ctx = MlsDecryptCtx {
+            state_store: &decrypt_store,
+            space_id: &board_route_space_id,
+            actor_did: &decrypt_actor,
+            device_id: &decrypt_device,
+        };
         let (projected_columns, options, projected_board_id) =
             columns_from_lifecycle_projection_with_local(
                 &containers,
@@ -7106,7 +7438,9 @@ fn select_kanban_board(
                 &board_id,
                 &raw_operations,
                 &local_realm_id,
+                Some(&decrypt_ctx),
             );
+        drop(decrypt_store);
         if !options.is_empty() {
             board_space_options.set(options);
         }
@@ -7128,6 +7462,13 @@ fn select_kanban_board(
         return;
     }
     let raw_operations = state_store.read().load().raw_operations;
+    let decrypt_store = state_store.read();
+    let decrypt_ctx = MlsDecryptCtx {
+        state_store: &decrypt_store,
+        space_id: &board_route_space_id,
+        actor_did: &decrypt_actor,
+        device_id: &decrypt_device,
+    };
     let (projected_columns, options, projected_board_id) =
         columns_from_lifecycle_projection_with_local(
             &containers,
@@ -7135,7 +7476,9 @@ fn select_kanban_board(
             &board_id,
             &raw_operations,
             &local_realm_id,
+            Some(&decrypt_ctx),
         );
+    drop(decrypt_store);
     if !options.is_empty() {
         board_space_options.set(options);
     }
@@ -8478,6 +8821,8 @@ fn seed_columns() -> Vec<KanbanColumn> {
 mod tests {
     use super::*;
 
+    const TEST_REALM_ID: &str = "cx:realm:0196419b-0000-7000-8000-000000000010";
+
     #[cfg(not(target_arch = "wasm32"))]
     fn temp_state_store(name: &str) -> LocalStateStore {
         let stamp = std::time::SystemTime::now()
@@ -9101,6 +9446,145 @@ mod tests {
         );
     }
 
+    #[test]
+    fn value_is_mls_envelope_detects_encrypted_patch_values() {
+        // Full envelope shape written by encrypt_values_with_device_snapshot.
+        assert!(value_is_mls_envelope(&json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "group_id": "g",
+            "epoch": 0,
+        })));
+        // Minimal envelope detected via ciphertext + content_type.
+        assert!(value_is_mls_envelope(&json!({
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        })));
+        // Plain content blocks are NOT envelopes — unencrypted realms must
+        // pay nothing and render as-is.
+        assert!(!value_is_mls_envelope(&json!({
+            "kind": "cx.content.text",
+            "body": "plain body",
+        })));
+        assert!(!value_is_mls_envelope(&json!("just a string")));
+    }
+
+    #[test]
+    fn private_flow_display_text_passes_plaintext_through_without_ctx() {
+        let plain = json!({ "kind": "cx.content.text", "body": "plain body" });
+        // No decrypt ctx, non-envelope value → renders the plaintext as-is.
+        assert_eq!(private_flow_display_text(None, Some(&plain)), "plain body");
+        // Missing value → blank.
+        assert_eq!(private_flow_display_text(None, None), "");
+    }
+
+    #[test]
+    fn private_flow_display_text_blanks_undecryptable_envelope() {
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "group_id": "g",
+            "epoch": 0,
+        });
+        // Envelope + no ctx must render blank rather than leaking the raw
+        // envelope JSON through flow_body_display_text.
+        assert_eq!(private_flow_display_text(None, Some(&envelope)), "");
+        let store = temp_state_store("private-flow-blank");
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: "cx:space:01904100-0000-7000-8000-000000000001",
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:01904100-0000-7000-8000-000000000001",
+        };
+        // Envelope + ctx but no local snapshot → soft failure → blank.
+        assert_eq!(private_flow_display_text(Some(&ctx), Some(&envelope)), "");
+    }
+
+    #[test]
+    fn private_flow_field_text_prefers_local_sidecar_plaintext() {
+        // X5.2 — the author's own encrypted field can NEVER be decrypted
+        // (OpenMLS refuses the author's own ciphertext). The local sidecar
+        // is the only source. With a sidecar hit and NO MLS group at all,
+        // the builder must still render the plaintext.
+        let space = "cx:space:01904100-0000-7000-8000-000000000001";
+        let flow = "cx:flow:01904100-0000-7000-8000-0000000000ab";
+        let mut store = temp_state_store("private-flow-sidecar");
+        // The writer stores the JSON-serialized patch value (a bare string).
+        store.save_private_plaintext(space, flow, "body", "\"author body\"");
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: space,
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:01904100-0000-7000-8000-000000000001",
+        };
+        // Even when the projection value is an un-decryptable envelope, the
+        // sidecar wins (tier 1) with zero decryption.
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        });
+        assert_eq!(
+            private_flow_field_text(Some(&ctx), flow, "body", Some(&envelope)),
+            "author body"
+        );
+        // A different flow id has no sidecar entry → falls back (blank for an
+        // un-decryptable envelope).
+        assert_eq!(
+            private_flow_field_text(
+                Some(&ctx),
+                "cx:flow:01904100-0000-7000-8000-0000000000cd",
+                "body",
+                Some(&envelope)
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
+        // X5.2 gate — simulate the writer having stored the author's body
+        // plaintext, then build a card from a projection whose body is an
+        // un-decryptable MLS envelope, with NO MLS snapshot present. The
+        // card must show the author's plaintext (proving the author sees
+        // own content with zero decryption).
+        let space = "cx:realm:01904100-0000-7000-8000-000000000000";
+        let flow = "cx:flow:01904100-0000-7000-8000-0000000000ab";
+        let mut store = temp_state_store("card-builder-sidecar");
+        store.save_private_plaintext(space, flow, "body", "\"recovered body\"");
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: space,
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:01904100-0000-7000-8000-000000000001",
+        };
+        let flow_view = crate::api::FlowProjectionView {
+            flow_id: flow.to_owned(),
+            space_id: space.to_owned(),
+            title: "Encrypted card".to_owned(),
+            summary: Some("public summary".to_owned()),
+            body: Some(json!({
+                "scheme": "mls-rfc9420",
+                "ciphertext": "AAAA",
+                "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            })),
+            board_space_id: None,
+            list_space_id: None,
+            rank: Some("U".to_owned()),
+            fields: Map::new(),
+            created_by: None,
+            created_at: None,
+            updated_at: None,
+            state: "active".to_owned(),
+        };
+        let card = card_from_flow_projection(&flow_view, Some(&ctx));
+        assert_eq!(card.body, "recovered body");
+        // Sanity: there is genuinely no MLS group to decrypt from.
+        assert!(store.mls_snapshot_for(space).is_none());
+    }
+
     /// T20 wire-up — `collection_projection_to_columns` adapter maps the
     /// canonical SDK response into the renderer's KanbanColumn vec. This
     /// is the core integration point; if the spec wire shape changes,
@@ -9151,7 +9635,7 @@ mod tests {
             ],
         };
 
-        let cols = collection_projection_to_columns(&projection);
+        let cols = collection_projection_to_columns(&projection, None);
         assert_eq!(cols.len(), 2, "two groups → two columns");
         assert_eq!(cols[0].id, "cx:space:01c3b617-7000-7000-8000-000000000000");
         assert_eq!(cols[0].title, "Review");
@@ -9187,7 +9671,7 @@ mod tests {
             position: None,
             discussion: None,
         };
-        let card = card_from_projection_item(&item);
+        let card = card_from_projection_item(&item, None);
         assert!(card.locked_flow.is_none());
         assert_eq!(card.history_visibility, "synthesis-only");
         assert_eq!(card.external_visibility, "No external discussions linked");
@@ -9278,6 +9762,7 @@ mod tests {
             board_id,
             &raw_operations,
             realm_id,
+            None,
         );
 
         assert_eq!(selected_board.as_deref(), Some(board_id));
@@ -9327,6 +9812,7 @@ mod tests {
             board_id,
             &remote_operations,
             realm_id,
+            None,
         );
 
         assert_eq!(selected_board.as_deref(), Some(board_id));
@@ -9426,7 +9912,7 @@ mod tests {
         }];
 
         let (columns, options, selected_board) =
-            columns_from_lifecycle_projection(&containers, &flows, "");
+            columns_from_lifecycle_projection(&containers, &flows, "", None);
 
         assert_eq!(selected_board.as_deref(), Some(board_id));
         assert_eq!(options.len(), 1);
@@ -9457,7 +9943,7 @@ mod tests {
         }];
 
         let (columns, options, selected_board) =
-            columns_from_lifecycle_projection(&containers, &[], "");
+            columns_from_lifecycle_projection(&containers, &[], "", None);
 
         assert_eq!(selected_board.as_deref(), Some(board_id));
         assert_eq!(options.len(), 1);
@@ -9644,7 +10130,7 @@ mod tests {
     #[test]
     fn encrypted_scope_blocks_plaintext_flow_update_payload() {
         let event = crate::operation::cx_ops::flow_update_patch(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
@@ -9672,7 +10158,7 @@ mod tests {
         .payload;
         let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
         let event = crate::operation::cx_ops::flow_update_patch(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
@@ -9713,6 +10199,7 @@ mod tests {
         let error = encrypt_private_card_detail_patch_values_with_store(
             patch,
             "cx:space:01904100-0000-7000-8000-000000000001",
+            "cx:flow:01904100-0000-7000-8000-0000000000ff",
             "did:web:alice.example",
             "cx:device:01904100-0000-7000-8000-000000000001",
             &mut state,
@@ -9753,12 +10240,20 @@ mod tests {
             "body": {"$op": "set", "value": "private body"},
         });
 
+        let flow_id = "cx:flow:01904100-0000-7000-8000-0000000000ff";
         let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
-            patch, space, actor, device, &mut state, &secure,
+            patch, space, flow_id, actor, device, &mut state, &secure,
         )
         .unwrap();
 
         assert!(state.mls_snapshot_for(space).is_some());
+        // X5.1 — the author's own plaintext is persisted to the local
+        // sidecar so a re-projection can render it (the author can never
+        // decrypt their own ciphertext).
+        assert_eq!(
+            state.private_plaintext_for(space, flow_id, "body").as_deref(),
+            Some("\"private body\"")
+        );
         assert_eq!(
             patched["body"]["value"]["content_type"],
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
@@ -9771,7 +10266,10 @@ mod tests {
             .expect("freshly-created creator group should emit genesis");
         assert_eq!(genesis.kind, "cx.mls.genesis");
         assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
-        assert_eq!(genesis.payload["creator_principal_id"].as_str(), Some(actor));
+        assert_eq!(
+            genesis.payload["creator_principal_id"].as_str(),
+            Some(actor)
+        );
         assert!(genesis.payload.get("governance_binding").is_some());
         assert_registered_payload_valid(&genesis);
     }
@@ -9809,8 +10307,9 @@ mod tests {
             "body": {"$op": "set", "value": "private body"},
         });
 
+        let flow_id = "cx:flow:01904100-0000-7000-8000-0000000000ff";
         let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
-            patch, space, actor, device, &mut state, &secure,
+            patch, space, flow_id, actor, device, &mut state, &secure,
         )
         .unwrap();
 
@@ -9819,6 +10318,18 @@ mod tests {
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
         );
         assert!(patched["body"]["value"].get("ciphertext").is_some());
+        // X5.2 gate — the on-the-wire patch value is an MLS envelope (no
+        // plaintext), while the local sidecar now holds the plaintext.
+        assert!(value_is_mls_envelope(&patched["body"]["value"]));
+        let envelope_str = serde_json::to_string(&patched["body"]["value"]).unwrap();
+        assert!(
+            !envelope_str.contains("private body"),
+            "on-wire envelope must not contain the plaintext"
+        );
+        assert_eq!(
+            state.private_plaintext_for(space, flow_id, "body").as_deref(),
+            Some("\"private body\"")
+        );
         // The snapshot already existed (not freshly created here), so there is
         // no fresh epoch-0 material and genesis is not emitted on this path.
         assert!(mls_events.genesis.is_none());
@@ -9861,6 +10372,7 @@ mod tests {
         let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
             patch.clone(),
             "cx:space:01904100-0000-7000-8000-000000000001",
+            "cx:flow:01904100-0000-7000-8000-0000000000ff",
             "did:web:alice.example",
             "cx:device:01904100-0000-7000-8000-000000000001",
             &mut state,
@@ -9877,7 +10389,7 @@ mod tests {
     #[test]
     fn encrypted_scope_allows_structural_flow_position_update() {
         let event = crate::operation::cx_ops::flow_position_update(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({
@@ -9896,7 +10408,7 @@ mod tests {
     #[test]
     fn encrypted_scope_allows_content_only_metadata_create_payloads() {
         let flow = crate::operation::cx_ops::kanban_card_flow_create(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             "cx:space:0196419b-0000-7000-8000-000000000001",
@@ -9906,7 +10418,7 @@ mod tests {
         )
         .build("yougen");
         let space = crate::operation::cx_ops::space_create(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             "cx:space:0196419b-0000-7000-8000-000000000002",
             "list",
@@ -9923,7 +10435,7 @@ mod tests {
     #[test]
     fn encrypted_scope_allows_flow_summary_metadata_update() {
         let event = crate::operation::cx_ops::flow_update_patch(
-            "cx:realm:test",
+            TEST_REALM_ID,
             "did:web:alice.example",
             DEMO_FLOW_LEGAL_REVIEW_ID,
             json!({

@@ -34,6 +34,22 @@ pub const MLS_ACCOUNT_SECRET_ITEM_TYPE: &str = "mls_account_secret";
 /// stable discriminator the recovery import path matches against.
 pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "yougen_mls_account_secret";
 
+/// X5.3 — `item_type` carried by the encrypted local-plaintext sidecar backup.
+///
+/// The sidecar (`LocalStateStore::mls_private_plaintext`, the author's own
+/// plaintext for their encrypted private flow fields) MUST cross devices: a new
+/// browser can never decrypt the author's own MLS ciphertext (OpenMLS
+/// `validation.rs` rejects own-leaf messages before any key lookup), so without
+/// this backup the author loses sight of everything they wrote after switching
+/// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
+/// SECRET (not the passphrase directly) so the restore flow — which imports the
+/// account secret first — can decrypt it with NO second passphrase prompt. Both
+/// soland's validator and the yougen client validator allowlist this content
+/// type under the `secret_storage` class.
+pub const MLS_PRIVATE_PLAINTEXT_ITEM_TYPE: &str = "mls_private_plaintext";
+/// `secret_id` carried by the encrypted local-plaintext sidecar backup.
+pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext";
+
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
 /// behind the user's recovery passphrase.
 ///
@@ -177,6 +193,117 @@ pub fn is_mls_account_secret_backup(body: &Value) -> bool {
         == Some(MLS_ACCOUNT_SECRET_ITEM_TYPE)
 }
 
+/// X5.3 — build a `secret_storage` PUT body that wraps the entire encrypted
+/// local-plaintext sidecar map behind a KEK derived from the ACCOUNT SECRET.
+///
+/// Mirrors [`build_mls_account_secret_backup_body_with_kek_and_version`] but
+/// with the sidecar identifiers and the sidecar JSON bytes as the encrypted
+/// payload. `sidecar_json` is the serialized `mls_private_plaintext` map
+/// (`serde_json::to_vec` of `space -> flow -> field -> plaintext`); only its
+/// ciphertext, salt and nonce travel on the wire. The caller derives `kek` from
+/// the account secret (`derive_vault_kek(account_secret.as_bytes())`), so the
+/// restore path — which imports the account secret first — can decrypt with no
+/// second passphrase prompt. base64url-clean; domain separation re-attached so
+/// the AAD's `item_types` matches the rewritten contents.
+pub fn build_mls_private_plaintext_backup_body_with_kek(
+    backup_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    kek: &VaultKek,
+    sidecar_json: &[u8],
+) -> Result<Value> {
+    let ct = encrypt_vault(kek, sidecar_json)
+        .map_err(|err| anyhow!("encrypt private plaintext sidecar: {err}"))?;
+    // `encrypt_vault` emits base64url natively (the charset the validator
+    // requires), so the wire fields go straight into the uploaded body.
+    let mut body = build_recovery_vault_backup_body(
+        backup_id,
+        actor_did,
+        device_id,
+        &ct.ciphertext_b64,
+        &ct.digest_sha256,
+        &ct.salt_b64,
+        &ct.nonce_b64,
+        VAULT_ARGON2_M_KIB,
+        VAULT_ARGON2_T,
+        VAULT_ARGON2_P,
+    );
+    if let Some(item) = body
+        .get_mut("contents")
+        .and_then(Value::as_array_mut)
+        .and_then(|c| c.first_mut())
+        .and_then(Value::as_object_mut)
+    {
+        item.insert(
+            "item_type".to_owned(),
+            Value::String(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE.to_owned()),
+        );
+        item.insert(
+            "secret_id".to_owned(),
+            Value::String(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
+        );
+    }
+    crate::key_backup::attach_key_backup_domain_separation(
+        &mut body,
+        crate::key_backup::KeyBackupClass::SecretStorage,
+        "recovery_vault",
+    );
+    Ok(body)
+}
+
+/// X5.3 — decrypt a downloaded `mls_private_plaintext` backup body and return
+/// the serialized sidecar JSON bytes.
+///
+/// The KEK source is the ACCOUNT SECRET bytes (NOT the recovery passphrase):
+/// the restore flow imports the account secret first, then feeds its bytes here
+/// so the sidecar is recovered with no second passphrase prompt. `decrypt_vault`
+/// internally derives the KEK from these bytes + the stored salt, exactly as the
+/// account-secret path does.
+pub fn decrypt_mls_private_plaintext_backup(account_secret: &[u8], body: &Value) -> Result<Vec<u8>> {
+    let encryption = body
+        .get("encryption")
+        .ok_or_else(|| anyhow!("backup body missing encryption"))?;
+    let salt_b64 = encryption
+        .get("kdf")
+        .and_then(|kdf| kdf.get("salt"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("backup body missing encryption.kdf.salt"))?;
+    let nonce_b64 = encryption
+        .get("aead")
+        .and_then(|aead| aead.get("nonce"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("backup body missing encryption.aead.nonce"))?;
+    let ciphertext_b64 = body
+        .get("ciphertext")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("backup body missing ciphertext"))?;
+    decrypt_vault(account_secret, salt_b64, nonce_b64, ciphertext_b64)
+}
+
+/// True when `body` is an MLS private-plaintext sidecar backup. Matched on the
+/// dedicated `mls_private_plaintext` item type.
+pub fn is_mls_private_plaintext_backup(body: &Value) -> bool {
+    body.get("contents")
+        .and_then(Value::as_array)
+        .and_then(|c| c.first())
+        .and_then(|item| item.get("item_type"))
+        .and_then(Value::as_str)
+        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE)
+}
+
+/// Pure body-selection: pick the latest `mls_private_plaintext` backup from a
+/// `list_key_backups`-shaped payload, if present. Newer `series_seq` wins,
+/// followed by the creation timestamp.
+pub fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value> {
+    iter_backup_bodies(list_payload)
+        .filter(|body| is_mls_private_plaintext_backup(body))
+        .max_by(|a, b| {
+            (backup_series_seq(a), backup_created_at(a))
+                .cmp(&(backup_series_seq(b), backup_created_at(b)))
+        })
+        .cloned()
+}
+
 /// Iterate the `{"backups": [...]}` payload returned by
 /// [`crate::api::ContrixApi::list_key_backups`].
 ///
@@ -309,6 +436,11 @@ pub struct RestoreReport {
     pub restored: usize,
     /// Number of `mls_history` backups that failed to restore.
     pub failed: usize,
+    /// X5.3 — whether the encrypted local-plaintext sidecar backup was
+    /// successfully decrypted and merged into the local state store on this
+    /// call. Stays `false` when no sidecar backup exists or restore of it
+    /// failed (a non-fatal condition; see `first_error`).
+    pub private_plaintext_restored: bool,
     /// First restore failure reason, for diagnostics.
     pub first_error: Option<String>,
 }
@@ -402,7 +534,53 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         }
     }
 
+    // Step 3 (X5.3): restore the author's encrypted local-plaintext sidecar.
+    // The KEK source is the account secret imported in Step 1 — load it back
+    // (now local) and decrypt with no second passphrase prompt, then merge the
+    // sidecar map into the state store. Failure here is NON-FATAL: the author
+    // simply won't see their own old content until the next encrypted write
+    // rebuilds the sidecar; the rest of the restore stands.
+    if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
+        match restore_private_plaintext_sidecar(
+            &sidecar_body,
+            state_store,
+            secure_store,
+            actor_did,
+        ) {
+            Ok(()) => report.private_plaintext_restored = true,
+            Err(err) => {
+                if report.first_error.is_none() {
+                    report.first_error = Some(format!("private plaintext restore: {err}"));
+                }
+            }
+        }
+    }
+
     Ok(report)
+}
+
+/// X5.3 — decrypt the `mls_private_plaintext` sidecar backup with the local
+/// account secret and merge it into `state_store`. Factored out so the restore
+/// step stays readable and so the `?` short-circuit doesn't abort the whole
+/// restore.
+fn restore_private_plaintext_sidecar(
+    sidecar_body: &Value,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+) -> Result<()> {
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
+        .ok_or_else(|| anyhow!("no account secret available to decrypt sidecar"))?;
+    let sidecar_json =
+        decrypt_mls_private_plaintext_backup(stored.secret.as_bytes(), sidecar_body)?;
+    let map: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    > = serde_json::from_slice(&sidecar_json)
+        .map_err(|err| anyhow!("parse sidecar JSON: {err}"))?;
+    state_store.merge_private_plaintext_map(map);
+    Ok(())
 }
 
 /// Auto-restore MLS history for a fresh device using the recovery passphrase.
@@ -613,6 +791,53 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
 
     Ok(account_backup_id)
+}
+
+/// X5.3 — wrap the entire local-plaintext sidecar map behind a KEK derived from
+/// the ACCOUNT SECRET and upload it to soland's `secret_storage` endpoint.
+///
+/// The KEK source is the account secret (already recoverable via the passphrase
+/// through the X3 `mls_account_secret` backup), so the restore flow decrypts the
+/// sidecar with no second passphrase prompt. Reuses any prior sidecar backup's
+/// `backup_id`/series so the upload stays in the same rotation series
+/// (`series_seq++` whenever the sidecar changes). Returns the `backup_id` it
+/// wrote. Errors if no local account secret exists (the user hasn't used
+/// encryption, so there is nothing to wrap the sidecar with).
+pub async fn upload_mls_private_plaintext_backup(
+    api: &crate::api::ContrixApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    sidecar_json: &[u8],
+) -> Result<String> {
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
+        .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
+
+    let kek = derive_vault_kek(stored.secret.as_bytes())
+        .map_err(|err| anyhow!("derive KEK: {err}"))?;
+
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let previous_backup = select_mls_private_plaintext_backup(&list_payload);
+    let backup_id = previous_backup
+        .as_ref()
+        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+
+    let mut body = build_mls_private_plaintext_backup_body_with_kek(
+        &backup_id,
+        actor_did,
+        device_id,
+        &kek,
+        sidecar_json,
+    )?;
+    apply_next_series(previous_backup.as_ref(), &mut body);
+    api.put_key_backup(&backup_id, body)
+        .await
+        .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
+
+    Ok(backup_id)
 }
 
 #[cfg(test)]
@@ -962,5 +1187,157 @@ mod tests {
                 .all(|b| { b.get("backup_class").and_then(Value::as_str) == Some("mls_history") })
         );
         assert!(select_mls_history_backups(&serde_json::json!({})).is_empty());
+    }
+
+    // ---- X5.3: encrypted private-plaintext sidecar backup ----
+
+    fn sample_sidecar() -> std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    > {
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("body".to_owned(), "\"author body\"".to_owned());
+        fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
+        let mut flows = std::collections::BTreeMap::new();
+        flows.insert("cx:flow:alpha".to_owned(), fields);
+        let mut spaces = std::collections::BTreeMap::new();
+        spaces.insert("cx:space:demo".to_owned(), flows);
+        spaces
+    }
+
+    fn wrap_sidecar() -> (Vec<u8>, Value) {
+        let sidecar = sample_sidecar();
+        let json = serde_json::to_vec(&sidecar).unwrap();
+        let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
+        let body = build_mls_private_plaintext_backup_body_with_kek(
+            BACKUP_ID, ACTOR, DEVICE, &kek, &json,
+        )
+        .unwrap();
+        (json, body)
+    }
+
+    #[test]
+    fn sidecar_backup_round_trips_under_account_secret() {
+        let (json, body) = wrap_sidecar();
+        let recovered =
+            decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &body).unwrap();
+        assert_eq!(recovered, json);
+        // The decoded map equals the original sidecar.
+        let map: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+        > = serde_json::from_slice(&recovered).unwrap();
+        assert_eq!(map, sample_sidecar());
+    }
+
+    #[test]
+    fn sidecar_backup_wrong_account_secret_fails() {
+        let (_json, body) = wrap_sidecar();
+        let result = decrypt_mls_private_plaintext_backup(b"a-different-account-secret", &body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sidecar_backup_has_expected_identifiers_and_no_plaintext_leak() {
+        let (_json, body) = wrap_sidecar();
+        assert!(is_mls_private_plaintext_backup(&body));
+        assert_eq!(
+            body["contents"][0]["item_type"].as_str(),
+            Some(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE)
+        );
+        assert_eq!(
+            body["contents"][0]["secret_id"].as_str(),
+            Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID)
+        );
+        assert_eq!(body["backup_class"], "secret_storage");
+        assert_eq!(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE, "mls_private_plaintext");
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(!serialized.contains("author body"));
+        assert!(!serialized.contains("author synthesis"));
+    }
+
+    #[test]
+    fn sidecar_backup_validates_as_secret_storage_envelope() {
+        let (_json, body) = wrap_sidecar();
+        validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage)).expect(
+            "mls_private_plaintext backup must validate as a secret_storage envelope (base64url-clean)",
+        );
+    }
+
+    #[test]
+    fn select_sidecar_finds_and_prefers_highest_series_seq() {
+        let (_json, base_body) = wrap_sidecar();
+        let mut older = base_body.clone();
+        older["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000a1");
+        older["series_seq"] = serde_json::json!(1);
+        let mut newer = base_body.clone();
+        newer["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000a2");
+        newer["series_seq"] = serde_json::json!(2);
+        let payload = serde_json::json!({
+            "backups": [
+                { "backup_id": "cx:backup:h", "backup_class": "mls_history" },
+                older,
+                newer.clone(),
+            ]
+        });
+        let found = select_mls_private_plaintext_backup(&payload).expect("sidecar present");
+        assert!(is_mls_private_plaintext_backup(&found));
+        assert_eq!(found["backup_id"], newer["backup_id"]);
+        // Absent payload -> None.
+        assert!(
+            select_mls_private_plaintext_backup(&serde_json::json!({ "backups": [] })).is_none()
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn restore_brings_back_the_sidecar_into_the_store() {
+        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+
+        // Build a real, decryptable account-secret + history backup so Step 1/2
+        // succeed and the account secret is local for the sidecar KEK source.
+        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
+        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = ContrixMlsIdentity::new_basic(
+            Did::new(ACTOR.to_owned()).unwrap(),
+            DeviceId::new(device_a.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(space.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        let history = crate::mls::persistence::encrypt_state(
+            space,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            ACCOUNT_SECRET,
+            b"deterministic-salt",
+        );
+
+        // The sidecar is encrypted under the ACCOUNT SECRET (not the passphrase).
+        let (_json, sidecar_body) = wrap_sidecar();
+
+        let payload = serde_json::json!({
+            "backups": [wrap(), history_body(&history), sidecar_body]
+        });
+        let store = MemorySecureKeyStore::new();
+        let mut state = temp_state_store("restore-sidecar");
+
+        let report = restore_mls_history_with_passphrase_from_payload(
+            &payload, &mut state, &store, ACTOR, DEVICE, PASSPHRASE,
+        )
+        .unwrap();
+
+        assert!(report.account_secret_imported);
+        assert_eq!(report.restored, 1);
+        assert!(report.private_plaintext_restored, "sidecar must be restored");
+        assert_eq!(
+            state.private_plaintext_for("cx:space:demo", "cx:flow:alpha", "body"),
+            Some("\"author body\"".to_owned())
+        );
+        assert_eq!(
+            state.private_plaintext_for("cx:space:demo", "cx:flow:alpha", "synthesis"),
+            Some("\"author synthesis\"".to_owned())
+        );
     }
 }

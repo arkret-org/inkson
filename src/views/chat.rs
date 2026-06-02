@@ -1507,6 +1507,22 @@ fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
 }
 
 fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage> {
+    chat_message_from_event_with_sidecar(space_id, event, None)
+}
+
+/// X9 — build a `ChatMessage` from a synced/projected event, preferring the
+/// author's own local plaintext sidecar (`mls_private_plaintext`, keyed by
+/// `message:{message_id}`) over the encrypted payload. OpenMLS forbids an
+/// author from decrypting their OWN application messages, so for the author's
+/// encrypted messages the ciphertext is undecryptable and the timeline carries
+/// no plaintext body — without the sidecar the message is dropped (no body →
+/// `None`) and the discussion shows "No messages" after reload / on a new
+/// device. The sidecar lookup mirrors kanban's `private_flow_field_text`.
+fn chat_message_from_event_with_sidecar(
+    space_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
@@ -1514,7 +1530,20 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
     {
         return None;
     }
-    let body = text_body_from_message(&candidates)?;
+    // Author-owned plaintext sidecar: look up the body the author stored on
+    // encrypted send, keyed by `message:{message_id}` under the discussion
+    // flow. Falls back to the decoded payload body (another member's message
+    // we CAN decrypt, or a plaintext message).
+    let sidecar_body = state_store.and_then(|store| {
+        let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
+        let flow_id = first_string_in_candidates(&candidates, &["flow_id", "thread_id"])?;
+        let space = first_string_in_candidates(&candidates, &["space_id"]).unwrap_or(space_id);
+        store.private_plaintext_for(space, flow_id, &format!("message:{message_id}"))
+    });
+    let body = match sidecar_body {
+        Some(plaintext) => plaintext,
+        None => text_body_from_message(&candidates)?,
+    };
     let explicit_message_kind = candidates
         .iter()
         .any(|candidate| message_kind_is_create(candidate));

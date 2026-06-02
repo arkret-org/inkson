@@ -601,6 +601,19 @@ pub fn RecoveryPanel(
                                     // Cloned up-front because the primary upload moves `api_token`.
                                     let mls_base = base.clone();
                                     let mls_api_token = api_token.clone();
+                                    // X5.3 — clones for the private-plaintext sidecar upload
+                                    // (the account-secret upload below moves `mls_base`/`mls_api_token`).
+                                    let sidecar_base = base.clone();
+                                    let sidecar_api_token = api_token.clone();
+                                    let sidecar_actor = actor_for_async.clone();
+                                    let sidecar_device = device_for_async.clone();
+                                    // Snapshot the sidecar before any await so we don't hold the
+                                    // store borrow across the network round-trips.
+                                    let sidecar_json = if store.read().private_plaintext_is_empty() {
+                                        None
+                                    } else {
+                                        Some(store.read().private_plaintext_snapshot_json())
+                                    };
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.put_key_backup(&backup_id_clone, body).await
                                     })
@@ -659,6 +672,36 @@ pub fn RecoveryPanel(
                                                                     "Vault uploaded; account MLS recovery key upload failed: {}",
                                                                     err.display()
                                                                 ));
+                                                            } else if let Some(sidecar_json) = sidecar_json {
+                                                                // X5.3 — account secret backup is up;
+                                                                // now back up the encrypted local-plaintext
+                                                                // sidecar (KEK derived from the account
+                                                                // secret inside the helper) so a fresh
+                                                                // browser recovers the author's own content.
+                                                                // Best-effort: failure must not undo the
+                                                                // vault/account-secret uploads above.
+                                                                let sidecar_outcome = with_authed_api(
+                                                                    &sidecar_base,
+                                                                    sidecar_api_token,
+                                                                    |api| async move {
+                                                                        let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                                                        crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                                                            &api,
+                                                                            secure.as_ref(),
+                                                                            &sidecar_actor,
+                                                                            &sidecar_device,
+                                                                            &sidecar_json,
+                                                                        )
+                                                                        .await
+                                                                    },
+                                                                )
+                                                                .await;
+                                                                if let Err(err) = sidecar_outcome {
+                                                                    vault_status.set(format!(
+                                                                        "Vault + account MLS recovery key uploaded; private plaintext backup failed: {}",
+                                                                        err.display()
+                                                                    ));
+                                                                }
                                                             }
                                                         }
                                                         Err(err) => vault_status.set(format!(

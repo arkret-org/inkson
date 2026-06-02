@@ -487,6 +487,7 @@ fn item_type_allowed_for_class(class: KeyBackupClass, item_type: &str) -> bool {
                 | "user_signing_key"
                 | "recovery_secret"
                 | "mls_account_secret"
+                | "mls_private_plaintext"
                 | "mls_group_secrets_backup_key"
                 | "private_account_state"
         ),

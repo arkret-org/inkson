@@ -2252,7 +2252,31 @@ fn try_local_mls_decrypt(
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
-    let envelope = state_store.read().mls_snapshot_for(space_id)?;
+    try_local_mls_decrypt_core(
+        &state_store.read(),
+        space_id,
+        actor_did,
+        device_id,
+        payload_value,
+    )
+}
+
+/// Shared MLS decrypt core used by both the timeline audit emitter
+/// (`try_local_mls_decrypt`, which holds a `Signal<LocalStateStore>`) and
+/// the kanban decrypt-on-read path (which already holds a borrowed
+/// `&LocalStateStore`). Restores the space's MLS group from the local
+/// snapshot + this device's snapshot secret and decrypts `payload_value`
+/// (a typed `EncryptedPayload` envelope). Every soft failure (no snapshot,
+/// wrong/absent device secret, payload that doesn't deserialize or
+/// decrypt) returns `None`.
+pub(crate) fn try_local_mls_decrypt_core(
+    state_store: &LocalStateStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    payload_value: &Value,
+) -> Option<Vec<u8>> {
+    let envelope = state_store.mls_snapshot_for(space_id)?;
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let secret = crate::mls::runtime::load_device_snapshot_secret(
         secure_store.as_ref(),

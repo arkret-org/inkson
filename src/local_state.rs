@@ -1011,6 +1011,30 @@ pub struct ClientLocalState {
     /// needless round-trip on every encrypted write after the first).
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
+    /// X5.1 — local-only plaintext sidecar for the author's own encrypted
+    /// private flow fields. Keyed `space_id -> flow_id -> field_path ->
+    /// plaintext` where `field_path` is the dotted private patch path
+    /// emitted by the kanban writer (e.g. `"body"`, `"synthesis"`) and
+    /// `plaintext` is the JSON-serialized patch *value* (the same bytes
+    /// `collect_encryptable_private_patch_values` produced before
+    /// encryption, decoded to a UTF-8 string).
+    ///
+    /// Why this exists: OpenMLS refuses (RFC 9420 forward secrecy,
+    /// `validation.rs:115`) to let the *author* decrypt their own
+    /// application messages — the check is a pure leaf-index comparison
+    /// that fires before any key lookup. Account-secret restore
+    /// reconstructs the SAME leaf, so NO author device (original or
+    /// restored) can ever decrypt the author's own ciphertext. The only
+    /// way the author sees their own encrypted card body/synthesis after a
+    /// re-projection (refresh / board switch / live poll) is this local
+    /// plaintext sidecar.
+    ///
+    /// CRITICAL: this MUST NEVER leave the device. It is written only by
+    /// [`LocalStateStore::save_private_plaintext`] and never enters any
+    /// upstream op / `cx.flow.update` payload. (Cross-device backup of the
+    /// sidecar is a separate later task — not implemented here.)
+    #[serde(default)]
+    pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// Actor-private Space remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1247,6 +1271,7 @@ impl Default for ClientLocalState {
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
+            mls_private_plaintext: BTreeMap::new(),
             space_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
@@ -2990,6 +3015,164 @@ impl LocalStateStore {
         }
     }
 
+    /// X5.1 — persist the author's own plaintext for an encrypted private
+    /// flow field into the local-only sidecar. `field_path` is the dotted
+    /// private patch path (e.g. `"body"`, `"synthesis"`); `plaintext` is
+    /// the JSON-serialized patch value the writer encrypted. Empty values
+    /// are removed rather than stored so a cleared field doesn't keep a
+    /// stale plaintext around (consistent with the `unset` write path).
+    ///
+    /// This data NEVER leaves the device — it is the only place the
+    /// author's own encrypted content survives a re-projection, since the
+    /// author can never decrypt their own MLS ciphertext.
+    pub fn save_private_plaintext(
+        &mut self,
+        space_id: &str,
+        flow_id: &str,
+        field_path: &str,
+        plaintext: &str,
+    ) {
+        let space_id = space_id.trim();
+        let flow_id = flow_id.trim();
+        let field_path = field_path.trim();
+        if space_id.is_empty() || flow_id.is_empty() || field_path.is_empty() {
+            return;
+        }
+        self.ensure_cached_loaded();
+        let mut changed = false;
+        if plaintext.is_empty() {
+            // Cleared field: drop the sidecar entry (and prune empty maps).
+            if let Some(flows) = self.cached.mls_private_plaintext.get_mut(space_id)
+                && let Some(fields) = flows.get_mut(flow_id)
+            {
+                if fields.remove(field_path).is_some() {
+                    changed = true;
+                }
+                if fields.is_empty() {
+                    flows.remove(flow_id);
+                }
+            }
+            if let Some(flows) = self.cached.mls_private_plaintext.get(space_id)
+                && flows.is_empty()
+            {
+                self.cached.mls_private_plaintext.remove(space_id);
+            }
+        } else {
+            let slot = self
+                .cached
+                .mls_private_plaintext
+                .entry(space_id.to_owned())
+                .or_default()
+                .entry(flow_id.to_owned())
+                .or_default()
+                .entry(field_path.to_owned())
+                .or_default();
+            if *slot != plaintext {
+                *slot = plaintext.to_owned();
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self.flush();
+        }
+    }
+
+    /// X5.1 — read back a single author-owned plaintext field from the
+    /// local sidecar, if present. Returns `None` when no plaintext was
+    /// ever stored for this (space, flow, field) — the read path then
+    /// falls back to decrypting another member's ciphertext.
+    pub fn private_plaintext_for(
+        &self,
+        space_id: &str,
+        flow_id: &str,
+        field_path: &str,
+    ) -> Option<String> {
+        self.load()
+            .mls_private_plaintext
+            .get(space_id.trim())
+            .and_then(|flows| flows.get(flow_id.trim()))
+            .and_then(|fields| fields.get(field_path.trim()))
+            .filter(|plaintext| !plaintext.is_empty())
+            .cloned()
+    }
+
+    /// X5.1 — all sidecar plaintext fields for a single flow (`field_path
+    /// -> plaintext`). Convenience for callers that want to enumerate
+    /// every stored field at once.
+    pub fn private_plaintext_fields(
+        &self,
+        space_id: &str,
+        flow_id: &str,
+    ) -> BTreeMap<String, String> {
+        self.load()
+            .mls_private_plaintext
+            .get(space_id.trim())
+            .and_then(|flows| flows.get(flow_id.trim()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
+    /// (`space -> flow -> field -> plaintext`) to JSON bytes for the encrypted
+    /// cross-device backup. Returns the serialization of an empty map (`{}`)
+    /// when no sidecar entries exist, so callers can cheaply detect "nothing to
+    /// back up" via [`Self::private_plaintext_is_empty`] first.
+    pub fn private_plaintext_snapshot_json(&self) -> Vec<u8> {
+        serde_json::to_vec(&self.load().mls_private_plaintext)
+            .unwrap_or_else(|_| b"{}".to_vec())
+    }
+
+    /// X5.3 — true when the sidecar holds no plaintext for any space/flow/field.
+    /// Used to skip the cross-device backup upload when there is nothing to
+    /// protect.
+    pub fn private_plaintext_is_empty(&self) -> bool {
+        self.load().mls_private_plaintext.is_empty()
+    }
+
+    /// X5.3 — merge an incoming sidecar map (decrypted from a cross-device
+    /// backup) into the local cache, then flush.
+    ///
+    /// Merge semantics: incoming entries only FILL fields that are missing
+    /// locally; on a (space, flow, field) conflict the EXISTING LOCAL value is
+    /// kept. Rationale: the local sidecar is written synchronously on every
+    /// encrypted write by the author on THIS device, so a locally-present value
+    /// is at least as fresh as the backup (which is only re-uploaded
+    /// periodically). On a brand-new browser the local cache is empty, so the
+    /// backup populates everything — the common restore case.
+    pub fn merge_private_plaintext_map(
+        &mut self,
+        incoming: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    ) {
+        if incoming.is_empty() {
+            return;
+        }
+        self.ensure_cached_loaded();
+        let mut changed = false;
+        for (space_id, flows) in incoming {
+            let local_flows = self
+                .cached
+                .mls_private_plaintext
+                .entry(space_id)
+                .or_default();
+            for (flow_id, fields) in flows {
+                let local_fields = local_flows.entry(flow_id).or_default();
+                for (field_path, plaintext) in fields {
+                    if plaintext.is_empty() {
+                        continue;
+                    }
+                    // Keep existing local value on conflict; only fill gaps.
+                    local_fields.entry(field_path).or_insert_with(|| {
+                        changed = true;
+                        plaintext
+                    });
+                }
+            }
+        }
+        if changed {
+            let _ = self.flush();
+        }
+    }
+
     /// Drain the buffered telemetry log and POST each entry to soland's
     /// audit feed. The endpoint is 404-tolerant: until soland wires
     /// `cx.audit.user_action.ingest`, the server returns 404 and we
@@ -3387,6 +3570,75 @@ mod tests {
     }
 
     #[test]
+    fn private_plaintext_snapshot_json_round_trips_through_merge() {
+        // X5.3 — write sidecar entries, snapshot to JSON, then merge that JSON
+        // into a FRESH store (the new-browser restore case) and read them back.
+        let path = temp_state_path("private-plaintext-snapshot");
+        let mut store = LocalStateStore::with_path(path);
+        assert!(store.private_plaintext_is_empty());
+        store.save_private_plaintext("cx:space:s1", "cx:flow:f1", "body", "\"hello body\"");
+        store.save_private_plaintext(
+            "cx:space:s1",
+            "cx:flow:f1",
+            "synthesis",
+            "\"hello synthesis\"",
+        );
+        store.save_private_plaintext("cx:space:s2", "cx:flow:f2", "body", "\"other body\"");
+        assert!(!store.private_plaintext_is_empty());
+
+        let json = store.private_plaintext_snapshot_json();
+        let map: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>> =
+            serde_json::from_slice(&json).unwrap();
+
+        // Fresh store (empty) merges the snapshot -> every field reappears.
+        let fresh_path = temp_state_path("private-plaintext-merged");
+        let mut fresh = LocalStateStore::with_path(fresh_path);
+        assert!(fresh.private_plaintext_is_empty());
+        fresh.merge_private_plaintext_map(map);
+        assert_eq!(
+            fresh.private_plaintext_for("cx:space:s1", "cx:flow:f1", "body"),
+            Some("\"hello body\"".to_owned())
+        );
+        assert_eq!(
+            fresh.private_plaintext_for("cx:space:s1", "cx:flow:f1", "synthesis"),
+            Some("\"hello synthesis\"".to_owned())
+        );
+        assert_eq!(
+            fresh.private_plaintext_for("cx:space:s2", "cx:flow:f2", "body"),
+            Some("\"other body\"".to_owned())
+        );
+    }
+
+    #[test]
+    fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
+        // X5.3 merge semantics: incoming only FILLS missing fields; an existing
+        // local value wins on conflict.
+        let path = temp_state_path("private-plaintext-conflict");
+        let mut store = LocalStateStore::with_path(path);
+        store.save_private_plaintext("cx:space:s1", "cx:flow:f1", "body", "\"local newer\"");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
+        fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
+        let mut flows = BTreeMap::new();
+        flows.insert("cx:flow:f1".to_owned(), fields);
+        let mut incoming = BTreeMap::new();
+        incoming.insert("cx:space:s1".to_owned(), flows);
+        store.merge_private_plaintext_map(incoming);
+
+        // Conflict: local value kept.
+        assert_eq!(
+            store.private_plaintext_for("cx:space:s1", "cx:flow:f1", "body"),
+            Some("\"local newer\"".to_owned())
+        );
+        // Gap: backup fills it.
+        assert_eq!(
+            store.private_plaintext_for("cx:space:s1", "cx:flow:f1", "synthesis"),
+            Some("\"backup synthesis\"".to_owned())
+        );
+    }
+
+    #[test]
     fn move_submission_record_round_trips_through_store() {
         let path = temp_state_path("move-submission");
         let mut store = LocalStateStore::with_path(path.clone());
@@ -3428,6 +3680,54 @@ mod tests {
         let mut store = LocalStateStore::with_path(reader.path.clone());
         store.drop_move_submission(mid);
         assert!(!store.space_has_paused_anchorer(space));
+    }
+
+    #[test]
+    fn private_plaintext_sidecar_round_trips_through_store() {
+        // X5.1 — save → reload via a fresh reader → read back. The local
+        // plaintext sidecar must survive a reload (serde-persisted), since
+        // it is the only place the author's own encrypted content lives.
+        let path = temp_state_path("private-plaintext-sidecar");
+        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let flow = "cx:flow:0196419b-0000-7000-8000-0000000000aa";
+        {
+            let mut store = LocalStateStore::with_path(path.clone());
+            store.save_private_plaintext(space, flow, "body", "\"author body\"");
+            store.save_private_plaintext(space, flow, "synthesis", "\"author synthesis\"");
+        }
+        // Fresh reader (simulating a process restart / reload).
+        let reader = LocalStateStore::with_path(path.clone());
+        assert_eq!(
+            reader.private_plaintext_for(space, flow, "body").as_deref(),
+            Some("\"author body\"")
+        );
+        assert_eq!(
+            reader
+                .private_plaintext_for(space, flow, "synthesis")
+                .as_deref(),
+            Some("\"author synthesis\"")
+        );
+        let fields = reader.private_plaintext_fields(space, flow);
+        assert_eq!(fields.len(), 2);
+        // Missing keys return None.
+        assert!(reader.private_plaintext_for(space, flow, "content").is_none());
+        assert!(
+            reader
+                .private_plaintext_for("cx:space:other", flow, "body")
+                .is_none()
+        );
+
+        // Clearing a field (empty plaintext) removes it and persists.
+        let mut writer = LocalStateStore::with_path(path.clone());
+        writer.save_private_plaintext(space, flow, "body", "");
+        let reader = LocalStateStore::with_path(path);
+        assert!(reader.private_plaintext_for(space, flow, "body").is_none());
+        assert_eq!(
+            reader
+                .private_plaintext_for(space, flow, "synthesis")
+                .as_deref(),
+            Some("\"author synthesis\"")
+        );
     }
 
     #[test]

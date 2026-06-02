@@ -9,7 +9,9 @@ use serde_json::Value;
 
 use crate::api::{ContrixApi, is_auth_expired_error};
 use crate::components::{SecurityStateBadge, UiIcon};
-use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
+use crate::config::{
+    ClientConfig, LocalConfigStore, is_valid_device_id, normalize_device_id, normalize_server_url,
+};
 use crate::conformance::{
     PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
     PROFILE_PUSH_GATEWAY, profile_ready,
@@ -6549,6 +6551,43 @@ fn has_bootstrap_refresh_material(
     })
 }
 
+fn is_local_development_server_url(principal_server_url: &str) -> bool {
+    let normalized = normalize_server_url(principal_server_url);
+    let Ok(url) = url::Url::parse(&normalized) else {
+        return false;
+    };
+    url.host_str()
+        .is_some_and(|host| matches!(host, "local.host" | "localhost" | "127.0.0.1" | "::1"))
+}
+
+fn can_attempt_development_session_reissue(
+    principal_server_url: &str,
+    actor_did: &str,
+    device_id: &str,
+) -> bool {
+    let actor = actor_did.trim();
+    let device = device_id.trim();
+    !actor.is_empty()
+        && actor.starts_with("did:")
+        && is_valid_device_id(device)
+        && is_local_development_server_url(principal_server_url)
+}
+
+fn can_bootstrap_with_development_session_reissue(
+    local_state: &ClientLocalState,
+    principal_server_url: &str,
+    actor_did: &str,
+    device_id: &str,
+) -> bool {
+    let actor = actor_did.trim();
+    local_state
+        .account_scope_owner
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|owner| owner == actor)
+        && can_attempt_development_session_reissue(principal_server_url, actor, device_id)
+}
+
 #[component]
 pub fn RouterView() -> Element {
     let initial_config = LocalConfigStore::default().load();
@@ -6564,8 +6603,16 @@ pub fn RouterView() -> Element {
         &initial_config.server_url,
         &initial_config.account_did,
     );
-    let initial_session_boot_state =
-        SessionBootState::from_boot_material(&initial_session_token, initial_can_restore_session);
+    let initial_can_reissue_development_session = can_bootstrap_with_development_session_reissue(
+        &initial_local_state,
+        &initial_config.server_url,
+        &initial_config.account_did,
+        &initial_config.device_id,
+    );
+    let initial_session_boot_state = SessionBootState::from_boot_material(
+        &initial_session_token,
+        initial_can_restore_session || initial_can_reissue_development_session,
+    );
     let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
@@ -6939,16 +6986,29 @@ pub fn RouterView() -> Element {
                 session.clear();
             }
         }
-        let can_restore_session = {
+        let (can_restore_session, can_reissue_development_session) = {
             let store = state_store.read();
-            has_bootstrap_refresh_material(&store, &base, &account_did())
+            let state = store.load();
+            (
+                has_bootstrap_refresh_material(&store, &base, &account_did()),
+                can_bootstrap_with_development_session_reissue(
+                    &state,
+                    &base,
+                    &account_did(),
+                    &device_id(),
+                ),
+            )
         };
-        if !base.trim().is_empty() && (!session.trim().is_empty() || can_restore_session) {
+        if !base.trim().is_empty()
+            && (!session.trim().is_empty()
+                || can_restore_session
+                || can_reissue_development_session)
+        {
             bootstrap_pending.set(false);
             sync_bootstrap_complete.set(false);
             session_boot_state.set(SessionBootState::from_boot_material(
                 &session,
-                can_restore_session,
+                can_restore_session || can_reissue_development_session,
             ));
             connect(
                 base,
@@ -7048,7 +7108,29 @@ pub fn RouterView() -> Element {
             {
                 return;
             }
-            let detection_key = format!("{generation}|{base}|{actor}|{device}");
+            // BUG X4: the account MLS secret is created lazily on the
+            // first encrypted write — at register / first space entry it
+            // does not exist yet, so `mls_backup_prompt_required` returns
+            // false and this effect would never re-fire to surface the
+            // backup prompt once the secret appears. Two changes fix that:
+            //   1. Read a `state_store` signal in the *synchronous* effect
+            //      body (`has_local_mls_snapshot`) so Dioxus re-runs this
+            //      effect when the first encrypted write saves a snapshot.
+            //   2. Fold the local account-secret presence into the
+            //      detection key (`sec=`) so the `seen` guard no longer
+            //      matches once the secret flips false→true, letting the
+            //      detection re-run and re-evaluate the backup prompt.
+            let has_local_mls_snapshot =
+                !state_store_for_detection.read().mls_snapshots().is_empty();
+            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                &actor,
+            )
+            .map(|secret| secret.is_some())
+            .unwrap_or(false);
+            let detection_key = format!(
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}"
+            );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
             }
@@ -7208,6 +7290,28 @@ pub fn RouterView() -> Element {
             ) else {
                 return;
             };
+            // BUG X4: the per-space bootstrap caches its `seen` key, so after
+            // the user's first encrypted write *creates* the account MLS
+            // secret (and this space's MLS snapshot) the detection would
+            // never re-run and the backup prompt would never appear. Read a
+            // `state_store` signal in the synchronous body (`has_local_mls_snapshot`)
+            // so Dioxus re-fires this effect when the write saves the snapshot,
+            // and fold both the local account-secret presence (`sec=`) and the
+            // snapshot presence (`snap=`) into the key so the `seen` guard no
+            // longer matches once they flip false→true.
+            let has_local_mls_snapshot = state_store_for_bootstrap
+                .read()
+                .mls_snapshot_for(&bootstrap_space_id)
+                .is_some();
+            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                &actor,
+            )
+            .map(|secret| secret.is_some())
+            .unwrap_or(false);
+            let bootstrap_key = format!(
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}"
+            );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
             }
@@ -7668,6 +7772,7 @@ pub fn RouterView() -> Element {
                 token,
                 actor_did: account_did,
                 device_id,
+                state_store,
                 needs_mls_backup,
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
@@ -10056,6 +10161,22 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
+async fn reissue_development_session(
+    principal_server_url: &str,
+    actor_did: &str,
+    device_id: &str,
+) -> Option<crate::models::DevLoginResponse> {
+    if !can_attempt_development_session_reissue(principal_server_url, actor_did, device_id) {
+        return None;
+    }
+    let api = ContrixApi::new(principal_server_url).ok()?;
+    let description = api.describe().await.ok()?;
+    if !description.development_mode {
+        return None;
+    }
+    api.dev_login(actor_did.trim(), device_id.trim()).await.ok()
+}
+
 /// The single source of truth for re-minting the principal bearer.
 ///
 /// Registered once at the app root and reached everywhere through
@@ -10146,7 +10267,28 @@ async fn remint_principal_bearer(
             crate::session::invalidate_current_session(reason);
             None
         }
-        _ => None,
+        _ => {
+            if let Some(session) = reissue_development_session(&base, &actor, &device).await {
+                if !same_server_url(&base, &base_url()) {
+                    return None;
+                }
+                let access_token = session.access_token.clone();
+                let actor = if session.actor.trim().is_empty() {
+                    actor
+                } else {
+                    session.actor.clone()
+                };
+                let device = if session.device_id.trim().is_empty() {
+                    device
+                } else {
+                    session.device_id.clone()
+                };
+                token.set(access_token.clone());
+                persist_config(config_store, base, actor, device, access_token.clone());
+                return Some(access_token);
+            }
+            None
+        }
     }
 }
 
@@ -11194,6 +11336,68 @@ mod tests {
             session_expires_at: Some(now + chrono::Duration::seconds(session_expires_in)),
             stored_at: now,
         }
+    }
+
+    #[test]
+    fn development_session_reissue_is_local_did_and_protocol_device_only() {
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01964137-0000-7000-8000-000000000001";
+
+        assert!(can_attempt_development_session_reissue(
+            "https://local.host",
+            actor,
+            device
+        ));
+        assert!(can_attempt_development_session_reissue(
+            "http://127.0.0.1:8787",
+            actor,
+            device
+        ));
+        assert!(!can_attempt_development_session_reissue(
+            "https://principal.example",
+            actor,
+            device
+        ));
+        assert!(!can_attempt_development_session_reissue(
+            "https://local.host",
+            "alice",
+            device
+        ));
+        assert!(!can_attempt_development_session_reissue(
+            "https://local.host",
+            actor,
+            "dev_yougen"
+        ));
+    }
+
+    #[test]
+    fn bootstrap_development_reissue_requires_matching_account_scope_owner() {
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01964137-0000-7000-8000-000000000001";
+        let mut state = ClientLocalState::default();
+
+        assert!(!can_bootstrap_with_development_session_reissue(
+            &state,
+            "https://local.host",
+            actor,
+            device
+        ));
+
+        state.account_scope_owner = Some(actor.to_owned());
+        assert!(can_bootstrap_with_development_session_reissue(
+            &state,
+            "https://local.host",
+            actor,
+            device
+        ));
+
+        state.account_scope_owner = Some("did:web:bob.example".to_owned());
+        assert!(!can_bootstrap_with_development_session_reissue(
+            &state,
+            "https://local.host",
+            actor,
+            device
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

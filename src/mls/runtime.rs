@@ -14,7 +14,7 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 const DEVICE_SNAPSHOT_SECRET_PREFIX: &str = "yougen.mls_snapshot.device_secret.v1";
 const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret";
-pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 2;
+pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
