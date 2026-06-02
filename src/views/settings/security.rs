@@ -23,8 +23,7 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
-    derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
     recovery_passphrase_strength_error,
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -232,8 +231,14 @@ pub fn SettingsSecurityPanel(
                                                     return;
                                                 }
                                             };
-                                            let ct = match encrypt_vault(&kek, payload.as_bytes()) {
-                                                Ok(c) => c,
+                                            let body = match build_recovery_vault_backup_body(
+                                                &backup_id_async,
+                                                &actor_for_payload,
+                                                &device_for_payload,
+                                                &kek,
+                                                payload.as_bytes(),
+                                            ) {
+                                                Ok(b) => b,
                                                 Err(err) => {
                                                     action_status.set(format!(
                                                         "AEAD encrypt failed: {err}"
@@ -241,18 +246,6 @@ pub fn SettingsSecurityPanel(
                                                     return;
                                                 }
                                             };
-                                            let body = build_recovery_vault_backup_body(
-                                                &backup_id_async,
-                                                &actor_for_payload,
-                                                &device_for_payload,
-                                                &ct.ciphertext_b64,
-                                                &ct.digest_sha256,
-                                                &ct.salt_b64,
-                                                &ct.nonce_b64,
-                                                VAULT_ARGON2_M_KIB,
-                                                VAULT_ARGON2_T,
-                                                VAULT_ARGON2_P,
-                                            );
                                             let backup_id_inner = backup_id_async.clone();
                                             match with_authed_api(&base, api_token, |api| async move {
                                                 api.put_key_backup(&backup_id_inner, body).await
@@ -265,9 +258,8 @@ pub fn SettingsSecurityPanel(
                                                     last_backup_at.set(now.clone());
                                                     status_text.set("enabled".to_owned());
                                                     action_status.set(format!(
-                                                        "Backup {} stored ({} bytes ciphertext)",
+                                                        "Backup {} stored",
                                                         short_protocol_id(&backup_id_async),
-                                                        ct.ciphertext.len()
                                                     ));
                                                     let next = KeyBackupState {
                                                         status: "enabled".to_owned(),

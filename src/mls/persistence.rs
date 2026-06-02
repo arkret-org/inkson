@@ -347,10 +347,17 @@ impl MlsSnapshotEnvelope {
             "backup_version": "kb_mls_snapshot_v1",
             "created_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
             "encryption": {
-                "recipient_method": "device_snapshot_secret",
-                "recipient_key_ref": device_id,
+                // Spec key-management.md §7.5.3 / device-lifecycle.md §12:
+                // mls_history is wrapped under a `secret_storage` key
+                // (`mls_group_secrets_backup_key`), recovered after the account
+                // secret is unlocked. The legacy `device_snapshot_secret` wire
+                // value is not in the `cx.schema.key_backup.v1` enum and has
+                // been removed.
+                "recipient_method": "secret_storage_key",
+                "recipient_key_ref": "mls_group_secrets_backup_key",
                 "aead": {
                     "name": "xchacha20_poly1305",
+                    "aead_profile": "cx.aead.xchacha20_poly1305.v1",
                     "nonce": nonce
                 }
             },
@@ -613,9 +620,10 @@ mod tests {
                 .is_some_and(|value| value.starts_with("cx:backup_series:"))
         );
         assert_eq!(body["series_seq"], 0);
+        assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
         assert_eq!(
-            body["encryption"]["recipient_method"],
-            "device_snapshot_secret"
+            body["encryption"]["recipient_key_ref"],
+            "mls_group_secrets_backup_key"
         );
         assert!(body["encryption"].get("kdf").is_none());
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");

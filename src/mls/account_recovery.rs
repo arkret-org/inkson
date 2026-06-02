@@ -14,11 +14,10 @@
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 
-use crate::key_backup::build_recovery_vault_backup_body;
-use crate::recovery_crypto::{
-    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, VaultKek, decrypt_vault, derive_vault_kek,
-    encrypt_vault,
+use crate::key_backup::{
+    BackupItem, KeyBackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
+use crate::recovery_crypto::{VaultKek, derive_vault_kek};
 
 /// `item_type` carried by the account MLS snapshot secret backup.
 ///
@@ -53,7 +52,7 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext"
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
 /// behind an already-derived recovery KEK.
 ///
-/// The envelope shape reuses [`build_recovery_vault_backup_body`] (same
+/// The envelope shape reuses [`crate::key_backup::build_recovery_vault_backup_body`] (same
 /// `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape that
 /// soland already validates). The plaintext account secret is encrypted with the
 /// supplied KEK; only the ciphertext, salt and nonce travel on the wire. The
@@ -93,80 +92,37 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     account_secret: &str,
     account_secret_version: u32,
 ) -> Result<Value> {
-    let ct = encrypt_vault(kek, account_secret.as_bytes())
-        .map_err(|err| anyhow!("encrypt account secret: {err}"))?;
-    // `encrypt_vault` emits base64url (`-`/`_`) natively, which is exactly the
-    // charset the key-backup validator requires, so the wire fields go straight
-    // into the uploaded body.
-    let mut body = build_recovery_vault_backup_body(
+    // Spec §7.5: the item identifiers are set BEFORE sealing so the AEAD AAD
+    // (`domain_separation.aead_aad.item_types`) binds the real
+    // `mls_account_secret` item — no post-seal relabel (which would desync the
+    // AAD from the ciphertext).
+    build_passphrase_kdf_backup_body(
         backup_id,
         actor_did,
         device_id,
-        &ct.ciphertext_b64,
-        &ct.digest_sha256,
-        &ct.salt_b64,
-        &ct.nonce_b64,
-        VAULT_ARGON2_M_KIB,
-        VAULT_ARGON2_T,
-        VAULT_ARGON2_P,
-    );
-    // Re-label the single content item from the recovery-vault default
-    // (`recovery_secret` / `yougen_recovery_vault_payload`) to the MLS account
-    // secret identifiers, then re-attach domain separation so the AAD's
-    // `item_types` matches the rewritten contents.
-    if let Some(item) = body
-        .get_mut("contents")
-        .and_then(Value::as_array_mut)
-        .and_then(|c| c.first_mut())
-        .and_then(Value::as_object_mut)
-    {
-        item.insert(
-            "item_type".to_owned(),
-            Value::String(MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned()),
-        );
-        item.insert(
-            "secret_id".to_owned(),
-            Value::String(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
-        );
-        item.insert(
-            "secret_version".to_owned(),
-            Value::Number(serde_json::Number::from(account_secret_version)),
-        );
-    }
-    crate::key_backup::attach_key_backup_domain_separation(
-        &mut body,
-        crate::key_backup::KeyBackupClass::SecretStorage,
+        kek,
+        account_secret.as_bytes(),
+        KeyBackupClass::SecretStorage,
         "recovery_vault",
-    );
-    Ok(body)
+        &BackupItem {
+            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE,
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID,
+            extra: vec![(
+                "secret_version",
+                Value::Number(serde_json::Number::from(account_secret_version)),
+            )],
+        },
+    )
 }
 
 /// Decrypt a downloaded `mls_account_secret` backup body with the user's
 /// recovery passphrase and return the account snapshot secret bytes.
 ///
-/// Mirrors [`decrypt_vault`]: the salt/nonce/ciphertext are read from the
-/// envelope and the passphrase is stretched with the same Argon2id parameters.
+/// Delegates to [`crate::key_backup::open_passphrase_kdf_backup_body`]: verifies
+/// `key_commitment`, recomputes the spec §7.5 deterministic nonce, binds the
+/// AEAD AAD, then decrypts.
 pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Result<Vec<u8>> {
-    let encryption = body
-        .get("encryption")
-        .ok_or_else(|| anyhow!("backup body missing encryption"))?;
-    let salt_b64 = encryption
-        .get("kdf")
-        .and_then(|kdf| kdf.get("salt"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing encryption.kdf.salt"))?;
-    let nonce_b64 = encryption
-        .get("aead")
-        .and_then(|aead| aead.get("nonce"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing encryption.aead.nonce"))?;
-    let ciphertext_b64 = body
-        .get("ciphertext")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing ciphertext"))?;
-    // The wire fields are base64url, which is exactly what `decrypt_vault`
-    // decodes, so they are fed straight in.
-    decrypt_vault(passphrase, salt_b64, nonce_b64, ciphertext_b64)
+    open_passphrase_kdf_backup_body(passphrase, body)
 }
 
 /// True when `body` is an MLS account-secret backup. Matched on the dedicated
@@ -200,43 +156,20 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     kek: &VaultKek,
     sidecar_json: &[u8],
 ) -> Result<Value> {
-    let ct = encrypt_vault(kek, sidecar_json)
-        .map_err(|err| anyhow!("encrypt private plaintext sidecar: {err}"))?;
-    // `encrypt_vault` emits base64url natively (the charset the validator
-    // requires), so the wire fields go straight into the uploaded body.
-    let mut body = build_recovery_vault_backup_body(
+    build_passphrase_kdf_backup_body(
         backup_id,
         actor_did,
         device_id,
-        &ct.ciphertext_b64,
-        &ct.digest_sha256,
-        &ct.salt_b64,
-        &ct.nonce_b64,
-        VAULT_ARGON2_M_KIB,
-        VAULT_ARGON2_T,
-        VAULT_ARGON2_P,
-    );
-    if let Some(item) = body
-        .get_mut("contents")
-        .and_then(Value::as_array_mut)
-        .and_then(|c| c.first_mut())
-        .and_then(Value::as_object_mut)
-    {
-        item.insert(
-            "item_type".to_owned(),
-            Value::String(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE.to_owned()),
-        );
-        item.insert(
-            "secret_id".to_owned(),
-            Value::String(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
-        );
-    }
-    crate::key_backup::attach_key_backup_domain_separation(
-        &mut body,
-        crate::key_backup::KeyBackupClass::SecretStorage,
+        kek,
+        sidecar_json,
+        KeyBackupClass::SecretStorage,
         "recovery_vault",
-    );
-    Ok(body)
+        &BackupItem {
+            item_type: MLS_PRIVATE_PLAINTEXT_ITEM_TYPE,
+            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID,
+            extra: Vec::new(),
+        },
+    )
 }
 
 /// X5.3 — decrypt a downloaded `mls_private_plaintext` backup body and return
@@ -244,31 +177,14 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
 ///
 /// The KEK source is the ACCOUNT SECRET bytes (NOT the recovery passphrase):
 /// the restore flow imports the account secret first, then feeds its bytes here
-/// so the sidecar is recovered with no second passphrase prompt. `decrypt_vault`
-/// internally derives the KEK from these bytes + the stored salt, exactly as the
-/// account-secret path does.
+/// so the sidecar is recovered with no second passphrase prompt.
+/// `open_passphrase_kdf_backup_body` derives the Argon2id root from these bytes +
+/// the stored salt, exactly as the account-secret path does.
 pub fn decrypt_mls_private_plaintext_backup(
     account_secret: &[u8],
     body: &Value,
 ) -> Result<Vec<u8>> {
-    let encryption = body
-        .get("encryption")
-        .ok_or_else(|| anyhow!("backup body missing encryption"))?;
-    let salt_b64 = encryption
-        .get("kdf")
-        .and_then(|kdf| kdf.get("salt"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing encryption.kdf.salt"))?;
-    let nonce_b64 = encryption
-        .get("aead")
-        .and_then(|aead| aead.get("nonce"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing encryption.aead.nonce"))?;
-    let ciphertext_b64 = body
-        .get("ciphertext")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("backup body missing ciphertext"))?;
-    decrypt_vault(account_secret, salt_b64, nonce_b64, ciphertext_b64)
+    open_passphrase_kdf_backup_body(account_secret, body)
 }
 
 /// True when `body` is an MLS private-plaintext sidecar backup. Matched on the

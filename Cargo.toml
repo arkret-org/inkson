@@ -93,6 +93,12 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # pin is used for the ciphertext digest's sha256 (already in `sha2`).
 argon2 = "0.5"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# key-management.md §7.5: backup AEAD key / nonce key / commitment key are HKDF
+# subkeys of the Argon2id root, and the passphrase_kdf nonce is HMAC-SHA256 over
+# a canonical transcript. Both pulled in transitively by the crypto stack; made
+# direct here for the spec-conformant key-backup crypto.
+hkdf = "0.12"
+hmac = "0.12"
 # Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
 # in-memory secure key store. The crate is already in the dependency graph
 # transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it

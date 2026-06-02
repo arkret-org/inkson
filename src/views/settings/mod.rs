@@ -29,8 +29,7 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
 use crate::recovery_crypto::{
-    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
-    derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
     recovery_passphrase_strength_error,
 };
 use crate::routes::Route;
@@ -1528,11 +1527,14 @@ pub fn SettingsPanel(
                                             return;
                                         }
                                     };
-                                    let ct = match encrypt_vault(
+                                    let body = match build_recovery_vault_backup_body(
+                                        &backup_id,
+                                        &actor,
+                                        &device,
                                         &kek,
                                         payload_plaintext.as_bytes(),
                                     ) {
-                                        Ok(c) => c,
+                                        Ok(b) => b,
                                         Err(err) => {
                                             key_backup_status.set(format!(
                                                 "AEAD encrypt failed: {err}"
@@ -1540,18 +1542,6 @@ pub fn SettingsPanel(
                                             return;
                                         }
                                     };
-                                    let body = build_recovery_vault_backup_body(
-                                        &backup_id,
-                                        &actor,
-                                        &device,
-                                        &ct.ciphertext_b64,
-                                        &ct.digest_sha256,
-                                        &ct.salt_b64,
-                                        &ct.nonce_b64,
-                                        VAULT_ARGON2_M_KIB,
-                                        VAULT_ARGON2_T,
-                                        VAULT_ARGON2_P,
-                                    );
                                     let backup_id_clone = backup_id.clone();
                                     let backup_id_for_log = backup_id.clone();
                                     match with_authed_api(&base, api_token, |api| async move {
@@ -1561,8 +1551,7 @@ pub fn SettingsPanel(
                                     {
                                         Ok(_) => {
                                             key_backup_status.set(format!(
-                                                "Backup {backup_id_for_log} stored ({} bytes ciphertext)",
-                                                ct.ciphertext.len()
+                                                "Backup {backup_id_for_log} stored"
                                             ));
                                             key_backup_passphrase.set(String::new());
                                         }

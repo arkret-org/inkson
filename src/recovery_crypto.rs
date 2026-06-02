@@ -16,10 +16,14 @@ use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use getrandom::fill;
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// Argon2id parameters used by the Encrypted Cloud Vault. We deliberately
 /// pick OWASP-recommended values that complete in a couple of seconds on a
@@ -54,6 +58,18 @@ pub const VAULT_NONCE_LEN: usize = 24;
 /// gives the user a memorable, copy-pasteable string.
 pub const RECOVERY_KEY_BYTES: usize = 32;
 
+/// Length of the producer-generated `nonce_salt` (key-management.md §7.5: "至少
+/// 128-bit 随机值"). Mixed into the deterministic nonce transcript so duplicate
+/// business-metadata tuples cannot collide nonces.
+pub const VAULT_NONCE_SALT_LEN: usize = 16;
+
+/// AEAD identifiers carried on the wire (spec §7.5 / §12 example).
+pub const VAULT_AEAD_NAME: &str = "xchacha20_poly1305";
+pub const VAULT_AEAD_PROFILE: &str = "cx.aead.xchacha20_poly1305.v1";
+
+const HKDF_COMMITMENT_INFO: &[u8] = b"contrix-key-backup-commitment-v1";
+const HKDF_NONCE_INFO: &[u8] = b"contrix-key-backup-aead-nonce-v1";
+
 /// Outcome of `derive_vault_kek`: the KEK plus the parameters that
 /// generated it. The parameters are serialised into the backup body so
 /// any future device can reproduce the KDF.
@@ -66,17 +82,35 @@ pub struct VaultKek {
     pub p: u32,
 }
 
-/// Outcome of `encrypt_vault`: the ciphertext (Poly1305 tag appended by
-/// the AEAD), the random nonce, and base64-encoded views of both so the
-/// caller can hand them straight to the backup body.
+/// Envelope metadata that the spec §7.5 nonce transcript and §7.1 AEAD AAD bind
+/// to. The envelope builder owns these strings; the crypto derives the
+/// domain-isolated AEAD key, the deterministic nonce, and the key commitment
+/// from them. `aad_canonical` is the canonical-JSON bytes of the envelope's
+/// `domain_separation.aead_aad` object (single source of truth for the AAD, so
+/// encrypt and decrypt bind byte-identical associated data).
+#[derive(Clone, Copy)]
+pub struct VaultSealContext<'a> {
+    pub backup_id: &'a str,
+    pub actor_id: &'a str,
+    pub device_id: &'a str,
+    pub backup_class: &'a str,
+    pub subdomain: &'a str,
+    pub backup_version: &'a str,
+    pub created_at: &'a str,
+    pub aad_canonical: &'a [u8],
+}
+
+/// Outcome of [`seal_vault`]: base64url ciphertext + the deterministic
+/// nonce/salt/nonce_salt and the `key_commitment`, ready to drop into a
+/// `cx.schema.key_backup.v1` envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VaultCiphertext {
-    pub ciphertext: Vec<u8>,
-    pub nonce: [u8; VAULT_NONCE_LEN],
+pub struct VaultSealed {
     pub ciphertext_b64: String,
-    pub nonce_b64: String,
+    pub ciphertext_digest: String,
     pub salt_b64: String,
-    pub digest_sha256: String,
+    pub nonce_b64: String,
+    pub nonce_salt_b64: String,
+    pub key_commitment: String,
 }
 
 /// Stretch a user passphrase into a 32-byte key under Argon2id with a
@@ -111,35 +145,115 @@ pub fn derive_vault_kek_with_salt(
     })
 }
 
-/// Encrypt the vault plaintext under the KEK with XChaCha20-Poly1305 and
-/// a fresh random nonce. The returned struct carries everything the
-/// recovery backup body needs (ciphertext, nonce, salt, sha256 digest).
-pub fn encrypt_vault(kek: &VaultKek, plaintext: &[u8]) -> Result<VaultCiphertext> {
-    let cipher = XChaCha20Poly1305::new((&kek.key).into());
-    let mut nonce_bytes = [0u8; VAULT_NONCE_LEN];
-    fill(&mut nonce_bytes).map_err(|err| anyhow!("nonce rng: {err}"))?;
-    let nonce = XNonce::from_slice(&nonce_bytes);
+/// HKDF-Expand the Argon2id root key into a 32-byte domain subkey
+/// (`HKDF(root, info)`, salt=none per key-management.md §7.1/§7.5).
+fn hkdf_subkey(root: &[u8; VAULT_KDF_OUTPUT_LEN], info: &[u8]) -> Result<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(None, root);
+    let mut out = [0u8; 32];
+    hk.expand(info, &mut out)
+        .map_err(|err| anyhow!("hkdf expand: {err}"))?;
+    Ok(out)
+}
+
+/// Domain-isolated AEAD wrap key: `HKDF(root, "contrix-key-backup/<class>/<subdomain>/v1")`.
+fn vault_aead_key(
+    root: &[u8; VAULT_KDF_OUTPUT_LEN],
+    backup_class: &str,
+    subdomain: &str,
+) -> Result<[u8; 32]> {
+    let info = format!("contrix-key-backup/{backup_class}/{subdomain}/v1");
+    hkdf_subkey(root, info.as_bytes())
+}
+
+/// `key_commitment = SHA256(HKDF(root, "contrix-key-backup-commitment-v1"))`
+/// (key-management.md §7.5). Lets a recovering client reject a wrong passphrase
+/// before touching the ciphertext.
+pub fn vault_key_commitment(root: &VaultKek) -> Result<String> {
+    let commitment_key = hkdf_subkey(&root.key, HKDF_COMMITMENT_INFO)?;
+    Ok(format!(
+        "sha256:{}",
+        hex_lower(&Sha256::digest(commitment_key))
+    ))
+}
+
+/// Deterministic AEAD nonce per key-management.md §7.5:
+/// `HMAC-SHA256(HKDF(root,"...-aead-nonce-v1"), canonical_json(transcript))[0:24]`.
+fn vault_nonce(
+    root: &VaultKek,
+    ctx: &VaultSealContext<'_>,
+    nonce_salt_b64: &str,
+) -> Result<[u8; VAULT_NONCE_LEN]> {
+    let nonce_key = hkdf_subkey(&root.key, HKDF_NONCE_INFO)?;
+    let transcript = serde_json::json!({
+        "backup_id": ctx.backup_id,
+        "actor_id": ctx.actor_id,
+        "device_id": ctx.device_id,
+        "backup_class": ctx.backup_class,
+        "backup_version": ctx.backup_version,
+        "created_at": ctx.created_at,
+        "aead": VAULT_AEAD_NAME,
+        "aead_profile": VAULT_AEAD_PROFILE,
+        "nonce_salt": nonce_salt_b64,
+    });
+    let bytes = crate::canonical::canonical_json_bytes(&transcript)
+        .map_err(|err| anyhow!("nonce transcript canonical json: {err}"))?;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(&nonce_key)
+        .map_err(|err| anyhow!("hmac key: {err}"))?;
+    mac.update(&bytes);
+    let tag = mac.finalize().into_bytes();
+    let mut nonce = [0u8; VAULT_NONCE_LEN];
+    nonce.copy_from_slice(&tag[..VAULT_NONCE_LEN]);
+    Ok(nonce)
+}
+
+/// Spec §7.5 seal: domain-isolated HKDF AEAD key, deterministic nonce derived
+/// from a fresh `nonce_salt`, AAD bound to the envelope metadata, and a
+/// `key_commitment` for wrong-passphrase fail-fast. Replaces the old
+/// direct-Argon2-key + random-nonce + no-AAD path.
+pub fn seal_vault(
+    root: &VaultKek,
+    ctx: &VaultSealContext<'_>,
+    plaintext: &[u8],
+) -> Result<VaultSealed> {
+    let mut nonce_salt = [0u8; VAULT_NONCE_SALT_LEN];
+    fill(&mut nonce_salt).map_err(|err| anyhow!("nonce_salt rng: {err}"))?;
+    let nonce_salt_b64 = B64.encode(nonce_salt);
+
+    let aead_key = vault_aead_key(&root.key, ctx.backup_class, ctx.subdomain)?;
+    let nonce = vault_nonce(root, ctx, &nonce_salt_b64)?;
+    let cipher = XChaCha20Poly1305::new((&aead_key).into());
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: ctx.aad_canonical,
+            },
+        )
         .map_err(|err| anyhow!("xchacha20poly1305 encrypt: {err}"))?;
     let digest = Sha256::digest(&ciphertext);
-    Ok(VaultCiphertext {
+    Ok(VaultSealed {
         ciphertext_b64: B64.encode(&ciphertext),
-        nonce_b64: B64.encode(nonce_bytes),
-        salt_b64: B64.encode(kek.salt),
-        digest_sha256: format!("sha256:{}", hex_lower(&digest)),
-        ciphertext,
-        nonce: nonce_bytes,
+        ciphertext_digest: format!("sha256:{}", hex_lower(&digest)),
+        salt_b64: B64.encode(root.salt),
+        nonce_b64: B64.encode(nonce),
+        nonce_salt_b64,
+        key_commitment: vault_key_commitment(root)?,
     })
 }
 
-/// Decrypt a previously produced vault ciphertext. Used by tests today
-/// and by the future "restore" flow tomorrow. Returns an error if the
-/// passphrase is wrong (AEAD tag mismatch) or if any input is malformed.
-pub fn decrypt_vault(
+/// Spec §7.5 open: re-derive the root from the passphrase + salt, verify
+/// `key_commitment` (wrong-passphrase fail-fast), recompute and check the
+/// deterministic nonce, then AEAD-decrypt with the bound AAD. Any mismatch is a
+/// hard error.
+#[allow(clippy::too_many_arguments)]
+pub fn open_vault(
     passphrase: &[u8],
+    ctx: &VaultSealContext<'_>,
     salt_b64: &str,
     nonce_b64: &str,
+    nonce_salt_b64: &str,
+    key_commitment: &str,
     ciphertext_b64: &str,
 ) -> Result<Vec<u8>> {
     let salt_bytes = B64
@@ -148,19 +262,39 @@ pub fn decrypt_vault(
     let salt: [u8; VAULT_SALT_LEN] = salt_bytes
         .try_into()
         .map_err(|_| anyhow!("salt must be {VAULT_SALT_LEN} bytes"))?;
+    let root = derive_vault_kek_with_salt(passphrase, &salt)?;
+
+    // Wrong-passphrase fail-fast via key_commitment before any AEAD work.
+    if !key_commitment.is_empty() && vault_key_commitment(&root)? != key_commitment {
+        return Err(anyhow!(
+            "vault decrypt failed: key_commitment mismatch (wrong passphrase)"
+        ));
+    }
+
+    // Receiver MUST recompute the deterministic nonce and reject mismatches.
+    let expected_nonce = vault_nonce(&root, ctx, nonce_salt_b64)?;
     let nonce_bytes = B64
         .decode(nonce_b64.trim_end_matches('='))
         .context("nonce base64")?;
-    let nonce_array: [u8; VAULT_NONCE_LEN] = nonce_bytes
-        .try_into()
-        .map_err(|_| anyhow!("nonce must be {VAULT_NONCE_LEN} bytes"))?;
+    if nonce_bytes != expected_nonce {
+        return Err(anyhow!(
+            "vault decrypt failed: nonce does not match the spec transcript"
+        ));
+    }
+
+    let aead_key = vault_aead_key(&root.key, ctx.backup_class, ctx.subdomain)?;
     let ciphertext = B64
         .decode(ciphertext_b64.trim_end_matches('='))
         .context("ciphertext base64")?;
-    let kek = derive_vault_kek_with_salt(passphrase, &salt)?;
-    let cipher = XChaCha20Poly1305::new((&kek.key).into());
+    let cipher = XChaCha20Poly1305::new((&aead_key).into());
     let plaintext = cipher
-        .decrypt(XNonce::from_slice(&nonce_array), ciphertext.as_slice())
+        .decrypt(
+            XNonce::from_slice(&expected_nonce),
+            Payload {
+                msg: ciphertext.as_slice(),
+                aad: ctx.aad_canonical,
+            },
+        )
         .map_err(|_| anyhow!("vault decrypt failed: wrong passphrase or corrupt ciphertext"))?;
     Ok(plaintext)
 }
@@ -446,48 +580,102 @@ mod tests {
         assert_ne!(a.key, b.key);
     }
 
+    fn test_ctx<'a>(aad: &'a [u8]) -> VaultSealContext<'a> {
+        VaultSealContext {
+            backup_id: "cx:backup:01964137-0000-7000-8000-00000000beef",
+            actor_id: "did:web:alice.example",
+            device_id: "cx:device:01964137-0000-7000-8000-000000000001",
+            backup_class: "secret_storage",
+            subdomain: "recovery_vault",
+            backup_version: "kb_1",
+            created_at: "2026-06-02T00:00:00Z",
+            aad_canonical: aad,
+        }
+    }
+
     #[test]
-    fn encrypt_decrypt_round_trip() {
-        let kek = derive_vault_kek_with_salt(b"open sesame", &[7u8; VAULT_SALT_LEN]).unwrap();
-        let plaintext = br#"{"device_sk":"opaque","recovery_key_digest":"sha256:..."}"#;
-        let ct = encrypt_vault(&kek, plaintext).unwrap();
-        let recovered = decrypt_vault(
+    fn seal_open_round_trip() {
+        let root = derive_vault_kek_with_salt(b"open sesame", &[7u8; VAULT_SALT_LEN]).unwrap();
+        let aad = br#"{"backup_class":"secret_storage"}"#;
+        let ctx = test_ctx(aad);
+        let plaintext = br#"{"device_sk":"opaque"}"#;
+        let sealed = seal_vault(&root, &ctx, plaintext).unwrap();
+        let recovered = open_vault(
             b"open sesame",
-            &ct.salt_b64,
-            &ct.nonce_b64,
-            &ct.ciphertext_b64,
+            &ctx,
+            &sealed.salt_b64,
+            &sealed.nonce_b64,
+            &sealed.nonce_salt_b64,
+            &sealed.key_commitment,
+            &sealed.ciphertext_b64,
         )
         .unwrap();
         assert_eq!(recovered, plaintext);
     }
 
     #[test]
-    fn decrypt_rejects_wrong_passphrase() {
-        let kek = derive_vault_kek_with_salt(b"first", &[3u8; VAULT_SALT_LEN]).unwrap();
-        let ct = encrypt_vault(&kek, b"payload").unwrap();
-        let err =
-            decrypt_vault(b"second", &ct.salt_b64, &ct.nonce_b64, &ct.ciphertext_b64).unwrap_err();
+    fn open_rejects_wrong_passphrase_via_commitment() {
+        let root = derive_vault_kek_with_salt(b"first", &[3u8; VAULT_SALT_LEN]).unwrap();
+        let aad = b"{}";
+        let ctx = test_ctx(aad);
+        let sealed = seal_vault(&root, &ctx, b"payload").unwrap();
+        let err = open_vault(
+            b"second",
+            &ctx,
+            &sealed.salt_b64,
+            &sealed.nonce_b64,
+            &sealed.nonce_salt_b64,
+            &sealed.key_commitment,
+            &sealed.ciphertext_b64,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("key_commitment mismatch"));
+    }
+
+    #[test]
+    fn open_rejects_aad_tamper() {
+        let root = derive_vault_kek_with_salt(b"pp", &[5u8; VAULT_SALT_LEN]).unwrap();
+        let ctx = test_ctx(b"{\"backup_class\":\"secret_storage\"}");
+        let sealed = seal_vault(&root, &ctx, b"secret").unwrap();
+        // Same passphrase + nonce, but a different AAD must fail the AEAD tag.
+        let tampered = test_ctx(b"{\"backup_class\":\"did_recovery\"}");
+        let err = open_vault(
+            b"pp",
+            &tampered,
+            &sealed.salt_b64,
+            &sealed.nonce_b64,
+            &sealed.nonce_salt_b64,
+            &sealed.key_commitment,
+            &sealed.ciphertext_b64,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("vault decrypt failed"));
     }
 
     #[test]
-    fn ciphertext_digest_matches_sha256_of_raw_bytes() {
-        let kek = derive_vault_kek_with_salt(b"pp", &[9u8; VAULT_SALT_LEN]).unwrap();
-        let ct = encrypt_vault(&kek, b"hello world").unwrap();
-        let digest = Sha256::digest(&ct.ciphertext);
-        assert_eq!(ct.digest_sha256, format!("sha256:{}", hex_lower(&digest)));
+    fn nonce_is_deterministic_from_transcript() {
+        let root = derive_vault_kek_with_salt(b"pp", &[9u8; VAULT_SALT_LEN]).unwrap();
+        let ctx = test_ctx(b"{}");
+        let n1 = vault_nonce(&root, &ctx, "c2FsdA").unwrap();
+        let n2 = vault_nonce(&root, &ctx, "c2FsdA").unwrap();
+        assert_eq!(n1, n2, "same transcript + nonce_salt must yield same nonce");
+        let n3 = vault_nonce(&root, &ctx, "ZGlmZg").unwrap();
+        assert_ne!(n1, n3, "different nonce_salt must change the nonce");
     }
 
     #[test]
-    fn nonce_and_salt_decode_cleanly_from_emitted_b64() {
-        let kek = derive_vault_kek_with_salt(b"pp", &[12u8; VAULT_SALT_LEN]).unwrap();
-        let ct = encrypt_vault(&kek, b"x").unwrap();
-        let salt_back = B64.decode(ct.salt_b64.trim_end_matches('=')).unwrap();
-        let nonce_back = B64.decode(ct.nonce_b64.trim_end_matches('=')).unwrap();
-        assert_eq!(salt_back.len(), VAULT_SALT_LEN);
-        assert_eq!(nonce_back.len(), VAULT_NONCE_LEN);
-        assert_eq!(salt_back, kek.salt);
-        assert_eq!(nonce_back, ct.nonce);
+    fn key_commitment_is_stable_and_passphrase_bound() {
+        let a = derive_vault_kek_with_salt(b"pp", &[1u8; VAULT_SALT_LEN]).unwrap();
+        let b = derive_vault_kek_with_salt(b"pp", &[1u8; VAULT_SALT_LEN]).unwrap();
+        let c = derive_vault_kek_with_salt(b"other", &[1u8; VAULT_SALT_LEN]).unwrap();
+        assert_eq!(
+            vault_key_commitment(&a).unwrap(),
+            vault_key_commitment(&b).unwrap()
+        );
+        assert_ne!(
+            vault_key_commitment(&a).unwrap(),
+            vault_key_commitment(&c).unwrap()
+        );
     }
 
     #[test]
@@ -555,15 +743,19 @@ mod tests {
     }
 
     #[test]
-    fn live_kek_and_decrypt_path_works_with_random_salt() {
+    fn live_seal_open_path_works_with_random_salt() {
         // Smoke test for the "real" entry point that uses getrandom for the salt.
-        let kek = derive_vault_kek(b"random-salt-passphrase").unwrap();
-        let ct = encrypt_vault(&kek, b"hello").unwrap();
-        let plain = decrypt_vault(
+        let root = derive_vault_kek(b"random-salt-passphrase").unwrap();
+        let ctx = test_ctx(b"{}");
+        let sealed = seal_vault(&root, &ctx, b"hello").unwrap();
+        let plain = open_vault(
             b"random-salt-passphrase",
-            &ct.salt_b64,
-            &ct.nonce_b64,
-            &ct.ciphertext_b64,
+            &ctx,
+            &sealed.salt_b64,
+            &sealed.nonce_b64,
+            &sealed.nonce_salt_b64,
+            &sealed.key_commitment,
+            &sealed.ciphertext_b64,
         )
         .unwrap();
         assert_eq!(plain, b"hello");

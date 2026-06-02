@@ -26,8 +26,7 @@ use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    RECOVERY_PASSPHRASE_MIN_STRENGTH, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T,
-    decrypt_vault, derive_vault_kek, encrypt_vault, estimate_passphrase_strength,
+    RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
     fingerprint_recovery_key, generate_recovery_key, recovery_passphrase_strength_error,
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -577,26 +576,20 @@ pub fn RecoveryPanel(
                                             return;
                                         }
                                     };
-                                    let ct = match encrypt_vault(&kek, payload_plaintext.as_bytes()) {
-                                        Ok(c) => c,
+                                    let body = match build_recovery_vault_backup_body(
+                                        &backup_id_for_async,
+                                        &actor_for_async,
+                                        &device_for_async,
+                                        &kek,
+                                        payload_plaintext.as_bytes(),
+                                    ) {
+                                        Ok(b) => b,
                                         Err(err) => {
                                             vault_sync.set(SyncBadge::Failed);
                                             vault_status.set(format!("AEAD encrypt failed: {err}"));
                                             return;
                                         }
                                     };
-                                    let body = build_recovery_vault_backup_body(
-                                        &backup_id_for_async,
-                                        &actor_for_async,
-                                        &device_for_async,
-                                        &ct.ciphertext_b64,
-                                        &ct.digest_sha256,
-                                        &ct.salt_b64,
-                                        &ct.nonce_b64,
-                                        VAULT_ARGON2_M_KIB,
-                                        VAULT_ARGON2_T,
-                                        VAULT_ARGON2_P,
-                                    );
                                     let backup_id_clone = backup_id_for_async.clone();
                                     // Cloned up-front because the primary upload moves `api_token`.
                                     let mls_base = base.clone();
@@ -625,8 +618,7 @@ pub fn RecoveryPanel(
                                             vault_uploaded_at.set(now.clone());
                                             vault_sync.set(SyncBadge::Synced);
                                             vault_status.set(format!(
-                                                "Uploaded backup {backup_id_for_async} ({} bytes ciphertext)",
-                                                ct.ciphertext.len()
+                                                "Uploaded backup {backup_id_for_async}"
                                             ));
                                             passphrase.set(String::new());
                                             confirm_pass.set(String::new());
@@ -1217,9 +1209,10 @@ pub fn RecoveryPanel(
                                         let mut store = state_store;
                                         move |_| {
                                             let pass_bytes = restore_pass().into_bytes();
-                                            let salt = target_row.salt_b64.clone();
-                                            let nonce = target_row.nonce_b64.clone();
-                                            let ct = target_row.ciphertext_b64.clone();
+                                            // Spec §7.5: decrypt from the full envelope (verifies
+                                            // key_commitment + recomputes the deterministic nonce +
+                                            // binds the AEAD AAD), not from loose salt/nonce/ct.
+                                            let body = target_row.body.clone();
                                             let bid = target_row.backup_id.clone();
                                             // Captured for the Option A account-MLS recovery below.
                                             let all_rows = backup_rows();
@@ -1229,7 +1222,7 @@ pub fn RecoveryPanel(
                                             restore_loading.set(true);
                                             spawn(async move {
                                                 let bid_label = short_protocol_id(&bid);
-                                                match decrypt_vault(&pass_bytes, &salt, &nonce, &ct) {
+                                                match crate::key_backup::open_passphrase_kdf_backup_body(&pass_bytes, &body) {
                                                     Ok(plain) => {
                                                         let text = String::from_utf8_lossy(&plain).into_owned();
                                                         restore_plaintext.set(text);

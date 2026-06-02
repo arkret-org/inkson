@@ -27,7 +27,6 @@ use serde_json::Value;
 
 use crate::components::HelpTip;
 use crate::local_state::LocalStateStore;
-use crate::recovery_crypto::decrypt_vault;
 use crate::views::helpers::with_authed_api;
 
 #[component]
@@ -152,44 +151,14 @@ pub fn RecoverPanel(
                                             }
                                         };
 
-                                        let Some(salt) = backup_value
-                                            .pointer("/encryption/kdf/salt")
-                                            .and_then(|v| v.as_str())
-                                        else {
-                                            restore_status.set(
-                                                "Backup envelope missing /encryption/kdf/salt — refusing to decrypt.".to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        let Some(nonce) = backup_value
-                                            .pointer("/encryption/aead/nonce")
-                                            .and_then(|v| v.as_str())
-                                        else {
-                                            restore_status.set(
-                                                "Backup envelope missing /encryption/aead/nonce — refusing to decrypt.".to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        let Some(ciphertext) = backup_value
-                                            .get("ciphertext")
-                                            .and_then(|v| v.as_str())
-                                        else {
-                                            restore_status.set(
-                                                "Backup envelope missing top-level ciphertext.".to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        // TODO(G3.Y1-followup): verify
-                                        // the envelope's `key_commitment`
-                                        // (spec key-management.md §7.2)
-                                        // BEFORE calling decrypt_vault
-                                        // so a wrong passphrase fails
-                                        // locally with no oracle leak.
-                                        match decrypt_vault(
+                                        // Spec §7.5: decrypt from the full envelope. `open_*`
+                                        // verifies `key_commitment` (wrong-passphrase fail-fast,
+                                        // no oracle leak), recomputes the deterministic nonce, and
+                                        // binds the AEAD AAD, returning a clear error for any
+                                        // missing/mismatched field.
+                                        match crate::key_backup::open_passphrase_kdf_backup_body(
                                             pass.as_bytes(),
-                                            salt,
-                                            nonce,
-                                            ciphertext,
+                                            &backup_value,
                                         ) {
                                             Ok(plain) => {
                                                 let recovered = String::from_utf8_lossy(&plain)
