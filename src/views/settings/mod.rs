@@ -10,6 +10,7 @@ pub mod blocklist;
 pub mod capabilities;
 pub mod consent;
 pub mod devices;
+pub mod mls_recovery;
 pub mod recover_restore;
 pub mod recovery;
 pub mod security;
@@ -1362,28 +1363,6 @@ pub fn SettingsPanel(
                                 }
                             }
 
-                            div { class: "event", "data-testid": "bound-services-settings",
-                                div { class: "event-head", span { "Bound Services" } span { "Principal Server delegated" } }
-                                div { class: "metric-grid",
-                                    div { class: "metric",
-                                        strong { "soland" }
-                                        span { "events, sync, projections" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "coauth" }
-                                        span { "auth bridge / session grant" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "chime" }
-                                        span { "push wakeups, redacted by default" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "applet runtime" }
-                                        span { "capability-scoped extensions" }
-                                    }
-                                }
-                            }
-
                         }
                     }
 
@@ -1665,6 +1644,19 @@ pub fn SettingsPanel(
                     }
                     div { class: "muted", "Contract: cx.schema.key_backup.v1 over /api/v1/keys/backups/*." }
                 }
+                            // X11.1 — persistent MLS recovery-passphrase entry.
+                            // Always reachable here (Security & recovery),
+                            // shows live backup status, and lets the user
+                            // set/replace the passphrase regardless of the
+                            // boot detection effect timing. NOT gated on
+                            // `needs_mls_backup`.
+                            mls_recovery::SettingsMlsRecoveryPanel {
+                                base_url,
+                                token,
+                                account_did,
+                                device_id,
+                                state_store,
+                            }
                         }
                     }
 

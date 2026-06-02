@@ -63,7 +63,10 @@ pub use circle_scope_picker::{
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use error_boundary::{ErrorBoundary, RetryableError};
-pub use mls_backup_prompt::MlsBackupPrompt;
+pub use mls_backup_prompt::{
+    MlsBackupPrompt, MlsBackupSignal, maybe_flag_mls_backup_after_encrypted_write,
+    try_needs_mls_backup_signal,
+};
 pub use mls_unlock::MlsUnlockPrompt;
 pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{

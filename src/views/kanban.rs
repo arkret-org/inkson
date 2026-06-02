@@ -57,6 +57,13 @@ const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
 ];
 const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str = "application/vnd.contrix.flow.patch-value+json";
 
+/// X10.2 — shown for an encrypted private field (body/synthesis) that this
+/// device cannot read yet: no local plaintext sidecar AND the author can't
+/// decrypt their own ciphertext (OpenMLS) / a fresh browser before MLS
+/// unlock+restore. Distinguishes "encrypted, unlock to view" from genuinely
+/// empty content so users don't read it as data loss.
+const MLS_LOCKED_FIELD_PLACEHOLDER: &str = "🔒 Encrypted — unlock MLS (enter your recovery passphrase) to view";
+
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
 /// (not tied to an account or Space), so they live in `localStorage`
@@ -169,6 +176,13 @@ struct KanbanCard {
     /// Canonical wire path: `object.synthesis` (with `object.tracks.synthesis.body`
     /// honored as a back-compat fallback in projection reads).
     synthesis: String,
+    /// X10.2 — `body`/`synthesis` are encrypted MLS envelopes this device
+    /// cannot read yet (no local plaintext sidecar + can't decrypt: author's
+    /// own ciphertext, or a fresh browser before MLS unlock). When true the
+    /// display layer shows a locked placeholder; `body`/`synthesis` stay
+    /// EMPTY so the editor never re-saves a placeholder over real ciphertext.
+    body_locked: bool,
+    synthesis_locked: bool,
     created_by: String,
     created_at: String,
     updated_at: String,
@@ -1078,6 +1092,19 @@ fn card_from_projection_item(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
+    // X10.2: bind the private-field value exprs once so the text + locked
+    // checks read the same source.
+    let item_body_value = item.object.get("body").or_else(|| {
+        item.object
+            .get("fields")
+            .and_then(|fields| fields.get("body"))
+    });
+    let item_synthesis_value = item.object.get("synthesis").or_else(|| {
+        item.object
+            .get("tracks")
+            .and_then(|tracks| tracks.get("synthesis"))
+            .and_then(|track| track.get("body"))
+    });
     KanbanCard {
         id,
         rank,
@@ -1089,26 +1116,24 @@ fn card_from_projection_item(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned(),
-        body: private_flow_field_text(
+        body: private_flow_field_text(decrypt_ctx, &primary_flow_id, "body", item_body_value),
+        body_locked: private_flow_field_locked(
             decrypt_ctx,
             &primary_flow_id,
             "body",
-            item.object.get("body").or_else(|| {
-                item.object
-                    .get("fields")
-                    .and_then(|fields| fields.get("body"))
-            }),
+            item_body_value,
         ),
         synthesis: private_flow_field_text(
             decrypt_ctx,
             &primary_flow_id,
             "synthesis",
-            item.object.get("synthesis").or_else(|| {
-                item.object
-                    .get("tracks")
-                    .and_then(|tracks| tracks.get("synthesis"))
-                    .and_then(|track| track.get("body"))
-            }),
+            item_synthesis_value,
+        ),
+        synthesis_locked: private_flow_field_locked(
+            decrypt_ctx,
+            &primary_flow_id,
+            "synthesis",
+            item_synthesis_value,
         ),
         created_by,
         created_at,
@@ -1412,12 +1437,55 @@ fn private_flow_display_text(ctx: Option<&MlsDecryptCtx<'_>>, value: Option<&Val
     if value_is_mls_envelope(value) {
         return match ctx.and_then(|ctx| decrypt_private_flow_value(ctx, value)) {
             Some(plaintext) => flow_body_display_text(Some(&plaintext)),
-            // Encrypted but un-decryptable: render blank instead of the
-            // raw envelope. Do NOT crash.
+            // Encrypted but un-decryptable: return BLANK (never the raw
+            // envelope, never crash). The locked state is surfaced
+            // separately via `private_flow_field_locked` so the placeholder
+            // text never contaminates `card.body` / the editable draft
+            // (which would let an edit overwrite the real ciphertext). See
+            // X10.2.
             None => String::new(),
         };
     }
     flow_body_display_text(Some(value))
+}
+
+/// X10.2 — true when a private field IS an MLS envelope that this device
+/// cannot currently read: no local plaintext sidecar AND decryption is not
+/// possible (author's own ciphertext / fresh browser before MLS unlock).
+/// The display layer renders [`MLS_LOCKED_FIELD_PLACEHOLDER`] in this case so
+/// the user can tell "encrypted, unlock to view" apart from "no content" —
+/// WITHOUT putting the placeholder text into `card.body` (which the editor
+/// copies and could re-save, corrupting the real encrypted content).
+fn private_flow_field_locked(
+    ctx: Option<&MlsDecryptCtx<'_>>,
+    flow_id: &str,
+    field_path: &str,
+    value: Option<&Value>,
+) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    if !value_is_mls_envelope(value) {
+        return false;
+    }
+    // Sidecar hit → readable, not locked.
+    if let Some(ctx) = ctx
+        && ctx
+            .state_store
+            .private_plaintext_for(ctx.space_id, flow_id, field_path)
+            .is_some()
+    {
+        return false;
+    }
+    // Decryptable (another member's ciphertext) → not locked.
+    if ctx
+        .and_then(|ctx| decrypt_private_flow_value(ctx, value))
+        .is_some()
+    {
+        return false;
+    }
+    // Envelope, no sidecar, can't decrypt → locked.
+    true
 }
 
 /// X5.2 — resolve the display text for an author-private flow field
@@ -1499,28 +1567,33 @@ fn card_from_flow_projection(
                 "Managed by board".to_owned()
             }
         });
+    // X10.2: bind the private-field value exprs once so text + locked agree.
+    let flow_body_value = flow.body.as_ref().or_else(|| flow.fields.get("body"));
+    let flow_synthesis_value = flow.fields.get("synthesis").or_else(|| {
+        flow.fields
+            .get("tracks")
+            .and_then(|tracks| tracks.get("synthesis"))
+            .and_then(|track| track.get("body"))
+    });
     KanbanCard {
         id: flow.flow_id.clone(),
         rank: flow_projection_field_string(flow, flow.rank.as_deref(), &["rank"])
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: private_flow_field_text(
-            decrypt_ctx,
-            &flow.flow_id,
-            "body",
-            flow.body.as_ref().or_else(|| flow.fields.get("body")),
-        ),
+        body: private_flow_field_text(decrypt_ctx, &flow.flow_id, "body", flow_body_value),
+        body_locked: private_flow_field_locked(decrypt_ctx, &flow.flow_id, "body", flow_body_value),
         synthesis: private_flow_field_text(
             decrypt_ctx,
             &flow.flow_id,
             "synthesis",
-            flow.fields.get("synthesis").or_else(|| {
-                flow.fields
-                    .get("tracks")
-                    .and_then(|tracks| tracks.get("synthesis"))
-                    .and_then(|track| track.get("body"))
-            }),
+            flow_synthesis_value,
+        ),
+        synthesis_locked: private_flow_field_locked(
+            decrypt_ctx,
+            &flow.flow_id,
+            "synthesis",
+            flow_synthesis_value,
         ),
         created_by: flow
             .created_by
@@ -1575,6 +1648,8 @@ fn local_created_card(
         description,
         body: String::new(),
         synthesis: String::new(),
+        body_locked: false,
+        synthesis_locked: false,
         created_by: "yougen".to_owned(),
         created_at: String::new(),
         updated_at: String::new(),
@@ -4838,6 +4913,18 @@ pub fn KanbanPanel(
                                                                     },
                                                                 }
                                                             }
+                                                        } else if card.body.trim().is_empty()
+                                                            && card.body_locked
+                                                        {
+                                                            // X10.2: encrypted field this device can't
+                                                            // read yet — show a locked notice (NOT "No
+                                                            // description", NOT an edit affordance that
+                                                            // would overwrite the real ciphertext).
+                                                            div {
+                                                                class: "card-detail-empty",
+                                                                "data-testid": "card-detail-body-locked",
+                                                                div { "{MLS_LOCKED_FIELD_PLACEHOLDER}" }
+                                                            }
                                                         } else if card.body.trim().is_empty() {
                                                             div { class: "card-detail-empty",
                                                                 div { "No description" }
@@ -6513,11 +6600,30 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
     }
 }
 
+/// Event kinds that carry ONLY non-secret structural metadata (container
+/// title / kind / parent / rank) and therefore MUST submit to the server as
+/// plaintext even inside an encrypted Realm. Container creation (`cx.space.create`
+/// for Board and List) is the canonical example: a second device needs the
+/// plaintext title to render the Board/List name instead of falling back to
+/// `generated_board_fallback_title` (`cx:space:...`). Only Flow card private
+/// content fields (body / synthesis / discussion) are E2EE — never the
+/// container scaffold. Exempting these kinds here is a hard invariant: it
+/// guarantees the plaintext-block decision can never silently drop a container
+/// create, regardless of what `kanban_event_carries_plaintext_private_content`
+/// matches in the future. See _next.md X13.
+const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["cx.space.create"];
+
 fn kanban_plaintext_block_reason(
     scope_security_encrypted: bool,
     event: &crate::operation::EventEnvelope,
 ) -> Option<String> {
     if !scope_security_encrypted || !kanban_event_carries_plaintext_private_content(event) {
+        return None;
+    }
+    // Container scaffold writes (board/list title, kind, parent, rank) are
+    // non-secret metadata and ALWAYS submit via the normal plaintext event
+    // path even in an encrypted Realm. Never block them.
+    if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
         return None;
     }
     kanban_plaintext_block_reason_for_kind(scope_security_encrypted, &event.kind)
@@ -7181,6 +7287,14 @@ fn dispatch_card_detail_update(
     // X5.3 — clones for the private-plaintext sidecar re-upload (trigger c).
     let actor_for_sidecar = actor_did.clone();
     let device_for_sidecar = device_id.clone();
+    // X11.2 — first-write trigger. Read the context-provided
+    // `needs_mls_backup` signal HERE (inside the Dioxus scope), so the
+    // encrypted-write success arm can flip the backup prompt on directly,
+    // bypassing the fragile boot detection effect. Best-effort: `None` when
+    // no provider is mounted (unit tests / non-app callers).
+    let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
+    let base_for_backup_trigger = base_url.clone();
+    let actor_for_backup_trigger = actor_did.clone();
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
@@ -7311,6 +7425,21 @@ fn dispatch_card_detail_update(
                                 "{kind} operation accepted; MLS history backup failed: {}",
                                 err.display()
                             )),
+                        }
+                        // X11.2 — first-write trigger. After this encrypted
+                        // write landed, if the server holds no
+                        // `mls_account_secret` backup yet, flip
+                        // `needs_mls_backup` on directly so the prompt surfaces
+                        // promptly (not gated on the boot detection effect).
+                        // Best-effort + non-blocking.
+                        if let Some(signal) = backup_trigger_signal {
+                            crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                base_for_backup_trigger.clone(),
+                                api_token.clone(),
+                                actor_for_backup_trigger.clone(),
+                                signal,
+                            )
+                            .await;
                         }
                     }
                     // X5.3 (trigger c) — re-upload the encrypted local-plaintext
@@ -7562,7 +7691,20 @@ fn submit_kanban_operation_event(
     ));
     let api_token = token();
     let operation_id_for_status = operation_id.clone();
-    spawn(async move {
+    // X13: use `spawn_forever`, NOT `spawn`. The "New board" handler calls
+    // `navigator.replace(...)` to route to the new board IMMEDIATELY after
+    // calling this — a `spawn`-ed task is tied to the current component scope
+    // and gets dropped/cancelled when that route change unmounts the panel,
+    // so the `cx.space.create` POST never left the client (board stuck
+    // `write_state:"queued"`, never reaching the server → other devices saw a
+    // nameless `cx:space:...` board). `spawn_forever` detaches the task so the
+    // submit completes regardless of navigation/unmount. Signal `.set()` after
+    // unmount is a safe no-op in Dioxus; the durable `state_store` write still
+    // lands. ("Add List" never navigated, which is why lists were `accepted`
+    // while boards stayed `queued`.)
+    // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
+    // reach it via the re-exported core crate.
+    dioxus::core::spawn_forever(async move {
         let operation_for_submit = operation.clone();
         match with_authed_api(&base_url, api_token, |api| async move {
             api.submit_event_envelope(&operation_for_submit).await
@@ -8732,6 +8874,8 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
                 created_by: "did:web:acme.example:users:alice".to_owned(),
                 created_at: "2026-05-08T08:00:00Z".to_owned(),
                 updated_at: String::new(),
@@ -8764,6 +8908,8 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
                 created_by: "did:web:acme.example:users:bob".to_owned(),
                 created_at: "2026-05-09T09:00:00Z".to_owned(),
                 updated_at: String::new(),
@@ -8793,6 +8939,8 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
                 body: String::new(),
                 synthesis: String::new(),
+                body_locked: false,
+                synthesis_locked: false,
                 created_by: "did:web:acme.example:users:carol".to_owned(),
                 created_at: "2026-05-01T10:00:00Z".to_owned(),
                 updated_at: String::new(),
@@ -10432,6 +10580,62 @@ mod tests {
         assert!(kanban_plaintext_block_reason(true, &space).is_none());
     }
 
+    /// X13 regression: in an encrypted scope, container creation
+    /// (`cx.space.create` for BOTH board and list) MUST NOT be blocked — the
+    /// title/kind/parent/rank are non-secret metadata that has to reach the
+    /// server so a second device can render the real Board/List name. By
+    /// contrast a `cx.flow.update` carrying plaintext private body MUST stay
+    /// blocked (only E2EE may leave the client for that field).
+    #[test]
+    fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_content() {
+        let board = crate::operation::cx_ops::space_create(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-00000000aa01",
+            "board",
+            "ZZTEST board title",
+            None,
+            None,
+        )
+        .build("yougen");
+        assert_eq!(board.kind, "cx.space.create");
+        assert!(
+            kanban_plaintext_block_reason(true, &board).is_none(),
+            "encrypted scope must not block board container create"
+        );
+
+        let list = crate::operation::cx_ops::space_create(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            "cx:space:0196419b-0000-7000-8000-00000000aa02",
+            "list",
+            "Todos list title",
+            Some("cx:space:0196419b-0000-7000-8000-00000000aa01"),
+            Some("r001"),
+        )
+        .build("yougen");
+        assert_eq!(list.kind, "cx.space.create");
+        assert!(
+            kanban_plaintext_block_reason(true, &list).is_none(),
+            "encrypted scope must not block list container create"
+        );
+
+        // Counter-case: plaintext private body in a flow update is still blocked.
+        let private_update = crate::operation::cx_ops::flow_update_patch(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "body": {"$op": "set", "value": "private description"},
+            }),
+        )
+        .build("yougen");
+        assert!(
+            kanban_plaintext_block_reason(true, &private_update).is_some(),
+            "encrypted scope must still block plaintext private flow content"
+        );
+    }
+
     #[test]
     fn encrypted_scope_allows_flow_summary_metadata_update() {
         let event = crate::operation::cx_ops::flow_update_patch(
@@ -10852,6 +11056,8 @@ mod tests {
             description: String::new(),
             body: String::new(),
             synthesis: String::new(),
+            body_locked: false,
+            synthesis_locked: false,
             created_by: String::new(),
             created_at: String::new(),
             updated_at: String::new(),

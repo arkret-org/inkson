@@ -4,6 +4,70 @@ use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{RECOVERY_PASSPHRASE_MIN_STRENGTH, estimate_passphrase_strength};
 use crate::views::helpers::with_authed_api;
 
+/// X11.2 — context-provided handle to the app-root `needs_mls_backup`
+/// `Signal<bool>` so deep encrypted-write success paths (kanban card detail
+/// update, chat secure send) can flip the backup prompt on directly, WITHOUT
+/// relying on the fragile boot-time detection effect (whose `detection_key`
+/// rarely flips). Provided once at the app root; consumed via
+/// [`try_needs_mls_backup_signal`] from free functions / event handlers that
+/// run inside a Dioxus scope.
+///
+/// Newtype-wrapped so the context lookup can't collide with any other bare
+/// `Signal<bool>` a future view might provide.
+#[derive(Clone, Copy)]
+pub struct MlsBackupSignal(pub Signal<bool>);
+
+/// Best-effort: read the context-provided `needs_mls_backup` signal. Returns
+/// `None` when no provider is mounted (e.g. unit tests) so callers can stay
+/// non-fatal.
+pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
+    try_consume_context::<MlsBackupSignal>().map(|wrap| wrap.0)
+}
+
+/// X11.2 — shared first-write trigger. After a successful ENCRYPTED write,
+/// the caller spawns this: if the server holds NO `mls_account_secret`
+/// backup yet AND a local account secret exists, flip `needs_mls_backup` on
+/// so [`MlsBackupPrompt`] surfaces promptly. Best-effort and self-contained:
+/// swallows every error and never blocks the write path. Reliable because it
+/// re-evaluates server+local state on each encrypted write rather than
+/// depending on the boot detection effect's `detection_key`.
+pub async fn maybe_flag_mls_backup_after_encrypted_write(
+    base_url: String,
+    token: String,
+    actor_did: String,
+    mut needs_mls_backup: Signal<bool>,
+) {
+    if base_url.trim().is_empty() || token.trim().is_empty() || actor_did.trim().is_empty() {
+        return;
+    }
+    // Local account secret must exist (encryption has been used) — otherwise
+    // there's nothing to back up yet.
+    let has_local_secret = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor_did)
+            .map(|secret| secret.is_some())
+            .unwrap_or(false)
+    };
+    if !has_local_secret {
+        return;
+    }
+    // Server must NOT already hold an `mls_account_secret` backup. (When it
+    // does, the restore/unlock path owns the flow — backup and restore are
+    // mutually exclusive by this exact check, so we can't double-prompt.)
+    let payload = match with_authed_api(&base_url, token, |api| async move {
+        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+    })
+    .await
+    {
+        Ok(payload) => payload,
+        Err(_) => return,
+    };
+    if crate::mls::account_recovery::select_mls_account_secret_backup(&payload).is_some() {
+        return;
+    }
+    needs_mls_backup.set(true);
+}
+
 /// One-time account-MLS-secret BACKUP prompt — the mirror of
 /// [`crate::components::MlsUnlockPrompt`].
 ///
@@ -171,12 +235,12 @@ pub fn MlsBackupPrompt(
                 }
             }
             if too_weak {
-                div { class: "muted", "data-testid": "mls-backup-weak-hint",
+                div { class: "form-hint-warn", "data-testid": "mls-backup-weak-hint",
                     {crate::i18n::tr("mls_backup.hint.too_weak")}
                 }
             }
             if mismatch {
-                div { class: "muted", "data-testid": "mls-backup-mismatch-hint",
+                div { class: "form-hint-warn", "data-testid": "mls-backup-mismatch-hint",
                     {crate::i18n::tr("mls_backup.hint.mismatch")}
                 }
             }

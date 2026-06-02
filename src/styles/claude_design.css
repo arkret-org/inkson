@@ -657,6 +657,38 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: none; box-shadow: var(--ring); }
 .btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+/* Many buttons use bare `class="primary"`/`class="secondary"` (no `.btn`),
+   so `.btn[disabled]` never matched them and a disabled button looked fully
+   clickable. Give every disabled button — and the bare primary/secondary
+   variants — an unmistakable disabled treatment. `!important` overrides the
+   `.primary`/`.secondary` background + hover so it can't read as enabled. */
+button[disabled],
+button:disabled,
+.primary[disabled],
+.secondary[disabled] {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(0.4);
+  box-shadow: none !important;
+}
+button[disabled]:hover,
+button:disabled:hover,
+.primary[disabled]:hover,
+.secondary[disabled]:hover {
+  /* Neutralise hover so a disabled button never brightens on mouseover. */
+  background: var(--surface-2) !important;
+}
+/* Inline form-validation hint that must NOT read as muted secondary text —
+   used for "passphrase too weak" / mismatch. */
+.form-hint-warn {
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
 .btn.primary {
   background: var(--accent); color: var(--text-on-accent);
   border-color: transparent;
@@ -2187,15 +2219,28 @@ html[data-lang="en"] :is(.zh, [lang="zh"]) { display: none; }
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* auto-fit + minmax makes the column count follow the CONTAINER width, not
+     the viewport. A viewport media query can't help here because the settings
+     panel is squeezed narrow by its parent layout while the viewport stays
+     wide — so 4 fixed columns each got ~50px and text wrapped per-character
+     (`even ts, sync...`). Each cell now claims >=150px and the grid drops to
+     fewer columns (down to 1) as space shrinks. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
-@media (max-width: 1100px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
 .metric {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
+  /* Grid items default to min-width:auto, so a long unbroken token forces the
+     column wider than its 1fr share and — when the panel is squeezed (e.g. with
+     the right inspector open) — the browser falls back to per-character
+     wrapping, rendering text vertically (`even ts, sync...`). Allow the cell to
+     shrink and break long words/URLs at sensible points instead. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .metric .lbl {
   font-size: 11px;

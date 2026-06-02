@@ -6791,6 +6791,11 @@ pub fn RouterView() -> Element {
     // would lose history. Consumed by `MlsBackupPrompt`. Mutually exclusive
     // with `needs_mls_unlock`: restore (unlock) always wins.
     let needs_mls_backup = use_signal(|| false);
+    // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
+    // success paths (kanban card detail update, chat secure send) can flip the
+    // backup prompt on directly, WITHOUT relying on the fragile boot-time
+    // detection effect (X11). See `maybe_flag_mls_backup_after_encrypted_write`.
+    use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -7101,11 +7106,17 @@ pub fn RouterView() -> Element {
                 restore_payload_cache.set(None);
                 return;
             }
-            if base.trim().is_empty()
-                || actor.trim().is_empty()
-                || device.trim().is_empty()
-                || !sync_bootstrap_complete()
-            {
+            // X10.1: do NOT gate on `sync_bootstrap_complete()` here. A fresh
+            // browser sits on Dashboard with sync still pending; the MLS
+            // unlock/backup detection only needs a live session + a server
+            // `list_key_backups` call, NOT a completed sync. Gating on sync
+            // meant the unlock prompt never surfaced on a new device until the
+            // user manually entered a Space — i.e. "switched browser, never
+            // asked for my passphrase". Run as soon as session/actor/device
+            // are present; the `seen_detection_key` guard still prevents
+            // repeat runs, and re-running after sync (snap= flips) is handled
+            // by the detection key below.
+            if base.trim().is_empty() || actor.trim().is_empty() || device.trim().is_empty() {
                 return;
             }
             // BUG X4: the account MLS secret is created lazily on the

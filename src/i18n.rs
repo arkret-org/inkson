@@ -680,6 +680,38 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_backup.status.uploading", "Encrypting and uploading backup...");
     dict.set("mls_backup.status.created", "Backup created.");
 
+    // X11.1 — persistent MLS recovery-passphrase settings section.
+    dict.set("settings.mls_recovery.title", "MLS recovery passphrase");
+    dict.set(
+        "settings.mls_recovery.status.loading",
+        "Checking backup status…",
+    );
+    dict.set(
+        "settings.mls_recovery.status.no_local_secret",
+        "Not yet used encryption — there's nothing to back up until you send an encrypted message or write to an encrypted board.",
+    );
+    dict.set(
+        "settings.mls_recovery.status.backed_up",
+        "✓ Backed up — your account secret is protected by a recovery passphrase.",
+    );
+    dict.set(
+        "settings.mls_recovery.status.not_backed_up",
+        "⚠ Not backed up — set a recovery passphrase so a fresh browser or device can restore your encrypted history.",
+    );
+    dict.set(
+        "settings.mls_recovery.passphrase_label",
+        "Recovery passphrase",
+    );
+    dict.set("settings.mls_recovery.strength_prefix", "Passphrase strength");
+    dict.set(
+        "settings.mls_recovery.strength_min",
+        "Minimum: good (3/5).",
+    );
+    dict.set(
+        "settings.mls_recovery.submit",
+        "Set / Replace recovery passphrase",
+    );
+
     // Space-admin view (section labels)
     dict.set("space_admin.title", "Space Settings");
     dict.set("space_admin.governance", "Governance");
@@ -1644,6 +1676,26 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("mls_backup.status.uploading", "正在加密并上传备份…");
     dict.set("mls_backup.status.created", "备份已创建。");
+
+    // X11.1 — 持久化的 MLS 恢复口令设置区。
+    dict.set("settings.mls_recovery.title", "MLS 恢复口令");
+    dict.set("settings.mls_recovery.status.loading", "正在检查备份状态…");
+    dict.set(
+        "settings.mls_recovery.status.no_local_secret",
+        "尚未使用加密——在你发送加密消息或写入加密看板之前，没有可备份的内容。",
+    );
+    dict.set(
+        "settings.mls_recovery.status.backed_up",
+        "✓ 已备份——你的账号 secret 已由恢复口令保护。",
+    );
+    dict.set(
+        "settings.mls_recovery.status.not_backed_up",
+        "⚠ 未备份——请设置恢复口令，以便新浏览器或新设备能够恢复你的加密历史。",
+    );
+    dict.set("settings.mls_recovery.passphrase_label", "恢复口令");
+    dict.set("settings.mls_recovery.strength_prefix", "口令强度");
+    dict.set("settings.mls_recovery.strength_min", "最低：良好（3/5）。");
+    dict.set("settings.mls_recovery.submit", "设置 / 替换恢复口令");
 
     // Space-admin view
     dict.set("space_admin.title", "Space 设置");

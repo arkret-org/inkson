@@ -1540,6 +1540,7 @@ fn chat_message_from_event_with_sidecar(
         let space = first_string_in_candidates(&candidates, &["space_id"]).unwrap_or(space_id);
         store.private_plaintext_for(space, flow_id, &format!("message:{message_id}"))
     });
+    let body_from_sidecar = sidecar_body.is_some();
     let body = match sidecar_body {
         Some(plaintext) => plaintext,
         None => text_body_from_message(&candidates)?,
@@ -1624,6 +1625,11 @@ fn chat_message_from_event_with_sidecar(
     };
     let crypto_state = if scope_mismatch {
         MessageCryptoState::NeedsVerification
+    } else if body_from_sidecar {
+        // X9: the author's own plaintext was recovered from the local
+        // sidecar — the body is authoritative and fully resolved, so do not
+        // leave it stuck in `Decrypting`.
+        MessageCryptoState::Plaintext
     } else if has_encrypted_payload {
         MessageCryptoState::Decrypting
     } else {
@@ -1660,10 +1666,14 @@ fn chat_message_from_event_with_sidecar(
     })
 }
 
-fn chat_messages_from_events(space_id: &str, events: &[Value]) -> Vec<ChatMessage> {
+fn chat_messages_from_events_with_sidecar(
+    space_id: &str,
+    events: &[Value],
+    state_store: Option<&LocalStateStore>,
+) -> Vec<ChatMessage> {
     events
         .iter()
-        .filter_map(|event| chat_message_from_event(space_id, event))
+        .filter_map(|event| chat_message_from_event_with_sidecar(space_id, event, state_store))
         .collect()
 }
 
@@ -1724,8 +1734,9 @@ fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::polls::Poll
     cards
 }
 
-fn chat_messages_from_sync_spaces(
+fn chat_messages_from_sync_spaces_with_sidecar(
     spaces: &std::collections::BTreeMap<String, Value>,
+    state_store: Option<&LocalStateStore>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (space_id, body) in spaces {
@@ -1736,7 +1747,11 @@ fn chat_messages_from_sync_spaces(
         else {
             continue;
         };
-        messages.extend(chat_messages_from_events(space_id, timeline_events));
+        messages.extend(chat_messages_from_events_with_sidecar(
+            space_id,
+            timeline_events,
+            state_store,
+        ));
     }
     messages
 }
@@ -1899,14 +1914,18 @@ fn profile_display_label(profile: &Value, did: &str) -> String {
         .unwrap_or_else(|| did.to_owned())
 }
 
-fn chat_messages_from_local_state(state: &ClientLocalState) -> Vec<ChatMessage> {
+fn chat_messages_from_local_state_with_sidecar(
+    state: &ClientLocalState,
+    state_store: Option<&LocalStateStore>,
+) -> Vec<ChatMessage> {
     state
         .raw_operations
         .iter()
         .filter_map(|record| {
-            chat_message_from_event(
+            chat_message_from_event_with_sidecar(
                 record.space_id.as_deref().unwrap_or_default(),
                 &record.payload,
+                state_store,
             )
         })
         .collect()
@@ -2845,7 +2864,10 @@ pub fn ChatPanel(
             let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) else {
                 return;
             };
-            let mut loaded_messages = chat_messages_from_local_state(&state_store.read().load());
+            let mut loaded_messages = {
+                let store = state_store.read();
+                chat_messages_from_local_state_with_sidecar(&store.load(), Some(&store))
+            };
             let mut loaded_poll_cards = poll_cards_from_local_state(&state_store.read().load());
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
@@ -2864,7 +2886,10 @@ pub fn ChatPanel(
                         store.save_space_projection(space_id.clone(), projection.clone());
                     }
                 }
-                loaded_messages.extend(chat_messages_from_sync_spaces(&sync.spaces));
+                loaded_messages.extend(chat_messages_from_sync_spaces_with_sidecar(
+                    &sync.spaces,
+                    Some(&state_store.read()),
+                ));
                 loaded_poll_cards.extend(poll_cards_from_sync_spaces(&sync.spaces));
                 let default_space_ids = if selected_scope_for_load.is_empty() {
                     vec![selected_space_for_load.clone()]
@@ -2892,7 +2917,11 @@ pub fn ChatPanel(
                         &mut channels.write(),
                         channels_from_events(&space_id, &backfill.events),
                     );
-                    loaded_messages.extend(chat_messages_from_events(&space_id, &backfill.events));
+                    loaded_messages.extend(chat_messages_from_events_with_sidecar(
+                        &space_id,
+                        &backfill.events,
+                        Some(&state_store.read()),
+                    ));
                     loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
                 }
             }
@@ -5945,6 +5974,39 @@ pub fn ChatPanel(
                                 let actor_for_backup = actor.clone();
                                 let device_for_backup = did.clone();
                                 let commit_op_id = commit_envelope.local_operation_id().to_owned();
+                                // X9: capture identifiers needed by the
+                                // encrypted Ok(resp) arm to (A) clear the
+                                // optimistic bubble's `pending` flag and (B)
+                                // persist the message plaintext into the
+                                // author-owned sidecar so reload / a new
+                                // device can render the author's own
+                                // (otherwise undecryptable) messages.
+                                let message_id_for_lookup = message_id.clone();
+                                let message_id_for_sidecar = message_id.clone();
+                                // X10.6: also persisted into the raw_operation
+                                // record below so the tab-switch / reload
+                                // rebuild can reconstruct the sidecar key.
+                                let message_id_for_record = message_id.clone();
+                                let actor_for_record = actor.clone();
+                                // The synced event carries this exact flow_id
+                                // string (the payload was built with
+                                // `flow_id_value(&flow_id)`, which wraps it
+                                // verbatim), so the read-side sidecar lookup
+                                // keyed on the event's `flow_id` matches.
+                                let flow_id_for_sidecar = flow_id.clone();
+                                let flow_id_for_record = flow_id.clone();
+                                let body_for_sidecar = body.clone();
+                                // X11.2 — first-write trigger. Capture the
+                                // context-provided `needs_mls_backup` signal +
+                                // identity clones HERE (inside the Dioxus
+                                // scope) so the encrypted-send success arm can
+                                // flip the backup prompt on directly, bypassing
+                                // the fragile boot detection effect.
+                                let backup_trigger_signal =
+                                    crate::components::try_needs_mls_backup_signal();
+                                let base_for_backup_trigger = base.clone();
+                                let token_for_backup_trigger = api_token.clone();
+                                let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit event first; if it fails,
@@ -5974,15 +6036,82 @@ pub fn ChatPanel(
                                             Ok(resp) => {
                                                 {
                                                     let mut store = state_store.write();
+                                                    // X10.6: persist the message
+                                                    // identity (message_id + flow_id +
+                                                    // actor), NOT the plaintext body,
+                                                    // into the raw_operation record.
+                                                    // The encrypted send originally
+                                                    // stored only {event_id, kind,
+                                                    // status}, so the tab-switch / reload
+                                                    // rebuild — which re-derives the
+                                                    // discussion from raw_operations via
+                                                    // `chat_messages_from_local_state_with_sidecar`
+                                                    // — could NOT reconstruct the sidecar
+                                                    // key `message:{message_id}` under
+                                                    // `flow_id`. The sidecar lookup in
+                                                    // `chat_message_from_event_with_sidecar`
+                                                    // bails (`message_id`/`flow_id`
+                                                    // missing → `None`), then there is no
+                                                    // plaintext body → the author's own
+                                                    // (undecryptable) message is dropped
+                                                    // → the Discussion goes blank on the
+                                                    // next render. We deliberately keep
+                                                    // the body OUT of raw_operations (it
+                                                    // belongs only in the account-private
+                                                    // `mls_private_plaintext` sidecar
+                                                    // saved just below); persisting the
+                                                    // identity is enough for the rebuild
+                                                    // to re-key the sidecar and restore
+                                                    // the body. `encrypted_content` is a
+                                                    // marker so the reader still treats
+                                                    // it as E2EE when no sidecar exists
+                                                    // (e.g. another device/member).
                                                     store.append_raw_operation(
                                                         msg_op.local_operation_id().to_owned(),
                                                         Some(space_for_record.clone()),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
                                                             "kind": "cx.message.create",
+                                                            "actor": actor_for_record.clone(),
+                                                            "flow_id": flow_id_for_record.clone(),
+                                                            "message_id": message_id_for_record.clone(),
+                                                            "encrypted_content": true,
                                                             "status": resp.status.clone(),
                                                         }),
                                                     );
+                                                    // BUG B (X9): persist the message
+                                                    // plaintext into the author-owned
+                                                    // sidecar so reload / a new device can
+                                                    // render the author's own encrypted
+                                                    // messages (OpenMLS forbids an author
+                                                    // from decrypting their own ciphertext).
+                                                    // Keyed by `message:{message_id}` under
+                                                    // the discussion flow, sharing the
+                                                    // `mls_private_plaintext` map that the
+                                                    // X5.3 cross-device backup already
+                                                    // snapshots — no extra backup wiring.
+                                                    store.save_private_plaintext(
+                                                        &space_for_record,
+                                                        &flow_id_for_sidecar,
+                                                        &format!("message:{message_id_for_sidecar}"),
+                                                        &body_for_sidecar,
+                                                    );
+                                                }
+                                                // BUG A (X9): clear the optimistic bubble's
+                                                // `pending` spinner now that the server
+                                                // accepted the encrypted message (mirrors
+                                                // the plaintext path). Reconcile the local
+                                                // id to the server event_id so the synced
+                                                // copy dedups against this echo.
+                                                if let Some(found) = messages
+                                                    .write()
+                                                    .iter_mut()
+                                                    .find(|candidate| candidate.id == message_id_for_lookup)
+                                                {
+                                                    found.id = resp.event_id.clone();
+                                                    found.pending = false;
+                                                    found.failed = false;
+                                                    found.error = None;
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
@@ -6008,6 +6137,25 @@ pub fn ChatPanel(
                                                         err.user_message()
                                                     )),
                                                 }
+                                            }
+
+                                            // X11.2 — first-write trigger.
+                                            // After this encrypted send landed,
+                                            // if the server holds no
+                                            // `mls_account_secret` backup yet,
+                                            // flip `needs_mls_backup` on
+                                            // directly so the prompt surfaces
+                                            // promptly (not gated on the boot
+                                            // detection effect). Best-effort +
+                                            // non-blocking.
+                                            if let Some(signal) = backup_trigger_signal {
+                                                crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                                    base_for_backup_trigger.clone(),
+                                                    token_for_backup_trigger.clone(),
+                                                    actor_for_backup_trigger.clone(),
+                                                    signal,
+                                                )
+                                                .await;
                                             }
 
                                             // Disclosed-audit hardening profile
@@ -6357,12 +6505,74 @@ mod tests {
             ..ClientLocalState::default()
         };
 
-        let messages = chat_messages_from_local_state(&state);
+        let messages = chat_messages_from_local_state_with_sidecar(&state, None);
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].space_id, "cx:space:local");
         assert_eq!(messages[0].flow_id, "cx:flow:announce");
         assert_eq!(messages[0].body, "local fallback message");
+    }
+
+    #[test]
+    fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
+        // X10.6 regression: an encrypted send persists a body-less
+        // raw_operation stub (it MUST NOT store the plaintext in
+        // raw_operations) plus the plaintext into the account-private
+        // sidecar keyed by `message:{message_id}` under the flow. On a
+        // card-detail Discussion tab switch / reload the ChatPanel remounts
+        // and re-derives the feed from raw_operations via
+        // `chat_messages_from_local_state_with_sidecar`. The stub now carries
+        // `message_id` + `flow_id`, so the rebuild can re-key the sidecar and
+        // restore the author's own (otherwise undecryptable) message body.
+        let temp = std::env::temp_dir().join(format!(
+            "yougen-x10_6-rebuild-sidecar-{}",
+            uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(temp);
+        store.save_private_plaintext(
+            "cx:space:local",
+            "cx:flow:announce",
+            "message:chat-msg-enc",
+            "secret discussion body",
+        );
+
+        let state = ClientLocalState {
+            raw_operations: vec![crate::local_state::RawOperationRecord {
+                operation_id: "cx:operation:enc".to_owned(),
+                space_id: Some("cx:space:local".to_owned()),
+                received_at: chrono::Utc::now(),
+                // Encrypted stub: identity only, NO plaintext body.
+                payload: json!({
+                    "event_id": "cx:event:enc",
+                    "kind": "cx.message.create",
+                    "actor": "did:web:alice.example",
+                    "flow_id": "cx:flow:announce",
+                    "message_id": "chat-msg-enc",
+                    "encrypted_content": true,
+                    "status": "accepted"
+                }),
+            }],
+            ..ClientLocalState::default()
+        };
+
+        // Without the sidecar (e.g. another device) the stub has no body and
+        // is dropped — the author-can't-decrypt-own-message invariant.
+        let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None);
+        assert!(
+            without_sidecar.is_empty(),
+            "body-less encrypted stub must not surface a message without the sidecar"
+        );
+
+        // With the sidecar (same device, tab switch / reload) the body is
+        // restored and the message is fully resolved (not stuck decrypting).
+        let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store));
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].flow_id, "cx:flow:announce");
+        assert_eq!(restored[0].body, "secret discussion body");
+        assert!(matches!(
+            restored[0].crypto_state,
+            MessageCryptoState::Plaintext
+        ));
     }
 
     #[test]

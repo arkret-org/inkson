@@ -475,24 +475,34 @@ pub fn uuid_v7() -> String {
     format!("{time_low:08x}-{time_mid:04x}-{time_hi_and_version:04x}-{clock_seq:04x}-{node:012x}")
 }
 
+// CRITICAL: use a real CSPRNG (`getrandom`, which on wasm32 routes through the
+// browser's Web Crypto via the `wasm_js` feature), NOT `std::collections::
+// hash_map::RandomState`. On wasm32 `RandomState`'s seed is effectively fixed
+// (no OS entropy source), so the previous "hash a timestamp under RandomState"
+// approach degenerated into a near-deterministic function of the current
+// millisecond — two different browsers generating an id at a similar instant
+// produced the SAME uuid_v7. That surfaced as two browsers sharing one
+// `cx:device:<uuid>` device id (and risked collisions for every other id this
+// helper mints: event_id / operation_id / backup_id / series_id). getrandom
+// gives proper per-call entropy on every target.
 fn rand_u16() -> u16 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    let s = RandomState::new();
-    let mut hasher = s.build_hasher();
-    hasher.write_u64(chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64);
-    (hasher.finish() & 0xFFFF) as u16
+    let mut buf = [0u8; 2];
+    if getrandom::fill(&mut buf).is_err() {
+        // Extremely unlikely (Web Crypto unavailable); fall back to a
+        // time-derived value so id generation never panics.
+        let t = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        buf.copy_from_slice(&(t as u16).to_le_bytes());
+    }
+    u16::from_le_bytes(buf)
 }
 
 fn rand_u64() -> u64 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    let s = RandomState::new();
-    let mut hasher = s.build_hasher();
-    hasher.write_u64(chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64);
-    hasher.finish()
+    let mut buf = [0u8; 8];
+    if getrandom::fill(&mut buf).is_err() {
+        let t = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        buf.copy_from_slice(&t.to_le_bytes());
+    }
+    u64::from_le_bytes(buf)
 }
 
 /// Canonical helper constructors used by the current UI.
