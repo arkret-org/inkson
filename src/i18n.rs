@@ -677,7 +677,10 @@ pub fn english_translations() -> TranslationDict {
         "mls_backup.status.too_weak",
         "Choose a stronger passphrase (minimum strength is Good, 3/5).",
     );
-    dict.set("mls_backup.status.uploading", "Encrypting and uploading backup...");
+    dict.set(
+        "mls_backup.status.uploading",
+        "Encrypting and uploading backup...",
+    );
     dict.set("mls_backup.status.created", "Backup created.");
 
     // X11.1 — persistent MLS recovery-passphrase settings section.
@@ -702,11 +705,11 @@ pub fn english_translations() -> TranslationDict {
         "settings.mls_recovery.passphrase_label",
         "Recovery passphrase",
     );
-    dict.set("settings.mls_recovery.strength_prefix", "Passphrase strength");
     dict.set(
-        "settings.mls_recovery.strength_min",
-        "Minimum: good (3/5).",
+        "settings.mls_recovery.strength_prefix",
+        "Passphrase strength",
     );
+    dict.set("settings.mls_recovery.strength_min", "Minimum: good (3/5).");
     dict.set(
         "settings.mls_recovery.submit",
         "Set / Replace recovery passphrase",

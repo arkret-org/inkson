@@ -535,10 +535,14 @@ fn mark_all_notifications_read(
                 for notification in notifications.write().iter_mut() {
                     notification.read = true;
                 }
+                // Perf (P1): "mark all read" used to flush the whole local
+                // state once per notification. Coalesce into a single flush.
                 let mut store = state_store.write();
-                for id in ids {
-                    store.set_notification_read(id, true);
-                }
+                store.batch(|store| {
+                    for id in ids {
+                        store.set_notification_read(id, true);
+                    }
+                });
                 server_unread.set(0);
                 status_msg.set("All visible notifications marked read.".to_owned());
             }

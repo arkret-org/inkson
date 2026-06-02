@@ -7719,40 +7719,57 @@ fn submit_kanban_operation_event(
     // and gets dropped/cancelled when that route change unmounts the panel,
     // so the `cx.space.create` POST never left the client (board stuck
     // `write_state:"queued"`, never reaching the server → other devices saw a
-    // nameless `cx:space:...` board). `spawn_forever` detaches the task so the
-    // submit completes regardless of navigation/unmount. Signal `.set()` after
-    // unmount is a safe no-op in Dioxus; the durable `state_store` write still
-    // lands. ("Add List" never navigated, which is why lists were `accepted`
-    // while boards stayed `queued`.)
+    // nameless `cx:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
+    // the task so the submit completes regardless of navigation/unmount.
+    // ("Add List" never navigated, which is why lists were `accepted` while
+    // boards stayed `queued`.)
+    //
+    // X13.6 — but a DETACHED task may outlive the scope that owns the
+    // `Signal`s it captured (component unmount, or a `dx serve` hot-reload
+    // tearing scopes down mid-flight). Accessing a dropped signal PANICS in
+    // Dioxus 0.7 (`Result::unwrap()` on `Dropped(ValueDroppedError)`), which is
+    // exactly the crash this caused. So every post-await signal touch goes
+    // through `try_write()` and silently no-ops when the signal is gone. The
+    // POST already reached the server before any signal access, so a missed
+    // local `write_state` flip is cosmetic only — the next /sync reconciles it.
+    //
     // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
     // reach it via the re-exported core crate.
     dioxus::core::spawn_forever(async move {
         let operation_for_submit = operation.clone();
-        match with_authed_api(&base_url, api_token, |api| async move {
+        let result = with_authed_api(&base_url, api_token, |api| async move {
             api.submit_event_envelope(&operation_for_submit).await
         })
-        .await
-        {
+        .await;
+        match result {
             Ok(resp) => {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id_for_status,
-                    "accepted",
-                    Some(resp.event_id.clone()),
-                    None,
-                );
-                board_status.set(format!(
-                    "{kind} operation accepted by server (event_id={})",
-                    short_protocol_id(&resp.event_id)
-                ));
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_status,
+                        "accepted",
+                        Some(resp.event_id.clone()),
+                        None,
+                    );
+                }
+                if let Ok(mut status) = board_status.try_write() {
+                    *status = format!(
+                        "{kind} operation accepted by server (event_id={})",
+                        short_protocol_id(&resp.event_id)
+                    );
+                }
             }
             Err(err) => {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id_for_status,
-                    "failed",
-                    None,
-                    Some(err.display().to_string()),
-                );
-                board_status.set(format!("{kind} operation failed: {}", err.display()));
+                if let Ok(mut store) = state_store.try_write() {
+                    store.update_raw_operation_write_state(
+                        &operation_id_for_status,
+                        "failed",
+                        None,
+                        Some(err.display().to_string()),
+                    );
+                }
+                if let Ok(mut status) = board_status.try_write() {
+                    *status = format!("{kind} operation failed: {}", err.display());
+                }
             }
         }
     });

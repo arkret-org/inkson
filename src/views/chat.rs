@@ -1511,7 +1511,49 @@ fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
 }
 
 fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage> {
-    chat_message_from_event_with_sidecar(space_id, event, None)
+    chat_message_from_event_with_sidecar(space_id, event, None, None)
+}
+
+/// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
+/// envelope into a plaintext chat body.
+///
+/// Prefers the canonical `cx.schema.encrypted_envelope.v1` shape — parse the
+/// envelope and unwrap it to the typed [`contrix_sdk::EncryptedPayload`] before
+/// handing it to the shared MLS decrypt core — and falls back to a raw
+/// `EncryptedPayload` for legacy messages written before the envelope wrap. The
+/// decrypted bytes are the canonical Content Block JSON (see the secure send
+/// path), so we parse them and extract the display text, falling back to raw
+/// UTF-8 for any legacy raw-body ciphertext. Returns `None` on any soft failure
+/// (no local MLS snapshot, wrong/absent device secret, payload that doesn't
+/// decrypt) so the caller leaves the message in the `Decrypting`/`KeyMissing`
+/// state instead of presenting an undecrypted body.
+fn decrypt_chat_encrypted_content(
+    state_store: &LocalStateStore,
+    space_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    encrypted_content: &Value,
+) -> Option<String> {
+    let payload_value =
+        match serde_json::from_value::<contrix_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
+        {
+            Ok(envelope) => serde_json::to_value(envelope.to_payload().ok()?).ok()?,
+            Err(_) => encrypted_content.clone(),
+        };
+    let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
+        state_store,
+        space_id,
+        actor_did,
+        device_id,
+        &payload_value,
+    )?;
+    let as_utf8 = String::from_utf8(plaintext.clone()).ok();
+    match serde_json::from_slice::<Value>(&plaintext) {
+        Ok(content_value) => text_body_from_value(&content_value)
+            .map(ToOwned::to_owned)
+            .or(as_utf8),
+        Err(_) => as_utf8,
+    }
 }
 
 /// X9 — build a `ChatMessage` from a synced/projected event, preferring the
@@ -1526,6 +1568,7 @@ fn chat_message_from_event_with_sidecar(
     space_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
@@ -1534,6 +1577,19 @@ fn chat_message_from_event_with_sidecar(
     {
         return None;
     }
+    let message_space = first_string_in_candidates(&candidates, &["space_id"]).unwrap_or(space_id);
+    // T7.4: locate the canonical `encrypted_content` envelope (if any) up front
+    // so the read path can BOTH surface the decryption state AND attempt a real
+    // decrypt-on-read for remote members below.
+    let encrypted_content_value = candidates.iter().find_map(|candidate| {
+        candidate.get("encrypted_content").cloned().or_else(|| {
+            candidate
+                .get("content")
+                .and_then(|content| content.get("encrypted_content"))
+                .cloned()
+        })
+    });
+    let has_encrypted_payload = encrypted_content_value.is_some();
     // Author-owned plaintext sidecar: look up the body the author stored on
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // flow. Falls back to the decoded payload body (another member's message
@@ -1541,11 +1597,25 @@ fn chat_message_from_event_with_sidecar(
     let sidecar_body = state_store.and_then(|store| {
         let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
         let flow_id = first_string_in_candidates(&candidates, &["flow_id", "thread_id"])?;
-        let space = first_string_in_candidates(&candidates, &["space_id"]).unwrap_or(space_id);
-        store.private_plaintext_for(space, flow_id, &format!("message:{message_id}"))
+        store.private_plaintext_for(message_space, flow_id, &format!("message:{message_id}"))
     });
     let body_from_sidecar = sidecar_body.is_some();
-    let body = match sidecar_body {
+    // P0 decrypt-on-read: a remote member's message carries ciphertext but no
+    // author sidecar. Parse the canonical envelope, decrypt with this device's
+    // MLS snapshot secret, and extract the Content Block text. Soft-fails to
+    // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
+    let decrypted_body = if !body_from_sidecar
+        && let (Some((actor_did, device_id)), Some(store), Some(encrypted)) = (
+            decrypt_identity,
+            state_store,
+            encrypted_content_value.as_ref(),
+        ) {
+        decrypt_chat_encrypted_content(store, message_space, actor_did, device_id, encrypted)
+    } else {
+        None
+    };
+    let body_was_decrypted = decrypted_body.is_some();
+    let body = match sidecar_body.or(decrypted_body) {
         Some(plaintext) => plaintext,
         None => text_body_from_message(&candidates)?,
     };
@@ -1574,18 +1644,6 @@ fn chat_message_from_event_with_sidecar(
         .filter(|value| value.starts_with("cx:flow:"))
         .unwrap_or("cx:flow:general")
         .to_owned();
-    // T7.4: detect end-to-end encrypted payload. Body decoding above
-    // already prefers plaintext when both forms are present; if the
-    // candidates carry an `encrypted_content` block at all, we surface
-    // the decryption state to the renderer even when the timeline
-    // projection happened to expose a body.
-    let has_encrypted_payload = candidates.iter().any(|candidate| {
-        candidate.get("encrypted_content").is_some()
-            || candidate
-                .get("content")
-                .and_then(|content| content.get("encrypted_content"))
-                .is_some()
-    });
     // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we
     // route the message into `NeedsVerification` so the UI badge
@@ -1629,10 +1687,11 @@ fn chat_message_from_event_with_sidecar(
     };
     let crypto_state = if scope_mismatch {
         MessageCryptoState::NeedsVerification
-    } else if body_from_sidecar {
-        // X9: the author's own plaintext was recovered from the local
-        // sidecar — the body is authoritative and fully resolved, so do not
-        // leave it stuck in `Decrypting`.
+    } else if body_from_sidecar || body_was_decrypted {
+        // X9: the author's own plaintext was recovered from the local sidecar,
+        // OR (P0) a remote member's ciphertext was decrypted-on-read — the body
+        // is authoritative and fully resolved, so do not leave it stuck in
+        // `Decrypting`.
         MessageCryptoState::Plaintext
     } else if has_encrypted_payload {
         MessageCryptoState::Decrypting
@@ -1674,10 +1733,13 @@ fn chat_messages_from_events_with_sidecar(
     space_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
     events
         .iter()
-        .filter_map(|event| chat_message_from_event_with_sidecar(space_id, event, state_store))
+        .filter_map(|event| {
+            chat_message_from_event_with_sidecar(space_id, event, state_store, decrypt_identity)
+        })
         .collect()
 }
 
@@ -1741,6 +1803,7 @@ fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::polls::Poll
 fn chat_messages_from_sync_spaces_with_sidecar(
     spaces: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (space_id, body) in spaces {
@@ -1755,6 +1818,7 @@ fn chat_messages_from_sync_spaces_with_sidecar(
             space_id,
             timeline_events,
             state_store,
+            decrypt_identity,
         ));
     }
     messages
@@ -1833,9 +1897,16 @@ fn profile_presence_status(profile: &Value) -> String {
         .to_owned()
 }
 
-const CHAT_SYNC_POLL_INTERVAL_MS: u64 = 400;
+// Perf (P0): the chat presence/typing poll used to do a *full*
+// `account_subscribe_snapshot(None)` every 400ms (~2.5 full syncs/sec) which
+// duplicates the global `SyncEngine` and floods the network panel. Typing
+// indicators only need ~2s freshness (the sender throttles `typing=true` to one
+// emit / 3s), so a 2s cadence keeps the indicator responsive at 1/5th the load.
+const CHAT_SYNC_POLL_INTERVAL_MS: u64 = 2_000;
+// At the 2s cadence above, `profile_presence` fallback every 4 ticks (~8s) and a
+// 2-tick warmup (~4s) keep presence fresh without a per-member request storm.
 const CHAT_PROFILE_PRESENCE_FALLBACK_EVERY_TICKS: usize = 4;
-const CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS: usize = 3;
+const CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS: usize = 2;
 
 fn sync_presence_actor(event: &Value) -> Option<String> {
     value_string_at(event, &["user_id", "actor_id", "actor"])
@@ -1921,6 +1992,7 @@ fn profile_display_label(profile: &Value, did: &str) -> String {
 fn chat_messages_from_local_state_with_sidecar(
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
     state
         .raw_operations
@@ -1930,6 +2002,7 @@ fn chat_messages_from_local_state_with_sidecar(
                 record.space_id.as_deref().unwrap_or_default(),
                 &record.payload,
                 state_store,
+                decrypt_identity,
             )
         })
         .collect()
@@ -2525,6 +2598,9 @@ pub fn ChatPanel(
     }
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
+    // Perf (P0): replace the per-keystroke `cx.typing` POST with a leading-edge
+    // throttle (≤ once / 3s) plus a trailing `typing=false` once the user stops.
+    let typing_throttle = crate::perf::use_typing_throttle(3_000, 4_000);
     // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
     // the `is-dragover` outline as the user holds a file over the
     // textarea; `compose_upload_status` shows an inline progress / error
@@ -2798,7 +2874,11 @@ pub fn ChatPanel(
                     if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                         let active_typers =
                             typing_actors_from_sync_spaces(&sync.spaces, &space, &actor);
-                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
+                        // Only write the signal when the value actually changed —
+                        // an unchanged set would needlessly re-render the chat.
+                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str()
+                            && *typing_actors_for_poll.read() != active_typers
+                        {
                             typing_actors_for_poll.set(active_typers);
                         }
                         if let Some((next_presence, next_labels)) = presence_maps_from_sync_events(
@@ -2809,8 +2889,12 @@ pub fn ChatPanel(
                         ) {
                             got_sync_presence = true;
                             if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
-                                presence_states_for_poll.set(next_presence);
-                                presence_labels_for_poll.set(next_labels);
+                                if *presence_states_for_poll.read() != next_presence {
+                                    presence_states_for_poll.set(next_presence);
+                                }
+                                if *presence_labels_for_poll.read() != next_labels {
+                                    presence_labels_for_poll.set(next_labels);
+                                }
                             }
                         }
                     }
@@ -2844,8 +2928,12 @@ pub fn ChatPanel(
                             }
                         }
                         if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
-                            presence_states_for_poll.set(next_presence);
-                            presence_labels_for_poll.set(next_labels);
+                            if *presence_states_for_poll.read() != next_presence {
+                                presence_states_for_poll.set(next_presence);
+                            }
+                            if *presence_labels_for_poll.read() != next_labels {
+                                presence_labels_for_poll.set(next_labels);
+                            }
                         }
                     }
                 }
@@ -2863,14 +2951,27 @@ pub fn ChatPanel(
         let selected_space_for_load = selected_space.clone();
         let selected_scope_for_load = selected_space_scope.clone();
         let account_did_for_load = account_did.clone();
+        // P0 decrypt-on-read identity: this device's actor + device id let the
+        // message projection decrypt remote members' canonical encrypted_content
+        // envelopes from the local MLS snapshot.
+        let account_did_for_decrypt = account_did.clone();
+        let device_id_for_decrypt = device_id.clone();
         let mut account_display_name_for_load = account_display_name;
         spawn(async move {
+            let decrypt_identity = Some((
+                account_did_for_decrypt.as_str(),
+                device_id_for_decrypt.as_str(),
+            ));
             let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) else {
                 return;
             };
             let mut loaded_messages = {
                 let store = state_store.read();
-                chat_messages_from_local_state_with_sidecar(&store.load(), Some(&store))
+                chat_messages_from_local_state_with_sidecar(
+                    &store.load(),
+                    Some(&store),
+                    decrypt_identity,
+                )
             };
             let mut loaded_poll_cards = poll_cards_from_local_state(&state_store.read().load());
             if let Ok(account) = api.account_me().await
@@ -2893,6 +2994,7 @@ pub fn ChatPanel(
                 loaded_messages.extend(chat_messages_from_sync_spaces_with_sidecar(
                     &sync.spaces,
                     Some(&state_store.read()),
+                    decrypt_identity,
                 ));
                 loaded_poll_cards.extend(poll_cards_from_sync_spaces(&sync.spaces));
                 let default_space_ids = if selected_scope_for_load.is_empty() {
@@ -2925,6 +3027,7 @@ pub fn ChatPanel(
                         &space_id,
                         &backfill.events,
                         Some(&state_store.read()),
+                        decrypt_identity,
                     ));
                     loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
                 }
@@ -5036,32 +5139,30 @@ pub fn ChatPanel(
                                 if value.ends_with('@') {
                                     mention_picker_state.write().open();
                                 }
-                                // G3.Y2 — debounced typing signal. We
-                                // fire-and-forget the API call so the
-                                // composer never blocks; failures fall
-                                // back silently per the spec.
-                                //
-                                // TODO(G3.Y2-followup): add a real
-                                // 1-second debounce timer here. The
-                                // current implementation just emits
-                                // every keystroke, which exceeds the
-                                // spec's ~1s cadence but keeps the
-                                // testable seam (one `cx.typing` per
-                                // input event) simple. The receiving
-                                // side already TTL-expires stale
-                                // entries.
+                                // G3.Y2 — typing signal, fire-and-forget so the
+                                // composer never blocks; failures fall back
+                                // silently per the spec. Perf (P0): the throttle
+                                // emits `typing=true` on the leading edge (≤ once
+                                // / 3s) and `typing=false` after the user stops,
+                                // instead of one POST per keystroke. The
+                                // receiving side TTL-expires stale entries.
                                 let base = base.clone();
                                 let space = space.clone();
                                 let actor = actor.clone();
-                                let api_token = token();
-                                spawn(async move {
-                                    let _ = crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.send_typing(&space, &actor, None, true).await
-                                        },
-                                    ).await;
+                                typing_throttle.on_keystroke(move |is_typing| {
+                                    let base = base.clone();
+                                    let space = space.clone();
+                                    let actor = actor.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        let _ = crate::views::helpers::with_authed_api(
+                                            &base,
+                                            api_token,
+                                            |api| async move {
+                                                api.send_typing(&space, &actor, None, is_typing).await
+                                            },
+                                        ).await;
+                                    });
                                 });
                             }
                         },
@@ -5761,6 +5862,30 @@ pub fn ChatPanel(
                                 } else {
                                     selected_flow.clone()
                                 };
+                                // P2: preserve the composer's reply target on the
+                                // encrypted path (it was silently dropped before).
+                                let reply_to = reply_to_message()
+                                    .filter(|value| !value.trim().is_empty());
+                                // P1: encrypt the canonical Content Block JSON
+                                // (`cx.content.text`), NOT the bare body bytes, so
+                                // strict receivers can parse the decrypted payload
+                                // as `application/vnd.contrix.message+json` and the
+                                // decrypt-on-read path round-trips it back to text.
+                                let secure_content_value = sdk_payload_value(
+                                    contrix_sdk::ContentBlock::text(&body).to_value(),
+                                    "chat encrypted content block serialize",
+                                );
+                                let secure_content_bytes = match serde_json::to_vec(
+                                    &secure_content_value,
+                                ) {
+                                    Ok(bytes) => bytes,
+                                    Err(err) => {
+                                        status_msg.set(format!(
+                                            "Send Secure could not encode message content: {err}"
+                                        ));
+                                        return;
+                                    }
+                                };
                                 let api_token = token();
                                 let wait_for = active_sync_token(sync_cursor());
                                 let _hlc = Hlc::now("yougen").to_string();
@@ -5787,7 +5912,7 @@ pub fn ChatPanel(
                                     &scope_id_as_realm_id(&space),
                                     &actor,
                                     &did,
-                                    body.as_bytes(),
+                                    &secure_content_bytes,
                                 );
 
                                 let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
@@ -5940,7 +6065,7 @@ pub fn ChatPanel(
                                     body: body.clone(),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     flow_id: flow_id.clone(),
-                                    reply_to: None,
+                                    reply_to: reply_to.clone(),
                                     reactions: Vec::new(),
                                     redacted: false,
                                     edited: false,
@@ -5951,13 +6076,20 @@ pub fn ChatPanel(
                                     mentions: Vec::new(),
                                     crypto_state: MessageCryptoState::Plaintext,
                                 });
-                                let message_payload =
+                                let mut message_payload =
                                     contrix_sdk::MessageCreatePayload::with_encrypted_content(
                                         flow_id_value(&flow_id),
                                         "discussion",
                                         encrypted_payload_json,
                                     )
                                     .with_message_id(message_id.clone());
+                                // P2: carry the reply target as wire metadata so
+                                // reply threading / routing matches the plaintext
+                                // path (the readable body stays inside the
+                                // encrypted Content Block).
+                                if let Some(reply_to) = reply_to.as_deref() {
+                                    message_payload = message_payload.with_reply_to(reply_to);
+                                }
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
@@ -6001,6 +6133,11 @@ pub fn ChatPanel(
                                 let flow_id_for_sidecar = flow_id.clone();
                                 let flow_id_for_record = flow_id.clone();
                                 let body_for_sidecar = body.clone();
+                                // P2: recoverable draft — if the encrypted send
+                                // fails we restore the composer text instead of
+                                // losing it.
+                                let body_for_restore = body.clone();
+                                let message_id_for_failure = message_id.clone();
                                 // X11.2 — first-write trigger. Capture the
                                 // context-provided `needs_mls_backup` signal +
                                 // identity clones HERE (inside the Dioxus
@@ -6049,9 +6186,27 @@ pub fn ChatPanel(
                                                 );
                                             }
                                             Err(err) => {
-                                                status_msg.set(format!(
+                                                let message = format!(
                                                     "MLS commit event submit failed: {err}"
-                                                ));
+                                                );
+                                                // P2: reconcile the optimistic
+                                                // bubble so it doesn't spin
+                                                // forever, and keep the draft.
+                                                if let Some(found) = messages
+                                                    .write()
+                                                    .iter_mut()
+                                                    .find(|candidate| {
+                                                        candidate.id == message_id_for_failure
+                                                    })
+                                                {
+                                                    found.pending = false;
+                                                    found.failed = true;
+                                                    found.error = Some(message.clone());
+                                                }
+                                                if chat_draft().trim().is_empty() {
+                                                    chat_draft.set(body_for_restore.clone());
+                                                }
+                                                status_msg.set(message);
                                                 return;
                                             }
                                         }
@@ -6215,13 +6370,53 @@ pub fn ChatPanel(
                                             .build("yougen");
                                             let _ = api.submit_event_envelope(&audit_op).await;
                                         }
-                                        Err(err) => status_msg.set(format!(
-                                            "Message send failed: {err}"
-                                        )),
+                                        Err(err) => {
+                                            let message =
+                                                format!("Message send failed: {err}");
+                                            // P2: mark the optimistic bubble
+                                            // failed (was left spinning) and
+                                            // keep the draft recoverable.
+                                            if let Some(found) = messages
+                                                .write()
+                                                .iter_mut()
+                                                .find(|candidate| {
+                                                    candidate.id == message_id_for_failure
+                                                })
+                                            {
+                                                found.pending = false;
+                                                found.failed = true;
+                                                found.error = Some(message.clone());
+                                            }
+                                            if chat_draft().trim().is_empty() {
+                                                chat_draft.set(body_for_restore.clone());
+                                            }
+                                            status_msg.set(message);
+                                        }
                                     }
-                                }
+                                    } else {
+                                        // P2: auth/API init failed — without this
+                                        // arm the optimistic bubble spun forever
+                                        // and no status was shown.
+                                        let message = "Send Secure failed: could not start an authenticated session".to_owned();
+                                        if let Some(found) = messages
+                                            .write()
+                                            .iter_mut()
+                                            .find(|candidate| {
+                                                candidate.id == message_id_for_failure
+                                            })
+                                        {
+                                            found.pending = false;
+                                            found.failed = true;
+                                            found.error = Some(message.clone());
+                                        }
+                                        if chat_draft().trim().is_empty() {
+                                            chat_draft.set(body_for_restore.clone());
+                                        }
+                                        status_msg.set(message);
+                                    }
                                 });
                                 chat_draft.set(String::new());
+                                reply_to_message.set(None);
                             }
                         },
                         {crate::i18n::tr("chat.send_secure")}
@@ -6528,7 +6723,7 @@ mod tests {
             ..ClientLocalState::default()
         };
 
-        let messages = chat_messages_from_local_state_with_sidecar(&state, None);
+        let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].space_id, "cx:space:local");
@@ -6577,7 +6772,7 @@ mod tests {
 
         // Without the sidecar (e.g. another device) the stub has no body and
         // is dropped — the author-can't-decrypt-own-message invariant.
-        let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None);
+        let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
         assert!(
             without_sidecar.is_empty(),
             "body-less encrypted stub must not surface a message without the sidecar"
@@ -6585,7 +6780,7 @@ mod tests {
 
         // With the sidecar (same device, tab switch / reload) the body is
         // restored and the message is fully resolved (not stuck decrypting).
-        let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store));
+        let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].flow_id, "cx:flow:announce");
         assert_eq!(restored[0].body, "secret discussion body");
@@ -7032,6 +7227,51 @@ mod tests {
         assert!(MessageCryptoState::Decrypting.is_pending());
         assert!(MessageCryptoState::KeyMissing.is_pending());
         assert!(!MessageCryptoState::NeedsVerification.is_pending());
+    }
+
+    #[test]
+    fn secure_content_block_round_trips_back_to_text() {
+        // P1: the secure send path encrypts the canonical Content Block JSON
+        // (not raw body bytes), and the decrypt-on-read path extracts the text
+        // back out via `text_body_from_value`. This locks that symmetry without
+        // standing up a full MLS group.
+        let body = "secret hello with spaces";
+        let content_value = contrix_sdk::ContentBlock::text(body)
+            .to_value()
+            .expect("content block serializes");
+        let bytes = serde_json::to_vec(&content_value).expect("content block bytes");
+        let parsed: Value = serde_json::from_slice(&bytes).expect("content block parses");
+        assert_eq!(text_body_from_value(&parsed).as_deref(), Some(body));
+    }
+
+    #[test]
+    fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
+        // No local MLS snapshot for this space -> decrypt-on-read returns None
+        // so the caller leaves the message in Decrypting/KeyMissing rather than
+        // surfacing garbage.
+        let temp = std::env::temp_dir().join(format!(
+            "yougen-chat-decrypt-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let store = LocalStateStore::with_path(temp);
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "group_id": "group-x",
+            "epoch": 1,
+            "content_type": "application/vnd.contrix.message+json",
+            "ciphertext": "AAAA",
+            "payload_digest": "sha256:0",
+        });
+        assert!(
+            decrypt_chat_encrypted_content(
+                &store,
+                "cx:space:none",
+                "did:web:alice.example",
+                "cx:device:01964137-0000-7000-8000-000000000001",
+                &envelope,
+            )
+            .is_none()
+        );
     }
 
     #[test]

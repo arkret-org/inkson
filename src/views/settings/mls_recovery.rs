@@ -331,7 +331,10 @@ mod tests {
 
     #[test]
     fn status_no_local_secret_when_nothing_local() {
-        assert_eq!(resolve_status(false, false), MlsRecoveryStatus::NoLocalSecret);
+        assert_eq!(
+            resolve_status(false, false),
+            MlsRecoveryStatus::NoLocalSecret
+        );
     }
 
     #[test]

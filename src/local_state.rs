@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
@@ -1287,6 +1288,15 @@ impl Default for ClientLocalState {
 #[derive(Clone, Debug)]
 pub struct LocalStateStore {
     cached: ClientLocalState,
+    /// Perf (P0 sync-apply / notifications bulk): when `> 0`, [`Self::flush`]
+    /// defers the (potentially synchronous, blocking) persist and only records
+    /// that a write is pending. A batch guard performs exactly one flush when
+    /// the outermost batch closes. This collapses the dozens of full-state
+    /// serializations a single sync/bulk mutation used to trigger into one.
+    flush_suspended: u32,
+    /// Set by [`Self::flush`] while suspended; consumed by the batch guard so
+    /// it only persists when at least one mutation actually requested a flush.
+    flush_pending: Cell<bool>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -1343,6 +1353,8 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
+            flush_suspended: 0,
+            flush_pending: Cell::new(false),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -1374,12 +1386,41 @@ impl LocalStateStore {
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {
+        if self.flush_suspended > 0 {
+            // Inside a batch — defer the persist and remember a write happened.
+            self.flush_pending.set(true);
+            return Ok(());
+        }
         self.write_persisted_state(&self.cached)
+    }
+
+    /// Perf: run `body` with flushing suspended, then persist at most once.
+    ///
+    /// Every flush-on-write setter (`save_space_projection`, `set_anchor_view`,
+    /// `set_notification_read`, …) becomes a no-op persist while the batch is
+    /// open; the single trailing flush coalesces them. Batches nest safely —
+    /// only the outermost one persists. Use this on hot paths that touch the
+    /// store many times in a row (sync apply, "mark all read").
+    pub fn batch<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.flush_suspended = self.flush_suspended.saturating_add(1);
+        let result = body(self);
+        self.flush_suspended = self.flush_suspended.saturating_sub(1);
+        if self.flush_suspended == 0
+            && self.flush_pending.replace(false)
+            && let Err(error) = self.write_persisted_state(&self.cached)
+        {
+            tracing::warn!(%error, "local state batch flush failed");
+        }
+        result
     }
 
     pub fn save_sync_cursor(&mut self, cursor: impl Into<String>) {
         self.ensure_cached_loaded();
-        self.cached.sync_cursor = Some(cursor.into());
+        let cursor = cursor.into();
+        if self.cached.sync_cursor.as_deref() == Some(cursor.as_str()) {
+            return; // cursor unchanged — skip flush
+        }
+        self.cached.sync_cursor = Some(cursor);
         let _ = self.flush();
     }
 
@@ -1472,9 +1513,11 @@ impl LocalStateStore {
 
     pub fn save_space_projection(&mut self, space_id: impl Into<String>, projection: Value) {
         self.ensure_cached_loaded();
-        self.cached
-            .space_projections
-            .insert(space_id.into(), projection);
+        let space_id = space_id.into();
+        if self.cached.space_projections.get(&space_id) == Some(&projection) {
+            return; // projection identical — skip flush + dirtying renders
+        }
+        self.cached.space_projections.insert(space_id, projection);
         let _ = self.flush();
     }
 
@@ -1912,8 +1955,13 @@ impl LocalStateStore {
         let space_id = space_id.into();
         let draft = draft.into();
         if draft.trim().is_empty() {
-            self.cached.drafts.remove(&space_id);
+            if self.cached.drafts.remove(&space_id).is_none() {
+                return; // nothing to clear — skip flush
+            }
         } else {
+            if self.cached.drafts.get(&space_id) == Some(&draft) {
+                return; // draft unchanged — skip flush
+            }
             self.cached.drafts.insert(space_id, draft);
         }
         let _ = self.flush();
@@ -1955,11 +2003,15 @@ impl LocalStateStore {
 
     pub fn set_notification_read(&mut self, notification_id: impl Into<String>, read: bool) {
         self.ensure_cached_loaded();
-        self.cached
+        let entry = self
+            .cached
             .notification_client_state
             .entry(notification_id.into())
-            .or_default()
-            .read = read;
+            .or_default();
+        if entry.read == read {
+            return; // no change — don't dirty the store
+        }
+        entry.read = read;
         let _ = self.flush();
     }
 
@@ -2370,7 +2422,11 @@ impl LocalStateStore {
     /// view. Tests use this to seed Move-frontier behavior.
     pub fn set_anchor_view(&mut self, space_id: impl Into<String>, view: LocalAnchorView) {
         self.ensure_cached_loaded();
-        self.cached.anchor_views.insert(space_id.into(), view);
+        let space_id = space_id.into();
+        if self.cached.anchor_views.get(&space_id) == Some(&view) {
+            return; // anchor view unchanged — skip flush
+        }
+        self.cached.anchor_views.insert(space_id, view);
         let _ = self.flush();
     }
 
@@ -3118,8 +3174,7 @@ impl LocalStateStore {
     /// when no sidecar entries exist, so callers can cheaply detect "nothing to
     /// back up" via [`Self::private_plaintext_is_empty`] first.
     pub fn private_plaintext_snapshot_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.load().mls_private_plaintext)
-            .unwrap_or_else(|_| b"{}".to_vec())
+        serde_json::to_vec(&self.load().mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
     }
 
     /// X5.3 — true when the sidecar holds no plaintext for any space/flow/field.
@@ -3292,6 +3347,8 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
+            flush_suspended: 0,
+            flush_pending: Cell::new(false),
             path: path.into(),
         }
     }
@@ -3710,7 +3767,11 @@ mod tests {
         let fields = reader.private_plaintext_fields(space, flow);
         assert_eq!(fields.len(), 2);
         // Missing keys return None.
-        assert!(reader.private_plaintext_for(space, flow, "content").is_none());
+        assert!(
+            reader
+                .private_plaintext_for(space, flow, "content")
+                .is_none()
+        );
         assert!(
             reader
                 .private_plaintext_for("cx:space:other", flow, "body")

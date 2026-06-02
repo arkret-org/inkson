@@ -78,7 +78,10 @@ pub fn build_audit_ryw_receipt(
     let purpose = if delivered_to_devices.is_empty() {
         "ryw_receipt".to_owned()
     } else {
-        format!("ryw_receipt;delivered_to={}", delivered_to_devices.join(","))
+        format!(
+            "ryw_receipt;delivered_to={}",
+            delivered_to_devices.join(",")
+        )
     };
     OperationBuilder::new(space_id, actor, "cx.audit.ryw_receipt")
         .target_ref(source_event_id)

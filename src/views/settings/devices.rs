@@ -446,6 +446,18 @@ fn render_revoke_modal(
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
                             let target_label = short_protocol_id(&target_for_status);
+                            // P1: pre-validate the recovery passphrase BEFORE the
+                            // irreversible `revoke_device` call. The account-secret
+                            // rotation that follows requires a non-blank passphrase;
+                            // checking it up front avoids the unrecoverable
+                            // "device revoked, but MLS secret rotation failed"
+                            // half-state when the field was left empty.
+                            if revoke_passphrase().trim().is_empty() {
+                                revoke_status.set(
+                                    "Enter your recovery passphrase before revoking — it is required to rotate the MLS history secret.".to_owned(),
+                                );
+                                return;
+                            }
                             let passphrase_bytes = revoke_passphrase().into_bytes();
                             let snapshots = state_store.read().mls_snapshots();
                             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");

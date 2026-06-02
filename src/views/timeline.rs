@@ -431,6 +431,11 @@ pub fn TimelinePanel(
     let mut public_update_guard = use_signal(|| true);
     let mut public_update_guard_status = use_signal(|| "public update guard ready".to_owned());
     let mut initial_sync_requested = use_signal(|| false);
+    // Perf (P0): the composer used to persist the whole draft state and POST a
+    // `cx.typing` ephemeral on every keystroke. Debounce the draft persist and
+    // throttle typing to leading-edge + trailing-stop instead.
+    let draft_saver = crate::perf::use_debouncer(800);
+    let typing_throttle = crate::perf::use_typing_throttle(3_000, 4_000);
     // A6.2 composer drag-drop attachment state. `compose_dragover`
     // toggles the `is-dragover` outline as the user holds a file
     // over the composer; `compose_upload_status` shows an inline
@@ -1557,29 +1562,43 @@ pub fn TimelinePanel(
                     let device_for_typing = device_id_c.clone();
                     move |event| {
                         let value = event.value();
+                        // Local draft signal updates instantly for responsive
+                        // typing; the (blocking) persist is debounced.
                         draft.set(value.clone());
-                        state_store.write().save_draft(sc.clone(), value);
+                        let save_space = sc.clone();
+                        draft_saver.call(move || {
+                            state_store.write().save_draft(save_space, value);
+                        });
+                        // Throttle typing: leading-edge true (≤ once / 3s) plus
+                        // a trailing false once the user stops — instead of one
+                        // POST per character.
                         let base = base_url_sig();
-                        let api_token = token();
                         let space = sc.clone();
                         let actor = actor_for_typing.clone();
                         let device = device_for_typing.clone();
-                        let wait_for = active_sync_token(sync_cursor());
-                        spawn(async move {
-                            if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                // Round R2/R3 (T02): send_typing constructs a
-                                // cx.typing EphemeralEnvelope and POSTs it to
-                                // the broadcast ephemeral channel instead of
-                                // cx.events.submit.
-                                let _ = api
-                                    .send_typing(
-                                        &space,
-                                        &actor,
-                                        Some(device.as_str()).filter(|s| !s.is_empty()),
-                                        true,
-                                    )
-                                    .await;
-                            }
+                        typing_throttle.on_keystroke(move |is_typing| {
+                            let base = base.clone();
+                            let api_token = token();
+                            let space = space.clone();
+                            let actor = actor.clone();
+                            let device = device.clone();
+                            let wait_for = active_sync_token(sync_cursor());
+                            spawn(async move {
+                                if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
+                                    // Round R2/R3 (T02): send_typing constructs a
+                                    // cx.typing EphemeralEnvelope and POSTs it to
+                                    // the broadcast ephemeral channel instead of
+                                    // cx.events.submit.
+                                    let _ = api
+                                        .send_typing(
+                                            &space,
+                                            &actor,
+                                            Some(device.as_str()).filter(|s| !s.is_empty()),
+                                            is_typing,
+                                        )
+                                        .await;
+                                }
+                            });
                         });
                     }
                 },

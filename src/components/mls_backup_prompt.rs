@@ -99,8 +99,8 @@ pub fn MlsBackupPrompt(
 
     let pass_now = passphrase();
     let confirm_now = confirm();
-    let too_weak =
-        !pass_now.is_empty() && estimate_passphrase_strength(&pass_now) < RECOVERY_PASSPHRASE_MIN_STRENGTH;
+    let too_weak = !pass_now.is_empty()
+        && estimate_passphrase_strength(&pass_now) < RECOVERY_PASSPHRASE_MIN_STRENGTH;
     let mismatch = !confirm_now.is_empty() && pass_now != confirm_now;
     let can_submit = !pass_now.is_empty()
         && pass_now == confirm_now
@@ -165,18 +165,22 @@ pub fn MlsBackupPrompt(
                     if let Some(sidecar_json) = sidecar_json {
                         let actor = actor_for_sidecar;
                         let device = device_for_sidecar;
-                        let outcome = with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
-                            let secure_store =
-                                crate::secure_key_store::default_secure_key_store("yougen");
-                            crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                &api,
-                                secure_store.as_ref(),
-                                &actor,
-                                &device,
-                                &sidecar_json,
-                            )
-                            .await
-                        })
+                        let outcome = with_authed_api(
+                            &base_for_sidecar,
+                            session_for_sidecar,
+                            |api| async move {
+                                let secure_store =
+                                    crate::secure_key_store::default_secure_key_store("yougen");
+                                crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                    &api,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    &device,
+                                    &sidecar_json,
+                                )
+                                .await
+                            },
+                        )
                         .await;
                         // Best-effort: the account secret backup already
                         // succeeded, so a sidecar failure must not block the

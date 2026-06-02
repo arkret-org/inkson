@@ -6957,7 +6957,15 @@ pub fn RouterView() -> Element {
     // vice versa) and the two slid out of sync.
     use_effect(move || {
         let projections = state_store.read().load().space_projections;
-        spaces.set(space_previews_from_sync_spaces(&projections));
+        let next = space_previews_from_sync_spaces(&projections);
+        // Perf (P1): this effect re-runs on *any* `state_store` write (drafts,
+        // theme, notifications, read receipts, …), not just projection changes.
+        // Skip the `set` when the derived list is unchanged so unrelated writes
+        // don't cascade a re-render through every `spaces()` consumer (sidebar,
+        // command palette, root shell).
+        if *spaces.peek() != next {
+            spaces.set(next);
+        }
     });
 
     // Bootstrap handshake: on first render with a valid session, run

@@ -344,55 +344,52 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
 
     {
         let mut store = state_store.write();
-        store.save_sync_cursor(response.cursor.clone());
+        // Perf (P0): a single sync response can touch the cursor, dozens of
+        // space projections, anchor views, member identity events and account
+        // data — each setter used to flush the *entire* `ClientLocalState` to
+        // disk/localStorage. Wrap the whole apply in one batch so it persists
+        // exactly once.
+        store.batch(|store| {
+            store.save_sync_cursor(response.cursor.clone());
 
-        if is_full_sync {
-            // Server-authoritative for top-level Realm membership:
-            // drop projections the server didn't include, except local
-            // Space-container projections whose home Realm is still
-            // present. Containers are not guaranteed to arrive as
-            // top-level sync entries.
-            let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
-            let keep_set = crate::app::full_sync_projection_keep_set(
-                &server_set,
-                &store.load().space_projections,
-            );
-            let pruned = store.retain_space_projections(|id| keep_set.contains(id));
-            if !pruned.is_empty() {
-                tracing::info!(
-                    pruned_count = pruned.len(),
-                    "sync engine: full-sync pruned stale space projections",
+            if is_full_sync {
+                // Server-authoritative for top-level Realm membership:
+                // drop projections the server didn't include, except local
+                // Space-container projections whose home Realm is still
+                // present. Containers are not guaranteed to arrive as
+                // top-level sync entries.
+                let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
+                let keep_set = crate::app::full_sync_projection_keep_set(
+                    &server_set,
+                    &store.load().space_projections,
                 );
+                let pruned = store.retain_space_projections(|id| keep_set.contains(id));
+                if !pruned.is_empty() {
+                    tracing::info!(
+                        pruned_count = pruned.len(),
+                        "sync engine: full-sync pruned stale space projections",
+                    );
+                }
             }
-        }
-        // Explicit `left_spaces` deltas — meaningful primarily on
-        // incremental sync, but cheap to apply on full sync too.
-        for left_id in &response.left_spaces {
-            store.forget_space(left_id);
-        }
-        for (id, body) in &response.spaces {
-            store.save_space_projection(id.clone(), body.clone());
-            let view = LocalAnchorView::from_sync_body(body);
-            store.set_anchor_view(id.clone(), view);
-            store.ingest_move_event_states(id, body);
-            // R3.1 MID-2 — harvest inlined `cx.member.identity.update`
-            // event envelopes off the `members[]` roster entries. The
-            // SDK's effective-set filter is applied lazily when a UI
-            // surface needs to resolve a display identity.
-            ingest_member_identity_events_from_projection(&mut store, id, body);
-        }
+            // Explicit `left_spaces` deltas — meaningful primarily on
+            // incremental sync, but cheap to apply on full sync too.
+            for left_id in &response.left_spaces {
+                store.forget_space(left_id);
+            }
+            for (id, body) in &response.spaces {
+                store.save_space_projection(id.clone(), body.clone());
+                let view = LocalAnchorView::from_sync_body(body);
+                store.set_anchor_view(id.clone(), view);
+                store.ingest_move_event_states(id, body);
+                // R3.1 MID-2 — harvest inlined `cx.member.identity.update`
+                // event envelopes off the `members[]` roster entries. The
+                // SDK's effective-set filter is applied lazily when a UI
+                // surface needs to resolve a display identity.
+                ingest_member_identity_events_from_projection(store, id, body);
+            }
 
-        apply_account_data(
-            &mut store,
-            response,
-            &account_did,
-            &mut theme,
-            &mut last_error,
-        );
-
-        if let Err(error) = store.flush() {
-            last_error.set(Some(format!("state_store flush failed: {error}")));
-        }
+            apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
+        }); // store.batch — single coalesced flush happens here
     }
 
     // The `spaces` Signal is derived from `state_store.space_projections`

@@ -51,33 +51,21 @@ pub const MLS_PRIVATE_PLAINTEXT_ITEM_TYPE: &str = "mls_private_plaintext";
 pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext";
 
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
-/// behind the user's recovery passphrase.
+/// behind an already-derived recovery KEK.
 ///
 /// The envelope shape reuses [`build_recovery_vault_backup_body`] (same
 /// `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape that
-/// soland already validates). The plaintext account secret is encrypted with a
-/// freshly-derived KEK; only the ciphertext, salt and nonce travel on the wire.
-/// The `item_type` / `secret_id` are overwritten to the MLS-secret identifiers.
-pub fn build_mls_account_secret_backup_body(
-    backup_id: &str,
-    actor_did: &str,
-    device_id: &str,
-    account_secret: &str,
-) -> Result<Value> {
-    let kek =
-        derive_vault_kek(account_secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    build_mls_account_secret_backup_body_with_kek(
-        backup_id,
-        actor_did,
-        device_id,
-        &kek,
-        account_secret,
-    )
-}
-
-/// Variant of [`build_mls_account_secret_backup_body`] that wraps the account
-/// secret with an already-derived KEK (used when the passphrase has already been
-/// stretched on the recovery setup path so we avoid a second Argon2id pass).
+/// soland already validates). The plaintext account secret is encrypted with the
+/// supplied KEK; only the ciphertext, salt and nonce travel on the wire. The
+/// `item_type` / `secret_id` are overwritten to the MLS-secret identifiers.
+///
+/// NOTE: the KEK MUST be derived from the user's recovery *passphrase* (the same
+/// source `decrypt_mls_account_secret_backup` stretches on restore), never from
+/// the account secret itself — wrapping the account secret under a KEK derived
+/// from that same account secret would make the backup self-referential and
+/// undecryptable by the recovery flow. (A former `build_mls_account_secret_backup_body`
+/// helper that derived the KEK from the account secret was removed for this
+/// reason; it was dead code and a latent footgun.)
 pub fn build_mls_account_secret_backup_body_with_kek(
     backup_id: &str,
     actor_did: &str,
@@ -259,7 +247,10 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
 /// so the sidecar is recovered with no second passphrase prompt. `decrypt_vault`
 /// internally derives the KEK from these bytes + the stored salt, exactly as the
 /// account-secret path does.
-pub fn decrypt_mls_private_plaintext_backup(account_secret: &[u8], body: &Value) -> Result<Vec<u8>> {
+pub fn decrypt_mls_private_plaintext_backup(
+    account_secret: &[u8],
+    body: &Value,
+) -> Result<Vec<u8>> {
     let encryption = body
         .get("encryption")
         .ok_or_else(|| anyhow!("backup body missing encryption"))?;
@@ -388,6 +379,21 @@ fn mls_history_backup_needs_restore(
     let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body) else {
         return false;
     };
+    // P0 fork guard: verify the local secret can actually open the SERVER's
+    // history ciphertext. A new device's Welcome bootstrap mints a fresh random
+    // account/device-snapshot secret when none exists yet, then saves a local
+    // snapshot encrypted under that random secret. That local snapshot will
+    // always self-decrypt, so testing only the local snapshot (as we did below)
+    // cannot tell a genuinely-recovered secret apart from a forked random one.
+    // If the local secret fails to decrypt this server backup, the device has
+    // forked from the account-secret recovery chain and MUST be prompted to
+    // unlock/import before it pollutes the chain with its own history backups.
+    // (Backups this same device uploaded under the random secret still decrypt,
+    // so we rely on `.any()` across the full server set to catch a sibling
+    // device's backup made under the real account secret.)
+    if crate::mls::persistence::decrypt_envelope(&envelope, local_secret).is_err() {
+        return true;
+    }
     let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.space_id) else {
         return true;
     };
@@ -496,6 +502,10 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id)
             .is_ok();
     if let Some(secret_body) = select_mls_account_secret_backup(list_payload) {
+        // Fail closed against series rollback / withholding: the selected tail
+        // must sit at the end of a complete, digest-linked chain back to genesis
+        // before we trust it as the account secret to import.
+        verify_series_chain(&secret_body, &all_mls_account_secret_backups(list_payload))?;
         let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
@@ -541,12 +551,8 @@ pub fn restore_mls_history_with_passphrase_from_payload(
     // simply won't see their own old content until the next encrypted write
     // rebuilds the sidecar; the rest of the restore stands.
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
-        match restore_private_plaintext_sidecar(
-            &sidecar_body,
-            state_store,
-            secure_store,
-            actor_did,
-        ) {
+        match restore_private_plaintext_sidecar(&sidecar_body, state_store, secure_store, actor_did)
+        {
             Ok(()) => report.private_plaintext_restored = true,
             Err(err) => {
                 if report.first_error.is_none() {
@@ -622,6 +628,20 @@ pub struct MlsAccountSecretRotationUpload {
     pub history_backup_ids: Vec<String>,
 }
 
+/// Chain a successor backup envelope onto the previous series tail.
+///
+/// A genesis envelope (no predecessor) keeps its own freshly-generated
+/// `series_id` / `series_seq=0` and carries no `supersedes`. A successor
+/// inherits the predecessor's `series_id`, bumps `series_seq`, and binds the
+/// chain with `supersedes` (the predecessor's `backup_id`) plus
+/// `supersedes_digest` (the canonical SHA-256 of the predecessor envelope).
+///
+/// soland's `enforce_key_backup_series_chain` rejects any `series_seq > 0`
+/// envelope that omits `supersedes` / `supersedes_digest` with a
+/// `series_chain_broken` 409, so the second and later uploads in a series must
+/// carry these fields. The caller MUST give the successor envelope a *fresh*
+/// `backup_id` (not the predecessor's) so the predecessor stays persisted as a
+/// distinct chain link and `series_predecessor_not_found` is not triggered.
 fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
     let Some(prev) = previous else {
         return body.get("series_seq").and_then(Value::as_u64).unwrap_or(0);
@@ -631,7 +651,109 @@ fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
         body["series_id"] = Value::String(series_id.to_owned());
     }
     body["series_seq"] = Value::Number(serde_json::Number::from(next_seq));
+    if let Some(prev_backup_id) = prev.get("backup_id").and_then(Value::as_str) {
+        body["supersedes"] = Value::String(prev_backup_id.to_owned());
+    }
+    body["supersedes_digest"] = Value::String(series_supersedes_digest(prev));
     next_seq
+}
+
+/// `sha256:<hex>` over the canonical bytes of the predecessor backup envelope,
+/// used to bind a series successor's `supersedes_digest`. Any
+/// `auth_data.signature` is stripped first so the digest stays stable across
+/// (re)signing (yougen bodies currently carry no `auth_data`, so this is a
+/// no-op today, but keeps the digest definition spec-aligned).
+fn series_supersedes_digest(previous: &Value) -> String {
+    let mut canonical = previous.clone();
+    if let Some(auth_data) = canonical
+        .get_mut("auth_data")
+        .and_then(Value::as_object_mut)
+    {
+        auth_data.remove("signature");
+    }
+    crate::canonical::canonical_sha256(&canonical)
+        .unwrap_or_else(|_| format!("sha256:{}", "0".repeat(64)))
+}
+
+/// Generate a fresh protocol `backup_id` for a new envelope in a series.
+fn fresh_backup_id() -> String {
+    format!("cx:backup:{}", crate::operation::uuid_v7())
+}
+
+/// Verify the `supersedes` chain of a key-backup series back to genesis.
+///
+/// `tail` is the highest-`series_seq` body selected for the series; `all` is the
+/// full set of candidate bodies (same backup class) returned by the server
+/// list. The chain is valid only when every `series_seq` from `0..=tail` is
+/// present exactly once, each successor's `supersedes` points at the immediate
+/// predecessor's `backup_id`, and each `supersedes_digest` matches the canonical
+/// digest of that predecessor envelope.
+///
+/// Returns `Err("series_chain_broken: ...")` on any gap, duplicate, mislinked
+/// predecessor, or digest mismatch, so the restore path can fail closed against
+/// a server that rolled the series back, forged a high `series_seq`, or withheld
+/// an intermediate envelope (per key-management.md series-tail requirements).
+fn verify_series_chain(tail: &Value, all: &[Value]) -> Result<()> {
+    let series_id = tail
+        .get("series_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if series_id.is_empty() {
+        return Err(anyhow!(
+            "series_chain_broken: selected backup has no series_id"
+        ));
+    }
+    let tail_seq = backup_series_seq(tail);
+    let mut by_seq: std::collections::BTreeMap<u64, &Value> = std::collections::BTreeMap::new();
+    for body in all {
+        if body.get("series_id").and_then(Value::as_str) != Some(series_id) {
+            continue;
+        }
+        let seq = backup_series_seq(body);
+        if by_seq.insert(seq, body).is_some() {
+            return Err(anyhow!(
+                "series_chain_broken: duplicate series_seq {seq} in series {series_id}"
+            ));
+        }
+    }
+    for seq in 0..=tail_seq {
+        let Some(body) = by_seq.get(&seq) else {
+            return Err(anyhow!(
+                "series_chain_broken: missing series_seq {seq} in series {series_id}"
+            ));
+        };
+        if seq == 0 {
+            continue;
+        }
+        let prev = by_seq
+            .get(&(seq - 1))
+            .expect("predecessor presence checked by the 0..=tail_seq loop");
+        let prev_backup_id = prev
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if body.get("supersedes").and_then(Value::as_str) != Some(prev_backup_id) {
+            return Err(anyhow!(
+                "series_chain_broken: series_seq {seq} `supersedes` does not point at its predecessor"
+            ));
+        }
+        let expected_digest = series_supersedes_digest(prev);
+        if body.get("supersedes_digest").and_then(Value::as_str) != Some(expected_digest.as_str()) {
+            return Err(anyhow!(
+                "series_chain_broken: series_seq {seq} `supersedes_digest` mismatch"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Collect every `mls_account_secret` backup body from a `list_key_backups`
+/// payload (used to verify the series chain before trusting a selected tail).
+fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
+    iter_backup_bodies(list_payload)
+        .filter(|body| is_mls_account_secret_backup(body))
+        .cloned()
+        .collect()
 }
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
@@ -665,11 +787,9 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
 
     let list_payload = fetch_mls_restore_payload(api).await?;
     let previous_account_backup = select_mls_account_secret_backup(&list_payload);
-    let account_backup_id = previous_account_backup
-        .as_ref()
-        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+    // Each successor in a series MUST carry a fresh backup_id so the predecessor
+    // stays persisted as a distinct chain link (see `apply_next_series`).
+    let account_backup_id = fresh_backup_id();
 
     let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
         secure_store,
@@ -770,11 +890,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 
     let list_payload = fetch_mls_restore_payload(api).await?;
     let previous_account_backup = select_mls_account_secret_backup(&list_payload);
-    let account_backup_id = previous_account_backup
-        .as_ref()
-        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+    // Fresh backup_id per series link (see `apply_next_series`).
+    let account_backup_id = fresh_backup_id();
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
@@ -814,16 +931,13 @@ pub async fn upload_mls_private_plaintext_backup(
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
 
-    let kek = derive_vault_kek(stored.secret.as_bytes())
-        .map_err(|err| anyhow!("derive KEK: {err}"))?;
+    let kek =
+        derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
 
     let list_payload = fetch_mls_restore_payload(api).await?;
     let previous_backup = select_mls_private_plaintext_backup(&list_payload);
-    let backup_id = previous_backup
-        .as_ref()
-        .and_then(|body| body.get("backup_id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("cx:backup:{}", crate::operation::uuid_v7()));
+    // Fresh backup_id per series link (see `apply_next_series`).
+    let backup_id = fresh_backup_id();
 
     let mut body = build_mls_private_plaintext_backup_body_with_kek(
         &backup_id,
@@ -1085,6 +1199,82 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn verify_series_chain_accepts_single_genesis() {
+        let genesis = wrap();
+        assert_eq!(backup_series_seq(&genesis), 0);
+        verify_series_chain(&genesis, std::slice::from_ref(&genesis))
+            .expect("a lone genesis envelope is a valid one-link chain");
+    }
+
+    #[test]
+    fn verify_series_chain_rejects_missing_intermediate() {
+        // Genesis + a forged seq=2 tail with no seq=1 link present: a withholding
+        // server signature that must be rejected.
+        let mut genesis = wrap();
+        genesis["series_id"] =
+            serde_json::json!("cx:backup_series:01964137-0000-7000-8000-0000000000c1");
+        genesis["series_seq"] = serde_json::json!(0);
+        let mut forged_tail = genesis.clone();
+        forged_tail["backup_id"] =
+            serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000c2");
+        forged_tail["series_seq"] = serde_json::json!(2);
+        forged_tail["supersedes"] = serde_json::json!("cx:backup:does-not-exist");
+        forged_tail["supersedes_digest"] = serde_json::json!("sha256:deadbeef");
+
+        let err = verify_series_chain(&forged_tail, &[genesis, forged_tail.clone()])
+            .expect_err("a chain missing series_seq 1 must be rejected");
+        assert!(err.to_string().contains("series_chain_broken"));
+    }
+
+    #[test]
+    fn verify_series_chain_accepts_well_formed_successor() {
+        // Mirror what the upload path now produces: genesis then a successor
+        // linked by apply_next_series.
+        let mut genesis = wrap();
+        genesis["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000d0");
+        genesis["series_id"] =
+            serde_json::json!("cx:backup_series:01964137-0000-7000-8000-0000000000d1");
+        genesis["series_seq"] = serde_json::json!(0);
+
+        let mut successor = wrap();
+        successor["backup_id"] =
+            serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000d2");
+        apply_next_series(Some(&genesis), &mut successor);
+
+        verify_series_chain(&successor, &[genesis, successor.clone()])
+            .expect("an apply_next_series-linked successor must verify");
+    }
+
+    #[test]
+    fn prompt_required_when_local_snapshot_uses_forked_random_secret() {
+        // P0 regression: a new device's Welcome bootstrap minted a random
+        // account secret and saved a self-consistent local snapshot under it,
+        // while the server holds history encrypted under the REAL account
+        // secret. The old detection only checked the (self-decryptable) local
+        // snapshot and silently skipped the restore prompt, forking the chain.
+        let store = MemorySecureKeyStore::new();
+        crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "forked-random-secret")
+            .unwrap();
+        let mut state = temp_state_store("prompt-forked-secret");
+        // Server backup is encrypted under the real account secret...
+        let server_envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        // ...but the local snapshot was saved under the forked random secret at
+        // the same (or higher) epoch, so it self-decrypts and passes the old
+        // epoch/group gates.
+        let local_envelope =
+            history_envelope("cx:space:prompt", "group-a", 7, "forked-random-secret");
+        state.save_mls_snapshot(local_envelope.space_id.clone(), local_envelope);
+        let payload = serde_json::json!({
+            "backups": [wrap(), history_body(&server_envelope)]
+        });
+
+        assert!(
+            mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
+            "forked random local secret must still trigger the restore prompt"
+        );
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_replaces_stale_local_secret_before_history_replay() {
@@ -1209,10 +1399,9 @@ mod tests {
         let sidecar = sample_sidecar();
         let json = serde_json::to_vec(&sidecar).unwrap();
         let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-        let body = build_mls_private_plaintext_backup_body_with_kek(
-            BACKUP_ID, ACTOR, DEVICE, &kek, &json,
-        )
-        .unwrap();
+        let body =
+            build_mls_private_plaintext_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, &json)
+                .unwrap();
         (json, body)
     }
 
@@ -1330,7 +1519,10 @@ mod tests {
 
         assert!(report.account_secret_imported);
         assert_eq!(report.restored, 1);
-        assert!(report.private_plaintext_restored, "sidecar must be restored");
+        assert!(
+            report.private_plaintext_restored,
+            "sidecar must be restored"
+        );
         assert_eq!(
             state.private_plaintext_for("cx:space:demo", "cx:flow:alpha", "body"),
             Some("\"author body\"".to_owned())

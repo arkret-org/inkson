@@ -900,6 +900,16 @@ pub fn VerifyDevicePanel(
                                                         let base = base.clone();
                                                         let dev_id = dev_id.clone();
                                                         let api_token = token();
+                                                        // P1: pre-validate the recovery passphrase
+                                                        // BEFORE the irreversible revoke so an empty
+                                                        // field can't leave a "revoked but rotation
+                                                        // failed" half-state.
+                                                        if revoke_passphrase().trim().is_empty() {
+                                                            verify_status.set(
+                                                                "Enter your recovery passphrase before revoking — it is required to rotate the MLS history secret.".to_owned(),
+                                                            );
+                                                            return;
+                                                        }
                                                         let passphrase_bytes = revoke_passphrase().into_bytes();
                                                         let snapshots = state_store.read().mls_snapshots();
                                                         let secure_store = default_secure_key_store("yougen");

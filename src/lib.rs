@@ -74,6 +74,9 @@ pub mod offline;
 pub mod offline_queue;
 pub mod oidc;
 pub mod operation;
+/// Input-path perf helpers — draft-save debounce + typing throttle for the
+/// composer hot paths. See [`perf`] for the rationale.
+pub mod perf;
 pub mod presence_rx;
 pub mod push;
 pub mod rank;
