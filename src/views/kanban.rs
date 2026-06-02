@@ -2217,6 +2217,7 @@ pub fn KanbanPanel(
     let mut card_detail_sidebar_visible = use_signal(|| true);
     let mut card_detail_actions_open = use_signal(|| false);
     let mut card_detail_tab = use_signal(CardDetailContentTab::default);
+    let mut card_detail_discussion_mounted_for = use_signal(|| Option::<String>::None);
     let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
     let mut card_detail_overlay_press_ended = use_signal(|| false);
@@ -4352,6 +4353,16 @@ pub fn KanbanPanel(
                     } else {
                         "card-detail-tab"
                     };
+                    let discussion_panel_class = if active_detail_tab == CardDetailContentTab::Discussion {
+                        "card-detail-discussion-panel"
+                    } else {
+                        "card-detail-discussion-panel is-hidden"
+                    };
+                    let discussion_panel_should_mount = active_detail_tab
+                        == CardDetailContentTab::Discussion
+                        || card_detail_discussion_mounted_for()
+                            .as_deref()
+                            .is_some_and(|flow_id| flow_id == card.primary_flow_id.as_str());
                     let action_menu_class = if editing_card_detail() {
                         "card-detail-action-menu is-editing"
                     } else {
@@ -4833,7 +4844,13 @@ pub fn KanbanPanel(
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
                                                         disabled: editing_card_detail(),
-                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Discussion),
+                                                        onclick: {
+                                                            let flow_id = card.primary_flow_id.clone();
+                                                            move |_| {
+                                                                card_detail_discussion_mounted_for.set(Some(flow_id.clone()));
+                                                                card_detail_tab.set(CardDetailContentTab::Discussion);
+                                                            }
+                                                        },
                                                         "Discussion"
                                                     }
                                                 }
@@ -5373,11 +5390,13 @@ pub fn KanbanPanel(
                                                             }
                                                         }
                                                     }
-                                                } else {
+                                                }
+                                                if discussion_panel_should_mount {
                                                     div {
-                                                        class: "card-detail-discussion-panel",
+                                                        class: "{discussion_panel_class}",
                                                         "data-testid": "card-discussion-panel",
                                                         role: "tabpanel",
+                                                        "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
                                                         crate::views::chat::ChatPanel {
                                                             base_url: base_url.clone(),
                                                             plaintext_service_did: plaintext_service_did.clone(),

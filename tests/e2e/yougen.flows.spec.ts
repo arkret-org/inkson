@@ -889,10 +889,15 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("cx.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #cx:task:123");
-  expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "did:web:bob.example")).toBeTruthy();
-  expect(chatBody.payload.mentions.some((mention: { target: string }) => mention.target === "cx:task:123")).toBeTruthy();
+  expect(chatBody.payload.mentions).toBeUndefined();
+  expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
-  await expect(page.getByTestId("chat-mentions").last()).toContainText("did:web:bob.example");
+  await page.getByTestId("card-detail-tab-description").click();
+  await expect(page.getByTestId("card-description-panel")).toBeVisible();
+  await expect(page.getByTestId("card-discussion-panel")).toHaveCount(1);
+  await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
+  await page.getByTestId("card-detail-tab-discussion").click();
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
   await expect(page.getByTestId("discussion-timeline-protocol")).toHaveCount(0);
 });
 

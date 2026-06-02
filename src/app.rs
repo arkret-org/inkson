@@ -1518,6 +1518,9 @@ body {
 .card-detail-discussion-panel {
   overflow: hidden;
 }
+.card-detail-discussion-panel.is-hidden {
+  display: none;
+}
 .card-detail-synthesis-empty {
   color: var(--text-3, var(--cx-muted));
   font-size: 13px;

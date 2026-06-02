@@ -388,9 +388,15 @@ impl MlsSnapshotEnvelope {
             crate::key_backup::KeyBackupClass::MlsHistory,
             "mls_snapshot",
         );
-        // Phase 2: sign with the active device key (best effort; unsigned in
-        // tests where no in-process signer is installed).
-        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id);
+        // Phase 2: sign with the active device signer. `to_key_backup_body`
+        // returns a `Value` (no Result), so a signer-present-but-failed error is
+        // surfaced via a warning rather than silently dropped — `Ok(false)` (no
+        // signer installed, e.g. tests) leaves it unsigned without noise.
+        if let Err(error) =
+            crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
+        {
+            tracing::warn!(?error, "mls_history backup auth_data signing failed");
+        }
         body
     }
 

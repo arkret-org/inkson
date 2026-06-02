@@ -82,21 +82,42 @@ pub fn sign_key_backup_auth_data(
     Ok(())
 }
 
-/// Best-effort: sign `body`'s `auth_data` with the active in-process device key
-/// (the seed signer installed via `event_signer`). No-op for external / HSM
-/// signers or when no signer is installed — the envelope is left unsigned (the
-/// receiver treats unsigned/unverifiable backups as untrusted once enforcement
-/// lands). Returns `true` when a signature was attached.
-pub fn sign_key_backup_with_active_device(body: &mut Value, device_id: &str) -> bool {
-    if let Some(signer) = crate::event_signer::active_signer()
-        && let Some(signing_key) = signer.ed25519_signing_key()
-    {
-        let vm = signer.verification_method().to_owned();
-        // `ssk_generation` is bound once the cross-signing publish generation is
-        // resolvable at build time (follow-up); omitted otherwise.
-        return sign_key_backup_auth_data(body, signing_key, device_id, &vm, None).is_ok();
+/// Sign `body`'s `auth_data` with the active device signer (seed OR external /
+/// HSM — both via `EventSigner::sign`, which returns a raw signature).
+///
+/// Returns `Ok(true)` when signed, `Ok(false)` when NO signer is installed (the
+/// legitimate unsigned case — e.g. tests, or pre-bootstrap), and `Err` when a
+/// signer IS present but signing failed. Crucially this no longer silently
+/// downgrades external/HSM signers to unsigned: a present signer always signs or
+/// errors, so callers never ship an unsigned-but-a-signer-existed backup.
+pub fn sign_key_backup_with_active_device(
+    body: &mut Value,
+    device_id: &str,
+) -> anyhow::Result<bool> {
+    let Some(signer) = crate::event_signer::active_signer() else {
+        return Ok(false);
+    };
+    // Build auth_data WITHOUT the signature, then sign canonical(body) over it.
+    if let Some(object) = body.as_object_mut() {
+        object.remove("auth_data");
     }
-    false
+    let signed_fields: Vec<Value> = KEY_BACKUP_SIGNED_FIELDS
+        .iter()
+        .filter(|field| body.get(**field).is_some())
+        .map(|field| Value::String((*field).to_owned()))
+        .collect();
+    body["auth_data"] = json!({
+        "device_id": device_id,
+        "verification_method": signer.verification_method(),
+        "signature_algorithm": signer.algorithm(),
+        "signed_fields": signed_fields,
+    });
+    let payload = crate::canonical::canonical_json_bytes(body)?;
+    let signature = signer
+        .sign_raw(&payload)
+        .map_err(|err| anyhow::anyhow!("key backup auth_data sign: {err:?}"))?;
+    body["auth_data"]["signature"] = Value::String(B64.encode(signature));
+    Ok(true)
 }
 
 /// Phase 2 verify: check a key-backup envelope's `auth_data.signature` against
@@ -231,6 +252,14 @@ pub fn attach_key_backup_genesis_series(body: &mut Value) {
             .entry("series_id")
             .or_insert_with(|| json!(format!("cx:backup_series:{}", crate::operation::uuid_v7())));
         object.entry("series_seq").or_insert_with(|| json!(0));
+        // Genesis carries `supersedes: null` explicitly so it is present in the
+        // envelope and covered by `auth_data.signed_fields` (the schema requires
+        // signed_fields to contain `supersedes` on every envelope, and the
+        // fixture genesis case uses `null`). `apply_next_series` overwrites this
+        // with the predecessor backup_id for successors. soland treats a null
+        // `supersedes` as "no predecessor" (its `as_str()` read yields None), so
+        // the genesis chain check still passes.
+        object.entry("supersedes").or_insert(Value::Null);
     }
 }
 
@@ -418,9 +447,10 @@ pub fn build_passphrase_kdf_backup_body(
     body["key_commitment"] = Value::String(sealed.key_commitment);
     body["ciphertext"] = Value::String(sealed.ciphertext_b64);
     body["ciphertext_digest"] = Value::String(sealed.ciphertext_digest);
-    // Phase 2: sign the completed envelope with the active device key (best
-    // effort; unsigned when no in-process signer is installed, e.g. in tests).
-    sign_key_backup_with_active_device(&mut body, device_id);
+    // Phase 2: sign the completed envelope with the active device signer. Errors
+    // propagate (a present signer that fails MUST NOT ship an unsigned backup);
+    // unsigned is only allowed when NO signer is installed (Ok(false), e.g. tests).
+    sign_key_backup_with_active_device(&mut body, device_id)?;
     Ok(body)
 }
 
@@ -634,7 +664,7 @@ pub fn build_recovery_public_key_backup_body(
             .strip_prefix("sha256:")
             .unwrap_or_default()
     ));
-    sign_key_backup_with_active_device(&mut body, device_id);
+    sign_key_backup_with_active_device(&mut body, device_id)?;
     Ok(body)
 }
 

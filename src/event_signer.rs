@@ -58,7 +58,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use contrix_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
-use ed25519_dalek::SigningKey;
 use serde_json::Value;
 
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
@@ -114,12 +113,6 @@ pub struct YougenEventSigner {
     /// `None` until the first sign succeeds. Exposed for the UI
     /// freshness indicator.
     last_signed_at: Mutex<Option<DateTime<Utc>>>,
-    /// The raw Ed25519 device key, retained ONLY for the in-process seed
-    /// signer (`build_ed25519_signer`). `None` for external / HSM backends.
-    /// Used to produce raw detached signatures the SDK JWS pipeline does not
-    /// expose — e.g. the `cx.schema.key_backup.v1` `auth_data.signature`
-    /// (key-management.md §7.4.1).
-    raw_ed25519: Option<SigningKey>,
 }
 
 impl std::fmt::Debug for YougenEventSigner {
@@ -159,7 +152,6 @@ impl YougenEventSigner {
             verification_method,
             mode_tag: "external",
             last_signed_at: Mutex::new(None),
-            raw_ed25519: None,
         }
     }
 
@@ -179,12 +171,16 @@ impl YougenEventSigner {
         self.inner.algorithm()
     }
 
-    /// The raw Ed25519 device signing key, available ONLY for the in-process
-    /// seed signer. Used to produce the `cx.schema.key_backup.v1`
-    /// `auth_data.signature` (a raw detached signature, not a JWS). `None` for
-    /// external / HSM backends (those must sign backups via their own path).
-    pub fn ed25519_signing_key(&self) -> Option<&SigningKey> {
-        self.raw_ed25519.as_ref()
+    /// Produce a RAW detached signature over `bytes` (not a JWS) using the
+    /// active backend — works for the in-process seed signer AND external / HSM
+    /// signers alike (the SDK `EventSigner::sign` returns raw signature bytes;
+    /// for EdDSA that is the 64-byte Ed25519 signature). Used for the
+    /// `cx.schema.key_backup.v1` `auth_data.signature` (key-management.md
+    /// §7.4.1), whose wire form is a single base64url token, not a dotted JWS.
+    pub fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>, EventSignerError> {
+        self.inner
+            .sign(bytes)
+            .map_err(|err| EventSignerError::Backend(err.to_string()))
     }
 
     /// `"ed25519"` for the in-process seed signer, `"external"` for
@@ -315,7 +311,6 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
         verification_method,
         mode_tag: "ed25519",
         last_signed_at: Mutex::new(None),
-        raw_ed25519: Some(SigningKey::from_bytes(&seed)),
     }
 }
 

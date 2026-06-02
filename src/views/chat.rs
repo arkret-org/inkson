@@ -114,6 +114,29 @@ struct ChatMessage {
     crypto_state: MessageCryptoState,
 }
 
+fn fail_optimistic_chat_send(
+    mut messages: Signal<Vec<ChatMessage>>,
+    mut chat_draft: Signal<String>,
+    mut status_msg: Signal<String>,
+    message_id: &str,
+    body_for_restore: &str,
+    message: String,
+) {
+    if let Some(found) = messages
+        .write()
+        .iter_mut()
+        .find(|candidate| candidate.id == message_id)
+    {
+        found.pending = false;
+        found.failed = true;
+        found.error = Some(message.clone());
+    }
+    if chat_draft().trim().is_empty() {
+        chat_draft.set(body_for_restore.to_owned());
+    }
+    status_msg.set(message);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiscussionSidePanel {
     Users,
@@ -2746,6 +2769,11 @@ pub fn ChatPanel(
         "send-chat-button"
     } else {
         "send-e2ee-move-button"
+    };
+    let send_secure_label = if selected_channel_security_encrypted {
+        crate::i18n::tr("chat.send")
+    } else {
+        crate::i18n::tr("chat.send_secure")
     };
     let all_messages_snapshot = messages();
     let visible_messages = all_messages_snapshot
@@ -5866,6 +5894,39 @@ pub fn ChatPanel(
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()
                                     .filter(|value| !value.trim().is_empty());
+                                let message_id = new_chat_message_id();
+                                messages.write().push(ChatMessage {
+                                    space_id: space.clone(),
+                                    id: message_id.clone(),
+                                    sender: "yougen".to_owned(),
+                                    body: body.clone(),
+                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                    flow_id: flow_id.clone(),
+                                    reply_to: reply_to.clone(),
+                                    reactions: Vec::new(),
+                                    redacted: false,
+                                    edited: false,
+                                    revisions: Vec::new(),
+                                    pending: true,
+                                    failed: false,
+                                    error: None,
+                                    mentions: Vec::new(),
+                                    crypto_state: MessageCryptoState::Plaintext,
+                                });
+                                chat_draft.set(String::new());
+                                reply_to_message.set(None);
+                                let base = base.clone();
+                                let space = space.clone();
+                                let actor = actor.clone();
+                                let did = device_id.clone();
+                                let api_token = token();
+                                let wait_for = active_sync_token(sync_cursor());
+                                let backup_trigger_signal =
+                                    crate::components::try_needs_mls_backup_signal();
+                                let base_for_backup_trigger = base.clone();
+                                let token_for_backup_trigger = api_token.clone();
+                                let actor_for_backup_trigger = actor.clone();
+                                spawn(async move {
                                 // P1: encrypt the canonical Content Block JSON
                                 // (`cx.content.text`), NOT the bare body bytes, so
                                 // strict receivers can parse the decrypted payload
@@ -5880,18 +5941,22 @@ pub fn ChatPanel(
                                 ) {
                                     Ok(bytes) => bytes,
                                     Err(err) => {
-                                        status_msg.set(format!(
-                                            "Send Secure could not encode message content: {err}"
-                                        ));
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!(
+                                                "Send Secure could not encode message content: {err}"
+                                            ),
+                                        );
                                         return;
                                     }
                                 };
-                                let api_token = token();
-                                let wait_for = active_sync_token(sync_cursor());
                                 let _hlc = Hlc::now("yougen").to_string();
                                 let anchor_view = state_store.read().anchor_view_for(&space);
                                 let anchor_ref = anchor_view.move_anchor_ref();
-                                let did = device_id.clone();
                                 // 1) MLS commit event bumps the epoch +
                                 //    records covered_frontier.
                                 // Real MLS encrypt path. The shared runtime
@@ -5916,25 +5981,45 @@ pub fn ChatPanel(
                                 );
 
                                 let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
-                                    status_msg.set(
+                                    fail_optimistic_chat_send(
+                                        messages,
+                                        chat_draft,
+                                        status_msg,
+                                        &message_id,
+                                        &body,
                                         "Send Secure requires MLS state ready on this device; wait for Welcome or restore MLS history".to_owned(),
                                     );
                                     return;
                                 };
                                 let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
-                                    status_msg.set(
+                                    fail_optimistic_chat_send(
+                                        messages,
+                                        chat_draft,
+                                        status_msg,
+                                        &message_id,
+                                        &body,
                                         "Send Secure could not produce an MLS encrypted payload".to_owned(),
                                     );
                                     return;
                                 };
                                 let Some(local_schedule_hash) = local_schedule_hash.clone() else {
-                                    status_msg.set(
+                                    fail_optimistic_chat_send(
+                                        messages,
+                                        chat_draft,
+                                        status_msg,
+                                        &message_id,
+                                        &body,
                                         "Send Secure could not derive the MLS key schedule hash".to_owned(),
                                     );
                                     return;
                                 };
                                 if local_member_dids.is_empty() {
-                                    status_msg.set(
+                                    fail_optimistic_chat_send(
+                                        messages,
+                                        chat_draft,
+                                        status_msg,
+                                        &message_id,
+                                        &body,
                                         "Send Secure could not resolve MLS group members".to_owned(),
                                     );
                                     return;
@@ -5953,9 +6038,14 @@ pub fn ChatPanel(
                                     match contrix_sdk::EventId::new(commit_event_id.clone()) {
                                         Ok(value) => value,
                                         Err(err) => {
-                                            status_msg.set(format!(
-                                                "MLS commit event id invalid: {err:?}"
-                                            ));
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("MLS commit event id invalid: {err:?}"),
+                                            );
                                             return;
                                         }
                                     };
@@ -5972,9 +6062,16 @@ pub fn ChatPanel(
                                     ) {
                                         Ok(value) => value,
                                         Err(err) => {
-                                            status_msg.set(format!(
-                                                "MLS encrypted envelope build failed: {err}"
-                                            ));
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!(
+                                                    "MLS encrypted envelope build failed: {err}"
+                                                ),
+                                            );
                                             return;
                                         }
                                     };
@@ -5982,16 +6079,30 @@ pub fn ChatPanel(
                                     match serde_json::to_value(&encrypted_envelope) {
                                         Ok(value) => value,
                                         Err(err) => {
-                                            status_msg.set(format!(
-                                                "MLS encrypted envelope encode failed: {err}"
-                                            ));
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!(
+                                                    "MLS encrypted envelope encode failed: {err}"
+                                                ),
+                                            );
                                             return;
                                         }
                                     };
                                 let realm_id = match contrix_sdk::RealmId::new(scope_id_as_realm_id(&space)) {
                                     Ok(value) => value,
                                     Err(err) => {
-                                        status_msg.set(format!("MLS commit Realm id invalid: {err:?}"));
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!("MLS commit Realm id invalid: {err:?}"),
+                                        );
                                         return;
                                     }
                                 };
@@ -6002,7 +6113,14 @@ pub fn ChatPanel(
                                 ) {
                                     Ok(value) => value,
                                     Err(err) => {
-                                        status_msg.set(err);
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            err,
+                                        );
                                         return;
                                     }
                                 };
@@ -6020,9 +6138,16 @@ pub fn ChatPanel(
                                     ) {
                                         Ok(value) => value,
                                         Err(err) => {
-                                            status_msg.set(format!(
-                                                "MLS governance binding failed: {err}"
-                                            ));
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!(
+                                                    "MLS governance binding failed: {err}"
+                                                ),
+                                            );
                                             return;
                                         }
                                     };
@@ -6038,9 +6163,14 @@ pub fn ChatPanel(
                                     ) {
                                         Ok(value) => value,
                                         Err(err) => {
-                                            status_msg.set(format!(
-                                                "MLS commit payload failed: {err}"
-                                            ));
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("MLS commit payload failed: {err}"),
+                                            );
                                             return;
                                         }
                                     };
@@ -6053,29 +6183,6 @@ pub fn ChatPanel(
                                     )
                                     .build("yougen");
                                 commit_envelope.event_id = commit_event_id;
-                                let message_id = new_chat_message_id();
-                                // Optimistic local echo: the sender holds the
-                                // plaintext, so render it immediately while the
-                                // encrypted event round-trips (the synced copy
-                                // reconciles by message_id).
-                                messages.write().push(ChatMessage {
-                                    space_id: space.clone(),
-                                    id: message_id.clone(),
-                                    sender: "yougen".to_owned(),
-                                    body: body.clone(),
-                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    flow_id: flow_id.clone(),
-                                    reply_to: reply_to.clone(),
-                                    reactions: Vec::new(),
-                                    redacted: false,
-                                    edited: false,
-                                    revisions: Vec::new(),
-                                    pending: true,
-                                    failed: false,
-                                    error: None,
-                                    mentions: Vec::new(),
-                                    crypto_state: MessageCryptoState::Plaintext,
-                                });
                                 let mut message_payload =
                                     contrix_sdk::MessageCreatePayload::with_encrypted_content(
                                         flow_id_value(&flow_id),
@@ -6138,17 +6245,6 @@ pub fn ChatPanel(
                                 // losing it.
                                 let body_for_restore = body.clone();
                                 let message_id_for_failure = message_id.clone();
-                                // X11.2 — first-write trigger. Capture the
-                                // context-provided `needs_mls_backup` signal +
-                                // identity clones HERE (inside the Dioxus
-                                // scope) so the encrypted-send success arm can
-                                // flip the backup prompt on directly, bypassing
-                                // the fragile boot detection effect.
-                                let backup_trigger_signal =
-                                    crate::components::try_needs_mls_backup_signal();
-                                let base_for_backup_trigger = base.clone();
-                                let token_for_backup_trigger = api_token.clone();
-                                let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                         // Submit MLS commit event first; if it fails,
@@ -6415,11 +6511,10 @@ pub fn ChatPanel(
                                         status_msg.set(message);
                                     }
                                 });
-                                chat_draft.set(String::new());
-                                reply_to_message.set(None);
+                                });
                             }
                         },
-                        {crate::i18n::tr("chat.send_secure")}
+                        "{send_secure_label}"
                     }
                 }
                 if !embedded && !status_msg().is_empty() {
