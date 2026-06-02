@@ -125,9 +125,8 @@ pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Res
     open_passphrase_kdf_backup_body(passphrase, body)
 }
 
-/// True when `body` is an MLS account-secret backup. Matched on the dedicated
-/// `mls_account_secret` item type (now allowlisted by both validators);
-/// `secret_id` remains as a secondary, human-readable label.
+/// True when `body` is an MLS account-secret backup (ANY recipient method).
+/// Matched on the dedicated `mls_account_secret` item type.
 pub fn is_mls_account_secret_backup(body: &Value) -> bool {
     body.get("contents")
         .and_then(Value::as_array)
@@ -135,6 +134,29 @@ pub fn is_mls_account_secret_backup(body: &Value) -> bool {
         .and_then(|item| item.get("item_type"))
         .and_then(Value::as_str)
         == Some(MLS_ACCOUNT_SECRET_ITEM_TYPE)
+}
+
+/// The `encryption.recipient_method` of a backup envelope.
+fn backup_recipient_method(body: &Value) -> Option<&str> {
+    body.pointer("/encryption/recipient_method")
+        .and_then(Value::as_str)
+}
+
+/// True when `body` is the **passphrase-recoverable** account-secret backup
+/// (`recipient_method=passphrase_kdf`). The account secret now has TWO backups —
+/// this passphrase one and an HPKE `recovery_public_key` one — sharing the same
+/// `item_type`, so the passphrase restore path MUST only pick this variant
+/// (else it would try to passphrase-decrypt an HPKE envelope).
+pub fn is_passphrase_account_secret_backup(body: &Value) -> bool {
+    is_mls_account_secret_backup(body) && backup_recipient_method(body) == Some("passphrase_kdf")
+}
+
+/// True when `body` is the HPKE `recovery_public_key` account-secret backup —
+/// the passphrase-free fresh-device recovery path (open with the recovery
+/// private key, no passphrase prompt).
+pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
+    is_mls_account_secret_backup(body)
+        && backup_recipient_method(body) == Some("recovery_public_key")
 }
 
 /// X5.3 — build a `secret_storage` PUT body that wraps the entire encrypted
@@ -272,7 +294,7 @@ pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
 /// selected series.
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     iter_backup_bodies(list_payload)
-        .filter(|body| is_mls_account_secret_backup(body))
+        .filter(|body| is_passphrase_account_secret_backup(body))
         .max_by(|a, b| {
             (
                 backup_secret_version(a),
@@ -286,6 +308,65 @@ pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
                 ))
         })
         .cloned()
+}
+
+/// Select the newest HPKE `recovery_public_key` account-secret backup (the
+/// passphrase-free fresh-device recovery path). Newest by
+/// `(secret_version, created_at)`.
+pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value) -> Option<Value> {
+    iter_backup_bodies(list_payload)
+        .filter(|body| is_recovery_public_key_account_secret_backup(body))
+        .max_by(|a, b| {
+            (backup_secret_version(a), backup_created_at(a))
+                .cmp(&(backup_secret_version(b), backup_created_at(b)))
+        })
+        .cloned()
+}
+
+/// Build the HPKE `recovery_public_key` account-secret backup: the account
+/// secret HPKE-sealed to the actor's recovery public key. ANY device (holding
+/// only the public key) can build/upload this; a fresh device opens it with the
+/// recovery PRIVATE key — no passphrase prompt (key-management.md §7.5.2).
+pub fn build_mls_account_secret_recovery_public_key_backup(
+    backup_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    account_secret: &str,
+    account_secret_version: u32,
+) -> Result<Value> {
+    crate::key_backup::build_recovery_public_key_backup_body(
+        backup_id,
+        actor_did,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        crate::key_backup::KeyBackupClass::SecretStorage,
+        "recovery_vault",
+        &crate::key_backup::BackupItem {
+            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE,
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID,
+            extra: vec![(
+                "secret_version",
+                Value::Number(serde_json::Number::from(account_secret_version)),
+            )],
+        },
+        account_secret.as_bytes(),
+    )
+}
+
+/// Open the HPKE `recovery_public_key` account-secret backup with the recovery
+/// private key, returning `(secret, version)`.
+pub fn open_mls_account_secret_recovery_public_key_backup(
+    recovery_private_key: &[u8],
+    body: &Value,
+) -> Result<(String, u32)> {
+    let bytes =
+        crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
+    let secret = String::from_utf8(bytes)
+        .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
+    Ok((secret, mls_account_secret_backup_version(body)))
 }
 
 /// Pure body-selection: collect every `mls_history` backup body from a
@@ -453,8 +534,71 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         ));
     }
 
-    // Step 2: restore every mls_history backup. A failure on one backup is
-    // counted but does not abort the others.
+    restore_history_and_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        actor_did,
+        device_id,
+        &mut report,
+    );
+    Ok(report)
+}
+
+/// A3 (key-management.md §7.5.2): fresh-device restore via the recovery PRIVATE
+/// key (no passphrase prompt). Opens the HPKE `recovery_public_key`
+/// account-secret backup, imports the secret, then restores history + sidecar
+/// — the passphrase-free counterpart of
+/// [`restore_mls_history_with_passphrase_from_payload`]. The recovery private
+/// key is the one unlocked by the recovery policy (saved recovery key /
+/// threshold / hardware); on a brand-new browser (empty secure store) this is
+/// the path that works without first holding the account secret.
+pub fn restore_mls_history_with_recovery_key_from_payload(
+    list_payload: &Value,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    recovery_private_key: &[u8],
+) -> Result<RestoreReport> {
+    let _ = device_id;
+    let mut report = RestoreReport::default();
+    let secret_body = select_mls_account_secret_recovery_public_key_backup(list_payload)
+        .ok_or_else(|| anyhow!("no recovery_public_key account-secret backup on server"))?;
+    let (secret, version) =
+        open_mls_account_secret_recovery_public_key_backup(recovery_private_key, &secret_body)?;
+    crate::mls::runtime::replace_account_mls_secret_version(
+        secure_store,
+        actor_did,
+        version,
+        &secret,
+    )
+    .map_err(|err| anyhow!("replace account MLS secret: {err}"))?;
+    report.account_secret_imported = true;
+
+    restore_history_and_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        actor_did,
+        device_id,
+        &mut report,
+    );
+    Ok(report)
+}
+
+/// Shared restore tail (used by both the passphrase and recovery-key entry
+/// points): with the account secret already local, restore every `mls_history`
+/// backup and the author's `mls_private_plaintext` sidecar. Per-item failures
+/// are counted, never abort the rest.
+fn restore_history_and_sidecar(
+    list_payload: &Value,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    report: &mut RestoreReport,
+) {
     for body in select_mls_history_backups(list_payload) {
         match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
             state_store,
@@ -473,12 +617,6 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         }
     }
 
-    // Step 3 (X5.3): restore the author's encrypted local-plaintext sidecar.
-    // The KEK source is the account secret imported in Step 1 — load it back
-    // (now local) and decrypt with no second passphrase prompt, then merge the
-    // sidecar map into the state store. Failure here is NON-FATAL: the author
-    // simply won't see their own old content until the next encrypted write
-    // rebuilds the sidecar; the rest of the restore stands.
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
         match restore_private_plaintext_sidecar(&sidecar_body, state_store, secure_store, actor_did)
         {
@@ -490,8 +628,6 @@ pub fn restore_mls_history_with_passphrase_from_payload(
             }
         }
     }
-
-    Ok(report)
 }
 
 /// X5.3 — decrypt the `mls_private_plaintext` sidecar backup with the local
@@ -1284,6 +1420,99 @@ mod tests {
         assert!(
             mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
             "forked random local secret must still trigger the restore prompt"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn fresh_device_restores_via_recovery_key_no_passphrase() {
+        // A3 / the user's "cleared storage = device B" point: a brand-new device
+        // (empty secure store) recovers WITHOUT the passphrase, using only the
+        // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
+        // on host (real OpenMLS group), no live soland.
+        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+
+        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
+        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = ContrixMlsIdentity::new_basic(
+            Did::new(ACTOR.to_owned()).unwrap(),
+            DeviceId::new(device_a.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let group = identity.create_group(space.as_bytes()).unwrap();
+        let record = group.export_state_record().unwrap();
+        // Device A's history is encrypted under the account secret.
+        let history = crate::mls::persistence::encrypt_state(
+            space,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            ACCOUNT_SECRET,
+            b"deterministic-salt",
+        );
+
+        // The account secret is ALSO backed up HPKE-sealed to the recovery
+        // public key (the passphrase-free path). Only the recovery PRIVATE key
+        // opens it.
+        let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        let account_secret_body = build_mls_account_secret_recovery_public_key_backup(
+            BACKUP_ID,
+            ACTOR,
+            DEVICE,
+            &recovery_pk,
+            "did:web:alice.example#recovery",
+            ACCOUNT_SECRET,
+            crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+        )
+        .unwrap();
+
+        let payload = serde_json::json!({
+            "backups": [account_secret_body, history_body(&history)]
+        });
+        // Device B: empty secure store, empty state store.
+        let store = MemorySecureKeyStore::new();
+        let mut state = temp_state_store("fresh-device-recovery-key");
+
+        let report = restore_mls_history_with_recovery_key_from_payload(
+            &payload,
+            &mut state,
+            &store,
+            ACTOR,
+            DEVICE,
+            &recovery_sk,
+        )
+        .unwrap();
+
+        assert!(
+            report.account_secret_imported,
+            "account secret HPKE-imported"
+        );
+        assert_eq!(report.restored, 1, "history restored");
+        assert_eq!(report.failed, 0);
+        let loaded = crate::mls::runtime::load_account_mls_secret(&store, ACTOR)
+            .unwrap()
+            .expect("account secret now local");
+        assert_eq!(loaded.secret, ACCOUNT_SECRET);
+        assert!(
+            state.mls_snapshot_for(space).is_some(),
+            "snapshot decryptable"
+        );
+
+        // A WRONG recovery key cannot recover.
+        let (other_sk, _other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        let store2 = MemorySecureKeyStore::new();
+        let mut state2 = temp_state_store("fresh-device-wrong-key");
+        assert!(
+            restore_mls_history_with_recovery_key_from_payload(
+                &payload,
+                &mut state2,
+                &store2,
+                ACTOR,
+                DEVICE,
+                &other_sk,
+            )
+            .is_err(),
+            "wrong recovery key must fail"
         );
     }
 

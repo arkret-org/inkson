@@ -840,8 +840,9 @@ body {
 
 .board-popover-panel {
   position: absolute;
-  right: 0;
+  left: 0;
   top: calc(100% + 6px);
+  max-width: calc(100vw - 24px);
   z-index: var(--layer-local-popover);
   width: min(360px, calc(100vw - 48px));
   display: grid;

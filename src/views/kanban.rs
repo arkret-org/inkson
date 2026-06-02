@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -55,6 +58,9 @@ const KANBAN_PRIVATE_FLOW_PATCH_PATHS: &[&str] = &[
     "tracks.synthesis.body",
     "tracks.discussion.body",
 ];
+const KANBAN_BODY_PRIVATE_FIELD_PATHS: &[&str] = &["body", "fields.body"];
+const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] =
+    &["synthesis", "fields.synthesis", "tracks.synthesis.body"];
 const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str = "application/vnd.contrix.flow.patch-value+json";
 
 /// X10.2 — shown for an encrypted private field (body/synthesis) that this
@@ -1095,17 +1101,16 @@ fn card_from_projection_item(
         .to_owned();
     // X10.2: bind the private-field value exprs once so the text + locked
     // checks read the same source.
-    let item_body_value = item.object.get("body").or_else(|| {
-        item.object
-            .get("fields")
-            .and_then(|fields| fields.get("body"))
-    });
-    let item_synthesis_value = item.object.get("synthesis").or_else(|| {
-        item.object
-            .get("tracks")
-            .and_then(|tracks| tracks.get("synthesis"))
-            .and_then(|track| track.get("body"))
-    });
+    let item_body_field =
+        collection_item_private_field_value(&item.object, KANBAN_BODY_PRIVATE_FIELD_PATHS);
+    let item_body_value = item_body_field.map(|(value, _)| value);
+    let item_body_path = item_body_field.map(|(_, path)| path).unwrap_or("body");
+    let item_synthesis_field =
+        collection_item_private_field_value(&item.object, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
+    let item_synthesis_value = item_synthesis_field.map(|(value, _)| value);
+    let item_synthesis_path = item_synthesis_field
+        .map(|(_, path)| path)
+        .unwrap_or("synthesis");
     KanbanCard {
         id,
         rank,
@@ -1117,23 +1122,28 @@ fn card_from_projection_item(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned(),
-        body: private_flow_field_text(decrypt_ctx, &primary_flow_id, "body", item_body_value),
+        body: private_flow_field_text(
+            decrypt_ctx,
+            &primary_flow_id,
+            item_body_path,
+            item_body_value,
+        ),
         body_locked: private_flow_field_locked(
             decrypt_ctx,
             &primary_flow_id,
-            "body",
+            item_body_path,
             item_body_value,
         ),
         synthesis: private_flow_field_text(
             decrypt_ctx,
             &primary_flow_id,
-            "synthesis",
+            item_synthesis_path,
             item_synthesis_value,
         ),
         synthesis_locked: private_flow_field_locked(
             decrypt_ctx,
             &primary_flow_id,
-            "synthesis",
+            item_synthesis_path,
             item_synthesis_value,
         ),
         created_by,
@@ -1478,6 +1488,13 @@ fn private_flow_display_text(ctx: Option<&MlsDecryptCtx<'_>>, value: Option<&Val
     flow_body_display_text(Some(value))
 }
 
+fn private_plaintext_display_text(plaintext: &str) -> String {
+    if let Ok(parsed) = serde_json::from_str::<Value>(plaintext) {
+        return flow_body_display_text(Some(&parsed));
+    }
+    plaintext.to_owned()
+}
+
 /// X10.2 — true when a private field IS an MLS envelope that this device
 /// cannot currently read: no local plaintext sidecar AND decryption is not
 /// possible (author's own ciphertext / fresh browser before MLS unlock).
@@ -1497,19 +1514,23 @@ fn private_flow_field_locked(
     if !value_is_mls_envelope(value) {
         return false;
     }
-    // Sidecar hit → readable, not locked.
+    // Non-empty sidecar hit → readable, not locked. Empty sidecars are not
+    // useful for an encrypted `set` value; treat them as missing so the UI
+    // does not confuse encrypted-but-unreadable content with "no content".
     if let Some(ctx) = ctx
-        && ctx
-            .state_store
-            .private_plaintext_for(ctx.space_id, flow_id, field_path)
-            .is_some()
+        && let Some(plaintext) =
+            ctx.state_store
+                .private_plaintext_for(ctx.space_id, flow_id, field_path)
+        && !private_plaintext_display_text(&plaintext).trim().is_empty()
     {
         return false;
     }
-    // Decryptable (another member's ciphertext) → not locked.
-    if ctx
-        .and_then(|ctx| decrypt_private_flow_value(ctx, value))
-        .is_some()
+    // Decryptable non-empty content (another member's ciphertext) → not
+    // locked. Empty decrypted text is treated like a missing plaintext for an
+    // encrypted `set`, so the UI does not collapse unreadable private content
+    // into a misleading empty state.
+    if let Some(plaintext) = ctx.and_then(|ctx| decrypt_private_flow_value(ctx, value))
+        && !flow_body_display_text(Some(&plaintext)).trim().is_empty()
     {
         return false;
     }
@@ -1545,14 +1566,10 @@ fn private_flow_field_text(
             ctx.state_store
                 .private_plaintext_for(ctx.space_id, flow_id, field_path)
     {
-        // Stored shape is the JSON-serialized patch value; parse it back
-        // and render identically to the decrypt tier.
-        if let Ok(parsed) = serde_json::from_str::<Value>(&plaintext) {
-            return flow_body_display_text(Some(&parsed));
+        let text = private_plaintext_display_text(&plaintext);
+        if !text.trim().is_empty() {
+            return text;
         }
-        // Fall back to the raw string if it wasn't valid JSON (defensive;
-        // the writer always stores serialized JSON).
-        return plaintext;
     }
     // Tiers 2 + 3: decrypt another member's ciphertext, else blank.
     private_flow_display_text(ctx, value)
@@ -1597,31 +1614,39 @@ fn card_from_flow_projection(
             }
         });
     // X10.2: bind the private-field value exprs once so text + locked agree.
-    let flow_body_value = flow.body.as_ref().or_else(|| flow.fields.get("body"));
-    let flow_synthesis_value = flow.fields.get("synthesis").or_else(|| {
-        flow.fields
-            .get("tracks")
-            .and_then(|tracks| tracks.get("synthesis"))
-            .and_then(|track| track.get("body"))
-    });
+    let flow_body_field =
+        flow_projection_private_field_value(flow, KANBAN_BODY_PRIVATE_FIELD_PATHS);
+    let flow_body_value = flow_body_field.map(|(value, _)| value);
+    let flow_body_path = flow_body_field.map(|(_, path)| path).unwrap_or("body");
+    let flow_synthesis_field =
+        flow_projection_private_field_value(flow, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
+    let flow_synthesis_value = flow_synthesis_field.map(|(value, _)| value);
+    let flow_synthesis_path = flow_synthesis_field
+        .map(|(_, path)| path)
+        .unwrap_or("synthesis");
     KanbanCard {
         id: flow.flow_id.clone(),
         rank: flow_projection_field_string(flow, flow.rank.as_deref(), &["rank"])
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: private_flow_field_text(decrypt_ctx, &flow.flow_id, "body", flow_body_value),
-        body_locked: private_flow_field_locked(decrypt_ctx, &flow.flow_id, "body", flow_body_value),
+        body: private_flow_field_text(decrypt_ctx, &flow.flow_id, flow_body_path, flow_body_value),
+        body_locked: private_flow_field_locked(
+            decrypt_ctx,
+            &flow.flow_id,
+            flow_body_path,
+            flow_body_value,
+        ),
         synthesis: private_flow_field_text(
             decrypt_ctx,
             &flow.flow_id,
-            "synthesis",
+            flow_synthesis_path,
             flow_synthesis_value,
         ),
         synthesis_locked: private_flow_field_locked(
             decrypt_ctx,
             &flow.flow_id,
-            "synthesis",
+            flow_synthesis_path,
             flow_synthesis_value,
         ),
         created_by: flow
@@ -1716,6 +1741,22 @@ fn overlay_local_card_creates_with_decrypt(
         state_store,
         board_space_id,
         &[],
+        decrypt_ctx,
+    )
+}
+
+fn overlay_collection_projection_with_operations(
+    projection: &contrix_sdk::CollectionProjectionResBody,
+    state_store: &LocalStateStore,
+    board_space_id: &str,
+    remote_operations: &[RawOperationRecord],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Vec<KanbanColumn> {
+    overlay_card_projection_with_operations_and_decrypt(
+        collection_projection_to_columns(projection, decrypt_ctx),
+        state_store,
+        board_space_id,
+        remote_operations,
         decrypt_ctx,
     )
 }
@@ -1983,15 +2024,8 @@ fn local_card_update_from_raw_operation(
                         private_flow_field_text(decrypt_ctx, flow_id, field_path, Some(value));
                     if !text.trim().is_empty() {
                         Some(PrivateFieldOverlay::Set(text))
-                    } else if private_flow_field_locked(
-                        decrypt_ctx,
-                        flow_id,
-                        field_path,
-                        Some(value),
-                    ) {
-                        Some(PrivateFieldOverlay::Locked)
                     } else {
-                        Some(PrivateFieldOverlay::Set(text))
+                        Some(PrivateFieldOverlay::Locked)
                     }
                 } else {
                     Some(PrivateFieldOverlay::Set(flow_body_display_text(Some(
@@ -2003,14 +2037,32 @@ fn local_card_update_from_raw_operation(
         }
     }
 
+    fn extract_private_for_paths(
+        patch: &Map<String, Value>,
+        paths: &[&'static str],
+        decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+        flow_id: &str,
+    ) -> Option<PrivateFieldOverlay> {
+        paths.iter().find_map(|path| {
+            let op = patch_op_for_private_path(patch, path)?;
+            extract_private_set_unset(op.as_ref(), decrypt_ctx, flow_id, path)
+        })
+    }
+
     let title = patch.get("title").and_then(extract_set_unset);
     let summary = patch.get("summary").and_then(extract_set_unset);
-    let body_op = patch
-        .get("body")
-        .and_then(|op| extract_private_set_unset(op, decrypt_ctx, &flow_id, "body"));
-    let synthesis = patch
-        .get("synthesis")
-        .and_then(|op| extract_private_set_unset(op, decrypt_ctx, &flow_id, "synthesis"));
+    let body_op = extract_private_for_paths(
+        patch,
+        KANBAN_BODY_PRIVATE_FIELD_PATHS,
+        decrypt_ctx,
+        &flow_id,
+    );
+    let synthesis = extract_private_for_paths(
+        patch,
+        KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS,
+        decrypt_ctx,
+        &flow_id,
+    );
     let fields = patch.get("fields").and_then(|fields_op| {
         if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
             fields_op.get("value").cloned()
@@ -2246,6 +2298,75 @@ fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn map_dotted_value<'a>(map: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let mut current = map.get(first)?;
+    for segment in segments {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn value_dotted_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn collection_item_private_field_value<'a>(
+    object: &'a Value,
+    paths: &[&'static str],
+) -> Option<(&'a Value, &'static str)> {
+    paths
+        .iter()
+        .find_map(|path| value_dotted_value(object, path).map(|value| (value, *path)))
+}
+
+fn flow_projection_private_field_value<'a>(
+    flow: &'a crate::api::FlowProjectionView,
+    paths: &[&'static str],
+) -> Option<(&'a Value, &'static str)> {
+    paths.iter().find_map(|path| {
+        let value = if *path == "body" {
+            flow.body.as_ref()
+        } else if let Some(field_path) = path.strip_prefix("fields.") {
+            map_dotted_value(&flow.fields, field_path)
+        } else {
+            map_dotted_value(&flow.fields, path)
+        }?;
+        Some((value, *path))
+    })
+}
+
+fn patch_op_for_private_path<'a>(
+    patch: &'a Map<String, Value>,
+    path: &str,
+) -> Option<Cow<'a, Value>> {
+    if let Some(op) = patch.get(path) {
+        return Some(Cow::Borrowed(op));
+    }
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let parent_op = patch.get(first)?;
+    if parent_op.get("$op").and_then(Value::as_str) != Some("set") {
+        return None;
+    }
+    let mut current = parent_op.get("value")?;
+    for segment in segments {
+        current = current.get(segment)?;
+    }
+    if current.get("$op").and_then(Value::as_str).is_some() {
+        Some(Cow::Owned(current.clone()))
+    } else {
+        Some(Cow::Owned(
+            json!({ "$op": "set", "value": current.clone() }),
+        ))
+    }
 }
 
 #[component]
@@ -2588,11 +2709,13 @@ pub fn KanbanPanel(
     let auto_token = token;
     let auto_seed_fallback_allowed = seed_fallback_allowed;
     let auto_board_view_id = board_view_id;
+    let auto_lifecycle_realm_id = local_realm_id.clone();
     let auto_decrypt_space_id = selected_space.clone();
     let auto_decrypt_actor = account_did.clone();
     let auto_decrypt_device = device_id.clone();
     use_future(move || {
         let base = auto_base.clone();
+        let lifecycle_realm_id = auto_lifecycle_realm_id.clone();
         let decrypt_space_id = auto_decrypt_space_id.clone();
         let decrypt_actor = auto_decrypt_actor.clone();
         let decrypt_device = auto_decrypt_device.clone();
@@ -2610,6 +2733,20 @@ pub fn KanbanPanel(
                 );
                 return;
             }
+            let events_res = if lifecycle_realm_id.trim().is_empty() {
+                None
+            } else {
+                let realm_id = lifecycle_realm_id.clone();
+                with_authed_api(&base, api_token.clone(), |api| async move {
+                    api.backfill(&realm_id).await
+                })
+                .await
+                .ok()
+            };
+            let remote_update_operations = events_res
+                .as_ref()
+                .map(|resp| flow_update_operations_from_events(&resp.events))
+                .unwrap_or_default();
             match with_authed_api(&base, api_token, |api| async move {
                 api.collection_projection(&view).await
             })
@@ -2624,10 +2761,11 @@ pub fn KanbanPanel(
                             actor_did: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
-                        overlay_local_card_creates_with_decrypt(
-                            collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                        overlay_collection_projection_with_operations(
+                            &projection,
                             &decrypt_store,
                             &selected_board_space_id(),
+                            &remote_update_operations,
                             Some(&decrypt_ctx),
                         )
                     };
@@ -2692,6 +2830,20 @@ pub fn KanbanPanel(
                 let view = live_board_view_id();
                 if !view.trim().is_empty() {
                     let view_for_call = view.clone();
+                    let events_res = if lifecycle_realm_id.trim().is_empty() {
+                        None
+                    } else {
+                        let realm_id = lifecycle_realm_id.clone();
+                        with_authed_api(&base, api_token.clone(), |api| async move {
+                            api.backfill(&realm_id).await
+                        })
+                        .await
+                        .ok()
+                    };
+                    let remote_update_operations = events_res
+                        .as_ref()
+                        .map(|resp| flow_update_operations_from_events(&resp.events))
+                        .unwrap_or_default();
                     if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
                         api.collection_projection(&view_for_call).await
                     })
@@ -2705,10 +2857,11 @@ pub fn KanbanPanel(
                                 actor_did: &decrypt_actor,
                                 device_id: &decrypt_device,
                             };
-                            overlay_local_card_creates_with_decrypt(
-                                collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                            overlay_collection_projection_with_operations(
+                                &projection,
                                 &decrypt_store,
                                 &selected_board_space_id(),
+                                &remote_update_operations,
                                 Some(&decrypt_ctx),
                             )
                         };
@@ -3518,6 +3671,7 @@ pub fn KanbanPanel(
                                             // POST /api/v1/views/:id/projection. Demo seed is
                                             // opt-in so normal boards never show fake cards.
                                             let base = base_url.clone();
+                                            let onclick_lifecycle_realm_id = local_realm_id.clone();
                                             let onclick_decrypt_space_id = selected_space.clone();
                                             let onclick_decrypt_actor = account_did.clone();
                                             let onclick_decrypt_device = device_id.clone();
@@ -3536,7 +3690,22 @@ pub fn KanbanPanel(
                                                 let decrypt_space_id = onclick_decrypt_space_id.clone();
                                                 let decrypt_actor = onclick_decrypt_actor.clone();
                                                 let decrypt_device = onclick_decrypt_device.clone();
+                                                let lifecycle_realm_id = onclick_lifecycle_realm_id.clone();
                                                 spawn(async move {
+                                                    let events_res = if lifecycle_realm_id.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        let realm_id = lifecycle_realm_id.clone();
+                                                        with_authed_api(&base, api_token.clone(), |api| async move {
+                                                            api.backfill(&realm_id).await
+                                                        })
+                                                        .await
+                                                        .ok()
+                                                    };
+                                                    let remote_update_operations = events_res
+                                                        .as_ref()
+                                                        .map(|resp| flow_update_operations_from_events(&resp.events))
+                                                        .unwrap_or_default();
                                                     match with_authed_api(&base, api_token, |api| async move {
                                                         api.collection_projection(&view).await
                                                     })
@@ -3551,10 +3720,11 @@ pub fn KanbanPanel(
                                                                     actor_did: &decrypt_actor,
                                                                     device_id: &decrypt_device,
                                                                 };
-                                                                overlay_local_card_creates_with_decrypt(
-                                                                    collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
+                                                                overlay_collection_projection_with_operations(
+                                                                    &projection,
                                                                     &decrypt_store,
                                                                     &selected_board_space_id(),
+                                                                    &remote_update_operations,
                                                                     Some(&decrypt_ctx),
                                                                 )
                                                             };
@@ -5160,7 +5330,15 @@ pub fn KanbanPanel(
                                                         class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
-                                                        if synthesis_entries.is_empty() {
+                                                        if synthesis_entries.is_empty()
+                                                            && card.synthesis_locked
+                                                        {
+                                                            div {
+                                                                class: "card-detail-empty",
+                                                                "data-testid": "card-detail-synthesis-locked",
+                                                                div { "{MLS_LOCKED_FIELD_PLACEHOLDER}" }
+                                                            }
+                                                        } else if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
                                                                 div { "No synthesis yet." }
                                                             }
@@ -9922,6 +10100,36 @@ mod tests {
     }
 
     #[test]
+    fn private_flow_empty_sidecar_does_not_mask_encrypted_locked_state() {
+        let space = "cx:space:01904100-0000-7000-8000-000000000001";
+        let flow = "cx:flow:01904100-0000-7000-8000-0000000000ab";
+        let mut store = temp_state_store("private-flow-empty-sidecar");
+        store.save_private_plaintext(space, flow, "synthesis", "\"\"");
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: space,
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:01904100-0000-7000-8000-000000000001",
+        };
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+        });
+
+        assert_eq!(
+            private_flow_field_text(Some(&ctx), flow, "synthesis", Some(&envelope)),
+            ""
+        );
+        assert!(private_flow_field_locked(
+            Some(&ctx),
+            flow,
+            "synthesis",
+            Some(&envelope)
+        ));
+    }
+
+    #[test]
     fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         // X5.2 gate — simulate the writer having stored the author's body
         // plaintext, then build a card from a projection whose body is an
@@ -10034,6 +10242,81 @@ mod tests {
         assert!(matches!(card.state, CardState::Synced));
         // Empty group still produces an empty-cards column (board renders it).
         assert_eq!(cols[1].cards.len(), 0);
+    }
+
+    #[test]
+    fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
+        use contrix_sdk::{
+            CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionResBody,
+            ViewId, ViewKind, ViewRenderer,
+        };
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000003";
+        let projection = CollectionProjectionResBody {
+            kind: ViewKind::Collection,
+            renderer: ViewRenderer::Board,
+            view_id: ViewId::new("cx:view:01904100-0000-7000-8000-000000000001").unwrap(),
+            frontier: Vec::new(),
+            groups: vec![CollectionProjectionGroup {
+                group_id: board_id.to_owned(),
+                title: "Todo".to_owned(),
+                rank: Some("U".to_owned()),
+                items: vec![CollectionProjectionItem {
+                    object: json!({
+                        "id": flow_id,
+                        "type": "flow",
+                        "title": "Encrypted card",
+                    }),
+                    position: None,
+                    discussion: None,
+                }],
+                hidden_count: None,
+            }],
+        };
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "group_id": "g",
+            "epoch": 0,
+        });
+        let events = vec![json!({
+            "event_id": "cx:event:0196419b-0000-7000-8000-00000000f003",
+            "operation_id": "cx:operation:0196419b-0000-7000-8000-00000000f003",
+            "event_kind": "cx.flow.update",
+            "actor_id": "did:web:alice.example",
+            "created_at": "2026-05-22T10:00:00Z",
+            "space_id": TEST_REALM_ID,
+            "payload": {
+                "flow_id": flow_id,
+                "patch": {
+                    "body": { "$op": "set", "value": envelope.clone() },
+                    "synthesis": { "$op": "set", "value": envelope }
+                }
+            }
+        })];
+        let remote_operations = flow_update_operations_from_events(&events);
+        let store = LocalStateStore::default();
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: TEST_REALM_ID,
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:0196419b-0000-7000-8000-000000000001",
+        };
+
+        let cols = overlay_collection_projection_with_operations(
+            &projection,
+            &store,
+            board_id,
+            &remote_operations,
+            Some(&ctx),
+        );
+
+        let card = &cols[0].cards[0];
+        assert_eq!(card.body, "");
+        assert!(card.body_locked);
+        assert_eq!(card.synthesis, "");
+        assert!(card.synthesis_locked);
     }
 
     /// T20 — when `discussion` is None on the projection item, the card
@@ -10420,8 +10703,8 @@ mod tests {
                 "flow_id": flow_id,
                 "patch": {
                     "summary": { "$op": "set", "value": "new summary" },
-                    "body": { "$op": "set", "value": "new long description" },
-                    "synthesis": { "$op": "set", "value": "new synthesis note" },
+                    "fields.body": { "$op": "set", "value": "new long description" },
+                    "tracks.synthesis.body": { "$op": "set", "value": "new synthesis note" },
                     "fields": {
                         "$op": "set",
                         "value": {
@@ -10484,7 +10767,7 @@ mod tests {
                 "flow_id": flow_id,
                 "patch": {
                     "body": { "$op": "set", "value": envelope.clone() },
-                    "synthesis": { "$op": "set", "value": {
+                    "tracks.synthesis.body": { "$op": "set", "value": {
                         "encrypted_content": envelope
                     } }
                 }
