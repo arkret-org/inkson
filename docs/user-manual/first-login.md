@@ -83,14 +83,17 @@ a previously enrolled device to elevate trust.
 
 ### Step 4 — Recovery policy
 
-Choose one of:
+Pick an initial recovery preference:
 
 - **Encrypted Cloud Vault** — Argon2id passphrase + XChaCha20-Poly1305
-  upload. Strongest recovery; requires you to remember a passphrase.
+  upload. Unlocks encrypted backup material; requires you to remember a
+  passphrase.
 - **Social Recovery (SSS)** — split a recovery secret across N guardians.
-- **Recovery Key** — display-once 24-word recovery phrase.
+- **Recovery Key** — display-once high-entropy recovery phrase.
 
 The choice is persisted to `localState` under `onboarding.recovery_choice`.
+Publishing the active `cx.schema.recovery_policy.v1` remains a separate
+server-backed follow-up.
 
 <!-- TODO(screenshot): onboarding-step-recovery.png -->
 

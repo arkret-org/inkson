@@ -474,13 +474,13 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "Three independent layers, all stackable. Recovering through any one of them re-authorizes a fresh device on your account."
+                        "Three stackable recovery inputs. Each can contribute backup unlock or policy proof material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Encrypted Cloud Vault" }
                             span { class: if recovery_choice() == "vault" { "badge accent" } else { "badge" }, "Argon2id + xchacha20poly1305" }
-                            div { class: "muted", "Strong passphrase stretched on-device, then encrypted master key + recovery key are uploaded" }
+                            div { class: "muted", "Strong passphrase stretched on-device, then encrypted backup material is uploaded" }
                         }
                         div { class: "metric",
                             strong { "Social Recovery (SSS)" }
@@ -658,7 +658,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it your account could become permanently unrecoverable."
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it the Contrix principal control state could become permanently unrecoverable."
             }
             div {
                 class: "muted",

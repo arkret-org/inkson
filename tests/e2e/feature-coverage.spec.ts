@@ -277,15 +277,14 @@ test.describe("feature coverage placeholders", () => {
     });
   });
 
-  test("recovery: social recovery 3 of 5 reconstruct triggers cx.identity.recovery", async ({ page }) => {
+  test("recovery: social recovery surfaces guardian configuration", async ({ page }) => {
     // the recovery view's three layers
     // (vault / recovery-key / social) each expose a dedicated
     // data-testid section. The 3-of-5 social-recovery reconstruct flow
     // requires the social-recovery-section + recovery-key-section
-    // surfaces to render; the full Shamir share reconstruct is
-    // exercised in `recovery_crypto::tests` at the Rust unit-test
-    // layer. This e2e pins the UI surface so the flow has somewhere to
-    // plug in when the Shamir reconstruct UI lands.
+    // surfaces to render. The Shamir share release/reconstruct path is
+    // not wired yet; this e2e pins the UI surface so the flow has
+    // somewhere to plug in when the policy-backed recovery session lands.
     await page.goto("/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByTestId("recovery-panel")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("social-recovery-section")).toBeVisible();

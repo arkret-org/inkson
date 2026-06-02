@@ -60,7 +60,14 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     .await
     {
         Ok(payload) => payload,
-        Err(_) => return,
+        Err(err) => {
+            tracing::warn!(
+                error = %err.display(),
+                "MLS backup detection could not list key backups after encrypted write"
+            );
+            needs_mls_backup.set(true);
+            return;
+        }
     };
     if crate::mls::account_recovery::select_mls_account_secret_backup(&payload).is_some() {
         return;

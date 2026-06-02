@@ -1393,11 +1393,9 @@ struct MlsDecryptCtx<'a> {
     device_id: &'a str,
 }
 
-/// Cheap key-only check: is `value` an MLS-encrypted envelope (the shape
-/// `encrypt_values_with_device_snapshot` writes into a private patch
-/// value)? We avoid any crypto work unless this returns true, so
-/// unencrypted realms pay nothing.
-fn value_is_mls_envelope(value: &Value) -> bool {
+/// Cheap key-only check for the raw MLS payload/envelope shape. Projection and
+/// patch wrappers are handled by [`mls_envelope_value`].
+fn value_is_raw_mls_envelope(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
@@ -1405,6 +1403,36 @@ fn value_is_mls_envelope(value: &Value) -> bool {
         return true;
     }
     object.contains_key("ciphertext") && object.contains_key("content_type")
+}
+
+/// Extract a canonical MLS envelope from the value shapes the reducer/projection
+/// can hand back to the board UI:
+///
+/// - raw `EncryptedPayload` / `EncryptedEnvelopeV1`
+/// - `{ "encrypted_content": <envelope> }`
+/// - patch/set wrappers such as `{ "$op": "set", "value": <envelope> }`
+///
+/// This intentionally does not recurse through arbitrary object fields, so a
+/// plaintext business object containing unrelated keys is not treated as E2EE.
+fn mls_envelope_value(value: &Value) -> Option<&Value> {
+    if value_is_raw_mls_envelope(value) {
+        return Some(value);
+    }
+    let object = value.as_object()?;
+    for key in ["encrypted_content", "encrypted_payload", "value"] {
+        if let Some(child) = object.get(key)
+            && let Some(envelope) = mls_envelope_value(child)
+        {
+            return Some(envelope);
+        }
+    }
+    None
+}
+
+/// Cheap key-only check: is `value` an MLS-encrypted envelope, possibly wrapped
+/// by a projection or patch operation?
+fn value_is_mls_envelope(value: &Value) -> bool {
+    mls_envelope_value(value).is_some()
 }
 
 /// Decrypt a single private flow patch value if (and only if) it is an MLS
@@ -1415,15 +1443,13 @@ fn value_is_mls_envelope(value: &Value) -> bool {
 /// `None` the caller keeps the original value (plaintext realms) or falls
 /// back to a blank field (encrypted-but-locked).
 fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value) -> Option<Value> {
-    if !value_is_mls_envelope(value) {
-        return None;
-    }
+    let envelope = mls_envelope_value(value)?;
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         ctx.state_store,
         ctx.space_id,
         ctx.actor_did,
         ctx.device_id,
-        value,
+        envelope,
     )?;
     serde_json::from_slice::<Value>(&plaintext).ok()
 }
@@ -1676,19 +1702,51 @@ fn overlay_local_card_creates(
     state_store: &LocalStateStore,
     board_space_id: &str,
 ) -> Vec<KanbanColumn> {
-    overlay_card_projection_with_operations(columns, state_store, board_space_id, &[])
+    overlay_local_card_creates_with_decrypt(columns, state_store, board_space_id, None)
 }
 
+fn overlay_local_card_creates_with_decrypt(
+    columns: Vec<KanbanColumn>,
+    state_store: &LocalStateStore,
+    board_space_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Vec<KanbanColumn> {
+    overlay_card_projection_with_operations_and_decrypt(
+        columns,
+        state_store,
+        board_space_id,
+        &[],
+        decrypt_ctx,
+    )
+}
+
+#[cfg(test)]
 fn overlay_card_projection_with_operations(
     columns: Vec<KanbanColumn>,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],
 ) -> Vec<KanbanColumn> {
+    overlay_card_projection_with_operations_and_decrypt(
+        columns,
+        state_store,
+        board_space_id,
+        remote_operations,
+        None,
+    )
+}
+
+fn overlay_card_projection_with_operations_and_decrypt(
+    columns: Vec<KanbanColumn>,
+    state_store: &LocalStateStore,
+    board_space_id: &str,
+    remote_operations: &[RawOperationRecord],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Vec<KanbanColumn> {
     let state = state_store.load();
     let columns = overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
-    let columns = overlay_local_card_update_records(columns, remote_operations);
-    overlay_local_card_update_records(columns, &state.raw_operations)
+    let columns = overlay_local_card_update_records(columns, remote_operations, decrypt_ctx);
+    overlay_local_card_update_records(columns, &state.raw_operations, decrypt_ctx)
 }
 
 fn flow_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
@@ -1842,10 +1900,11 @@ fn displayed_card_state(card: &KanbanCard, projected_flow_ids: &BTreeSet<String>
 fn overlay_local_card_update_records(
     mut columns: Vec<KanbanColumn>,
     raw_operations: &[RawOperationRecord],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     for update in raw_operations
         .iter()
-        .filter_map(local_card_update_from_raw_operation)
+        .filter_map(|record| local_card_update_from_raw_operation(record, decrypt_ctx))
     {
         for column in columns.iter_mut() {
             if let Some(card) = column
@@ -1861,17 +1920,27 @@ fn overlay_local_card_update_records(
 }
 
 #[derive(Clone, Debug, PartialEq)]
+enum PrivateFieldOverlay {
+    Set(String),
+    Unset,
+    Locked,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct LocalCardUpdate {
     flow_id: String,
     title: Option<Option<String>>,
     summary: Option<Option<String>>,
-    body: Option<Option<String>>,
-    synthesis: Option<Option<String>>,
+    body: Option<PrivateFieldOverlay>,
+    synthesis: Option<PrivateFieldOverlay>,
     fields: Option<Value>,
     state: CardState,
 }
 
-fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<LocalCardUpdate> {
+fn local_card_update_from_raw_operation(
+    record: &RawOperationRecord,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Option<LocalCardUpdate> {
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
@@ -1898,10 +1967,50 @@ fn local_card_update_from_raw_operation(record: &RawOperationRecord) -> Option<L
         }
     }
 
+    fn extract_private_set_unset(
+        op: &Value,
+        decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+        flow_id: &str,
+        field_path: &str,
+    ) -> Option<PrivateFieldOverlay> {
+        let op_kind = op.get("$op").and_then(Value::as_str)?;
+        match op_kind {
+            "unset" => Some(PrivateFieldOverlay::Unset),
+            "set" => {
+                let value = op.get("value")?;
+                if value_is_mls_envelope(value) {
+                    let text =
+                        private_flow_field_text(decrypt_ctx, flow_id, field_path, Some(value));
+                    if !text.trim().is_empty() {
+                        Some(PrivateFieldOverlay::Set(text))
+                    } else if private_flow_field_locked(
+                        decrypt_ctx,
+                        flow_id,
+                        field_path,
+                        Some(value),
+                    ) {
+                        Some(PrivateFieldOverlay::Locked)
+                    } else {
+                        Some(PrivateFieldOverlay::Set(text))
+                    }
+                } else {
+                    Some(PrivateFieldOverlay::Set(flow_body_display_text(Some(
+                        value,
+                    ))))
+                }
+            }
+            _ => None,
+        }
+    }
+
     let title = patch.get("title").and_then(extract_set_unset);
     let summary = patch.get("summary").and_then(extract_set_unset);
-    let body_op = patch.get("body").and_then(extract_set_unset);
-    let synthesis = patch.get("synthesis").and_then(extract_set_unset);
+    let body_op = patch
+        .get("body")
+        .and_then(|op| extract_private_set_unset(op, decrypt_ctx, &flow_id, "body"));
+    let synthesis = patch
+        .get("synthesis")
+        .and_then(|op| extract_private_set_unset(op, decrypt_ctx, &flow_id, "synthesis"));
     let fields = patch.get("fields").and_then(|fields_op| {
         if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
             fields_op.get("value").cloned()
@@ -1929,10 +2038,36 @@ fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCardUpdate) {
         card.description = slot.clone().unwrap_or_default();
     }
     if let Some(slot) = &update.body {
-        card.body = slot.clone().unwrap_or_default();
+        match slot {
+            PrivateFieldOverlay::Set(value) => {
+                card.body = value.clone();
+                card.body_locked = false;
+            }
+            PrivateFieldOverlay::Unset => {
+                card.body.clear();
+                card.body_locked = false;
+            }
+            PrivateFieldOverlay::Locked => {
+                card.body.clear();
+                card.body_locked = true;
+            }
+        }
     }
     if let Some(slot) = &update.synthesis {
-        card.synthesis = slot.clone().unwrap_or_default();
+        match slot {
+            PrivateFieldOverlay::Set(value) => {
+                card.synthesis = value.clone();
+                card.synthesis_locked = false;
+            }
+            PrivateFieldOverlay::Unset => {
+                card.synthesis.clear();
+                card.synthesis_locked = false;
+            }
+            PrivateFieldOverlay::Locked => {
+                card.synthesis.clear();
+                card.synthesis_locked = true;
+            }
+        }
     }
     if let Some(fields) = &update.fields {
         if let Some(labels) = fields.get("labels").and_then(Value::as_array) {
@@ -2190,7 +2325,7 @@ pub fn KanbanPanel(
             &state.raw_operations,
             &initial_board_space_id,
         );
-        overlay_local_card_update_records(initial_columns, &state.raw_operations)
+        overlay_local_card_update_records(initial_columns, &state.raw_operations, None)
     };
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
@@ -2345,13 +2480,17 @@ pub fn KanbanPanel(
                     &route_local_realm_id,
                     Some(&decrypt_ctx),
                 );
-            drop(decrypt_store);
             if projected_board_id.as_deref() == Some(board_id.as_str()) {
                 if !options.is_empty() {
                     board_space_options.set(options);
                 }
-                let projected_columns =
-                    overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+                let projected_columns = overlay_local_card_creates_with_decrypt(
+                    projected_columns,
+                    &decrypt_store,
+                    &board_id,
+                    Some(&decrypt_ctx),
+                );
+                drop(decrypt_store);
                 if columns() != projected_columns {
                     columns.set(projected_columns);
                 }
@@ -2415,18 +2554,19 @@ pub fn KanbanPanel(
                     &route_local_realm_id,
                     Some(&decrypt_ctx),
                 );
-            drop(decrypt_store);
             if let Some(board_id) = projected_board_id {
                 if !options.is_empty() {
                     board_space_options.set(options);
                 }
                 let board_id_for_overlay = board_id.clone();
                 selected_board_space_id.set(board_id);
-                let projected_columns = overlay_local_card_creates(
+                let projected_columns = overlay_local_card_creates_with_decrypt(
                     projected_columns,
-                    &state_store.read(),
+                    &decrypt_store,
                     &board_id_for_overlay,
+                    Some(&decrypt_ctx),
                 );
+                drop(decrypt_store);
                 if columns() != projected_columns {
                     columns.set(projected_columns);
                 }
@@ -2484,10 +2624,11 @@ pub fn KanbanPanel(
                             actor_did: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
-                        overlay_local_card_creates(
+                        overlay_local_card_creates_with_decrypt(
                             collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
                             &decrypt_store,
                             &selected_board_space_id(),
+                            Some(&decrypt_ctx),
                         )
                     };
                     if !cols.is_empty() {
@@ -2564,10 +2705,11 @@ pub fn KanbanPanel(
                                 actor_did: &decrypt_actor,
                                 device_id: &decrypt_device,
                             };
-                            overlay_local_card_creates(
+                            overlay_local_card_creates_with_decrypt(
                                 collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
                                 &decrypt_store,
                                 &selected_board_space_id(),
+                                Some(&decrypt_ctx),
                             )
                         };
                         // Only overwrite when the server actually
@@ -2638,7 +2780,6 @@ pub fn KanbanPanel(
                                 &lifecycle_local_realm_id,
                                 Some(&decrypt_ctx),
                             );
-                        drop(decrypt_store);
                         if let Some(board_id) = projected_board_id {
                             if !options.is_empty() && board_space_options() != options {
                                 board_space_options.set(options);
@@ -2646,12 +2787,15 @@ pub fn KanbanPanel(
                             if current_board.trim().is_empty() {
                                 selected_board_space_id.set(board_id.clone());
                             }
-                            let projected_columns = overlay_card_projection_with_operations(
-                                projected_columns,
-                                &state_store.read(),
-                                &board_id,
-                                &remote_update_operations,
-                            );
+                            let projected_columns =
+                                overlay_card_projection_with_operations_and_decrypt(
+                                    projected_columns,
+                                    &decrypt_store,
+                                    &board_id,
+                                    &remote_update_operations,
+                                    Some(&decrypt_ctx),
+                                );
+                            drop(decrypt_store);
                             if columns() != projected_columns {
                                 let list_count = projected_columns.len();
                                 let card_count = projected_columns
@@ -2780,19 +2924,20 @@ pub fn KanbanPanel(
                         &lifecycle_local_realm_id,
                         Some(&decrypt_ctx),
                     );
-                drop(decrypt_store);
                 if let Some(board_id) = projected_board_id {
                     if !options.is_empty() {
                         board_space_options.set(options);
                     }
                     let board_id_for_overlay = board_id.clone();
                     selected_board_space_id.set(board_id);
-                    let projected_columns = overlay_card_projection_with_operations(
+                    let projected_columns = overlay_card_projection_with_operations_and_decrypt(
                         projected_columns,
-                        &state_store.read(),
+                        &decrypt_store,
                         &board_id_for_overlay,
                         &remote_update_operations,
+                        Some(&decrypt_ctx),
                     );
+                    drop(decrypt_store);
                     let list_count = projected_columns.len();
                     let card_count = projected_columns
                         .iter()
@@ -3406,10 +3551,11 @@ pub fn KanbanPanel(
                                                                     actor_did: &decrypt_actor,
                                                                     device_id: &decrypt_device,
                                                                 };
-                                                                overlay_local_card_creates(
+                                                                overlay_local_card_creates_with_decrypt(
                                                                     collection_projection_to_columns(&projection, Some(&decrypt_ctx)),
                                                                     &decrypt_store,
                                                                     &selected_board_space_id(),
+                                                                    Some(&decrypt_ctx),
                                                                 )
                                                             };
                                                             if !cols.is_empty() {
@@ -6279,10 +6425,13 @@ fn synthesis_revision_from_raw_operation(
     record: &RawOperationRecord,
     state_store: &LocalStateStore,
 ) -> Option<(String, String, CardSynthesisRevision)> {
-    let update = local_card_update_from_raw_operation(record)?;
+    let update = local_card_update_from_raw_operation(record, None)?;
     let payload = &record.payload;
     let body = json_path_string(Some(payload), &["synthesis_revision_body"])
-        .or_else(|| update.synthesis.clone().flatten())
+        .or_else(|| match update.synthesis {
+            Some(PrivateFieldOverlay::Set(value)) => Some(value),
+            _ => None,
+        })
         .unwrap_or_default();
     if body.trim().is_empty() {
         return None;
@@ -7610,13 +7759,17 @@ fn select_kanban_board(
                 &local_realm_id,
                 Some(&decrypt_ctx),
             );
-        drop(decrypt_store);
         if !options.is_empty() {
             board_space_options.set(options);
         }
         if projected_board_id.as_deref() == Some(board_id.as_str()) {
-            let projected_columns =
-                overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+            let projected_columns = overlay_local_card_creates_with_decrypt(
+                projected_columns,
+                &decrypt_store,
+                &board_id,
+                Some(&decrypt_ctx),
+            );
+            drop(decrypt_store);
             columns.set(projected_columns);
             projection_source.set(BoardProjectionSource::ApiDerived);
             board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
@@ -7648,13 +7801,17 @@ fn select_kanban_board(
             &local_realm_id,
             Some(&decrypt_ctx),
         );
-    drop(decrypt_store);
     if !options.is_empty() {
         board_space_options.set(options);
     }
     if projected_board_id.as_deref() == Some(board_id.as_str()) {
-        let projected_columns =
-            overlay_local_card_creates(projected_columns, &state_store.read(), &board_id);
+        let projected_columns = overlay_local_card_creates_with_decrypt(
+            projected_columns,
+            &decrypt_store,
+            &board_id,
+            Some(&decrypt_ctx),
+        );
+        drop(decrypt_store);
         let list_count = projected_columns.len();
         let card_count = projected_columns
             .iter()
@@ -9667,6 +9824,21 @@ mod tests {
             "ciphertext": "AAAA",
             "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
         })));
+        // Projection / patch wrappers must still be recognized as encrypted.
+        assert!(value_is_mls_envelope(&json!({
+            "encrypted_content": {
+                "ciphertext": "AAAA",
+                "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            }
+        })));
+        assert!(value_is_mls_envelope(&json!({
+            "$op": "set",
+            "value": {
+                "scheme": "mls-rfc9420",
+                "ciphertext": "AAAA",
+                "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            }
+        })));
         // Plain content blocks are NOT envelopes — unencrypted realms must
         // pay nothing and render as-is.
         assert!(!value_is_mls_envelope(&json!({
@@ -10281,6 +10453,69 @@ mod tests {
     }
 
     #[test]
+    fn remote_encrypted_flow_update_overlay_marks_private_fields_locked() {
+        let board_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000003";
+        let mut card = test_card(flow_id, "U");
+        card.body = String::new();
+        card.synthesis = String::new();
+        let columns = vec![KanbanColumn {
+            id: "cx:space:0196419b-0000-7000-8000-000000000002".to_owned(),
+            title: "Todo".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![card],
+            state: SpaceContainerLifecycleState::Active,
+        }];
+        let envelope = json!({
+            "scheme": "mls-rfc9420",
+            "ciphertext": "AAAA",
+            "content_type": KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
+            "group_id": "g",
+            "epoch": 0,
+        });
+        let events = vec![json!({
+            "event_id": "cx:event:0196419b-0000-7000-8000-00000000f002",
+            "operation_id": "cx:operation:0196419b-0000-7000-8000-00000000f002",
+            "event_kind": "cx.flow.update",
+            "actor_id": "did:web:alice.example",
+            "created_at": "2026-05-22T10:00:00Z",
+            "space_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+            "payload": {
+                "flow_id": flow_id,
+                "patch": {
+                    "body": { "$op": "set", "value": envelope.clone() },
+                    "synthesis": { "$op": "set", "value": {
+                        "encrypted_content": envelope
+                    } }
+                }
+            }
+        })];
+        let remote_operations = flow_update_operations_from_events(&events);
+        let store = LocalStateStore::default();
+        let ctx = MlsDecryptCtx {
+            state_store: &store,
+            space_id: TEST_REALM_ID,
+            actor_did: "did:web:alice.example",
+            device_id: "cx:device:0196419b-0000-7000-8000-000000000001",
+        };
+
+        let projected = overlay_card_projection_with_operations_and_decrypt(
+            columns,
+            &store,
+            board_id,
+            &remote_operations,
+            Some(&ctx),
+        );
+
+        let card = &projected[0].cards[0];
+        assert_eq!(card.body, "");
+        assert!(card.body_locked);
+        assert_eq!(card.synthesis, "");
+        assert!(card.synthesis_locked);
+        assert_eq!(card.state, CardState::Synced);
+    }
+
+    #[test]
     fn kanban_seed_fallback_requires_explicit_opt_in() {
         assert!(!kanban_seed_fallback_allowed_for_url("https://local.host"));
         assert!(!kanban_seed_fallback_allowed_for_url(
@@ -10751,7 +10986,7 @@ mod tests {
                 },
             }),
         };
-        let overlaid = overlay_local_card_update_records(columns, &[queued]);
+        let overlaid = overlay_local_card_update_records(columns, &[queued], None);
         let card = &overlaid[0].cards[0];
         assert_eq!(card.title, "new title");
         assert_eq!(card.description, "new summary");

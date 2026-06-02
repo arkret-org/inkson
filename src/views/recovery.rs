@@ -354,8 +354,8 @@ pub fn RecoveryPanel(
             // Spec landed two new normative JSON schemas:
             //   - `recovery-policy.schema.json` — policy_id, principal_id,
             //     policy_version, proof_kinds[] (device_quorum |
-            //     recovery_unlock | trusted_recovery_service |
-            //     principal_signing).
+            //     recovery_unlock | threshold_recovery |
+            //     trusted_recovery_service | principal_signing).
             //   - `recovery-receipt.schema.json` — receipt_id, principal_id,
             //     recovery_session_id, proof_summary[], completion_timestamp.
             //
@@ -372,7 +372,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery policy" }
                     span { class: "badge", "spec b47ff6ec" }
-                    HelpTip { text: "The recovery policy declares which proof kinds (device_quorum, recovery_unlock, trusted_recovery_service, principal_signing) and what threshold must be met before a recovery_session can complete. Receipts carry the proof_summary for audit." }
+                    HelpTip { text: "The recovery policy declares which proof kinds (device_quorum, recovery_unlock, threshold_recovery, trusted_recovery_service, principal_signing) and what threshold must be met before a recovery_session can complete. Backup unlock alone is not DID ownership proof; receipts carry the proof_summary for audit." }
                 }
                 div { class: "muted",
                     "TODO(R3.1): wire to /api/v1/recovery/policies + /api/v1/recovery/receipts. "
@@ -391,7 +391,7 @@ pub fn RecoveryPanel(
                     }
                     div { class: "metric",
                         strong { "proof_kinds" }
-                        span { "data-testid": "recovery-policy-proof-kinds", "device_quorum · recovery_unlock · trusted_recovery_service · principal_signing" }
+                        span { "data-testid": "recovery-policy-proof-kinds", "device_quorum · recovery_unlock · threshold_recovery · trusted_recovery_service · principal_signing" }
                         div { class: "muted", "Subset chosen by the policy author" }
                     }
                     div { class: "metric",
@@ -424,7 +424,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery options" }
                     span { "Encrypted Vault · Social Recovery · Recovery Key" }
-                    HelpTip { text: "Contrix never stores your passphrase on the server. Backups are encrypted on-device before upload. Any one recovery path is enough to re-authorize a new device on your account." }
+                    HelpTip { text: "Contrix never stores your passphrase on the server. Backups are encrypted on-device before upload. A recovery option may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
@@ -463,7 +463,7 @@ pub fn RecoveryPanel(
                         pending_label: Some("Uploading…".to_owned()),
                         test_id: Some("vault-sync-badge".to_owned()),
                     }
-                    HelpTip { text: "Your passphrase is the E2E recovery trust root. It is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret; if you lose it, encrypted MLS history cannot be restored on a fresh device." }
+                    HelpTip { text: "Your passphrase unlocks encrypted backup material. It is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret; it is not by itself DID ownership proof." }
                 }
                 div { class: "workflow-form",
                     label { r#for: "vault-passphrase", "Vault passphrase" }
@@ -756,7 +756,7 @@ pub fn RecoveryPanel(
                             } else if !recovery_key_fp().is_empty() {
                                 "Plaintext is no longer in memory. Regenerate to view a new value."
                             } else {
-                                "Generate one to enable single-key fallback recovery"
+                                "Generate one to enable policy-approved backup unlock fallback"
                             }
                         }
                     }
@@ -1337,7 +1337,7 @@ pub fn RecoveryPanel(
                     span { "method-specific evidence" }
                 }
                 div { class: "muted",
-                    "The new device generates its own key, the recovery is recorded against your account, your DID/key log is updated with method-specific evidence, the new device is re-authorized, and your encrypted Spaces roll their epoch to include it. Existing devices are notified."
+                    "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up flows."
                 }
             }
         }

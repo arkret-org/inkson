@@ -1584,9 +1584,10 @@ fn decrypt_chat_encrypted_content(
 /// `message:{message_id}`) over the encrypted payload. OpenMLS forbids an
 /// author from decrypting their OWN application messages, so for the author's
 /// encrypted messages the ciphertext is undecryptable and the timeline carries
-/// no plaintext body — without the sidecar the message is dropped (no body →
-/// `None`) and the discussion shows "No messages" after reload / on a new
-/// device. The sidecar lookup mirrors kanban's `private_flow_field_text`.
+/// no plaintext body. Without the sidecar, keep the message as a visible
+/// crypto-pending row instead of dropping it, so a fresh browser shows "locked"
+/// rather than "No messages". The sidecar lookup mirrors kanban's
+/// `private_flow_field_text`.
 fn chat_message_from_event_with_sidecar(
     space_id: &str,
     event: &Value,
@@ -1640,6 +1641,7 @@ fn chat_message_from_event_with_sidecar(
     let body_was_decrypted = decrypted_body.is_some();
     let body = match sidecar_body.or(decrypted_body) {
         Some(plaintext) => plaintext,
+        None if has_encrypted_payload => String::new(),
         None => text_body_from_message(&candidates)?,
     };
     let explicit_message_kind = candidates
@@ -6865,13 +6867,17 @@ mod tests {
             ..ClientLocalState::default()
         };
 
-        // Without the sidecar (e.g. another device) the stub has no body and
-        // is dropped — the author-can't-decrypt-own-message invariant.
+        // Without the sidecar (e.g. another device) the stub has no readable
+        // body, but it must still surface as an encrypted/locked row so the
+        // discussion does not look empty.
         let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
-        assert!(
-            without_sidecar.is_empty(),
-            "body-less encrypted stub must not surface a message without the sidecar"
-        );
+        assert_eq!(without_sidecar.len(), 1);
+        assert_eq!(without_sidecar[0].flow_id, "cx:flow:announce");
+        assert_eq!(without_sidecar[0].body, "");
+        assert!(matches!(
+            without_sidecar[0].crypto_state,
+            MessageCryptoState::Decrypting
+        ));
 
         // With the sidecar (same device, tab switch / reload) the body is
         // restored and the message is fully resolved (not stuck decrypting).
@@ -7381,6 +7387,33 @@ mod tests {
             }
         });
         let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
+        assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
+    }
+
+    #[test]
+    fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
+        let event = json!({
+            "event_id": "evt:bodyless",
+            "content": {
+                "type": "cx.message.create",
+                "flow_id": "cx:flow:1",
+                "message_id": "cx:message:1",
+                "encrypted_content": {
+                    "scheme": "mls-rfc9420",
+                    "version": "1.0",
+                    "group_id": "cx:mls:test",
+                    "epoch": 1,
+                    "content_type": "application/vnd.contrix.message+json",
+                    "ciphertext": "AAAA",
+                    "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                },
+            }
+        });
+
+        let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
+
+        assert_eq!(msg.body, "");
+        assert_eq!(msg.flow_id, "cx:flow:1");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 

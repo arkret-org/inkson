@@ -1,18 +1,20 @@
 # yougen — Recovery Flow
 
-> How to recover account access when the device that holds your signing key
-> is lost, broken, or revoked. Spec source: `crypto-media/device-lifecycle.md`
-> §10-§13.
+> How to recover Contrix Principal access and encrypted backup material when
+> the device that holds your signing key is lost, broken, or revoked. Spec
+> source: `identity/key-management.md` §7-§8 and
+> `crypto-media/device-lifecycle.md` §15.
 
 There are three recovery surfaces, picked at onboarding (Step 4):
 
 | Policy | Requires | Recovery time | Threat surface |
 | --- | --- | --- | --- |
-| **Encrypted Cloud Vault** | Passphrase you remember | ~30 seconds | Passphrase strength (Argon2id stretched). |
+| **Encrypted Cloud Vault** | Passphrase you remember | ~30 seconds | Passphrase strength (Argon2id stretched); unlocks backup material, not DID ownership by itself. |
 | **Social Recovery (SSS)** | N guardians out of K, each contacted out-of-band | Minutes to days | Guardian collusion threshold. |
-| **Recovery Key** | One-time 24-word phrase you stored offline | ~10 seconds | Loss / theft of the phrase. |
+| **Recovery Key** | One-time high-entropy phrase you stored offline | ~10 seconds | Loss / theft of the phrase. |
 
-You can stack policies. The recommended default is **Vault + Recovery Key**.
+You can stack policies. The recommended default is **Vault + Recovery Key**,
+but device authorization is controlled by the active `recovery_policy`.
 
 ---
 
@@ -30,8 +32,12 @@ Use this when:
 3. Enter the passphrase. yougen pulls the encrypted blob, runs Argon2id,
    decrypts via XChaCha20-Poly1305, then re-bootstraps the device key and
    imports the account MLS history secret when one is present.
-4. The new device automatically publishes a `cx.device.authorize` envelope
-   with `successor_of` pointing at the recovered identity.
+4. After the active `recovery_policy` accepts a bound `recovery_session`
+   proof, the device-authorization flow can publish `cx.device.authorize`.
+
+Current yougen status: the restore panel re-hydrates local backup payload and
+MLS account-secret material. It does not yet submit the policy proof or
+`cx.device.authorize` by itself.
 
 <!-- TODO(screenshot): settings-recovery-vault-restore.png -->
 
@@ -63,6 +69,10 @@ Use this when:
 4. Once N approvals reach the new device, yougen reconstructs the
    recovery secret and finishes bootstrap.
 
+Current yougen status: guardian configuration and rehearsal timestamps are
+stored locally. Server-backed share release, reconstruction, and recovery
+receipt writing are still pending implementation.
+
 <!-- TODO(screenshot): settings-social-recovery-pending.png -->
 <!-- TODO(screenshot): guardian-approve-prompt.png -->
 
@@ -75,15 +85,19 @@ shares, not your private key.
 
 Use this when:
 
-- You stored the 24-word phrase offline at onboarding.
+- You stored the high-entropy phrase offline at onboarding.
 - You can install yougen on a new device.
 
 ### Steps
 
 1. Install yougen and sign in via coauth.
 2. Open **Settings → Recovery → Restore from recovery key**.
-3. Enter the 24-word phrase. yougen derives the master secret and
+3. Enter the phrase. yougen derives the master secret and
    re-bootstraps the device.
+
+Current yougen status: the app can generate and fingerprint a recovery key.
+Fresh-device restore through that key still needs policy proof and
+device-authorization wiring.
 
 <!-- TODO(screenshot): settings-recovery-key-restore.png -->
 
