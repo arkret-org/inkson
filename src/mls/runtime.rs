@@ -967,11 +967,11 @@ pub fn encrypt_message_with_device_snapshot(
     ))
 }
 
-/// MLS exporter label for the v2 reaction routing tag
+/// MLS exporter label for the v1 reaction routing tag
 /// (`encryption-and-audit.md` §2.9). Bound, together with `context =
 /// realm_id` and the current group epoch's exporter secret, into the
 /// keyed-HMAC routing tag.
-pub const REACTION_ROUTING_LABEL_V2: &str = "contrix-reaction-routing-v2";
+pub const REACTION_ROUTING_LABEL_V1: &str = "contrix-reaction-routing-v1";
 /// Length (bytes) of the MLS exporter output used as the HMAC key.
 pub const REACTION_ROUTING_EXPORT_LEN: usize = 32;
 /// Content type for the encrypted real-emoji payload of a reaction.
@@ -987,10 +987,10 @@ pub struct EncryptedReaction {
     pub encrypted_payload: contrix_sdk::EncryptedPayload,
 }
 
-/// Pure derivation of the §2.9 v2 routing tag from an MLS exporter secret.
+/// Pure derivation of the §2.9 v1 routing tag from an MLS exporter secret.
 ///
 /// `tag = "sha256:" || hex(HMAC-SHA256(exporter_secret, NFC(canonical_emoji)))`.
-/// Split out from [`reaction_routing_tag_v2`] so it can be unit-tested with a
+/// Split out from [`reaction_routing_tag_v1`] so it can be unit-tested with a
 /// fixed exporter secret (the MLS half is exercised separately).
 pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoji: &str) -> String {
     use hmac::{Hmac, Mac};
@@ -1011,14 +1011,14 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
     hex
 }
 
-/// Restore this device's MLS group for `space_id` and derive the §2.9 v2
+/// Restore this device's MLS group for `space_id` and derive the §2.9 v1
 /// reaction routing tag for `canonical_emoji` at the current epoch.
 ///
 /// Read-only on the MLS group — it only reads the epoch's exporter secret,
 /// so it neither commits, advances the ratchet, nor mutates persisted
 /// snapshot state. Returns the `sha256:<hex>` wire form for
 /// `reaction_payload.key`.
-pub fn reaction_routing_tag_v2(
+pub fn reaction_routing_tag_v1(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     space_id: &str,
@@ -1036,7 +1036,7 @@ pub fn reaction_routing_tag_v2(
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let exporter = group
         .export_secret(
-            REACTION_ROUTING_LABEL_V2,
+            REACTION_ROUTING_LABEL_V1,
             realm_id.as_bytes(),
             REACTION_ROUTING_EXPORT_LEN,
         )
@@ -1044,7 +1044,7 @@ pub fn reaction_routing_tag_v2(
     Ok(reaction_routing_tag_from_exporter(&exporter, canonical_emoji))
 }
 
-/// Seal an E2EE reaction: derive the v2 routing tag and encrypt the real
+/// Seal an E2EE reaction: derive the v1 routing tag and encrypt the real
 /// emoji as an MLS application message, both under the current epoch.
 ///
 /// Unlike message send, this does NOT advance the MLS epoch (no commit) —
@@ -1075,7 +1075,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // exporter secret; the application message below does not change the epoch.
     let exporter = group
         .export_secret(
-            REACTION_ROUTING_LABEL_V2,
+            REACTION_ROUTING_LABEL_V1,
             realm_id.as_bytes(),
             REACTION_ROUTING_EXPORT_LEN,
         )

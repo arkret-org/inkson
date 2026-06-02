@@ -26,7 +26,7 @@ use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
-// build_signed_consent_revoke_v2 / format_submit_response and their
+// build_signed_consent_revoke_v1 / format_submit_response and their
 // helpers have been removed — the consent demo card now builds
 // cx.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
 // and submits them through cx.events.submit. The original Move-based
@@ -329,7 +329,7 @@ pub fn RevokeAllConsentCard(
             // empty list with `schema_violation` so the user MUST
             // surface the observations they are revoking. One
             // `actor_id:actor_seq` per line; rendered straight into the
-            // wire payload by `build_signed_consent_revoke_v2`.
+            // wire payload by `build_signed_consent_revoke_v1`.
             label {
                 {crate::i18n::tr("consent.revoke.dot_list_header")}
             }

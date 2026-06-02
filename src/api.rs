@@ -3641,9 +3641,9 @@ pub fn build_presence_envelope(
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
 /// here carries `proof = None` and the submit guard / receiver will
-/// reject it. See [`super::ContrixApi::submit_call_signal_v2`] for the
+/// reject it. See [`super::ContrixApi::submit_call_signal_v1`] for the
 /// signing + submit path.
-pub fn build_call_signal_envelope_v2(
+pub fn build_call_signal_envelope_v1(
     realm_id: &str,
     actor_did: &str,
     device_id: &str,

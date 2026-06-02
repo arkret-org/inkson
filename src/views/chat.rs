@@ -393,7 +393,7 @@ fn chat_reaction_add_operation(
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
-/// the v2 keyed-HMAC routing tag (`sha256:<hex>`) so the server can still
+/// the v1 keyed-HMAC routing tag (`sha256:<hex>`) so the server can still
 /// OR-Set dedup / rate-limit without learning the emoji; the real emoji
 /// travels inside `encrypted_payload`.
 fn chat_reaction_add_operation_encrypted(

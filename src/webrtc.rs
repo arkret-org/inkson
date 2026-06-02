@@ -20,7 +20,7 @@ use crate::operation::OperationBuilder;
 // NOTE: `cx.call.signal` is an ephemeral kind and MUST route through
 // `EphemeralEnvelope` (`cx.schema.ephemeral_envelope.v1`), NOT through
 // `cx.events.submit`. The canonical builder lives in
-// `crate::api::build_call_signal_envelope_v2` and accepts the v2
+// `crate::api::build_call_signal_envelope_v1` and accepts the v1
 // canonical signal_type values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
 // `speaking`, `focus_join`, `focus_leave`, `error`). Do
@@ -216,8 +216,8 @@ mod tests {
         assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
     }
 
-    fn make_v2_envelope(seq: u64, signal_type: &str) -> contrix_sdk::EphemeralEnvelope {
-        let mut env = crate::api::build_call_signal_envelope_v2(
+    fn make_v1_envelope(seq: u64, signal_type: &str) -> contrix_sdk::EphemeralEnvelope {
+        let mut env = crate::api::build_call_signal_envelope_v1(
             "cx:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "cx:device:01904100-0000-7000-8000-000000000002",
@@ -235,17 +235,17 @@ mod tests {
     }
 
     #[test]
-    fn v2_builder_accepts_canonical_signal_types() {
+    fn v1_builder_accepts_canonical_signal_types() {
         for st in contrix_sdk::CALL_SIGNAL_TYPES {
-            let env = make_v2_envelope(1, st);
+            let env = make_v1_envelope(1, st);
             assert_eq!(env.kind, "cx.call.signal");
             assert!(env.device_id.is_some());
         }
     }
 
     #[test]
-    fn v2_builder_rejects_unknown_signal_type() {
-        let err = crate::api::build_call_signal_envelope_v2(
+    fn v1_builder_rejects_unknown_signal_type() {
+        let err = crate::api::build_call_signal_envelope_v1(
             "cx:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "cx:device:01904100-0000-7000-8000-000000000002",
@@ -261,13 +261,13 @@ mod tests {
     #[test]
     fn receiver_accepts_then_rejects_seq_rollback() {
         let mut rx = CallSignalReceiver::new();
-        let outcome = rx.ingest(&make_v2_envelope(1, "invite"));
+        let outcome = rx.ingest(&make_v1_envelope(1, "invite"));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(&make_v2_envelope(2, "answer"));
+        let outcome = rx.ingest(&make_v1_envelope(2, "answer"));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(&make_v2_envelope(2, "candidate"));
+        let outcome = rx.ingest(&make_v1_envelope(2, "candidate"));
         match outcome {
             CallSignalIngestOutcome::SeqRollback { seq, .. } => assert_eq!(seq, 2),
             other => panic!("expected SeqRollback, got {other:?}"),

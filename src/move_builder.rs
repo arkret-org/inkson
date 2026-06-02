@@ -88,7 +88,7 @@ pub fn build_consent_revoke_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    build_consent_revoke_move_v2(
+    build_consent_revoke_move_v1(
         issuer,
         space_id,
         consent_id,
@@ -111,7 +111,7 @@ pub fn build_consent_revoke_move(
 /// [`contrix_sdk::Dot`] that the local view has observed and is
 /// explicitly revoking. The wire field maps to
 /// [`contrix_sdk::ConsentRevokePayload::observed_dots`].
-pub fn build_consent_revoke_move_v2(
+pub fn build_consent_revoke_move_v1(
     issuer: &str,
     space_id: &str,
     consent_id: &str,

@@ -2149,7 +2149,7 @@ mod tests {
             "status": "completed",
             "result": {"echo": null, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
-                "binding_kind": "future_scheme_v9",
+                "binding_kind": "unsupported_future_scheme",
                 "actor_id": "did:web:alice.example",
                 "signature": "deadbeef",
                 "canonical_subject": "",

@@ -1311,8 +1311,8 @@ mod tests {
         let provider = WebPushTokenProvider::new();
         assert_eq!(provider.platform(), "web");
         assert_eq!(provider.service_worker_path(), "/service-worker.js");
-        let custom = WebPushTokenProvider::new().with_service_worker_path("/sw-v2.js");
-        assert_eq!(custom.service_worker_path(), "/sw-v2.js");
+        let custom = WebPushTokenProvider::new().with_service_worker_path("/sw-v1.js");
+        assert_eq!(custom.service_worker_path(), "/sw-v1.js");
     }
 
     #[test]

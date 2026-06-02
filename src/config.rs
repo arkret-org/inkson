@@ -17,12 +17,13 @@ const DEFAULT_ACCOUNT_DID: &str = "";
 const DEVICE_ID_PREFIX: &str = "cx:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
-/// P3B.4: localStorage key for the multi-profile config. v1 keeps
-/// reading the old single-profile blob for migration; v2 holds the
-/// `MultiProfileConfig`. Both keys coexist during the transition;
-/// the next release deletes the v1 key after one launch.
+/// P3B.4: localStorage key for the multi-profile config holding the
+/// `MultiProfileConfig`. The legacy single-profile blob
+/// (`yougen.config.v1`) is still read on first launch for migration;
+/// both keys coexist during the transition and the legacy blob is
+/// left alone for one release in case the user rolls back.
 #[cfg(target_arch = "wasm32")]
-const PROFILES_STORAGE_KEY: &str = "yougen.profiles.v2";
+const PROFILES_STORAGE_KEY: &str = "yougen.profiles.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
