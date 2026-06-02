@@ -82,6 +82,23 @@ pub fn sign_key_backup_auth_data(
     Ok(())
 }
 
+/// Best-effort: sign `body`'s `auth_data` with the active in-process device key
+/// (the seed signer installed via `event_signer`). No-op for external / HSM
+/// signers or when no signer is installed — the envelope is left unsigned (the
+/// receiver treats unsigned/unverifiable backups as untrusted once enforcement
+/// lands). Returns `true` when a signature was attached.
+pub fn sign_key_backup_with_active_device(body: &mut Value, device_id: &str) -> bool {
+    if let Some(signer) = crate::event_signer::active_signer()
+        && let Some(signing_key) = signer.ed25519_signing_key()
+    {
+        let vm = signer.verification_method().to_owned();
+        // `ssk_generation` is bound once the cross-signing publish generation is
+        // resolvable at build time (follow-up); omitted otherwise.
+        return sign_key_backup_auth_data(body, signing_key, device_id, &vm, None).is_ok();
+    }
+    false
+}
+
 /// Phase 2 verify: check a key-backup envelope's `auth_data.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
 /// auth_data.signature)`, and confirm `signed_fields` covers the mandatory set.
@@ -120,10 +137,7 @@ pub fn verify_key_backup_auth_data(
     }
 
     let mut unsigned = body.clone();
-    if let Some(object) = unsigned
-        .get_mut("auth_data")
-        .and_then(Value::as_object_mut)
-    {
+    if let Some(object) = unsigned.get_mut("auth_data").and_then(Value::as_object_mut) {
         object.remove("signature");
     }
     let payload =
@@ -404,6 +418,9 @@ pub fn build_passphrase_kdf_backup_body(
     body["key_commitment"] = Value::String(sealed.key_commitment);
     body["ciphertext"] = Value::String(sealed.ciphertext_b64);
     body["ciphertext_digest"] = Value::String(sealed.ciphertext_digest);
+    // Phase 2: sign the completed envelope with the active device key (best
+    // effort; unsigned when no in-process signer is installed, e.g. in tests).
+    sign_key_backup_with_active_device(&mut body, device_id);
     Ok(body)
 }
 
@@ -524,6 +541,135 @@ pub fn build_did_recovery_backup_body(
     )
 }
 
+/// AEAD identifiers for HPKE backups (HPKE uses ChaCha20Poly1305 internally,
+/// 12-byte nonce derived by the HPKE key schedule — no wire nonce).
+pub const HPKE_AEAD_NAME: &str = "chacha20_poly1305";
+pub const HPKE_AEAD_PROFILE: &str = "cx.aead.chacha20_poly1305.v1";
+
+/// `info` transcript bound into the HPKE context (key-management.md §7.5.2):
+/// canonical_json of the envelope identity tuple. Both sealer and opener
+/// reconstruct this byte-identically from the envelope fields.
+fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
+    let info = json!({
+        "backup_id": body.get("backup_id").cloned().unwrap_or(Value::Null),
+        "series_id": body.get("series_id").cloned().unwrap_or(Value::Null),
+        "series_seq": body.get("series_seq").cloned().unwrap_or(Value::Null),
+        "actor_id": body.get("actor_id").cloned().unwrap_or(Value::Null),
+        "backup_class": body.get("backup_class").cloned().unwrap_or(Value::Null),
+        "backup_version": body.get("backup_version").cloned().unwrap_or(Value::Null),
+        "created_at": body.get("created_at").cloned().unwrap_or(Value::Null),
+    });
+    crate::canonical::canonical_json_bytes(&info)
+}
+
+/// Spec §7.5.2 builder: assemble a `recovery_public_key` backup envelope and
+/// HPKE-seal `plaintext` to `recovery_public_key`. ANY device (holding only the
+/// public key) can build this; only the recovery private key opens it — the
+/// fresh-device restore path. `recovery_key_ref` names the recovery policy
+/// verification method / DID `recoveryKeyAgreement` the public key belongs to.
+pub fn build_recovery_public_key_backup_body(
+    backup_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    class: KeyBackupClass,
+    subdomain: &str,
+    item: &BackupItem<'_>,
+    plaintext: &[u8],
+) -> anyhow::Result<Value> {
+    let mut content = serde_json::Map::new();
+    content.insert(
+        "item_type".to_owned(),
+        Value::String(item.item_type.to_owned()),
+    );
+    content.insert(
+        "secret_id".to_owned(),
+        Value::String(item.secret_id.to_owned()),
+    );
+    for (key, value) in &item.extra {
+        content.insert((*key).to_owned(), value.clone());
+    }
+    let mut body = json!({
+        "backup_id": backup_id,
+        "actor_id": actor_did,
+        "backup_class": class.as_str(),
+        "backup_version": "kb_1",
+        "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        "encryption": {
+            "recipient_method": "recovery_public_key",
+            "recipient_key_ref": recovery_key_ref,
+            "aead": {
+                "name": HPKE_AEAD_NAME,
+                "aead_profile": HPKE_AEAD_PROFILE,
+                "enc": "",
+            }
+        },
+        "contents": [Value::Object(content)],
+        "ciphertext": "",
+        "ciphertext_digest": "",
+    });
+    if is_protocol_device_id(device_id)
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
+    }
+    attach_key_backup_genesis_series(&mut body);
+    attach_key_backup_domain_separation(&mut body, class, subdomain);
+
+    let aad_aad = body
+        .get("domain_separation")
+        .and_then(|d| d.get("aead_aad"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?;
+    let aad = crate::canonical::canonical_json_bytes(&aad_aad)?;
+    let info = recovery_public_key_info(&body)?;
+    let sealed = crate::hpke_backup::hpke_seal(recovery_public_key, &info, &aad, plaintext)?;
+
+    body["encryption"]["aead"]["enc"] = Value::String(B64.encode(&sealed.enc));
+    body["ciphertext"] = Value::String(B64.encode(&sealed.ciphertext));
+    body["ciphertext_digest"] = Value::String(format!(
+        "sha256:{}",
+        crate::canonical::sha256_digest(&sealed.ciphertext)
+            .strip_prefix("sha256:")
+            .unwrap_or_default()
+    ));
+    sign_key_backup_with_active_device(&mut body, device_id);
+    Ok(body)
+}
+
+/// Spec §7.5.2 reader: rebuild the HPKE `info` + `aad` from a stored
+/// `recovery_public_key` envelope and HPKE-open it with `recovery_private_key`.
+pub fn open_recovery_public_key_backup_body(
+    recovery_private_key: &[u8],
+    body: &Value,
+) -> anyhow::Result<Vec<u8>> {
+    let enc_b64 = body
+        .pointer("/encryption/aead/enc")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!("recovery_public_key envelope missing encryption.aead.enc")
+        })?;
+    let ciphertext_b64 = body
+        .get("ciphertext")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("backup body missing ciphertext"))?;
+    let aad_aad = body
+        .get("domain_separation")
+        .and_then(|d| d.get("aead_aad"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?;
+    let aad = crate::canonical::canonical_json_bytes(&aad_aad)?;
+    let info = recovery_public_key_info(body)?;
+    let enc = B64
+        .decode(enc_b64)
+        .map_err(|e| anyhow::anyhow!("enc base64url: {e}"))?;
+    let ciphertext = B64
+        .decode(ciphertext_b64)
+        .map_err(|e| anyhow::anyhow!("ciphertext base64url: {e}"))?;
+    crate::hpke_backup::hpke_open(recovery_private_key, &enc, &info, &aad, &ciphertext)
+}
+
 fn validate_contents(body: &Value, class: KeyBackupClass) -> Result<(), String> {
     let contents = body
         .get("contents")
@@ -553,12 +699,21 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
         .get("aead")
         .ok_or_else(|| "encryption.aead is required".to_owned())?;
     let aead_name = required_str(aead, "name")?;
-    if !matches!(aead_name, "xchacha20_poly1305" | "aes_256_gcm") {
+    if !matches!(
+        aead_name,
+        "xchacha20_poly1305" | "aes_256_gcm" | "chacha20_poly1305"
+    ) {
         return Err("encryption.aead.name is unsupported".to_owned());
     }
-    let nonce = required_str(aead, "nonce")?;
-    if !is_base64url_token(nonce) || nonce.contains("placeholder") || nonce.contains("demo") {
-        return Err("encryption.aead.nonce must be real base64url metadata".to_owned());
+    // The wire AEAD `nonce` is required for the symmetric methods
+    // (passphrase_kdf / secret_storage_key); HPKE (`recovery_public_key`)
+    // derives its nonce internally and carries `enc` instead, so it is checked
+    // in its own branch below.
+    if method != "recovery_public_key" {
+        let nonce = required_str(aead, "nonce")?;
+        if !is_base64url_token(nonce) || nonce.contains("placeholder") || nonce.contains("demo") {
+            return Err("encryption.aead.nonce must be real base64url metadata".to_owned());
+        }
     }
     match method {
         "passphrase_kdf" => {
@@ -610,6 +765,22 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
             }
             if encryption.get("kdf").is_some() {
                 return Err("secret_storage_key backups must not carry encryption.kdf".to_owned());
+            }
+        }
+        "recovery_public_key" => {
+            // Spec §7.5.2: HPKE base-mode to the recovery public key. The KEM
+            // encapsulation rides in `encryption.aead.enc`; no passphrase KDF,
+            // no wire nonce, no nonce_salt/key_commitment (HPKE binds them).
+            let key_ref = required_str(encryption, "recipient_key_ref")?;
+            if key_ref.trim().is_empty() {
+                return Err("recovery_public_key requires a non-empty recipient_key_ref".to_owned());
+            }
+            let enc = required_str(aead, "enc")?;
+            if !is_base64url_token(enc) {
+                return Err("recovery_public_key encryption.aead.enc must be base64url".to_owned());
+            }
+            if encryption.get("kdf").is_some() {
+                return Err("recovery_public_key backups must not carry encryption.kdf".to_owned());
             }
         }
         other => return Err(format!("unsupported recipient_method {other}")),
@@ -937,6 +1108,28 @@ mod tests {
     }
 
     #[test]
+    fn sign_key_backup_with_active_device_is_noop_helper_signs_directly() {
+        // The build-path integration uses the process-wide signer slot, which
+        // races with other tests; the signing CORRECTNESS is covered by the
+        // round-trip/tamper tests. Here we just confirm the direct signing
+        // helper produces a self-verifying envelope (deterministic, no globals).
+        let root = test_root();
+        let mut body =
+            build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
+        let signing_key = SigningKey::from_bytes(&[55u8; 32]);
+        sign_key_backup_auth_data(
+            &mut body,
+            &signing_key,
+            DEVICE,
+            "did:web:alice.example#device",
+            None,
+        )
+        .unwrap();
+        verify_key_backup_auth_data(&body, &signing_key.verifying_key())
+            .expect("built+signed backup must self-verify");
+    }
+
+    #[test]
     fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
         let root = test_root();
         let mut body =
@@ -1076,6 +1269,49 @@ mod tests {
         );
         validate_key_backup_envelope(&body, Some(KeyBackupClass::MlsHistory))
             .expect("mls_history secret_storage_key envelope should validate");
+    }
+
+    #[test]
+    fn recovery_public_key_backup_round_trips_and_validates() {
+        let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        let body = build_recovery_public_key_backup_body(
+            BACKUP_ID,
+            ACTOR,
+            DEVICE,
+            &pk,
+            "did:web:alice.example#recovery",
+            KeyBackupClass::MlsHistory,
+            "mls_snapshot",
+            &BackupItem {
+                item_type: "mls_group_state",
+                secret_id: "yougen_mls_snapshot",
+                extra: Vec::new(),
+            },
+            b"opaque mls snapshot bytes",
+        )
+        .unwrap();
+
+        assert_eq!(
+            body["encryption"]["recipient_method"],
+            "recovery_public_key"
+        );
+        assert_eq!(
+            body["encryption"]["recipient_key_ref"],
+            "did:web:alice.example#recovery"
+        );
+        assert!(is_base64url_token(
+            body["encryption"]["aead"]["enc"].as_str().unwrap()
+        ));
+        assert!(body["encryption"]["aead"].get("nonce").is_none());
+        validate_key_backup_envelope(&body, Some(KeyBackupClass::MlsHistory))
+            .expect("recovery_public_key mls_history envelope should validate");
+
+        // The recovery private key opens it (the fresh-device restore path);
+        // a different recovery key cannot.
+        let opened = open_recovery_public_key_backup_body(&sk, &body).unwrap();
+        assert_eq!(opened, b"opaque mls snapshot bytes");
+        let (other_sk, _other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+        assert!(open_recovery_public_key_backup_body(&other_sk, &body).is_err());
     }
 
     #[test]

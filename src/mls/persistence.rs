@@ -388,6 +388,9 @@ impl MlsSnapshotEnvelope {
             crate::key_backup::KeyBackupClass::MlsHistory,
             "mls_snapshot",
         );
+        // Phase 2: sign with the active device key (best effort; unsigned in
+        // tests where no in-process signer is installed).
+        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id);
         body
     }
 

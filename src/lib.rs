@@ -42,6 +42,7 @@ pub mod dpop;
 pub mod event_signer;
 pub mod federation;
 pub mod hlc;
+pub mod hpke_backup;
 pub mod i18n;
 pub mod identity_handle;
 /// Round 4 (spec a77b995) — invite-claim flow (subject_proof +

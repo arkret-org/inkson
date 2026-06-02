@@ -99,6 +99,12 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 # direct here for the spec-conformant key-backup crypto.
 hkdf = "0.12"
 hmac = "0.12"
+# key-management.md §7.5.2: `recipient_method=recovery_public_key` backups are
+# HPKE base-mode (DHKEM(X25519,HKDF-SHA256) + HKDF-SHA256 + ChaCha20Poly1305).
+# hpke-rs (RustCrypto backend) is the audited RFC 9180 impl and builds on wasm.
+hpke-rs = "0.6"
+hpke-rs-crypto = "0.6"
+hpke-rs-rust-crypto = "0.6"
 # Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
 # in-memory secure key store. The crate is already in the dependency graph
 # transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it

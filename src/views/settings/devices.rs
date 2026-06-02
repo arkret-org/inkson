@@ -513,8 +513,10 @@ fn render_revoke_modal(
                                         }
                                         let history_count = rotation.history_backup_ids.len();
                                         let version = rotation.rotation.new_version;
+                                        let deleted_count =
+                                            rotation.deleted_superseded_backup_ids.len();
                                         revoke_status.set(format!(
-                                            "Revoked {target_label}. Rotated MLS history secret to v{version}; uploaded {history_count} fresh history backup(s)."
+                                            "Revoked {target_label}. Rotated MLS history secret to v{version}; uploaded {history_count} fresh history backup(s); deleted {deleted_count} superseded old backup(s)."
                                         ));
                                         revoke_passphrase.set(String::new());
                                         revoke_target.set(None);

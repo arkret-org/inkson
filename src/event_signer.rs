@@ -58,6 +58,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use contrix_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
+use ed25519_dalek::SigningKey;
 use serde_json::Value;
 
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
@@ -113,6 +114,12 @@ pub struct YougenEventSigner {
     /// `None` until the first sign succeeds. Exposed for the UI
     /// freshness indicator.
     last_signed_at: Mutex<Option<DateTime<Utc>>>,
+    /// The raw Ed25519 device key, retained ONLY for the in-process seed
+    /// signer (`build_ed25519_signer`). `None` for external / HSM backends.
+    /// Used to produce raw detached signatures the SDK JWS pipeline does not
+    /// expose — e.g. the `cx.schema.key_backup.v1` `auth_data.signature`
+    /// (key-management.md §7.4.1).
+    raw_ed25519: Option<SigningKey>,
 }
 
 impl std::fmt::Debug for YougenEventSigner {
@@ -152,6 +159,7 @@ impl YougenEventSigner {
             verification_method,
             mode_tag: "external",
             last_signed_at: Mutex::new(None),
+            raw_ed25519: None,
         }
     }
 
@@ -169,6 +177,14 @@ impl YougenEventSigner {
     /// JWS algorithm name (e.g. `"EdDSA"`).
     pub fn algorithm(&self) -> &str {
         self.inner.algorithm()
+    }
+
+    /// The raw Ed25519 device signing key, available ONLY for the in-process
+    /// seed signer. Used to produce the `cx.schema.key_backup.v1`
+    /// `auth_data.signature` (a raw detached signature, not a JWS). `None` for
+    /// external / HSM backends (those must sign backups via their own path).
+    pub fn ed25519_signing_key(&self) -> Option<&SigningKey> {
+        self.raw_ed25519.as_ref()
     }
 
     /// `"ed25519"` for the in-process seed signer, `"external"` for
@@ -299,6 +315,7 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
         verification_method,
         mode_tag: "ed25519",
         last_signed_at: Mutex::new(None),
+        raw_ed25519: Some(SigningKey::from_bytes(&seed)),
     }
 }
 

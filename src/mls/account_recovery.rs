@@ -255,21 +255,28 @@ pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
 }
 
 /// Pure body-selection: pick the latest `mls_account_secret` backup from a
-/// `list_key_backups`-shaped payload, if present. Newer `series_seq` wins,
-/// followed by the local secret version and creation timestamp.
+/// `list_key_backups`-shaped payload, if present.
+///
+/// Ordering is `(secret_version, created_at, series_seq)` — `secret_version`
+/// FIRST so a rotation that opens a NEW series (genesis `series_seq=0` but a
+/// bumped `secret_version`, per key-management.md §9.1) wins over the old
+/// series' higher-`series_seq` tail. This is the "active series pointer"
+/// (Phase 4 / B4): within one series the version is constant so `created_at` /
+/// `series_seq` break ties; across rotations the newer secret_version is
+/// canonical.
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     iter_backup_bodies(list_payload)
         .filter(|body| is_mls_account_secret_backup(body))
         .max_by(|a, b| {
             (
-                backup_series_seq(a),
                 backup_secret_version(a),
                 backup_created_at(a),
+                backup_series_seq(a),
             )
                 .cmp(&(
-                    backup_series_seq(b),
                     backup_secret_version(b),
                     backup_created_at(b),
+                    backup_series_seq(b),
                 ))
         })
         .cloned()
@@ -542,6 +549,10 @@ pub struct MlsAccountSecretRotationUpload {
     pub account_secret_backup_id: String,
     pub account_secret_series_seq: u64,
     pub history_backup_ids: Vec<String>,
+    /// Phase 4: backup_ids of the OLD (pre-rotation) account-secret + rewrapped
+    /// history backups that were deleted from the server after the new series
+    /// was confirmed (so a leaked old secret can no longer pull them).
+    pub deleted_superseded_backup_ids: Vec<String>,
 }
 
 /// Chain a successor backup envelope onto the previous series tail.
@@ -672,6 +683,72 @@ fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Phase 4 (key-management.md §9.1 / §12.2): after a compromise rotation uploads
+/// the NEW account-secret + rewrapped history backups (a fresh series under the
+/// new secret), the OLD superseded backups MUST be deleted so a leaked old
+/// secret can no longer pull old ciphertext off the server.
+///
+/// Given the PRE-rotation server list, the `keep_backup_ids` just uploaded, and
+/// the set of `rewrapped_space_ids` the rotation re-encrypted, return the
+/// superseded backup_ids to delete: every old `mls_account_secret` backup (the
+/// account secret is global — all old ones are superseded), plus every old
+/// `mls_history` backup whose `envelope_meta.space_ref` was rewrapped (so
+/// history for spaces NOT rewrapped — e.g. present only on the server, not
+/// locally — is conservatively left intact). Anything in `keep_backup_ids` is
+/// never selected.
+pub fn select_superseded_backup_ids(
+    list_payload: &Value,
+    keep_backup_ids: &[String],
+    rewrapped_space_ids: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let keep: std::collections::BTreeSet<&str> =
+        keep_backup_ids.iter().map(String::as_str).collect();
+    let mls_history = crate::key_backup::KeyBackupClass::MlsHistory.as_str();
+    iter_backup_bodies(list_payload)
+        .filter(|body| {
+            let id = body
+                .get("backup_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if keep.contains(id) {
+                return false;
+            }
+            if is_mls_account_secret_backup(body) {
+                return true;
+            }
+            if body.get("backup_class").and_then(Value::as_str) == Some(mls_history) {
+                let space = body
+                    .pointer("/envelope_meta/space_ref")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                return rewrapped_space_ids.contains(space);
+            }
+            false
+        })
+        .filter_map(|body| body.get("backup_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Delete `backup_ids` from the server (ownership-proof authenticated,
+/// best-effort). Returns `(deleted, failed)`. Called AFTER the new series is
+/// confirmed uploaded so a delete failure never leaves the user unrecoverable.
+pub async fn delete_backups(
+    api: &crate::api::ContrixApi,
+    actor_did: &str,
+    backup_ids: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut deleted = Vec::new();
+    let mut failed = Vec::new();
+    for id in backup_ids {
+        match api.delete_key_backup(id, actor_did).await {
+            Ok(_) => deleted.push(id.clone()),
+            Err(_) => failed.push(id.clone()),
+        }
+    }
+    (deleted, failed)
+}
+
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
     passphrase.is_empty()
         || std::str::from_utf8(passphrase)
@@ -702,9 +779,10 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     }
 
     let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_account_backup = select_mls_account_secret_backup(&list_payload);
-    // Each successor in a series MUST carry a fresh backup_id so the predecessor
-    // stays persisted as a distinct chain link (see `apply_next_series`).
+    // Phase 4 (§9.1): a compromise/revoke rotation opens a NEW series under the
+    // new secret (genesis, fresh series_id, seq=0) rather than appending to the
+    // old series — so the WHOLE old series can be deleted afterwards without
+    // breaking a `supersedes` chain.
     let account_backup_id = fresh_backup_id();
 
     let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
@@ -716,7 +794,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     .map_err(|err| anyhow!(err.user_message()))?;
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
+    let account_body = build_mls_account_secret_backup_body_with_kek_and_version(
         &account_backup_id,
         actor_did,
         device_id,
@@ -724,8 +802,9 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
         &rotation.new_secret,
         rotation.new_version,
     )?;
-    let account_secret_series_seq =
-        apply_next_series(previous_account_backup.as_ref(), &mut account_body);
+    // Genesis of the new series — no `apply_next_series`. `select_*` picks it as
+    // canonical via the bumped `secret_version`.
+    let account_secret_series_seq = backup_series_seq(&account_body);
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload rotated account MLS secret backup: {err}"))?;
@@ -744,11 +823,26 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
         history_backup_ids.push(backup_id);
     }
 
+    // Phase 4 (§9.1 / §12.2): delete the superseded OLD account-secret + history
+    // backups now that the new series is confirmed uploaded. Best-effort: a
+    // delete failure leaves stale-but-harmless old ciphertext, never blocks the
+    // rotation. Old backups for spaces that were rewrapped are removed; history
+    // for non-rewrapped spaces is left intact.
+    let rewrapped_space_ids: std::collections::BTreeSet<String> =
+        rotation.rewrapped_snapshots.keys().cloned().collect();
+    let mut keep = Vec::with_capacity(history_backup_ids.len() + 1);
+    keep.push(account_backup_id.clone());
+    keep.extend(history_backup_ids.iter().cloned());
+    let superseded = select_superseded_backup_ids(&list_payload, &keep, &rewrapped_space_ids);
+    let (deleted_superseded_backup_ids, _failed) =
+        delete_backups(api, actor_did, &superseded).await;
+
     Ok(MlsAccountSecretRotationUpload {
         rotation,
         account_secret_backup_id: account_backup_id,
         account_secret_series_seq,
         history_backup_ids,
+        deleted_superseded_backup_ids,
     })
 }
 
@@ -1273,6 +1367,39 @@ mod tests {
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
         let payload = serde_json::json!({ "backups": [wrap()] });
         assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    }
+
+    #[test]
+    fn select_superseded_picks_old_account_and_rewrapped_history_only() {
+        // Phase 4: after rotation, delete the old account-secret + the history of
+        // REWRAPPED spaces; leave history for non-rewrapped spaces (and anything
+        // just uploaded) intact.
+        let mut old_account = wrap();
+        old_account["backup_id"] = serde_json::json!("cx:backup:old-account");
+        let env_a = history_envelope("cx:space:a", "g-a", 1, ACCOUNT_SECRET);
+        let mut hist_a = history_body(&env_a);
+        hist_a["backup_id"] = serde_json::json!("cx:backup:old-hist-a");
+        let env_b = history_envelope("cx:space:b", "g-b", 1, ACCOUNT_SECRET);
+        let mut hist_b = history_body(&env_b);
+        hist_b["backup_id"] = serde_json::json!("cx:backup:old-hist-b");
+        let payload = serde_json::json!({ "backups": [old_account, hist_a, hist_b] });
+
+        let keep = vec!["cx:backup:new-account".to_owned()];
+        let mut rewrapped = std::collections::BTreeSet::new();
+        rewrapped.insert("cx:space:a".to_owned());
+
+        let superseded = select_superseded_backup_ids(&payload, &keep, &rewrapped);
+        assert!(superseded.contains(&"cx:backup:old-account".to_owned()));
+        assert!(superseded.contains(&"cx:backup:old-hist-a".to_owned()));
+        assert!(
+            !superseded.contains(&"cx:backup:old-hist-b".to_owned()),
+            "history for a space that was NOT rewrapped must be kept"
+        );
+
+        // Anything in `keep` is never selected.
+        let keep2 = vec!["cx:backup:old-account".to_owned()];
+        let superseded2 = select_superseded_backup_ids(&payload, &keep2, &rewrapped);
+        assert!(!superseded2.contains(&"cx:backup:old-account".to_owned()));
     }
 
     #[test]
