@@ -1036,24 +1036,26 @@ pub fn SetupPanel(
                                             move |_| {
                                                 let api_token = token();
                                                 let base = base.clone();
+                                                let backup_trigger_signal =
+                                                    crate::components::try_needs_mls_backup_signal();
                                                 let title = space_title();
                                                 let summary = space_summary();
                                                 let discoverability = space_discoverability();
                                                 let join_rule = space_policy_join_rule();
-                                                    let history_visibility = space_policy_history_visibility();
-                                                    let encryption_profile = realm_encryption_profile();
-                                                    let security_class = realm_security_class();
-                                                    let federation_policy = realm_federation_policy();
-                                                    let anchor_profile = realm_anchor_profile();
-                                                    let digest_algorithm = realm_digest_algorithm();
-                                                    let seed_text = seed_members();
-                                                    let actor = account_did();
-                                                    let device = device_id();
+                                                let history_visibility = space_policy_history_visibility();
+                                                let encryption_profile = realm_encryption_profile();
+                                                let security_class = realm_security_class();
+                                                let federation_policy = realm_federation_policy();
+                                                let anchor_profile = realm_anchor_profile();
+                                                let digest_algorithm = realm_digest_algorithm();
+                                                let seed_text = seed_members();
+                                                let actor = account_did();
+                                                let device = device_id();
                                                 let configured_plaintext_service_did =
                                                     plaintext_service_did.clone();
                                                 spawn(async move {
                                                     let invitees = parse_seed_members(&seed_text);
-                                                    match authed_api(&base, api_token) {
+                                                    match authed_api(&base, api_token.clone()) {
                                                         Ok(api) => {
                                                             let mut plaintext_services = plaintext_services_for_policy(
                                                                 &configured_plaintext_service_did,
@@ -1298,6 +1300,21 @@ pub fn SetupPanel(
                                                                 space_state.set(message.clone());
                                                                 status.set(message);
                                                                 create_step.set(NewSpaceStep::Done);
+                                                                if crate::security_state::encryption_profile_is_encrypted(
+                                                                    &encryption_profile,
+                                                                ) && let Some(signal) = backup_trigger_signal {
+                                                                    // Realm bootstrap creates the account MLS secret
+                                                                    // before the first encrypted message/card write,
+                                                                    // so trigger the recovery-passphrase prompt here
+                                                                    // instead of waiting for a later write hook.
+                                                                    crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                                                        base.clone(),
+                                                                        api_token.clone(),
+                                                                        actor.clone(),
+                                                                        signal,
+                                                                    )
+                                                                    .await;
+                                                                }
                                                             }
                                                             Err(error) => {
                                                                 let message = if is_auth_expired_error(&error) {

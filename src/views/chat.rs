@@ -195,6 +195,9 @@ type LocalMlsEncryptResult = (
     Vec<contrix_sdk::Did>,
     Option<LocalEncryptedMessage>,
     Option<contrix_sdk::MlsCommitEnvelope>,
+    // X14 — post-commit snapshot, persisted by the caller ONLY after the
+    // server accepts the `cx.mls.commit` (persist-on-accept).
+    Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 );
 
 fn run_local_mls_encrypt(
@@ -205,13 +208,13 @@ fn run_local_mls_encrypt(
     device_id: &str,
     plaintext_bytes: &[u8],
 ) -> LocalMlsEncryptResult {
-    let empty = (None, Vec::new(), None, None);
+    let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };
-    let Ok((schedule_hash, member_dids, payload, commit_envelope)) =
+    let Ok((schedule_hash, member_dids, payload, commit_envelope, new_snapshot)) =
         crate::mls::runtime::encrypt_message_with_device_snapshot(
             &mut state_store.write(),
             secure_store.as_ref(),
@@ -230,6 +233,7 @@ fn run_local_mls_encrypt(
         member_dids,
         Some((payload, aad)),
         Some(commit_envelope),
+        Some(new_snapshot),
     )
 }
 
@@ -5776,6 +5780,7 @@ pub fn ChatPanel(
                                     local_member_dids,
                                     encrypted_message,
                                     real_commit_envelope,
+                                    new_mls_snapshot,
                                 ): LocalMlsEncryptResult = run_local_mls_encrypt(
                                     state_store,
                                     &space,
@@ -6013,6 +6018,24 @@ pub fn ChatPanel(
                                         // abort message send (covered_frontier won't bind).
                                         match api.submit_event_envelope(&commit_envelope).await {
                                             Ok(resp) => {
+                                                // X14 — persist-on-accept: the
+                                                // server accepted the commit, so
+                                                // NOW advance the local snapshot
+                                                // to the post-commit epoch. On a
+                                                // commit reject we skip this and
+                                                // the snapshot stays at the
+                                                // pre-commit epoch, so the next
+                                                // Send Secure retries at the
+                                                // correct `expected_prev_epoch`
+                                                // instead of skewing forever.
+                                                if let Some(snapshot) = new_mls_snapshot {
+                                                    state_store
+                                                        .write()
+                                                        .save_mls_snapshot(
+                                                            space_for_record.clone(),
+                                                            snapshot,
+                                                        );
+                                                }
                                                 state_store.write().record_move_submission_with_event_id(
                                                     commit_op_id.clone(),
                                                     Some(resp.event_id.clone()),
@@ -6524,10 +6547,7 @@ mod tests {
         // `chat_messages_from_local_state_with_sidecar`. The stub now carries
         // `message_id` + `flow_id`, so the rebuild can re-key the sidecar and
         // restore the author's own (otherwise undecryptable) message body.
-        let temp = std::env::temp_dir().join(format!(
-            "yougen-x10_6-rebuild-sidecar-{}",
-            uuid_v7()
-        ));
+        let temp = std::env::temp_dir().join(format!("yougen-x10_6-rebuild-sidecar-{}", uuid_v7()));
         let mut store = LocalStateStore::with_path(temp);
         store.save_private_plaintext(
             "cx:space:local",

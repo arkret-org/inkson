@@ -842,6 +842,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created cx:realm:/);
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
+  await expect(page.getByTestId("mls-backup-banner")).toBeVisible();
   await expect(page.getByTestId("space-lifecycle-flow").getByTestId("selected-space-id")).toContainText("cx:realm:");
 
   await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();

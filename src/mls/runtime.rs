@@ -832,6 +832,7 @@ pub fn encrypt_values_with_device_snapshot(
         Vec<contrix_sdk::Did>,
         Vec<serde_json::Value>,
         contrix_sdk::MlsCommitEnvelope,
+        crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
 > {
@@ -867,6 +868,16 @@ pub fn encrypt_values_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    // X14 — persist-on-accept: do NOT save the post-commit snapshot here.
+    // The caller MUST call `state_store.save_mls_snapshot(space_id,
+    // new_envelope)` ONLY after the server ACCEPTS the corresponding
+    // `cx.mls.commit` event. Persisting before acceptance let the local
+    // snapshot epoch race ahead of the server's accepted epoch whenever a
+    // commit POST failed/was cancelled, so every later write computed
+    // `expected_prev_epoch = local_epoch - 1 > server_epoch` and the server
+    // rejected it with `mls_epoch_skew` forever. Returning the envelope and
+    // letting the caller persist on accept keeps `snapshot.epoch ==
+    // server.epoch` in lockstep by construction.
     let new_envelope = crate::mls::persistence::encrypt_state(
         space_id,
         &post_state.group_id,
@@ -875,12 +886,12 @@ pub fn encrypt_values_with_device_snapshot(
         &secret,
         &salt,
     );
-    state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
     Ok((
         schedule_hash,
         member_dids,
         encrypted_values,
         commit_envelope,
+        new_envelope,
     ))
 }
 
@@ -908,6 +919,7 @@ pub fn encrypt_message_with_device_snapshot(
         Vec<contrix_sdk::Did>,
         contrix_sdk::EncryptedPayload,
         contrix_sdk::MlsCommitEnvelope,
+        crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
 > {
@@ -933,6 +945,11 @@ pub fn encrypt_message_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    // X14 — persist-on-accept: see `encrypt_values_with_device_snapshot`.
+    // The caller persists `new_envelope` ONLY after the server accepts the
+    // `cx.mls.commit`, keeping `snapshot.epoch == server.epoch` in lockstep
+    // and preventing the permanent `mls_epoch_skew` that optimistic
+    // pre-accept persistence caused.
     let new_envelope = crate::mls::persistence::encrypt_state(
         space_id,
         &post_state.group_id,
@@ -941,8 +958,13 @@ pub fn encrypt_message_with_device_snapshot(
         &secret,
         &salt,
     );
-    state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
-    Ok((schedule_hash, member_dids, encrypted, commit_envelope))
+    Ok((
+        schedule_hash,
+        member_dids,
+        encrypted,
+        commit_envelope,
+        new_envelope,
+    ))
 }
 
 #[cfg(test)]
@@ -1126,6 +1148,8 @@ mod tests {
         assert_eq!(summary.space_id, space);
         assert_eq!(summary.epoch, 0);
         assert!(state.mls_snapshot_for(space).is_some());
+        // X14: encrypt no longer persists internally — the caller saves the
+        // returned envelope on server-accept. Mirror that contract here.
         let encrypted = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
@@ -1137,6 +1161,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted.2.len(), 1);
+        state.save_mls_snapshot(space, encrypted.4.clone());
         assert!(state.mls_snapshot_for(space).unwrap().epoch >= 1);
         let encrypted_again = encrypt_values_with_device_snapshot(
             &mut state,
@@ -1149,21 +1174,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted_again.2.len(), 1);
+        state.save_mls_snapshot(space, encrypted_again.4.clone());
         assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
     }
 
     fn genesis_governance_binding(group_id: &str) -> contrix_sdk::MlsGovernanceBindingPayload {
         let realm_id =
             contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap();
-        let frontier =
-            vec![contrix_sdk::EventId::new("cx:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
+        let frontier = vec![
+            contrix_sdk::EventId::new("cx:event:01904100-0000-7000-8000-0000000000aa").unwrap(),
+        ];
         let policy_root = contrix_sdk::Hash::new(
             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         )
         .unwrap();
         // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
         contrix_sdk::MlsGovernanceBindingPayload::realm(
-            realm_id, group_id, 0, 0, frontier, policy_root,
+            realm_id,
+            group_id,
+            0,
+            0,
+            frontier,
+            policy_root,
         )
         .unwrap()
     }
@@ -1194,8 +1226,14 @@ mod tests {
         assert!(!payload["cipher_suite"].as_str().unwrap_or("").is_empty());
         // governance_binding present and carries the genesis 0 -> 0 epochs.
         assert!(payload.get("governance_binding").is_some());
-        assert_eq!(payload["governance_binding"]["previous_epoch"].as_u64(), Some(0));
-        assert_eq!(payload["governance_binding"]["next_epoch"].as_u64(), Some(0));
+        assert_eq!(
+            payload["governance_binding"]["previous_epoch"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            payload["governance_binding"]["next_epoch"].as_u64(),
+            Some(0)
+        );
         // effective_scope mirrors the governance binding's.
         assert_eq!(
             payload["effective_scope"],
@@ -1408,7 +1446,7 @@ mod tests {
         let mut state = temp_state_store("ready-encrypt");
         state.save_mls_snapshot(space, envelope);
 
-        let (_schedule_hash, member_dids, encrypted_values, _commit) =
+        let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope) =
             encrypt_values_with_device_snapshot(
                 &mut state,
                 &store,
@@ -1424,6 +1462,60 @@ mod tests {
         assert_eq!(encrypted_values.len(), 1);
         assert!(encrypted_values[0].get("ciphertext").is_some());
         assert!(state.mls_snapshot_for(space).is_some());
+    }
+
+    /// X14 — persist-on-accept contract: `encrypt_values_with_device_snapshot`
+    /// MUST NOT advance the persisted snapshot. The stored snapshot epoch only
+    /// moves when the caller saves the returned envelope (which it does ONLY
+    /// after the server accepts the `cx.mls.commit`). This is the invariant
+    /// that keeps `snapshot.epoch == server.epoch` in lockstep and prevents the
+    /// permanent `mls_epoch_skew` that optimistic pre-accept persistence caused.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
+        let actor = "did:web:alice.example";
+        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let secure = MemorySecureKeyStore::new();
+        let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+        let mut state = temp_state_store("persist-on-accept");
+        let space = "cx:realm:01904100-0000-7000-8000-000000000099";
+
+        // Genesis installs the epoch-0 snapshot.
+        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
+            .unwrap()
+            .expect("creator snapshot created");
+        let epoch_before = state.mls_snapshot_for(space).unwrap().epoch;
+
+        // Encrypting produces a post-commit envelope at epoch+1 WITHOUT
+        // touching the persisted snapshot.
+        let result = encrypt_values_with_device_snapshot(
+            &mut state,
+            &secure,
+            space,
+            actor,
+            device,
+            "application/vnd.contrix.test+json",
+            &[br#""private""#.to_vec()],
+        )
+        .unwrap();
+        let post_commit_envelope = result.4;
+        assert_eq!(
+            state.mls_snapshot_for(space).unwrap().epoch,
+            epoch_before,
+            "encrypt must NOT advance the persisted snapshot (persist-on-accept)"
+        );
+        assert!(
+            post_commit_envelope.epoch > epoch_before,
+            "returned envelope carries the post-commit (advanced) epoch"
+        );
+
+        // The caller saving the returned envelope (simulating server-accept)
+        // is what advances the persisted snapshot.
+        state.save_mls_snapshot(space, post_commit_envelope.clone());
+        assert_eq!(
+            state.mls_snapshot_for(space).unwrap().epoch,
+            post_commit_envelope.epoch
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

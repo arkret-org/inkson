@@ -62,7 +62,8 @@ const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str = "application/vnd.contrix.flow
 /// decrypt their own ciphertext (OpenMLS) / a fresh browser before MLS
 /// unlock+restore. Distinguishes "encrypted, unlock to view" from genuinely
 /// empty content so users don't read it as data loss.
-const MLS_LOCKED_FIELD_PLACEHOLDER: &str = "🔒 Encrypted — unlock MLS (enter your recovery passphrase) to view";
+const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
+    "🔒 Encrypted — unlock MLS (enter your recovery passphrase) to view";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state
@@ -1230,7 +1231,9 @@ fn columns_from_lifecycle_projection(
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
-            column.cards.push(card_from_flow_projection(flow, decrypt_ctx));
+            column
+                .cards
+                .push(card_from_flow_projection(flow, decrypt_ctx));
         }
     }
 
@@ -1512,9 +1515,9 @@ fn private_flow_field_text(
 ) -> String {
     // Tier 1: author's own plaintext sidecar (local-only).
     if let Some(ctx) = ctx
-        && let Some(plaintext) = ctx
-            .state_store
-            .private_plaintext_for(ctx.space_id, flow_id, field_path)
+        && let Some(plaintext) =
+            ctx.state_store
+                .private_plaintext_for(ctx.space_id, flow_id, field_path)
     {
         // Stored shape is the JSON-serialized patch value; parse it back
         // and render identically to the decrypt tier.
@@ -7070,6 +7073,12 @@ fn kanban_mls_commit_event_from_store(
 struct EncryptedWriteMlsEvents {
     genesis: Option<crate::operation::EventEnvelope>,
     commit: Option<crate::operation::EventEnvelope>,
+    /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
+    /// after the server ACCEPTS `commit`, so the local snapshot epoch never
+    /// races ahead of the server's accepted epoch (the root cause of
+    /// permanent `mls_epoch_skew`). `None` when this write produced no
+    /// encrypted values (no commit).
+    snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 }
 
 fn encrypt_private_card_detail_patch_values(
@@ -7125,7 +7134,7 @@ fn encrypt_private_card_detail_patch_values_with_store(
         device_id,
         fresh_summary.as_ref(),
     )?;
-    let (schedule_hash, _member_dids, encrypted_values, commit_envelope) =
+    let (schedule_hash, _member_dids, encrypted_values, commit_envelope, new_snapshot) =
         crate::mls::runtime::encrypt_values_with_device_snapshot(
             state_store,
             secure_store,
@@ -7165,6 +7174,9 @@ fn encrypt_private_card_detail_patch_values_with_store(
         EncryptedWriteMlsEvents {
             genesis: genesis_event,
             commit: Some(commit_event),
+            // X14 — persisted by `dispatch_card_detail_update` ONLY after the
+            // server accepts the commit (see the commit Ok arm).
+            snapshot: Some(new_snapshot),
         },
     ))
 }
@@ -7217,6 +7229,7 @@ fn dispatch_card_detail_update(
     let EncryptedWriteMlsEvents {
         genesis: mls_genesis_op,
         commit: mls_commit_op,
+        snapshot: mls_new_snapshot,
     } = mls_events;
 
     let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
@@ -7345,6 +7358,18 @@ fn dispatch_card_detail_update(
             .await;
             match commit_result {
                 Ok(resp) => {
+                    // X14 — persist-on-accept: the server accepted this commit,
+                    // so NOW advance the local snapshot to the post-commit
+                    // epoch. This keeps `snapshot.epoch == server.epoch` in
+                    // lockstep; if the commit had been rejected we'd skip this
+                    // and the snapshot would stay at the pre-commit epoch, so
+                    // the next write retries at the correct `expected_prev_epoch`
+                    // instead of skewing forever.
+                    if let Some(snapshot) = mls_new_snapshot {
+                        state_store
+                            .write()
+                            .save_mls_snapshot(space_id.clone(), snapshot);
+                    }
                     if let Some(commit_operation_id) = mls_commit_operation_id {
                         state_store.write().record_move_submission_with_event_id(
                             commit_operation_id,
@@ -7461,18 +7486,15 @@ fn dispatch_card_detail_update(
                         Some(state_store.read().private_plaintext_snapshot_json())
                     };
                     if let Some(sidecar_json) = sidecar_json {
-                        let recovery_configured = with_authed_api(
-                            &base_url,
-                            api_token.clone(),
-                            |api| async move {
+                        let recovery_configured =
+                            with_authed_api(&base_url, api_token.clone(), |api| async move {
                                 crate::mls::account_recovery::fetch_mls_account_secret_backup(&api)
                                     .await
-                            },
-                        )
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some();
+                            })
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some();
                         if recovery_configured {
                             let _ = with_authed_api(&base_url, api_token.clone(), |api| async move {
                                 let secure = crate::secure_key_store::default_secure_key_store("yougen");
@@ -10399,7 +10421,9 @@ mod tests {
         // sidecar so a re-projection can render it (the author can never
         // decrypt their own ciphertext).
         assert_eq!(
-            state.private_plaintext_for(space, flow_id, "body").as_deref(),
+            state
+                .private_plaintext_for(space, flow_id, "body")
+                .as_deref(),
             Some("\"private body\"")
         );
         assert_eq!(
@@ -10475,7 +10499,9 @@ mod tests {
             "on-wire envelope must not contain the plaintext"
         );
         assert_eq!(
-            state.private_plaintext_for(space, flow_id, "body").as_deref(),
+            state
+                .private_plaintext_for(space, flow_id, "body")
+                .as_deref(),
             Some("\"private body\"")
         );
         // The snapshot already existed (not freshly created here), so there is

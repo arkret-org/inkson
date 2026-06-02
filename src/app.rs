@@ -7348,6 +7348,7 @@ pub fn RouterView() -> Element {
                     device,
                     bootstrap_space_id,
                     state_store_task,
+                    needs_mls_backup_for_bootstrap,
                 )
                 .await
                 {
@@ -9914,6 +9915,7 @@ async fn bootstrap_mls_welcome_for_space(
     device_id: String,
     space_id: String,
     mut state_store: Signal<LocalStateStore>,
+    needs_mls_backup: Signal<bool>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
     if session_token.trim().is_empty() || space_id.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
@@ -9965,6 +9967,17 @@ async fn bootstrap_mls_welcome_for_space(
     if applied == 0 {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
+
+    // Applying a Welcome creates/imports the local account MLS secret before
+    // the user necessarily sends an encrypted message. Prompt for the recovery
+    // passphrase now if the account secret still lacks a server backup.
+    crate::components::maybe_flag_mls_backup_after_encrypted_write(
+        base_url.clone(),
+        session_token.clone(),
+        actor_did.clone(),
+        needs_mls_backup,
+    )
+    .await;
 
     let Some(snapshot) = state_store.read().mls_snapshot_for(&space_id) else {
         return Ok(MlsWelcomeBootstrapOutcome {
