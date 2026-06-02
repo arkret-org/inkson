@@ -484,6 +484,9 @@ pub fn TimelinePanel(
         .collect();
     let events_for_reply_lookup = timeline_snapshot.clone();
     let events_for_composer_lookup = timeline_snapshot;
+    // Perf: lowercase the search query ONCE per render instead of 3× per event
+    // inside the timeline filter loop below.
+    let search_query_lc = search_query().to_lowercase();
     let moderation_appeal_target = events_data
         .iter()
         .find(|(_, event)| timeline_event_has_moderation_decision(event))
@@ -659,13 +662,10 @@ pub fn TimelinePanel(
             }
 
             for (idx, event) in events_data.into_iter() {
-                if search_query().is_empty()
-                    || event.body.to_lowercase().contains(&search_query().to_lowercase())
+                if search_query_lc.is_empty()
+                    || event.body.to_lowercase().contains(&search_query_lc)
                     || event.revisions.iter().any(|revision| {
-                        revision
-                            .body
-                            .to_lowercase()
-                            .contains(&search_query().to_lowercase())
+                        revision.body.to_lowercase().contains(&search_query_lc)
                     })
                 {
                     {

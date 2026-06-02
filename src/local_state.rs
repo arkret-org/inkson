@@ -1288,6 +1288,13 @@ impl Default for ClientLocalState {
 #[derive(Clone, Debug)]
 pub struct LocalStateStore {
     cached: ClientLocalState,
+    /// Perf: whether `cached` has been reconciled with the persistence layer at
+    /// least once. Before this flag existed, an empty/default account (where
+    /// `cached == ClientLocalState::default()`) re-read the backing store (disk
+    /// on native, localStorage on wasm) AND did a full-state `!= default`
+    /// comparison on EVERY `load()` / mutation. Once loaded, `cached` is the
+    /// authoritative single-process source of truth, so we skip both.
+    loaded: Cell<bool>,
     /// Perf (P0 sync-apply / notifications bulk): when `> 0`, [`Self::flush`]
     /// defers the (potentially synchronous, blocking) persist and only records
     /// that a write is pending. A batch guard performs exactly one flush when
@@ -1353,6 +1360,7 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
+            loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1374,7 +1382,10 @@ impl LocalStateStore {
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
     pub fn load(&self) -> ClientLocalState {
-        if self.cached != ClientLocalState::default() {
+        // Once reconciled with persistence, `cached` is authoritative (single
+        // process) — skip the full-state `!= default` compare and the repeated
+        // backing-store read that an empty account used to pay on every call.
+        if self.loaded.get() || self.cached != ClientLocalState::default() {
             return self.cached.clone();
         }
         self.read_persisted_state().unwrap_or_default()
@@ -1382,6 +1393,7 @@ impl LocalStateStore {
 
     pub fn save(&mut self, state: ClientLocalState) {
         self.cached = state;
+        self.loaded.set(true);
         let _ = self.flush();
     }
 
@@ -3347,6 +3359,7 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
+            loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
             path: path.into(),
@@ -3387,11 +3400,18 @@ impl LocalStateStore {
     }
 
     fn ensure_cached_loaded(&mut self) {
+        // Read the backing store at most once; afterwards `cached` is the
+        // authoritative source so empty/default accounts stop re-reading disk /
+        // localStorage on every mutation.
+        if self.loaded.get() {
+            return;
+        }
         if self.cached == ClientLocalState::default()
             && let Some(state) = self.read_persisted_state()
         {
             self.cached = state;
         }
+        self.loaded.set(true);
     }
 }
 
