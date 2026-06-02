@@ -77,7 +77,7 @@ pub struct DndPeriod {
 pub struct NotificationEvalContext {
     pub event_kind: String,
     pub notification_type: String,
-    pub space_id: String,
+    pub realm_id: String,
     pub flow_id: Option<String>,
     pub flow_track: Option<String>,
     pub sender: Option<String>,
@@ -448,7 +448,7 @@ fn member_count_matches(
 
 fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'a str> {
     match field {
-        "space_id" => Some(ctx.space_id.as_str()),
+        "realm_id" | "space_id" => Some(ctx.realm_id.as_str()),
         "type" | "kind" | "event_kind" => Some(ctx.event_kind.as_str()),
         "notification_type" => Some(ctx.notification_type.as_str()),
         "flow_id" => ctx.flow_id.as_deref(),
@@ -596,7 +596,7 @@ mod tests {
         NotificationEvalContext {
             event_kind: "cx.message.create".to_owned(),
             notification_type: "message".to_owned(),
-            space_id: "cx:space:demo".to_owned(),
+            realm_id: "cx:realm:demo".to_owned(),
             flow_id: Some("cx:flow:demo".to_owned()),
             flow_track: Some("discussion".to_owned()),
             body: Some("urgent launch note".to_owned()),
@@ -613,7 +613,7 @@ mod tests {
                     "rule_id": "override.mute-space",
                     "kind": "override",
                     "conditions": [
-                        {"kind": "field_match", "field": "space_id", "pattern": "cx:space:demo"}
+                        {"kind": "field_match", "field": "space_id", "pattern": "cx:realm:demo"}
                     ],
                     "actions": ["dont_notify"]
                 },

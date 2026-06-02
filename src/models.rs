@@ -903,7 +903,8 @@ pub struct EphemeralSubmitResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceConfigResponse {
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
     pub device_id: String,
@@ -926,7 +927,8 @@ pub struct IceServer {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceConfigRequest {
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
     pub device_id: String,
@@ -937,7 +939,8 @@ pub struct IceConfigRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CreateWebrtcSessionResponse {
     pub session_id: String,
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub participants: Vec<String>,
     #[serde(default)]
@@ -967,7 +970,8 @@ pub struct CallRecordingStartResponse {
     #[serde(default)]
     pub ok: bool,
     pub call_id: String,
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub recording_policy: String,
     #[serde(default)]

@@ -457,6 +457,7 @@ mod tests {
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
             capabilities: Default::default(),
+            operations: Vec::new(),
         };
         assert_eq!(
             bundle.verify_well_known("bob.example", &record),
@@ -474,6 +475,7 @@ mod tests {
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
             capabilities: Default::default(),
+            operations: Vec::new(),
         };
         match bundle.verify_well_known("bob.example", &record) {
             TrustCheck::SignatureMismatch(_) => {}

@@ -37,7 +37,7 @@ struct Notification {
     id: String,
     title: String,
     body: String,
-    space_id: String,
+    realm_id: String,
     space_label: Option<String>,
     kind: String,
     read: bool,
@@ -93,7 +93,7 @@ pub fn NotificationsPanel(
         .filter(|notification| {
             (show_archived() || !notification.archived)
                 && notification_kind_enabled(&local_state, &notification.kind)
-                && (!space_is_muted(&local_state, &notification.space_id)
+                && (!space_is_muted(&local_state, &notification.realm_id)
                     || notification_overrides_space_mute(notification))
         })
         .collect::<Vec<_>>();
@@ -104,8 +104,8 @@ pub fn NotificationsPanel(
         }
         NotificationGroup::BySpace => {
             visible_notifications.sort_by(|left, right| {
-                left.space_id
-                    .cmp(&right.space_id)
+                left.realm_id
+                    .cmp(&right.realm_id)
                     .then_with(|| right.timestamp.cmp(&left.timestamp))
             });
         }
@@ -265,7 +265,7 @@ pub fn NotificationsPanel(
                             "{hint}"
                         }
                     }
-                    if !notification.space_id.is_empty() {
+                    if !notification.realm_id.is_empty() {
                         {
                             let scope_kind = notification_scope_kind(notification);
                             let space_id_label = notification
@@ -273,11 +273,11 @@ pub fn NotificationsPanel(
                                 .as_deref()
                                 .filter(|label| !label.trim().is_empty())
                                 .map(ToOwned::to_owned)
-                                .unwrap_or_else(|| short_protocol_id(&notification.space_id));
+                                .unwrap_or_else(|| short_protocol_id(&notification.realm_id));
                             rsx! {
                                 div {
                                     class: "muted",
-                                    title: "{notification.space_id}",
+                                    title: "{notification.realm_id}",
                                     "{scope_kind}: {space_id_label}"
                                 }
                             }
@@ -337,14 +337,14 @@ pub fn NotificationsPanel(
                                 UiIcon { name: "archive" }
                             }
                         }
-                        if !notification.space_id.is_empty() {
+                        if !notification.realm_id.is_empty() {
                             button {
                                 class: "btn icon sm ghost",
                                 "data-testid": "mute-space-button",
                                 title: "Mute this space",
                                 "aria-label": "Mute this space",
                                 onclick: {
-                                    let space_id = notification.space_id.clone();
+                                    let space_id = notification.realm_id.clone();
                                     move |_| {
                                         state_store.write().set_space_muted(space_id.clone(), true);
                                         status_msg.set(format!(
@@ -891,20 +891,20 @@ fn notification_from_value(
         value_string(&value, &["title"]).unwrap_or_else(|| default_notification_title(&kind));
     let body = value_string(&value, &["body", "preview", "summary"])
         .unwrap_or_else(|| "Notification".to_owned());
-    let space_id = value_string(&value, &["realm_id", "space_id"]).unwrap_or_default();
-    let space_id = if kind == "invite" {
-        scope_id_as_realm_id(&space_id)
+    let raw_scope_id = value_string(&value, &["realm_id", "space_id"]).unwrap_or_default();
+    let realm_id = if kind == "invite" {
+        scope_id_as_realm_id(&raw_scope_id)
     } else {
-        space_id
+        raw_scope_id
     };
     let invite_id = value_string(&value, &["invite_id"]);
     let action = if kind == "invite" {
         invite_id.clone().and_then(|invite_id| {
-            if space_id.is_empty() {
+            if realm_id.is_empty() {
                 None
             } else {
                 Some(NotificationAction::AcceptInvite {
-                    realm_id: space_id.clone(),
+                    realm_id: realm_id.clone(),
                     invite_id,
                 })
             }
@@ -919,7 +919,7 @@ fn notification_from_value(
         id,
         title,
         body,
-        space_id,
+        realm_id,
         space_label: value_string(&value, &["space_label", "realm_title", "space_title"]),
         kind: kind.clone(),
         read: value_bool(&value, "read").unwrap_or(client_state.read),
@@ -1048,7 +1048,7 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
     NotificationEvalContext {
         event_kind,
         notification_type,
-        space_id: value_string(value, &["realm_id", "space_id"]).unwrap_or_default(),
+        realm_id: value_string(value, &["realm_id", "space_id"]).unwrap_or_default(),
         flow_id: value_string(value, &["flow_id"]),
         flow_track: value_string(value, &["flow_track", "track_name"]),
         sender: value_string(value, &["sender", "sender_did", "actor_id"]),
@@ -1121,14 +1121,14 @@ mod tests {
             "notification_id": "n1",
             "kind": "cx.notification",
             "notification_type": "message",
-            "space_id": "cx:space:quiet",
+            "realm_id": "cx:realm:quiet",
             "body": "hello"
         })];
         let rules = crate::notification_rules::parse_push_rules(&json!({
             "rules": [{
                 "rule_id": "override.quiet",
                 "conditions": [
-                    {"kind": "field_match", "field": "space_id", "pattern": "cx:space:quiet"}
+                    {"kind": "field_match", "field": "space_id", "pattern": "cx:realm:quiet"}
                 ],
                 "actions": ["dont_notify"]
             }]
@@ -1165,7 +1165,7 @@ mod tests {
         assert_eq!(notifications[0].kind, "invite");
         assert_eq!(notifications[0].title, "Realm invite");
         assert_eq!(
-            notifications[0].space_id,
+            notifications[0].realm_id,
             "cx:realm:01904100-0000-7000-8000-000000000002"
         );
         assert_eq!(notifications[0].body, "You were invited to join a Realm.");

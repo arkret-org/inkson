@@ -6059,7 +6059,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                 "root_space_id",
             ],
         )
-        .filter(|parent| parent != space_id)
+        .filter(|parent| parent != space_id && parent.starts_with("cx:space:"))
         {
             return Some(parent);
         }
@@ -6086,7 +6086,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                     container,
                     &["parent_space_id", "parent_id", "parent", "target_parent_id"],
                 )
-                .filter(|parent| parent != space_id)
+                .filter(|parent| parent != space_id && parent.starts_with("cx:space:"))
                 {
                     return Some(parent);
                 }
@@ -6144,8 +6144,20 @@ fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
 
     children
         .into_iter()
-        .filter(|child| child != space_id)
+        .filter(|child| child != space_id && child.starts_with("cx:space:"))
         .collect()
+}
+
+fn space_tree_parent_id(space: &SpacePreview) -> Option<&str> {
+    space
+        .parent_space_id
+        .as_deref()
+        .filter(|parent| !parent.trim().is_empty())
+        .or_else(|| {
+            (space.kind == SpacePreviewKind::Space)
+                .then(|| space.realm_id.trim())
+                .filter(|realm_id| !realm_id.is_empty())
+        })
 }
 
 fn normalize_space_hierarchy(spaces: &mut [SpacePreview]) {
@@ -6153,13 +6165,11 @@ fn normalize_space_hierarchy(spaces: &mut [SpacePreview]) {
     let mut child_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for space in spaces.iter() {
-        if let Some(parent) = space
-            .parent_space_id
-            .as_ref()
-            .filter(|parent| known.contains(*parent) && *parent != &space.space_id)
+        if let Some(parent) = space_tree_parent_id(space)
+            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
         {
             child_map
-                .entry(parent.clone())
+                .entry(parent.to_owned())
                 .or_default()
                 .insert(space.space_id.clone());
         }
@@ -6192,9 +6202,7 @@ fn descendant_space_ids(spaces: &[SpacePreview], root_space_id: &str) -> Vec<Str
     let known: BTreeSet<&str> = spaces.iter().map(|space| space.space_id.as_str()).collect();
     let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for space in spaces {
-        if let Some(parent) = space
-            .parent_space_id
-            .as_deref()
+        if let Some(parent) = space_tree_parent_id(space)
             .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
         {
             child_map
@@ -6262,9 +6270,7 @@ fn space_tree_items(spaces: &[SpacePreview]) -> Vec<SpaceTreeItem> {
         .collect();
     let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for space in spaces {
-        if let Some(parent) = space
-            .parent_space_id
-            .as_deref()
+        if let Some(parent) = space_tree_parent_id(space)
             .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
         {
             child_map
@@ -6291,9 +6297,7 @@ fn space_tree_items(spaces: &[SpacePreview]) -> Vec<SpaceTreeItem> {
     let mut roots: Vec<&str> = spaces
         .iter()
         .filter(|space| {
-            space
-                .parent_space_id
-                .as_deref()
+            space_tree_parent_id(space)
                 .map(|parent| !known.contains(parent))
                 .unwrap_or(true)
         })
@@ -11057,17 +11061,7 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
                 SpacePreviewKind::Realm => String::new(),
                 SpacePreviewKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
-            // Sidebar tree wiring: a Space without an explicit
-            // `parent_space_id` is rendered under its home Realm. This
-            // turns the Realm/Space classification into a single
-            // tree the existing sidebar code can render without
-            // restructure. Realms (and Spaces with real parents)
-            // keep their existing parent_space_id resolution.
-            let explicit_parent = extract_parent_space_id(id, body);
-            let parent_space_id = match (&kind, &explicit_parent) {
-                (SpacePreviewKind::Space, None) if !realm_id.is_empty() => Some(realm_id.clone()),
-                _ => explicit_parent,
-            };
+            let parent_space_id = extract_parent_space_id(id, body);
             SpacePreview {
                 space_id: id.clone(),
                 name: title,
@@ -11884,7 +11878,14 @@ mod tests {
 
         assert_eq!(child.kind, SpacePreviewKind::Space);
         assert_eq!(child.realm_id, "cx:realm:root");
-        assert_eq!(child.parent_space_id.as_deref(), Some("cx:realm:root"));
+        assert_eq!(child.parent_space_id, None);
+
+        let items = space_tree_items(&previews);
+        let child_item = items
+            .iter()
+            .find(|item| item.space.space_id == "cx:space:child")
+            .expect("child tree item");
+        assert_eq!(child_item.depth, 1);
     }
 
     #[test]

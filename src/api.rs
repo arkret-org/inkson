@@ -2301,7 +2301,7 @@ impl ContrixApi {
 
     pub async fn create_webrtc_session(
         &self,
-        space_id: &str,
+        realm_id: &str,
         participants: Vec<String>,
         mode: &str,
         recording_policy: &str,
@@ -2309,7 +2309,7 @@ impl ContrixApi {
         self.post_json(
             "api/v1/webrtc/sessions",
             json!({
-                "space_id": space_id,
+                "realm_id": realm_id,
                 "participants": participants,
                 "mode": mode,
                 "recording_policy": recording_policy,
@@ -2347,11 +2347,11 @@ impl ContrixApi {
     pub async fn start_call_recording(
         &self,
         session_id: &str,
-        space_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<CallRecordingStartResponse> {
         self.post_json(
             &format!("api/v1/calls/{session_id}/recording/start"),
-            json!({ "space_id": space_id }),
+            json!({ "realm_id": realm_id }),
         )
         .await
     }

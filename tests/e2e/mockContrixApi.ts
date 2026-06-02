@@ -42,6 +42,8 @@ export async function mockContrixApi(page: Page) {
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
+  const eventRealmId = (event: Record<string, unknown>) =>
+    String(event.realm_id ?? event.space_id ?? "");
   const boardSpaceContainers: SpaceContainerProjection[] = [
     {
       container_space_id: DEMO_BOARD_SPACE,
@@ -445,7 +447,7 @@ export async function mockContrixApi(page: Page) {
         if (typeof containerId === "string" && !boardSpaceContainers.some((row) => row.container_space_id === containerId)) {
           boardSpaceContainers.push({
             container_space_id: containerId,
-            realm_id: object.realm_id ?? body.space_id ?? DEMO_SPACE,
+            realm_id: object.realm_id ?? body.realm_id ?? DEMO_SPACE,
             kind: object.kind ?? "list",
             title: object.title ?? containerId,
             state: "active",
@@ -457,11 +459,13 @@ export async function mockContrixApi(page: Page) {
       if (body.kind === "cx.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
+        const legacyRealmId = body.space_id;
+        const realmId = body.realm_id ?? legacyRealmId ?? DEMO_SPACE;
         timelineEvents.push({
           ...(body.payload ?? {}),
           event_id: body.event_id,
           kind: body.kind,
-          space_id: body.space_id ?? DEMO_SPACE,
+          realm_id: realmId,
           actor_id: body.actor_id ?? "did:web:alice.example",
           actor_seq: body.actor_seq,
           created_at: body.created_at ?? "2026-04-28T12:00:00Z",
@@ -482,7 +486,7 @@ export async function mockContrixApi(page: Page) {
           const fields = object.fields ?? {};
           const nextProjection: FlowProjection = {
             flow_id: flowId,
-            realm_id: object.realm_id ?? body.space_id ?? DEMO_SPACE,
+            realm_id: object.realm_id ?? body.realm_id ?? DEMO_SPACE,
             title: object.title ?? body.payload?.title ?? flowId,
             summary: object.summary,
             state: "active",
@@ -711,7 +715,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/account/subscribe") {
-      const demoTimelineEvents = timelineEvents.filter((event) => event.space_id === DEMO_SPACE);
+      const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_SPACE);
       const frame = {
         kind: "delta",
         cursor: "cx:cursor:e2e-2",
@@ -728,7 +732,7 @@ export async function mockContrixApi(page: Page) {
                     child_space_ids: [],
                   },
                   timeline: {
-                    events: timelineEvents.filter((event) => event.space_id === realm.id),
+                    events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
                     limited: false,
                   },
                   state: { events: [] },
@@ -907,7 +911,7 @@ export async function mockContrixApi(page: Page) {
         .map((space) => space.trim())
         .filter(Boolean);
       const events = requestedSpaces.length
-        ? timelineEvents.filter((event) => requestedSpaces.includes(String(event.space_id)))
+        ? timelineEvents.filter((event) => requestedSpaces.includes(eventRealmId(event)))
         : timelineEvents;
       return json(route, { events, next_cursor: null, frontier: {} });
     }
