@@ -1136,8 +1136,7 @@ pub mod cx_ops {
     }
 
     /// Build a `cx.moderation.appeal.submit` operation. Mirrors the
-    /// 4-state moderation appeal FSM (see
-    /// `contrix_sdk::round23::AppealSubmitPayload`).
+    /// 4-state moderation appeal FSM (see the SDK `AppealSubmitPayload`).
     pub fn moderation_appeal_submit(
         space_id: &str,
         actor: &str,

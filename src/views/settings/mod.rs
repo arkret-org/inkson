@@ -3289,11 +3289,11 @@ mod tests {
         assert!(!is_likely_valid_did("did:web:   "));
         // Non-alphanumeric method.
         assert!(!is_likely_valid_did("did:we b:alice"));
-        assert!(!is_likely_valid_did("did:web-x:alice")); // ROUND4-ALLOW: negative test
+        assert!(!is_likely_valid_did("did:web-x:alice")); // DRIFT-ALLOW: negative test
         // Round 4 (spec a77b995) — `.`/`-`/`_`/`:` are forbidden in
         // the method segment; method MUST be lowercase ASCII alphanum.
-        assert!(!is_likely_valid_did("did:web.x:alice")); // ROUND4-ALLOW: negative test
-        assert!(!is_likely_valid_did("did:web_x:alice")); // ROUND4-ALLOW: negative test
+        assert!(!is_likely_valid_did("did:web.x:alice")); // DRIFT-ALLOW: negative test
+        assert!(!is_likely_valid_did("did:web_x:alice")); // DRIFT-ALLOW: negative test
         assert!(!is_likely_valid_did("did:WEB:alice"));
         // Whitespace inside method-specific id is rejected (round-4
         // regex `^did:[a-z0-9]+:[^\s]+$`).

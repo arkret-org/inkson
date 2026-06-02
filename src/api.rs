@@ -2692,6 +2692,24 @@ impl ContrixApi {
             .await
     }
 
+    /// Rename a device the caller controls by updating its user-facing
+    /// `display_name`. Hits soland's `cx.devices.rename`
+    /// (`POST /api/v1/devices/{device_id}/rename`). `display_name` is the
+    /// optional, mutable, UI-only device name per
+    /// `crypto-media/device-lifecycle.md` §4; the canonical id is always
+    /// `device_id`. Returns the updated device record JSON.
+    pub async fn rename_device(
+        &self,
+        device_id: &str,
+        display_name: &str,
+    ) -> anyhow::Result<Value> {
+        self.post_json(
+            &format!("api/v1/devices/{device_id}/rename"),
+            json!({ "display_name": display_name }),
+        )
+        .await
+    }
+
     /// G3.Y1 — list the principal's active devices via soland's
     /// `cx.devices.list` (`GET /api/v1/devices`). Returns the raw JSON
     /// response shape `{ "actor": ..., "current_device_id": ..., "devices": [...] }`.
