@@ -548,19 +548,25 @@ pub fn build_recovery_vault_backup_body(
     )
 }
 
+/// Build a `did_recovery` backup, HPKE-sealed to the actor's recovery public
+/// key. Spec §5.0.1 first-backup gate forbids passphrase_kdf-only did_recovery,
+/// so this uses `recovery_public_key` (a single passphrase must never control
+/// DID recovery). `recovery_key_ref` names the recovery policy verification
+/// method / DID `recoveryKeyAgreement`.
 pub fn build_did_recovery_backup_body(
     backup_id: &str,
     actor_did: &str,
     device_id: &str,
-    root: &VaultKek,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
     plaintext: &[u8],
 ) -> anyhow::Result<Value> {
-    build_passphrase_kdf_backup_body(
+    build_recovery_public_key_backup_body(
         backup_id,
         actor_did,
         device_id,
-        root,
-        plaintext,
+        recovery_public_key,
+        recovery_key_ref,
         KeyBackupClass::DidRecovery,
         "recovery_policy",
         &BackupItem {
@@ -568,6 +574,7 @@ pub fn build_did_recovery_backup_body(
             secret_id: "yougen_did_recovery_share",
             extra: Vec::new(),
         },
+        plaintext,
     )
 }
 
@@ -747,6 +754,16 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
     }
     match method {
         "passphrase_kdf" => {
+            // Spec §5.0.1 first-backup gate: a did_recovery envelope MUST encrypt
+            // to recovery_public_key / threshold_recovery / hardware_wrapped_key
+            // — passphrase_kdf alone is forbidden (a single passphrase must not
+            // control DID recovery).
+            if class == KeyBackupClass::DidRecovery {
+                return Err(
+                    "did_recovery backups must not use passphrase_kdf alone; use recovery_public_key, threshold_recovery, or hardware_wrapped_key"
+                        .to_owned(),
+                );
+            }
             if class == KeyBackupClass::MlsHistory {
                 return Err(
                     "mls_history backups must use secret_storage_key or recovery_public_key"
@@ -1195,18 +1212,23 @@ mod tests {
     }
 
     #[test]
-    fn did_recovery_backup_uses_separate_domain() {
-        let root = test_root();
+    fn did_recovery_backup_uses_separate_domain_and_hpke() {
+        let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let body = build_did_recovery_backup_body(
             "cx:backup:01964137-0000-7000-8000-00000000d1d0",
             ACTOR,
             DEVICE,
-            &root,
+            &pk,
+            "did:web:alice.example#recovery",
             b"recovery share",
         )
         .unwrap();
 
         assert_eq!(body["backup_class"], "did_recovery");
+        assert_eq!(
+            body["encryption"]["recipient_method"],
+            "recovery_public_key"
+        );
         assert!(
             body["series_id"]
                 .as_str()
@@ -1219,7 +1241,30 @@ mod tests {
             "contrix-key-backup/did_recovery/recovery_policy/v1"
         );
         validate_key_backup_envelope(&body, Some(KeyBackupClass::DidRecovery))
-            .expect("did_recovery envelope should validate");
+            .expect("did_recovery HPKE envelope should validate");
+        // Round-trips with the recovery private key.
+        assert_eq!(
+            open_recovery_public_key_backup_body(&sk, &body).unwrap(),
+            b"recovery share"
+        );
+    }
+
+    #[test]
+    fn did_recovery_passphrase_kdf_is_rejected() {
+        // Spec §5.0.1 first-backup gate: passphrase_kdf-only did_recovery forbidden.
+        let root = test_root();
+        let mut body =
+            build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
+        body["backup_class"] = json!("did_recovery");
+        body["contents"][0]["item_type"] = json!("recovery_key_share");
+        attach_key_backup_domain_separation(
+            &mut body,
+            KeyBackupClass::DidRecovery,
+            "recovery_policy",
+        );
+        let err = validate_key_backup_envelope(&body, Some(KeyBackupClass::DidRecovery))
+            .expect_err("passphrase_kdf did_recovery must be rejected");
+        assert!(err.contains("did_recovery"), "{err}");
     }
 
     #[test]

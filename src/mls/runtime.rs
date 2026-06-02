@@ -967,6 +967,156 @@ pub fn encrypt_message_with_device_snapshot(
     ))
 }
 
+/// MLS exporter label for the v2 reaction routing tag
+/// (`encryption-and-audit.md` §2.9). Bound, together with `context =
+/// realm_id` and the current group epoch's exporter secret, into the
+/// keyed-HMAC routing tag.
+pub const REACTION_ROUTING_LABEL_V2: &str = "contrix-reaction-routing-v2";
+/// Length (bytes) of the MLS exporter output used as the HMAC key.
+pub const REACTION_ROUTING_EXPORT_LEN: usize = 32;
+/// Content type for the encrypted real-emoji payload of a reaction.
+pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.contrix.reaction+json";
+
+/// Result of sealing an E2EE reaction: the plaintext routing tag for the
+/// wire `reaction_payload.key`, plus the structured encrypted payload that
+/// carries the real emoji.
+pub struct EncryptedReaction {
+    /// `sha256:<hex>` keyed-HMAC routing tag for `reaction_payload.key`.
+    pub routing_tag: String,
+    /// MLS application-message payload carrying the real emoji JSON.
+    pub encrypted_payload: contrix_sdk::EncryptedPayload,
+}
+
+/// Pure derivation of the §2.9 v2 routing tag from an MLS exporter secret.
+///
+/// `tag = "sha256:" || hex(HMAC-SHA256(exporter_secret, NFC(canonical_emoji)))`.
+/// Split out from [`reaction_routing_tag_v2`] so it can be unit-tested with a
+/// fixed exporter secret (the MLS half is exercised separately).
+pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoji: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use unicode_normalization::UnicodeNormalization;
+
+    let nfc: String = canonical_emoji.nfc().collect();
+    let mut mac = <Hmac<Sha256>>::new_from_slice(exporter_secret)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(nfc.as_bytes());
+    let tag = mac.finalize().into_bytes();
+    let mut hex = String::with_capacity(7 + tag.len() * 2);
+    hex.push_str("sha256:");
+    for byte in tag.iter() {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// Restore this device's MLS group for `space_id` and derive the §2.9 v2
+/// reaction routing tag for `canonical_emoji` at the current epoch.
+///
+/// Read-only on the MLS group — it only reads the epoch's exporter secret,
+/// so it neither commits, advances the ratchet, nor mutates persisted
+/// snapshot state. Returns the `sha256:<hex>` wire form for
+/// `reaction_payload.key`.
+pub fn reaction_routing_tag_v2(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    space_id: &str,
+    realm_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    canonical_emoji: &str,
+) -> Result<String, MlsRuntimeError> {
+    let snapshot = state_store
+        .mls_snapshot_for(space_id)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let exporter = group
+        .export_secret(
+            REACTION_ROUTING_LABEL_V2,
+            realm_id.as_bytes(),
+            REACTION_ROUTING_EXPORT_LEN,
+        )
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    Ok(reaction_routing_tag_from_exporter(&exporter, canonical_emoji))
+}
+
+/// Seal an E2EE reaction: derive the v2 routing tag and encrypt the real
+/// emoji as an MLS application message, both under the current epoch.
+///
+/// Unlike message send, this does NOT advance the MLS epoch (no commit) —
+/// `encryption-and-audit.md` §2.9 reuses the application-key flow, so
+/// reactions ride the current epoch and the server deduplicates on the
+/// routing tag. The post-encrypt snapshot IS persisted immediately so the
+/// sender's application ratchet never reuses a generation; because the epoch
+/// is unchanged there is no epoch-skew risk that would require
+/// persist-on-accept.
+pub fn encrypt_reaction_with_device_snapshot(
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    space_id: &str,
+    realm_id: &str,
+    actor_did: &str,
+    device_id: &str,
+    canonical_emoji: &str,
+) -> Result<EncryptedReaction, MlsRuntimeError> {
+    let snapshot = state_store
+        .mls_snapshot_for(space_id)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+
+    // Routing tag is derived from the same (pre-application-message) epoch
+    // exporter secret; the application message below does not change the epoch.
+    let exporter = group
+        .export_secret(
+            REACTION_ROUTING_LABEL_V2,
+            realm_id.as_bytes(),
+            REACTION_ROUTING_EXPORT_LEN,
+        )
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let routing_tag = reaction_routing_tag_from_exporter(&exporter, canonical_emoji);
+
+    // The decrypted plaintext MUST validate as
+    // event-payload.schema.json#/$defs/reaction_encrypted_payload_plaintext —
+    // a JSON object whose `key` is the real emoji / short tag.
+    let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
+        .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
+    let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.reaction.add");
+    let aad_value =
+        serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
+    let encrypted_payload = group
+        .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad_value), &plaintext)
+        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+
+    // Persist the advanced application ratchet immediately (no epoch change →
+    // no epoch-skew, so persist-on-accept is unnecessary and persisting now
+    // prevents nonce reuse on the next reaction encrypt).
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    let new_envelope = crate::mls::persistence::encrypt_state(
+        space_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        &secret,
+        &salt,
+    );
+    state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
+
+    Ok(EncryptedReaction { routing_tag, encrypted_payload })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -982,6 +1132,49 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         crate::local_state::LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn reaction_routing_tag_is_deterministic_and_wire_shaped() {
+        let exporter = [0x11u8; 32];
+        let tag = reaction_routing_tag_from_exporter(&exporter, "👍");
+        // Stable for the same (exporter, emoji).
+        assert_eq!(tag, reaction_routing_tag_from_exporter(&exporter, "👍"));
+        // sha256:<64 lowercase hex> wire form.
+        let hex = tag.strip_prefix("sha256:").expect("sha256: prefix");
+        assert_eq!(hex.len(), 64);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn reaction_routing_tag_separates_emoji_and_exporter() {
+        let exporter_a = [0x11u8; 32];
+        let exporter_b = [0x22u8; 32];
+        // Different emoji → different tag under the same exporter.
+        assert_ne!(
+            reaction_routing_tag_from_exporter(&exporter_a, "👍"),
+            reaction_routing_tag_from_exporter(&exporter_a, "🎉"),
+        );
+        // Same emoji → different tag under a different epoch's exporter secret
+        // (this is why the tag does not dedup across epochs).
+        assert_ne!(
+            reaction_routing_tag_from_exporter(&exporter_a, "👍"),
+            reaction_routing_tag_from_exporter(&exporter_b, "👍"),
+        );
+    }
+
+    #[test]
+    fn reaction_routing_tag_normalises_to_nfc() {
+        let exporter = [0x33u8; 32];
+        // "é" as precomposed U+00E9 vs decomposed "e" + U+0301 must agree
+        // after NFC normalisation, so the chosen-emoji privacy + dedup hold
+        // regardless of the sender's input form.
+        let precomposed = "\u{00E9}";
+        let decomposed = "e\u{0301}";
+        assert_eq!(
+            reaction_routing_tag_from_exporter(&exporter, precomposed),
+            reaction_routing_tag_from_exporter(&exporter, decomposed),
+        );
     }
 
     #[test]

@@ -99,6 +99,10 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 # direct here for the spec-conformant key-backup crypto.
 hkdf = "0.12"
 hmac = "0.12"
+# encryption-and-audit.md §2.9: the v2 reaction routing tag HMACs over the
+# NFC-normalised canonical emoji bytes, so the chosen-emoji privacy property
+# holds regardless of the sender's input normalisation form.
+unicode-normalization = "0.1"
 # key-management.md §7.5.2: `recipient_method=recovery_public_key` backups are
 # HPKE base-mode (DHKEM(X25519,HKDF-SHA256) + HKDF-SHA256 + ChaCha20Poly1305).
 # hpke-rs (RustCrypto backend) is the audited RFC 9180 impl and builds on wasm.

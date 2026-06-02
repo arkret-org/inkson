@@ -35,6 +35,7 @@ pub mod cross_signing;
 pub mod crypto;
 pub mod crypto_boundary;
 pub mod cursor;
+pub mod device_name;
 pub mod device_revoke;
 pub mod did_resolver;
 pub mod discovery;

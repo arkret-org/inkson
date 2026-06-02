@@ -747,7 +747,11 @@ impl ContrixApi {
     ) -> anyhow::Result<DevLoginResponse> {
         self.post_json(
             "api/v1/auth/dev-login",
-            json!({"actor": actor, "device_id": device_id, "display_name": "yougen"}),
+            json!({
+                "actor": actor,
+                "device_id": device_id,
+                "display_name": crate::device_name::default_device_display_name(),
+            }),
         )
         .await
     }
@@ -775,7 +779,7 @@ impl ContrixApi {
             "grant_jwt": grant_jwt,
             "principal_id": principal_id,
             "device_id": device_id,
-            "display_name": "yougen session-grant bridge",
+            "display_name": crate::device_name::default_device_display_name(),
         });
         if let Some(introspection_proof) = introspection_proof {
             body["introspection_proof"] = serde_json::to_value(introspection_proof)?;

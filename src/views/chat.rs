@@ -392,6 +392,68 @@ fn chat_reaction_add_operation(
         .build("yougen")
 }
 
+/// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
+/// the v2 keyed-HMAC routing tag (`sha256:<hex>`) so the server can still
+/// OR-Set dedup / rate-limit without learning the emoji; the real emoji
+/// travels inside `encrypted_payload`.
+fn chat_reaction_add_operation_encrypted(
+    space_id: &str,
+    actor: &str,
+    event_id: &str,
+    routing_tag: &str,
+    encrypted_payload: &contrix_sdk::EncryptedPayload,
+) -> crate::operation::EventEnvelope {
+    let encrypted_payload_json =
+        serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
+    OperationBuilder::new(space_id, actor, "cx.reaction.add")
+        .target_ref(event_id)
+        .body(json!({
+            "target_ref": event_id,
+            "key": routing_tag,
+            "encrypted_payload": encrypted_payload_json,
+        }))
+        .build("yougen")
+}
+
+/// Build the `cx.reaction.add` operation for a tapped emoji, choosing the
+/// plaintext or E2EE (§2.9 routing-tag) shape based on whether the channel
+/// is encrypted. On any MLS failure in an encrypted channel the reaction is
+/// dropped (returns `None`) rather than leaking the emoji in plaintext.
+#[allow(clippy::too_many_arguments)]
+fn build_chat_reaction_add_operation(
+    mut state_store: Signal<LocalStateStore>,
+    space_id: &str,
+    actor: &str,
+    device_id: &str,
+    event_id: &str,
+    emoji: &str,
+    channel_encrypted: bool,
+) -> Option<crate::operation::EventEnvelope> {
+    if !channel_encrypted {
+        return Some(chat_reaction_add_operation(space_id, actor, event_id, emoji));
+    }
+    let realm_id = scope_id_as_realm_id(space_id);
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
+        &mut state_store.write(),
+        secure_store.as_ref(),
+        space_id,
+        &realm_id,
+        actor,
+        device_id,
+        emoji,
+    ) {
+        Ok(sealed) => Some(chat_reaction_add_operation_encrypted(
+            space_id,
+            actor,
+            event_id,
+            &sealed.routing_tag,
+            &sealed.encrypted_payload,
+        )),
+        Err(_) => None,
+    }
+}
+
 fn normalize_participant_id(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -4400,8 +4462,10 @@ pub fn ChatPanel(
                                                     let base = base_url.clone();
                                                     let space = selected_space.clone();
                                                     let actor = account_did.clone();
+                                                    let device = device_id.clone();
                                                     let msg_id = msg.id.clone();
                                                     let emoji = emoji.to_string();
+                                                    let channel_encrypted = selected_channel_security_encrypted;
                                                     move |_| {
                                                         if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                             if let Some((_, senders)) = found.reactions.iter_mut().find(|(key, _)| key == &emoji) {
@@ -4412,11 +4476,25 @@ pub fn ChatPanel(
                                                                 found.reactions.push((emoji.clone(), vec![actor.clone()]));
                                                             }
                                                         }
+                                                        // Build the op synchronously: in an encrypted channel this
+                                                        // seals the emoji + derives the §2.9 routing tag (and persists
+                                                        // the advanced MLS ratchet) before the network spawn.
+                                                        let Some(op) = build_chat_reaction_add_operation(
+                                                            state_store,
+                                                            &space,
+                                                            &actor,
+                                                            &device,
+                                                            &msg_id,
+                                                            &emoji,
+                                                            channel_encrypted,
+                                                        ) else {
+                                                            status_msg.set(
+                                                                "Reaction skipped: MLS state not ready for this encrypted channel".to_owned(),
+                                                            );
+                                                            reaction_picker.set(None);
+                                                            return;
+                                                        };
                                                         let base = base.clone();
-                                                        let space = space.clone();
-                                                        let actor = actor.clone();
-                                                        let msg_id = msg_id.clone();
-                                                        let emoji = emoji.clone();
                                                         let api_token = token();
                                                         let wait_for = active_sync_token(sync_cursor());
                                                         spawn(async move {
@@ -4425,9 +4503,6 @@ pub fn ChatPanel(
                                                                 api_token,
                                                                 wait_for,
                                                                 |api| async move {
-                                                                    let op = chat_reaction_add_operation(
-                                                                        &space, &actor, &msg_id, &emoji,
-                                                                    );
                                                                     api.submit_event_envelope(&op).await
                                                                 },
                                                             )

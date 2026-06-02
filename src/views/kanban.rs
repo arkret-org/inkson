@@ -6606,7 +6606,7 @@ fn synthesis_revision_from_raw_operation(
     let update = local_card_update_from_raw_operation(record, None)?;
     let payload = &record.payload;
     let body = json_path_string(Some(payload), &["synthesis_revision_body"])
-        .or_else(|| match update.synthesis {
+        .or(match update.synthesis {
             Some(PrivateFieldOverlay::Set(value)) => Some(value),
             _ => None,
         })

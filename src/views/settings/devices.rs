@@ -53,6 +53,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 #[derive(Clone, Debug, PartialEq)]
 struct DeviceRow {
     device_id: String,
+    display_name: String,
     is_current: bool,
     verification_state: String,
     created_at: String,
@@ -70,6 +71,12 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
             arr.iter()
                 .filter_map(|item| {
                     let device_id = item.get("device_id").and_then(Value::as_str)?.to_owned();
+                    let display_name = item
+                        .get("display_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
                     let is_current = item
                         .get("is_current_session_device")
                         .and_then(Value::as_bool)
@@ -86,6 +93,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
                         .to_owned();
                     Some(DeviceRow {
                         device_id,
+                        display_name,
                         is_current,
                         verification_state,
                         created_at,
@@ -348,6 +356,16 @@ fn render_device_row(
     // or the dedicated `device-row-current` testid below.
     let device_id_for_button = row.device_id.clone();
     let device_id_label = short_protocol_id(&row.device_id);
+    // Friendly name is the primary label; the short device-id fragment
+    // (`#<suffix>`) disambiguates devices that share a display name, and
+    // the full id stays reachable via the row tooltip.
+    let id_suffix = crate::device_name::device_id_short_suffix(&row.device_id);
+    let has_name = !row.display_name.is_empty();
+    let primary_label = if has_name {
+        row.display_name.clone()
+    } else {
+        device_id_label.clone()
+    };
     rsx! {
         tr {
             class: "{row_class}",
@@ -355,7 +373,27 @@ fn render_device_row(
             "data-device-id": "{row.device_id}",
             "data-current": if is_current { "true" } else { "false" },
             td {
-                strong { title: "{row.device_id}", "{device_id_label}" }
+                div { class: "device-identity",
+                    strong {
+                        title: "{row.device_id}",
+                        "data-testid": "device-row-name",
+                        "{primary_label}"
+                    }
+                    if !id_suffix.is_empty() {
+                        span {
+                            class: "muted device-id-suffix",
+                            "data-testid": "device-row-id-suffix",
+                            "#{id_suffix}"
+                        }
+                    }
+                }
+                if has_name {
+                    div {
+                        class: "muted device-id-secondary",
+                        title: "{row.device_id}",
+                        "{device_id_label}"
+                    }
+                }
                 if is_current {
                     span {
                         class: "badge green",
@@ -814,6 +852,7 @@ mod tests {
             "devices": [
                 {
                     "device_id": "device-1",
+                    "display_name": "Chrome · Windows",
                     "is_current_session_device": true,
                     "verification_state": "verified",
                     "created_at": "2026-05-01T00:00:00Z"
@@ -830,7 +869,11 @@ mod tests {
         assert_eq!(cur.as_deref(), Some("device-1"));
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].device_id, "device-1");
+        assert_eq!(rows[0].display_name, "Chrome · Windows");
         assert!(rows[0].is_current);
+        // Missing display_name parses to an empty string (UI falls back
+        // to the short device id).
+        assert_eq!(rows[1].display_name, "");
         assert_eq!(rows[1].verification_state, "unverified");
     }
 
