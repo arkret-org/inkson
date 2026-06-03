@@ -19,7 +19,7 @@
 use cokret_sdk::mls_move::{
     covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
 };
-use cokret_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
+use cokret_sdk::{AnchorId, Effect, Hash, Precondition, RealmId};
 use serde::{Deserialize, Serialize};
 
 /// Serializable view of the MLS Governance Binding Move tuple set. Keeps
@@ -62,7 +62,7 @@ impl GovernanceBindingPayload {
     /// `Err` if the typed ids fail validation.
     pub fn from_anchor(
         group_id: impl Into<String>,
-        space_id: &SpaceId,
+        space_id: &RealmId,
         prev_epoch: u64,
         new_epoch: u64,
         new_schedule: &Hash,
@@ -135,12 +135,12 @@ pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::{AnchorId, Hash, SpaceId};
+    use cokret_sdk::{AnchorId, Hash, RealmId};
 
     use super::*;
 
-    fn space_id() -> SpaceId {
-        SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
+    fn space_id() -> RealmId {
+        RealmId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
     }
 
     fn anchor() -> AnchorId {

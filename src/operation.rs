@@ -493,8 +493,8 @@ pub mod cx_ops {
             .unwrap_or_else(|err| panic!("invalid realm id {value:?}: {err:?}"))
     }
 
-    fn space_id_value(value: &str) -> cokret_sdk::SpaceId {
-        cokret_sdk::SpaceId::new(value.to_owned())
+    fn space_id_value(value: &str) -> cokret_sdk::RealmId {
+        cokret_sdk::RealmId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid space id {value:?}: {err:?}"))
     }
 

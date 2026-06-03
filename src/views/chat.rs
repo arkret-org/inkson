@@ -430,7 +430,9 @@ fn build_chat_reaction_add_operation(
     channel_encrypted: bool,
 ) -> Option<crate::operation::EventEnvelope> {
     if !channel_encrypted {
-        return Some(chat_reaction_add_operation(space_id, actor, event_id, emoji));
+        return Some(chat_reaction_add_operation(
+            space_id, actor, event_id, emoji,
+        ));
     }
     let realm_id = scope_id_as_realm_id(space_id);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
@@ -1619,12 +1621,12 @@ fn decrypt_chat_encrypted_content(
     device_id: &str,
     encrypted_content: &Value,
 ) -> Option<String> {
-    let payload_value =
-        match serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
-        {
-            Ok(envelope) => serde_json::to_value(envelope.to_payload().ok()?).ok()?,
-            Err(_) => encrypted_content.clone(),
-        };
+    let payload_value = match serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(
+        encrypted_content.clone(),
+    ) {
+        Ok(envelope) => serde_json::to_value(envelope.to_payload().ok()?).ok()?,
+        Err(_) => encrypted_content.clone(),
+    };
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         state_store,
         space_id,

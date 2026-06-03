@@ -582,13 +582,9 @@ pub struct OkResBody {
     pub ok: bool,
 }
 
-pub use cokret_sdk::model::KeysUploadResBody;
-
-pub use cokret_sdk::model::KeysQueryResBody;
-
-pub use cokret_sdk::model::KeysClaimResBody;
-
-pub use cokret_sdk::model::DeviceMessagesSendResBody;
+pub use cokret_sdk::model::{
+    DeviceMessagesSendResBody, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceMessagesReceiveResBody {

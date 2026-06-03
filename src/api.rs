@@ -1533,9 +1533,7 @@ impl CokretApi {
     }
 
     pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
-        self.get_json(&format!(
-            "_cokret/self/snapshot/head?realm_id={realm_id}"
-        ))
+        self.get_json(&format!("_cokret/self/snapshot/head?realm_id={realm_id}"))
             .await
     }
 
@@ -1770,9 +1768,7 @@ impl CokretApi {
             .device_keys
             .iter()
             .find(|(did, _)| did.as_str() == actor)
-            .and_then(|(_, actor_map)| {
-                actor_map.iter().find(|(dev, _)| dev.as_str() == device_id)
-            })
+            .and_then(|(_, actor_map)| actor_map.iter().find(|(dev, _)| dev.as_str() == device_id))
             .and_then(|(_, device_value)| device_value.get("mls_key_packages"));
         let Some(packages) = packages else {
             return Ok(None);
@@ -1908,7 +1904,8 @@ impl CokretApi {
         &self,
         body: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        self.post_json("_cokret/root/identity/recovery-sessions", body).await
+        self.post_json("_cokret/root/identity/recovery-sessions", body)
+            .await
     }
 
     /// 6.3 — submit a recovery proof (e.g. from
@@ -2195,7 +2192,8 @@ impl CokretApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("_cokret/find/directory/search-actors", body).await
+        self.post_json("_cokret/find/directory/search-actors", body)
+            .await
     }
 
     /// A6.1 — global cross-space message search backed by soland's
@@ -2712,8 +2710,11 @@ impl CokretApi {
         &self,
         view_id: &str,
     ) -> anyhow::Result<cokret_sdk::CollectionProjectionResBody> {
-        self.post_json(&format!("_cokret/self/views/{view_id}/projection"), json!({}))
-            .await
+        self.post_json(
+            &format!("_cokret/self/views/{view_id}/projection"),
+            json!({}),
+        )
+        .await
     }
 
     // Pull the canonical Space-container / Flow lifecycle state for a Realm so the
@@ -2751,8 +2752,11 @@ impl CokretApi {
     /// NOT spec's `ck.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
     /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
-        self.post_json(&format!("_cokret/self/devices/{device_id}/revoke"), json!({}))
-            .await
+        self.post_json(
+            &format!("_cokret/self/devices/{device_id}/revoke"),
+            json!({}),
+        )
+        .await
     }
 
     /// Rename a device the caller controls by updating its user-facing
@@ -2849,7 +2853,8 @@ impl CokretApi {
         &self,
         request: Value,
     ) -> anyhow::Result<MimiKeyMaterialResBody> {
-        self.post_json("_cokret/open/mimi/key-material", request).await
+        self.post_json("_cokret/open/mimi/key-material", request)
+            .await
     }
 
     pub async fn mimi_room_update(
@@ -2857,8 +2862,11 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiRoomUpdateResBody> {
-        self.put_json(&format!("_cokret/open/mimi/flows/{room_id}/update"), request)
-            .await
+        self.put_json(
+            &format!("_cokret/open/mimi/flows/{room_id}/update"),
+            request,
+        )
+        .await
     }
 
     pub async fn mimi_notify(
@@ -2866,8 +2874,11 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiNotifyResBody> {
-        self.post_json(&format!("_cokret/open/mimi/flows/{room_id}/notify"), request)
-            .await
+        self.post_json(
+            &format!("_cokret/open/mimi/flows/{room_id}/notify"),
+            request,
+        )
+        .await
     }
 
     pub async fn mimi_submit_message(
@@ -2875,8 +2886,11 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiSubmitMessageResBody> {
-        self.post_json(&format!("_cokret/open/mimi/flows/{room_id}/messages"), request)
-            .await
+        self.post_json(
+            &format!("_cokret/open/mimi/flows/{room_id}/messages"),
+            request,
+        )
+        .await
     }
 
     pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResBody> {
@@ -2885,11 +2899,13 @@ impl CokretApi {
     }
 
     pub async fn mimi_request_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
-        self.post_json("_cokret/open/mimi/consent/request", request).await
+        self.post_json("_cokret/open/mimi/consent/request", request)
+            .await
     }
 
     pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
-        self.post_json("_cokret/open/mimi/consent/update", request).await
+        self.post_json("_cokret/open/mimi/consent/update", request)
+            .await
     }
 
     pub async fn mimi_identifier_query(
@@ -2904,14 +2920,16 @@ impl CokretApi {
         &self,
         request: Value,
     ) -> anyhow::Result<MimiReportAbuseResBody> {
-        self.post_json("_cokret/open/mimi/report-abuse", request).await
+        self.post_json("_cokret/open/mimi/report-abuse", request)
+            .await
     }
 
     pub async fn mimi_proxy_download(
         &self,
         request: Value,
     ) -> anyhow::Result<MimiProxyDownloadResBody> {
-        self.post_json("_cokret/open/mimi/proxy-download", request).await
+        self.post_json("_cokret/open/mimi/proxy-download", request)
+            .await
     }
 
     // ── Identity (extended) ─────────────────────────────────────────
@@ -3038,7 +3056,10 @@ impl CokretApi {
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         let value = serde_json::to_value(&signed)?;
-        let request = self.http.post(self.endpoint("_cokret/self/events")?).json(&value);
+        let request = self
+            .http
+            .post(self.endpoint("_cokret/self/events")?)
+            .json(&value);
         let request = self.with_write_request_headers(request, &idempotency_key);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
@@ -3100,7 +3121,10 @@ impl CokretApi {
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let value = serde_json::to_value(&body)?;
-        let request = self.http.post(self.endpoint("_cokret/self/events")?).json(&value);
+        let request = self
+            .http
+            .post(self.endpoint("_cokret/self/events")?)
+            .json(&value);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
@@ -3204,8 +3228,11 @@ impl CokretApi {
         &self,
         request: &IceConfigRequest,
     ) -> anyhow::Result<IceConfigResponse> {
-        self.post_json("_cokret/self/rtc/ice-config", serde_json::to_value(request)?)
-            .await
+        self.post_json(
+            "_cokret/self/rtc/ice-config",
+            serde_json::to_value(request)?,
+        )
+        .await
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -3223,8 +3250,11 @@ impl CokretApi {
         &self,
         body: &AgentKeyPairReqBody,
     ) -> anyhow::Result<AgentKeyPairResBody> {
-        self.post_json("_cokret/gate/account/agent-key-pair", serde_json::to_value(body)?)
-            .await
+        self.post_json(
+            "_cokret/gate/account/agent-key-pair",
+            serde_json::to_value(body)?,
+        )
+        .await
     }
 
     /// `POST /_cokret/self/agents` — `ck.agent.provision`. Provisions a new
@@ -5248,7 +5278,7 @@ mod tests {
             blob_download_url_for("http://127.0.0.1:8787/", "ck:blob:sha256:abcdef#image/png");
         assert_eq!(
             url,
-            "http://127.0.0.1:8787/_cokret/self/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
+            "http://127.0.0.1:8787/_cokret/self/blob/get?blob_ref=ck%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
         );
     }
 
@@ -5603,13 +5633,16 @@ mod tests {
     #[test]
     fn event_paths_use_v1_query_parameters() {
         let backfill = events_query_path("ck:space:demo");
-        assert_eq!(backfill, "_cokret/self/events?realms=cx%3Aspace%3Ademo");
+        assert_eq!(
+            backfill,
+            "_cokret/self/events/query?realms=ck%3Aspace%3Ademo"
+        );
         assert!(!backfill.contains("direction="));
 
         let subscribe = events_subscribe_path("ck:space:demo", Some("ck:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
-            "_cokret/self/events/subscribe?realms=cx%3Aspace%3Ademo&after=cx%3Acursor%3Ademo&include_history=true"
+            "_cokret/self/events/subscribe?realms=ck%3Aspace%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
         );
         assert!(!subscribe.contains("&from="));
     }

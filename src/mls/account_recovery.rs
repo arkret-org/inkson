@@ -468,9 +468,7 @@ pub struct RestoreReport {
 /// `mls_account_secret` body if one is present (None if absent). No passphrase
 /// is required — this is the SAFE half that can run at silent boot to *detect*
 /// whether account-secret recovery is available.
-pub async fn fetch_mls_account_secret_backup(
-    api: &crate::api::CokretApi,
-) -> Result<Option<Value>> {
+pub async fn fetch_mls_account_secret_backup(api: &crate::api::CokretApi) -> Result<Option<Value>> {
     let payload = api
         .list_key_backups()
         .await

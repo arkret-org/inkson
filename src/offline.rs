@@ -647,9 +647,12 @@ mod tests {
         let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
         global_queue().clear().await;
         assert_eq!(pending_count().await, 0);
-        enqueue_settings_write("/_cokret/self/account/data/blocklist", serde_json::json!({}))
-            .await
-            .unwrap();
+        enqueue_settings_write(
+            "/_cokret/self/account/data/blocklist",
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
         assert_eq!(pending_count().await, 1);
         global_queue().clear().await;
     }

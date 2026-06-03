@@ -1,7 +1,5 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -1541,14 +1539,13 @@ fn private_flow_field_locked(
 /// X5.2 — resolve the display text for an author-private flow field
 /// (`body` / `synthesis`) with a 3-tier precedence:
 ///
-/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the
-///    author's own content, the ONLY source the author can ever see for
-///    their own encrypted fields (OpenMLS refuses to decrypt the author's
-///    own ciphertext). Stored as the JSON-serialized patch value, so we
-///    parse it back and run it through `flow_body_display_text` exactly as
-///    the decrypt tier would, keeping write+read symmetric.
-/// 2. **Decrypt** (`private_flow_display_text`) — for ciphertext written by
-///    *other* members / other leaves synced in, which we *can* decrypt.
+/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the author's own content, the ONLY
+///    source the author can ever see for their own encrypted fields (OpenMLS refuses to decrypt the
+///    author's own ciphertext). Stored as the JSON-serialized patch value, so we parse it back and
+///    run it through `flow_body_display_text` exactly as the decrypt tier would, keeping write+read
+///    symmetric.
+/// 2. **Decrypt** (`private_flow_display_text`) — for ciphertext written by *other* members / other
+///    leaves synced in, which we *can* decrypt.
 /// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
 ///
 /// `field_path` MUST match the token the writer stored under (the patch

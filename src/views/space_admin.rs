@@ -2797,7 +2797,7 @@ async fn run_device_revoke_from_snapshot(
 ///
 /// 1. read the encrypted MLS snapshot for the Space out of the local state store;
 /// 2. validate inputs and load this device's snapshot secret;
-/// 3. mint a UUIDv7 operation_id, parse typed `Did` / `SpaceId`;
+/// 3. mint a UUIDv7 operation_id, parse typed `Did` / `RealmId`;
 /// 4. run the SDK Remove (group decrypt → commit → re-export);
 /// 5. submit the `mls_commit` Operation via `with_authed_api`;
 /// 6. on submit success, re-encrypt the post-commit group state and save it back so the next boot

@@ -162,8 +162,7 @@ pub fn hash_node_id(node_id: &str) -> u32 {
     let hlc = HlcGenerator::new(node_id).current();
     let parts = parse_hlc(hlc.as_str())
         .expect("HlcGenerator emits a spec-valid HLC string parseable by parse_hlc");
-    u32::from_str_radix(&parts.node_id, 16)
-        .expect("SDK node-id segment is 8 lowercase hex chars")
+    u32::from_str_radix(&parts.node_id, 16).expect("SDK node-id segment is 8 lowercase hex chars")
 }
 
 /// A global monotonic sequence counter for operation ordering.

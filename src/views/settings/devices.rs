@@ -2,20 +2,20 @@
 //! pairing (`/settings/devices/pair`).
 //!
 //! Surfaces:
-//! - `device-list` — wrapper element listing the principal's active devices (`GET /_cokret/self/devices`
-//!   via [`crate::api::CokretApi::list_devices`])
+//! - `device-list` — wrapper element listing the principal's active devices (`GET
+//!   /_cokret/self/devices` via [`crate::api::CokretApi::list_devices`])
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /_cokret/self/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`], then
-//!   rotates the account MLS history secret and rewraps local `mls_history` backups.
+//!   `POST /_cokret/self/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`],
+//!   then rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
 //!   /_cokret/self/devices/pairing-challenge`. The coauth-side unauthenticated `POST
-//!   /_cokret/gate/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow without
-//!   first authenticating do not yet exist — see the `TODO(G3.Y1-followup)` comments below.
+//!   /_cokret/gate/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow
+//!   without first authenticating do not yet exist — see the `TODO(G3.Y1-followup)` comments below.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
 //! - `pair-device-status` — feedback area.
@@ -211,9 +211,11 @@ pub fn SettingsDevicesPanel(
             let api_token = api_token.clone();
             load_status.set("Loading…".to_owned());
             spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move {
-                    api.list_devices().await
-                })
+                match with_authed_api(
+                    &base,
+                    api_token,
+                    |api| async move { api.list_devices().await },
+                )
                 .await
                 {
                     Ok(value) => {

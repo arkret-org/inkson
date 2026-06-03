@@ -2116,7 +2116,8 @@ mod tests {
                 grant_types: vec!["authorization_code".to_owned()],
                 token_endpoint_auth_method: Some("none".to_owned()),
             }],
-            oidc_browser_bridge_session_path: "_cokret/gate/auth/oidc/browser-bridge/session".to_owned(),
+            oidc_browser_bridge_session_path: "_cokret/gate/auth/oidc/browser-bridge/session"
+                .to_owned(),
             oidc_exchange_describe_path: "_cokret/gate/auth/oidc/exchange/describe".to_owned(),
             oidc_exchange_path: "_cokret/gate/auth/oidc/exchange".to_owned(),
             auth_bridge_contract: "auth-bridge".to_owned(),

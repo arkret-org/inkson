@@ -95,8 +95,9 @@ pub fn build_principal_signing_proof_active(session: &Value) -> anyhow::Result<O
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ed25519_dalek::{Verifier, VerifyingKey};
+
+    use super::*;
 
     fn sample_session() -> Value {
         json!({
@@ -143,9 +144,12 @@ mod tests {
     fn proof_signature_verifies_against_transcript() {
         let session = sample_session();
         let signing_key = SigningKey::from_bytes(&[51u8; 32]);
-        let proof =
-            build_principal_signing_proof(&session, "did:key:z6MkPrincipalFixture#key", &signing_key)
-                .unwrap();
+        let proof = build_principal_signing_proof(
+            &session,
+            "did:key:z6MkPrincipalFixture#key",
+            &signing_key,
+        )
+        .unwrap();
         assert_eq!(proof["kind"], "principal_signing");
         assert_eq!(proof["alg"], "EdDSA");
         assert_eq!(proof["challenge"], session["challenge"]);
@@ -154,9 +158,7 @@ mod tests {
         // exactly what soland does server-side.
         let transcript = principal_signing_proof_transcript(&session).unwrap();
         let bytes = crate::canonical::canonical_json_bytes(&transcript).unwrap();
-        let sig_raw = B64
-            .decode(proof["signature"].as_str().unwrap())
-            .unwrap();
+        let sig_raw = B64.decode(proof["signature"].as_str().unwrap()).unwrap();
         let signature = ed25519_dalek::Signature::from_slice(&sig_raw).unwrap();
         let vk: VerifyingKey = signing_key.verifying_key();
         vk.verify(&bytes, &signature)

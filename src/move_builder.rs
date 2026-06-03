@@ -38,7 +38,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 #[cfg(test)]
 use cokret_sdk::LatticeOpType;
 use cokret_sdk::{
-    AnchorId, CellRef, Did, Effect, Hash, Hlc, LatticeOp, Move, MoveId, MoveSignature, SpaceId,
+    AnchorId, CellRef, Did, Effect, Hash, Hlc, LatticeOp, Move, MoveId, MoveSignature, RealmId,
     canonical,
 };
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
@@ -734,7 +734,7 @@ pub fn build_conflict_repair_move(
         id: move_id,
         issuer: Did::new(issuer.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
-        space_id: SpaceId::new(space_id.to_owned())
+        space_id: RealmId::new(space_id.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
         preconditions: vec![],
         effects: parse_effects(std::slice::from_ref(&effect))?,
@@ -833,7 +833,7 @@ fn build_move_inner_with_preconditions_and_refs(
         id: move_id.clone(),
         issuer: Did::new(issuer.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid issuer DID: {e}"))?,
-        space_id: SpaceId::new(space_id.to_owned())
+        space_id: RealmId::new(space_id.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid space id: {e}"))?,
         preconditions: parse_preconditions(&preconditions)?,
         effects: parse_effects(&effects)?,
@@ -1359,12 +1359,12 @@ mod tests {
 
     #[test]
     fn mls_commit_move_with_binding_attaches_sdk_preconditions_and_effects() {
-        use cokret_sdk::{AnchorId, Hash, SpaceId};
+        use cokret_sdk::{AnchorId, Hash, RealmId};
 
         use crate::mls::governance::GovernanceBindingPayload;
 
         let space_id =
-            SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
+            RealmId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
         let anchor = AnchorId::new(format!("ck:anchor:sha256:{}", "a".repeat(64))).unwrap();
         let schedule = Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
         let binding = GovernanceBindingPayload::from_anchor(

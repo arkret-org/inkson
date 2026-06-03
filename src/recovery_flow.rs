@@ -4,8 +4,8 @@
 //! [`crate::api::CokretApi`] that drive the REC-1 recovery flow:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
-//! - 6.3: open a recovery session, sign + submit a `principal_signing` proof,
-//!   then complete with client-supplied `ck.device.authorize` material.
+//! - 6.3: open a recovery session, sign + submit a `principal_signing` proof, then complete with
+//!   client-supplied `ck.device.authorize` material.
 //!
 //! The wire shapes match `cokret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
@@ -29,7 +29,11 @@ pub struct ActiveRecoveryPolicy {
 pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPolicy> {
     let p = response.get("active_policy").filter(|v| !v.is_null())?;
     Some(ActiveRecoveryPolicy {
-        policy_id: p.get("policy_id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        policy_id: p
+            .get("policy_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
         policy_version: p.get("version").and_then(Value::as_u64).unwrap_or_default(),
         trust_domain: p
             .get("trust_domain")
@@ -217,7 +221,10 @@ mod tests {
 
     #[test]
     fn parse_active_policy_handles_null_and_value() {
-        assert_eq!(parse_active_recovery_policy(&json!({ "active_policy": null })), None);
+        assert_eq!(
+            parse_active_recovery_policy(&json!({ "active_policy": null })),
+            None
+        );
         let parsed = parse_active_recovery_policy(&json!({
             "active_policy": {
                 "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
@@ -228,6 +235,9 @@ mod tests {
         }))
         .expect("active policy");
         assert_eq!(parsed.policy_version, 3);
-        assert_eq!(parsed.allowed_proof_kinds, vec!["principal_signing", "recovery_unlock"]);
+        assert_eq!(
+            parsed.allowed_proof_kinds,
+            vec!["principal_signing", "recovery_unlock"]
+        );
     }
 }

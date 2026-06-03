@@ -335,10 +335,9 @@ pub fn ensure_creator_mls_snapshot(
 /// (soland and strict client schema validators both compare them).
 ///
 /// Digest field derivation (deterministic, leak-free):
-/// - `group_info_digest`  = the group's `schedule_hash()` (`sha256:` over the
-///   RFC 9420 epoch authenticator) — a stable per-epoch group-state digest.
-/// - `ratchet_tree_digest` = `sha256:` over the base64 TLS-serialized ratchet
-///   tree bytes.
+/// - `group_info_digest`  = the group's `schedule_hash()` (`sha256:` over the RFC 9420 epoch
+///   authenticator) — a stable per-epoch group-state digest.
+/// - `ratchet_tree_digest` = `sha256:` over the base64 TLS-serialized ratchet tree bytes.
 ///
 /// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
 /// builder stamps on `EventEnvelope::created_at`.
@@ -1041,7 +1040,10 @@ pub fn reaction_routing_tag_v1(
             REACTION_ROUTING_EXPORT_LEN,
         )
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    Ok(reaction_routing_tag_from_exporter(&exporter, canonical_emoji))
+    Ok(reaction_routing_tag_from_exporter(
+        &exporter,
+        canonical_emoji,
+    ))
 }
 
 /// Seal an E2EE reaction: derive the v1 routing tag and encrypt the real
@@ -1114,7 +1116,10 @@ pub fn encrypt_reaction_with_device_snapshot(
     );
     state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
 
-    Ok(EncryptedReaction { routing_tag, encrypted_payload })
+    Ok(EncryptedReaction {
+        routing_tag,
+        encrypted_payload,
+    })
 }
 
 #[cfg(test)]
@@ -1143,7 +1148,10 @@ mod tests {
         // sha256:<64 lowercase hex> wire form.
         let hex = tag.strip_prefix("sha256:").expect("sha256: prefix");
         assert_eq!(hex.len(), 64);
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                 .payload
                 .get("kind")
                 .and_then(|v| v.as_str())
-                .map(|kind| kind.starts_with("cx.call."))
+                .map(|kind| kind.starts_with("ck.call."))
                 .unwrap_or(false)
         })
         .count();
@@ -133,8 +133,10 @@ mod tests {
 
     #[test]
     fn renders_signal_count_from_raw_operations() {
+        // Ensure a clean slate even if a prior run aborted before cleanup.
+        let _ = std::fs::remove_file("call_view_test.json");
         let mut store = LocalStateStore::with_path("call_view_test.json");
-        // counted: starts with cx.call.
+        // counted: starts with ck.call.
         store.append_raw_operation(
             "op-1".to_owned(),
             Some("ck:space:s".to_owned()),
@@ -161,7 +163,7 @@ mod tests {
                     .payload
                     .get("kind")
                     .and_then(|v| v.as_str())
-                    .map(|kind| kind.starts_with("cx.call."))
+                    .map(|kind| kind.starts_with("ck.call."))
                     .unwrap_or(false)
             })
             .count();

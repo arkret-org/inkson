@@ -6,7 +6,7 @@
 //! `cx.relation.*`, and `cx.container.*` operations without each call site
 //! re-discovering the SDK's struct layout.
 
-pub use cokret_sdk::{Morph, Relation, RelationProfile, SpaceId};
+pub use cokret_sdk::{Morph, RealmId, Relation, RelationProfile};
 use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;

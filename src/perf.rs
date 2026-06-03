@@ -6,12 +6,11 @@
 //! synchronous serialize + one network request per character. These hooks
 //! collapse that into:
 //!
-//! * **draft save** — a trailing debounce (`use_debouncer`): the local `draft`
-//!   signal still updates instantly for responsiveness, but the persist only
-//!   runs after the user pauses.
-//! * **typing** — a leading-edge throttle + trailing stop (`use_typing_throttle`):
-//!   emit `typing=true` at most once per `active` window, then emit
-//!   `typing=false` once the user has been quiet for `stop`.
+//! * **draft save** — a trailing debounce (`use_debouncer`): the local `draft` signal still updates
+//!   instantly for responsiveness, but the persist only runs after the user pauses.
+//! * **typing** — a leading-edge throttle + trailing stop (`use_typing_throttle`): emit
+//!   `typing=true` at most once per `active` window, then emit `typing=false` once the user has
+//!   been quiet for `stop`.
 //!
 //! Both are timer-driven with a monotonically increasing generation token, so
 //! stale spawned tasks observe the bumped generation and exit instead of firing

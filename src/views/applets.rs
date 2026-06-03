@@ -124,7 +124,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("cx.applet.protocol_session."))
+                .map(|k| k.starts_with("ck.applet.protocol_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -648,14 +648,14 @@ mod tests {
 
     #[test]
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
-        // The view filters with `kind.starts_with("cx.applet.protocol_session.")`.
+        // The view filters with `kind.starts_with("ck.applet.protocol_session.")`.
         for kind in [
             "ck.applet.protocol_session.start",
             "ck.applet.protocol_session.status",
         ] {
-            assert!(kind.starts_with("cx.applet.protocol_session."));
+            assert!(kind.starts_with("ck.applet.protocol_session."));
         }
-        assert!(!"ck.applet.registration".starts_with("cx.applet.protocol_session."));
+        assert!(!"ck.applet.registration".starts_with("ck.applet.protocol_session."));
     }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
@@ -686,7 +686,8 @@ mod tests {
                 "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest"
             ),
             ManifestInputKind::Url(
-                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest".to_owned(),
+                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest"
+                    .to_owned(),
             )
         );
         let json = "{\"manifest_id\":\"applet:demo\",\"namespace\":\"bridge.demo\"}";

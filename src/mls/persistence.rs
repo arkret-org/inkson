@@ -8,9 +8,9 @@
 //!
 //! This module wires three pieces together:
 //!
-//! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()`
-//!    / `restore_from_state_record()` so the openmls provider storage can be round-tripped through
-//!    a typed [`cokret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
+//! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()` /
+//!    `restore_from_state_record()` so the openmls provider storage can be round-tripped through a
+//!    typed [`cokret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
 //!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
 //!    openmls provider keys.
 //!
@@ -24,9 +24,9 @@
 //! [`cokret_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
-//!    `ck.schema.key_backup.v1` request body used by `PUT /_cokret/self/keys/backups/{backup_id}`. The
-//!    blob is opaque to soland; device-secret-derived encryption keeps the server zero-knowledge of
-//!    group keys.
+//!    `ck.schema.key_backup.v1` request body used by `PUT /_cokret/self/keys/backups/{backup_id}`.
+//!    The blob is opaque to soland; device-secret-derived encryption keeps the server
+//!    zero-knowledge of group keys.
 //!
 //! 3. **Restore on boot or pair-in.** [`restore_envelope`] decrypts the envelope with this device's
 //!    MLS snapshot secret and reconstructs the group via the SDK call. Two failure modes are pinned

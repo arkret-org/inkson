@@ -7140,12 +7140,11 @@ pub fn RouterView() -> Element {
             // does not exist yet, so `mls_backup_prompt_required` returns
             // false and this effect would never re-fire to surface the
             // backup prompt once the secret appears. Two changes fix that:
-            //   1. Read a `state_store` signal in the *synchronous* effect
-            //      body (`has_local_mls_snapshot`) so Dioxus re-runs this
-            //      effect when the first encrypted write saves a snapshot.
-            //   2. Fold the local account-secret presence into the
-            //      detection key (`sec=`) so the `seen` guard no longer
-            //      matches once the secret flips false→true, letting the
+            //   1. Read a `state_store` signal in the *synchronous* effect body
+            //      (`has_local_mls_snapshot`) so Dioxus re-runs this effect when the first
+            //      encrypted write saves a snapshot.
+            //   2. Fold the local account-secret presence into the detection key (`sec=`) so the
+            //      `seen` guard no longer matches once the secret flips false→true, letting the
             //      detection re-run and re-evaluate the backup prompt.
             let has_local_mls_snapshot =
                 !state_store_for_detection.read().mls_snapshots().is_empty();
