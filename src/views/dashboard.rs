@@ -110,9 +110,11 @@ pub fn DashboardPanel(
 
     let visible_recent_flows = recent_flows()
         .into_iter()
-        .filter(|flow| {
-            flow.state != "archived" && flow.state != "deleted" && flow.state != "redacted"
-        })
+        // R11: the Flow state enum is exactly {active, archived, redacted}
+        // (flow.schema.json). "Recent flows" shows only `active`; `archived`
+        // and `redacted` are hidden here. There is NO `deleted` state in the
+        // spec, so it is intentionally not referenced.
+        .filter(|flow| flow.state != "archived" && flow.state != "redacted")
         .take(5)
         .collect::<Vec<_>>();
     let visible_notifications = notification_summaries

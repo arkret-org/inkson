@@ -1055,7 +1055,12 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
         realm_id: value_string(value, &["realm_id", "space_id"]).unwrap_or_default(),
         flow_id: value_string(value, &["flow_id"]),
         flow_track: value_string(value, &["flow_track", "track_name"]),
-        sender: value_string(value, &["sender", "sender_did", "actor_id"]),
+        // actor_id 优先(canonical envelope 主体);sender / sender_did 已废弃,
+        // 仅作向后兼容容忍服务端旧值(spec forbidden-wire-fields.json: sender → sender_actor_id)。
+        sender: value_string(
+            value,
+            &["actor_id", "sender_actor_id", "sender", "sender_did"],
+        ),
         body: value_string(value, &["body", "summary", "preview"]),
         is_e2ee,
         local_decrypted: value_bool(value, "local_decrypted").unwrap_or(!is_e2ee),

@@ -2107,6 +2107,17 @@ pub fn TimelinePanel(
     }
 }
 
+/// Read the sender identity from a timeline event envelope.
+///
+/// canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
+/// `sender → sender_actor_id`)。优先 `actor_id` / `sender_actor_id`;`sender`
+/// 已废弃,降到尾部仅作向后兼容容忍服务端旧值。
+fn timeline_actor_id(event: &Value) -> Option<&str> {
+    ["actor_id", "sender_actor_id", "sender"]
+        .into_iter()
+        .find_map(|key| event.get(key).and_then(Value::as_str))
+}
+
 fn timeline_events_from_sync_spaces(
     spaces: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<TimelineEvent> {
@@ -2166,14 +2177,13 @@ fn timeline_events_from_sync_spaces(
             events.push(TimelineEvent {
                 space_id: Some(space_id.clone()),
                 id: event_id.clone(),
-                sender: event
-                    .get("sender")
-                    .and_then(Value::as_str)
+                // canonical envelope 主体是 `actor_id`(spec
+                // forbidden-wire-fields.json: sender → sender_actor_id)。优先
+                // actor_id / sender_actor_id;`sender` 已废弃,仅作向后兼容。
+                sender: timeline_actor_id(event)
                     .unwrap_or("did:web:unknown")
                     .to_owned(),
-                sender_display: event
-                    .get("sender")
-                    .and_then(Value::as_str)
+                sender_display: timeline_actor_id(event)
                     .map(short_protocol_id)
                     .unwrap_or_else(|| "server".to_owned()),
                 body,

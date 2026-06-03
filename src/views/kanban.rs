@@ -207,8 +207,9 @@ struct KanbanCard {
     /// Flow lifecycle state (orthogonal to `state` above which is
     /// Move-lifecycle). Spec: `flow-and-message.md §3`,
     /// `common-fields.md §5.1`. Active cards render in the column;
-    /// Archived cards move to the archived-cards drawer. Tombstoned is
-    /// included for state-machine completeness but UI never emits it.
+    /// Archived cards move to the archived-cards drawer. Redacted is the
+    /// irreversible terminal (content cleared, envelope/audit retained); UI
+    /// never emits it but renders a "[消息已撤回]" placeholder for it.
     lifecycle: FlowLifecycleState,
 }
 
@@ -252,10 +253,14 @@ enum FlowLifecycleState {
     #[default]
     Active,
     Archived,
-    /// Server-only terminal (`deleted` / `redacted` per the wire enum,
-    /// merged here for UI). The UI never produces this; the variant
-    /// exists so `dispatch_flow_lifecycle` can exhaustively match.
-    Tombstoned,
+    /// Irreversible terminal per the wire enum (`flow.schema.json` state =
+    /// {`active`,`archived`,`redacted`}). `redacted` clears content but
+    /// retains the envelope/audit trail, so the UI renders a
+    /// "[消息已撤回]" placeholder rather than hiding the Flow. There is NO
+    /// `deleted` terminal in the spec; `flow_lifecycle_from_wire` downgrades
+    /// any stray `"deleted"` wire value (logging a warning) instead of
+    /// treating it as terminal.
+    Redacted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1819,9 +1824,14 @@ fn raw_operation_from_event(event: &Value, expected_kind: &str) -> Option<RawOpe
     let operation_id = json_path_string(Some(event), &["operation_id"])
         .or_else(|| json_path_string(Some(event), &["event_id"]))
         .unwrap_or_else(|| format!("remote-{expected_kind}"));
+    // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
+    // sender → sender_actor_id)。优先 actor_id / sender_actor_id;`sender`
+    // 已废弃,降到尾部仅作向后兼容容忍服务端旧值。
     let actor_id = json_path_string(Some(event), &["actor_id"])
-        .or_else(|| json_path_string(Some(event), &["sender"]))
+        .or_else(|| json_path_string(Some(event), &["sender_actor_id"]))
         .or_else(|| json_path_string(Some(&body), &["actor_id"]))
+        .or_else(|| json_path_string(Some(&body), &["sender_actor_id"]))
+        .or_else(|| json_path_string(Some(event), &["sender"]))
         .or_else(|| json_path_string(Some(&body), &["sender"]))
         .unwrap_or_default();
     let created_at = json_path_string(Some(event), &["created_at"])
@@ -3264,7 +3274,14 @@ pub fn KanbanPanel(
     // handlers (the raw `selected_space` String can't be moved into more
     // than one closure).
     let board_route_space_id = card_detail_route_space_id(&selected_space);
-    let selected_scope_security_encrypted = {
+    // R4 (fail-closed): three-state security signal. `Some(true/false)` means
+    // the Realm security projection IS known (encrypted / plaintext); `None`
+    // means the projection is missing / not yet synced. We deliberately drop
+    // the old `.unwrap_or(false)` — "unknown" must NOT collapse to "plaintext",
+    // otherwise a private field destined for an encrypted Realm could be
+    // submitted in cleartext while the projection is still in flight. The
+    // plaintext-block guard fails closed on `None`.
+    let selected_scope_security_encrypted: Option<bool> = {
         let state = state_store.read().load();
         let scope_id = if projection_realm_id.trim().is_empty() {
             selected_space.as_str()
@@ -3279,8 +3296,13 @@ pub fn KanbanPanel(
                 )
             })
             .map(crate::security_state::realm_projection_is_encrypted)
-            .unwrap_or(false)
     };
+    // Fail-closed `bool` projection for the non-guard consumers (security
+    // badge display, the per-card encrypt decision): when the Realm security
+    // state is unknown we treat it as encrypted so those paths never take the
+    // plaintext branch. Known-plaintext (`Some(false)`) stays `false`.
+    let selected_scope_security_encrypted_or_secure =
+        selected_scope_security_encrypted.unwrap_or(true);
     let projected_space_container_ids = lifecycle_container_projection()
         .into_iter()
         .map(|view| view.container_space_id)
@@ -4175,7 +4197,7 @@ pub fn KanbanPanel(
                                 div { class: "event-head",
                                     span { class: "space-title flow-title-with-security",
                                         SecurityStateBadge {
-                                            encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
+                                            encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                             compact: true,
                                             test_id: Some("flow-card-security-state".to_owned()),
                                         }
@@ -4236,6 +4258,26 @@ pub fn KanbanPanel(
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        // R11: `redacted` clears Flow content but retains the
+                        // envelope/audit trail (flow.schema.json terminal). The
+                        // UI MUST surface a "[消息已撤回]" placeholder rather than
+                        // hiding the Flow, so the card stays visible without
+                        // leaking its (now-cleared) title/body.
+                        for redacted_card in column
+                            .cards
+                            .iter()
+                            .filter(|c| c.lifecycle == FlowLifecycleState::Redacted)
+                        {
+                            div {
+                                class: "event board-card board-card-redacted",
+                                "data-testid": "kanban-card-redacted",
+                                "data-flow-id": "{redacted_card.id}",
+                                div { class: "event-head",
+                                    span { class: "space-title muted", "{crate::i18n::tr(\"timeline.redacted\")}" }
                                 }
                             }
                         }
@@ -4539,7 +4581,7 @@ pub fn KanbanPanel(
                                     div { class: "event-head",
                                         span { class: "space-title flow-title-with-security",
                                             SecurityStateBadge {
-                                                encrypted: row.card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
+                                                encrypted: row.card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                                 compact: true,
                                                 test_id: Some("flow-card-security-state".to_owned()),
                                             }
@@ -4773,7 +4815,7 @@ pub fn KanbanPanel(
                                     div { class: "card-detail-title-block",
                                         div { class: "card-detail-title-row",
                                             SecurityStateBadge {
-                                                encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted),
+                                                encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
                                                 compact: true,
                                                 test_id: Some("flow-detail-security-state".to_owned()),
                                             }
@@ -6354,12 +6396,14 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
             continue;
         }
         for path in [
+            // actor_id 优先(canonical);`sender` 已废弃,降到尾部仅作向后兼容。
             &["body", "actor_id"][..],
-            &["body", "sender"][..],
-            &["body", "author"][..],
-            &["body", "created_by"][..],
+            &["body", "sender_actor_id"][..],
             &["payload", "actor_id"][..],
             &["actor_id"][..],
+            &["body", "author"][..],
+            &["body", "created_by"][..],
+            &["body", "sender"][..],
         ] {
             if let Some(did) = json_path_string(Some(payload), path) {
                 dids.insert(did);
@@ -6498,7 +6542,8 @@ fn save_card_detail_edit(
     device_id: String,
     current: KanbanCard,
     synthesis_entries: Vec<CardSynthesisTrackEntry>,
-    scope_security_encrypted: bool,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
     card_edit_scope: Signal<CardEditScope>,
     card_edit_title: Signal<String>,
     card_edit_description: Signal<String>,
@@ -6959,20 +7004,58 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
 /// matches in the future. See _next.md X13.
 const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ck.space.create"];
 
+/// R4 fail-closed reason surfaced when the Realm security projection has not
+/// synced yet and we cannot prove the scope is plaintext. Mirrors the
+/// `kanban.security_not_ready` i18n key.
+const SECURITY_STATE_NOT_READY_REASON: &str =
+    "Security state not ready; please retry shortly before writing to this Realm.";
+
+/// R4 (fail-closed): `scope_security_encrypted` is a THREE-STATE value:
+/// - `Some(true)`  — the scope's security projection is known-encrypted.
+/// - `Some(false)` — the scope's security projection is known-plaintext (a legitimate plaintext
+///   Realm); plaintext writes are allowed.
+/// - `None`        — the security projection is MISSING / not yet synced (first paint, incremental
+///   window, projection gap). We do NOT know whether the Realm requires E2EE, so we MUST NOT
+///   default to plaintext. Block the write and ask the user to retry once the projection lands;
+///   otherwise a private field bound for an encrypted Realm could leak in cleartext while the
+///   projection is still in flight.
 fn kanban_plaintext_block_reason(
-    scope_security_encrypted: bool,
+    scope_security_encrypted: Option<bool>,
     event: &crate::operation::EventEnvelope,
 ) -> Option<String> {
-    if !scope_security_encrypted || !kanban_event_carries_plaintext_private_content(event) {
-        return None;
+    match scope_security_encrypted {
+        // Known plaintext Realm — legitimate cleartext write, never block.
+        Some(false) => None,
+        // Unknown security state — fail-closed: block plaintext private
+        // content until the projection is ready. Container scaffold writes
+        // (non-secret metadata) are still exempt below.
+        None => {
+            if !kanban_event_carries_plaintext_private_content(event) {
+                return None;
+            }
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
+                return None;
+            }
+            // NB: kept as a plain string (not `i18n::tr`) so this pure guard
+            // stays callable outside a Dioxus runtime (unit tests). The
+            // localized copy lives under the `kanban.security_not_ready` key
+            // for any UI surface that wants to translate it.
+            Some(SECURITY_STATE_NOT_READY_REASON.to_owned())
+        }
+        // Known encrypted Realm — block plaintext private content.
+        Some(true) => {
+            if !kanban_event_carries_plaintext_private_content(event) {
+                return None;
+            }
+            // Container scaffold writes (board/list title, kind, parent,
+            // rank) are non-secret metadata and ALWAYS submit via the normal
+            // plaintext event path even in an encrypted Realm. Never block.
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
+                return None;
+            }
+            kanban_plaintext_block_reason_for_kind(true, &event.kind)
+        }
     }
-    // Container scaffold writes (board/list title, kind, parent, rank) are
-    // non-secret metadata and ALWAYS submit via the normal plaintext event
-    // path even in an encrypted Realm. Never block them.
-    if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
-        return None;
-    }
-    kanban_plaintext_block_reason_for_kind(scope_security_encrypted, &event.kind)
 }
 
 fn kanban_plaintext_block_reason_for_kind(
@@ -7533,7 +7616,8 @@ fn dispatch_card_detail_update(
     device_id: String,
     current: KanbanCard,
     draft: CardDetailDraft,
-    scope_security_encrypted: bool,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -7548,9 +7632,13 @@ fn dispatch_card_detail_update(
             return false;
         }
     };
+    // R4 fail-closed: when the Realm security state is unknown (`None`),
+    // treat the scope as encrypted so we take the encrypt path rather than
+    // emitting a plaintext patch. The plaintext-block guard below still
+    // fails closed on the unknown state for any private content.
     let effective_security_encrypted = current
         .security_encrypted
-        .unwrap_or(scope_security_encrypted);
+        .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
     let (patch, mls_events) = if effective_security_encrypted {
         match encrypt_private_card_detail_patch_values(
             patch,
@@ -7577,7 +7665,14 @@ fn dispatch_card_detail_update(
 
     let op = crate::operation::cx_ops::flow_update_patch(&space_id, &actor_did, &current.id, patch)
         .build("yougen");
-    if let Some(reason) = kanban_plaintext_block_reason(effective_security_encrypted, &op) {
+    // R4: feed the guard the three-state security signal. An explicit
+    // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
+    // the scope three-state so an unknown projection fails closed.
+    let guard_security_state = current
+        .security_encrypted
+        .map(Some)
+        .unwrap_or(scope_security_encrypted);
+    if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &op) {
         board_status.set(reason);
         return false;
     }
@@ -8034,7 +8129,8 @@ fn submit_kanban_operation_event(
     token: Signal<String>,
     space_id: String,
     operation: crate::operation::EventEnvelope,
-    scope_security_encrypted: bool,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
     mut state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
@@ -8132,7 +8228,8 @@ fn submit_column_order_updates(
     space_id: String,
     actor_did: String,
     ordered_columns: Vec<KanbanColumn>,
-    scope_security_encrypted: bool,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
     state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
@@ -8187,7 +8284,8 @@ fn submit_kanban_move(
     subject: String,
     kind: &'static str,
     value: serde_json::Value,
-    scope_security_encrypted: bool,
+    // R4: three-state security signal (see `kanban_plaintext_block_reason`).
+    scope_security_encrypted: Option<bool>,
     mut columns: Signal<Vec<KanbanColumn>>,
     mut state_store: Signal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
@@ -8495,13 +8593,24 @@ fn space_container_state_from_wire(state: &str) -> SpaceContainerLifecycleState 
     }
 }
 
-/// Sibling at the Flow object layer. Server emits the four states
-/// `active / archived / deleted / redacted`; yougen folds the two
-/// terminals into `Tombstoned` since the UI treats them equivalently.
+/// Sibling at the Flow object layer. The wire enum is exactly
+/// `{active, archived, redacted}` (`flow.schema.json` state) — `redacted`
+/// is the only irreversible terminal. There is NO `deleted` state in the
+/// spec; if the server ever sends `"deleted"` we log a warning and degrade
+/// to `Active` (the safe non-terminal default — server can correct on next
+/// sync) rather than silently treating it as a terminal.
 fn flow_lifecycle_from_wire(state: &str) -> FlowLifecycleState {
     match state {
         "archived" => FlowLifecycleState::Archived,
-        "deleted" | "redacted" => FlowLifecycleState::Tombstoned,
+        "redacted" => FlowLifecycleState::Redacted,
+        "deleted" => {
+            tracing::warn!(
+                wire_state = "deleted",
+                "Flow wire state `deleted` is not in the spec enum (active/archived/redacted); \
+                 degrading to Active. Redact, not delete, is the terminal per flow.schema.json."
+            );
+            FlowLifecycleState::Active
+        }
         _ => FlowLifecycleState::Active,
     }
 }
@@ -8647,14 +8756,14 @@ fn dispatch_space_container_lifecycle(
 
 /// Pure guard for Flow lifecycle transitions. Mirrors
 /// `validate_space_container_lifecycle_transition` at the Flow layer — refuses
-/// same-state self-transitions and UI-emitted Tombstone targets.
+/// same-state self-transitions and UI-emitted Redacted targets.
 fn validate_flow_lifecycle_transition(
     flow_id: &str,
     prior: FlowLifecycleState,
     target: FlowLifecycleState,
 ) -> Result<(), String> {
-    if matches!(target, FlowLifecycleState::Tombstoned) {
-        return Err("Tombstone is server-only; UI dispatch refused".to_owned());
+    if matches!(target, FlowLifecycleState::Redacted) {
+        return Err("Redaction is server-only; UI dispatch refused".to_owned());
     }
     if prior == target {
         return Err(format!(
@@ -8719,9 +8828,9 @@ fn dispatch_flow_lifecycle(
         FlowLifecycleState::Active => {
             crate::operation::cx_ops::flow_restore(&space_id, &actor_did, &flow_id)
         }
-        FlowLifecycleState::Tombstoned => {
+        FlowLifecycleState::Redacted => {
             // Invariant: `validate_flow_lifecycle_transition` (called above)
-            // already rejects any move to Tombstone, so by construction the
+            // already rejects any move to Redacted, so by construction the
             // only targets that reach this match are Active|Archived. If we
             // ever land here something upstream broke the contract — fail
             // loud rather than emitting a silently-wrong Move.
@@ -9699,15 +9808,17 @@ mod tests {
             flow_lifecycle_from_wire("archived"),
             FlowLifecycleState::Archived
         );
-        // Spec lists both `deleted` and `redacted` as terminal; yougen
-        // folds them into the same UI bucket.
-        assert_eq!(
-            flow_lifecycle_from_wire("deleted"),
-            FlowLifecycleState::Tombstoned
-        );
+        // R11: `redacted` is the only spec terminal (flow.schema.json).
         assert_eq!(
             flow_lifecycle_from_wire("redacted"),
-            FlowLifecycleState::Tombstoned
+            FlowLifecycleState::Redacted
+        );
+        // `deleted` is NOT in the spec enum; it degrades to the safe
+        // non-terminal `Active` default (and logs a warning) rather than
+        // being treated as a terminal.
+        assert_eq!(
+            flow_lifecycle_from_wire("deleted"),
+            FlowLifecycleState::Active
         );
         assert_eq!(
             flow_lifecycle_from_wire("garbage"),
@@ -9806,10 +9917,10 @@ mod tests {
         let err = validate_flow_lifecycle_transition(
             "ck:flow:test",
             FlowLifecycleState::Active,
-            FlowLifecycleState::Tombstoned,
+            FlowLifecycleState::Redacted,
         )
-        .expect_err("UI-emitted Tombstone must be refused");
-        assert!(err.contains("Tombstone"));
+        .expect_err("UI-emitted Redaction must be refused");
+        assert!(err.contains("Redaction"));
 
         validate_flow_lifecycle_transition(
             "ck:flow:test",
@@ -10861,9 +10972,59 @@ mod tests {
         .build("yougen");
 
         assert!(kanban_event_carries_plaintext_private_content(&event));
-        let reason = kanban_plaintext_block_reason(true, &event).unwrap();
+        let reason = kanban_plaintext_block_reason(Some(true), &event).unwrap();
         assert!(reason.contains("Encrypted Realm blocks plaintext ck.flow.update"));
-        assert!(kanban_plaintext_block_reason(false, &event).is_none());
+        assert!(kanban_plaintext_block_reason(Some(false), &event).is_none());
+    }
+
+    /// R4 fail-closed: when the Realm security state is UNKNOWN (`None`, i.e.
+    /// the security projection has not synced yet) the guard MUST block a
+    /// plaintext private-content write rather than defaulting to plaintext.
+    /// A known-plaintext Realm (`Some(false)`) is the legitimate case that
+    /// MUST still be allowed — that is what keeps fail-closed from breaking
+    /// normal plaintext flows.
+    #[test]
+    fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
+        let private_update = crate::operation::cx_ops::flow_update_patch(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            DEMO_FLOW_LEGAL_REVIEW_ID,
+            json!({
+                "body": {"$op": "set", "value": "private description"},
+            }),
+        )
+        .build("yougen");
+        assert!(kanban_event_carries_plaintext_private_content(
+            &private_update
+        ));
+        // Unknown security state → fail-closed block.
+        assert!(
+            kanban_plaintext_block_reason(None, &private_update).is_some(),
+            "unknown security state must fail closed for plaintext private content"
+        );
+        // Known-plaintext Realm → legitimate plaintext write, never blocked.
+        assert!(
+            kanban_plaintext_block_reason(Some(false), &private_update).is_none(),
+            "known-plaintext Realm must keep allowing plaintext writes"
+        );
+
+        // Non-private metadata (container scaffold) is exempt even when the
+        // security state is unknown, so board/list creation is not bricked
+        // while the projection is in flight.
+        let board_create = crate::operation::cx_ops::space_create(
+            TEST_REALM_ID,
+            "did:web:alice.example",
+            "ck:space:00000000-0000-7000-8000-0000000000aa",
+            "board",
+            "Roadmap",
+            None,
+            None,
+        )
+        .build("yougen");
+        assert!(
+            kanban_plaintext_block_reason(None, &board_create).is_none(),
+            "container scaffold metadata must not be blocked by unknown security state"
+        );
     }
 
     #[test]
@@ -10889,7 +11050,7 @@ mod tests {
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
-        assert!(kanban_plaintext_block_reason(true, &event).is_none());
+        assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
     }
 
     #[test]
@@ -11127,7 +11288,7 @@ mod tests {
 
         assert_eq!(event.kind, "ck.flow.update");
         assert!(!kanban_event_carries_plaintext_private_content(&event));
-        assert!(kanban_plaintext_block_reason(true, &event).is_none());
+        assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
     }
 
     #[test]
@@ -11153,8 +11314,8 @@ mod tests {
         )
         .build("yougen");
 
-        assert!(kanban_plaintext_block_reason(true, &flow).is_none());
-        assert!(kanban_plaintext_block_reason(true, &space).is_none());
+        assert!(kanban_plaintext_block_reason(Some(true), &flow).is_none());
+        assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
     }
 
     /// X13 regression: in an encrypted scope, container creation
@@ -11177,7 +11338,7 @@ mod tests {
         .build("yougen");
         assert_eq!(board.kind, "ck.space.create");
         assert!(
-            kanban_plaintext_block_reason(true, &board).is_none(),
+            kanban_plaintext_block_reason(Some(true), &board).is_none(),
             "encrypted scope must not block board container create"
         );
 
@@ -11193,7 +11354,7 @@ mod tests {
         .build("yougen");
         assert_eq!(list.kind, "ck.space.create");
         assert!(
-            kanban_plaintext_block_reason(true, &list).is_none(),
+            kanban_plaintext_block_reason(Some(true), &list).is_none(),
             "encrypted scope must not block list container create"
         );
 
@@ -11208,7 +11369,7 @@ mod tests {
         )
         .build("yougen");
         assert!(
-            kanban_plaintext_block_reason(true, &private_update).is_some(),
+            kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
             "encrypted scope must still block plaintext private flow content"
         );
     }
@@ -11226,7 +11387,7 @@ mod tests {
         .build("yougen");
 
         assert!(!kanban_event_carries_plaintext_private_content(&event));
-        assert!(kanban_plaintext_block_reason(true, &event).is_none());
+        assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
     }
 
     #[test]

@@ -565,6 +565,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.add_list", "Add List");
     dict.set("kanban.save_card", "Save");
     dict.set("kanban.cancel_card", "Cancel");
+    dict.set(
+        "kanban.security_not_ready",
+        "Security state not ready; please retry shortly before writing to this Realm.",
+    );
     dict.set("space_admin.apply_policy", "Apply Policy");
     dict.set(
         "space_admin.grant_capability_move",
@@ -1562,6 +1566,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.add_list", "添加列表");
     dict.set("kanban.save_card", "保存");
     dict.set("kanban.cancel_card", "取消");
+    dict.set(
+        "kanban.security_not_ready",
+        "安全状态未就绪,请稍候重试后再写入该 Realm。",
+    );
     dict.set("space_admin.apply_policy", "应用策略");
     dict.set("space_admin.grant_capability_move", "授予权限（Move）");
     dict.set("space_admin.revoke_capability_move", "撤销权限（Move）");

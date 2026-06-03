@@ -1794,7 +1794,16 @@ fn chat_message_from_event_with_sidecar(
         id: event_id,
         sender: first_string_in_candidates(
             &candidates,
-            &["sender", "sender_id", "actor_id", "actor"],
+            // canonical envelope 主体是 `actor_id`(spec forbidden-wire-fields.json:
+            // sender → sender_actor_id)。优先读 actor_id / sender_actor_id;
+            // `sender` / `sender_id` / `actor` 已废弃,仅作向后兼容容忍服务端旧值。
+            &[
+                "actor_id",
+                "sender_actor_id",
+                "sender",
+                "sender_id",
+                "actor",
+            ],
         )
         .unwrap_or("did:web:unknown")
         .to_owned(),
@@ -1862,7 +1871,14 @@ fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::polls::Poll
         {
             let actor = first_string_in_candidates(
                 &candidates,
-                &["sender", "sender_id", "actor_id", "actor"],
+                // actor_id 优先(canonical),sender* / actor 仅作向后兼容(已废弃)。
+                &[
+                    "actor_id",
+                    "sender_actor_id",
+                    "sender",
+                    "sender_id",
+                    "actor",
+                ],
             )
             .unwrap_or("did:web:unknown");
             if let Some(index) = by_poll_id.get(&poll_id).copied() {
