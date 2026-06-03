@@ -7531,7 +7531,7 @@ pub fn RouterView() -> Element {
         .unwrap_or_else(|| route_label(&route));
     let topbar_context_title = selected_preview
         .as_ref()
-        .map(|space| space.name.clone())
+        .map(|space| space.title.clone())
         .unwrap_or_else(|| {
             if route_uses_space_context {
                 "Space".to_owned()
@@ -7912,7 +7912,7 @@ pub fn RouterView() -> Element {
                                 .iter()
                                 .filter(|item| {
                                     q_lc.is_empty()
-                                        || item.space.name.to_lowercase().contains(&q_lc)
+                                        || item.space.title.to_lowercase().contains(&q_lc)
                                         || item.space.space_id.to_lowercase().contains(&q_lc)
                                 })
                                 .collect();
@@ -7935,7 +7935,7 @@ pub fn RouterView() -> Element {
                                                     mobile_space_query.set(String::new());
                                                 }
                                             },
-                                            "{item.space.name}"
+                                            "{item.space.title}"
                                         }
                                     }
                                 }
@@ -8192,8 +8192,8 @@ pub fn RouterView() -> Element {
                                     .space_remark(&item_space.space_id);
                                 let display_name = remark
                                     .as_ref()
-                                    .map(|r| r.display_name(&item_space.name).to_owned())
-                                    .unwrap_or_else(|| item_space.name.clone());
+                                    .map(|r| r.display_name(&item_space.title).to_owned())
+                                    .unwrap_or_else(|| item_space.title.clone());
                                 let has_remark = remark
                                     .as_ref()
                                     .is_some_and(|r| !r.local_name.trim().is_empty());
@@ -8231,7 +8231,7 @@ pub fn RouterView() -> Element {
                             Link {
                                 class: "{item_class} sidebar-row-main",
                                 "data-testid": "space-button",
-                                title: "{item_space.name}",
+                                title: "{item_space.title}",
                                 style: "padding-left: calc(10px + {depth_px}px);",
                                 to: Route::Space { space_id: item_space.space_id.clone() },
                                 onclick: {
@@ -9507,7 +9507,7 @@ fn CommandPalette(
         .collect();
     let matched_spaces: Vec<SpacePreview> = spaces
         .iter()
-        .filter(|space| palette_filter(&query, &format!("{} {}", space.name, space.space_id)))
+        .filter(|space| palette_filter(&query, &format!("{} {}", space.title, space.space_id)))
         .take(10)
         .cloned()
         .collect();
@@ -9534,12 +9534,12 @@ fn CommandPalette(
                                     class: "command-palette-item",
                                     "data-testid": "command-palette-space",
                                     role: "option",
-                                    "aria-label": "Open space {space.name}",
+                                    "aria-label": "Open space {space.title}",
                                     onclick: {
                                         let id = space.space_id.clone();
                                         move |_| on_pick_space.call(id.clone())
                                     },
-                                    span { class: "command-palette-item-title", "{space.name}" }
+                                    span { class: "command-palette-item-title", "{space.title}" }
                                     span { class: "command-palette-item-hint", title: "{space.space_id}", "{space_id_label}" }
                                 }
                             }
@@ -11077,7 +11077,7 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
             let parent_space_id = extract_parent_space_id(id, body);
             SpacePreview {
                 space_id: id.clone(),
-                name: title,
+                title,
                 description,
                 tags,
                 public: true,
@@ -11770,7 +11770,7 @@ mod tests {
     fn preview(id: &str, name: &str, parent: Option<&str>) -> SpacePreview {
         SpacePreview {
             space_id: id.to_owned(),
-            name: name.to_owned(),
+            title: name.to_owned(),
             description: None,
             tags: Default::default(),
             public: true,
@@ -11995,7 +11995,7 @@ mod tests {
             previews[0].space_id,
             "ck:space:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(previews[0].name, "Cokret Demo Space");
+        assert_eq!(previews[0].title, "Cokret Demo Space");
         assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
     }
 
@@ -12043,7 +12043,7 @@ mod tests {
             previews[0].space_id,
             "ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729"
         );
-        assert_eq!(previews[0].name, "Test");
+        assert_eq!(previews[0].title, "Test");
         assert_eq!(previews[0].kind, SpacePreviewKind::Realm);
     }
 

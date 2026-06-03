@@ -606,7 +606,7 @@ pub fn DirectoryPanel(
                             span { "{space.category.clone().unwrap_or_else(|| \"space\".to_owned())}" }
                             span { if space.public { "public" } else { "private" } }
                         }
-                        div { class: "space-title", "{space.name}" }
+                        div { class: "space-title", "{space.title}" }
                         div { class: "muted", "{space.description.clone().unwrap_or_default()}" }
                         div { class: "actions",
                             Link {
@@ -639,7 +639,7 @@ pub fn DirectoryPanel(
                         div { class: "event-head", span { "Index Projection" } span { "{spaces().len()} result(s)" } }
                         for space in spaces() {
                             GenericEntityCard {
-                                title: space.name.clone(),
+                                title: space.title.clone(),
                                 summary: space.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
                                 entity_type: "realm".to_owned(),
                             }

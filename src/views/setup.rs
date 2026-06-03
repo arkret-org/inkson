@@ -1106,9 +1106,13 @@ pub fn SetupPanel(
                                                                 invitees.clone(),
                                                                 plaintext_services.clone(),
                                                             ).await {
-                                                            Ok(space) => {
-                                                                selected_space.set(space.space_id.clone());
-                                                                created_space_id.set(space.space_id.clone());
+                                                            Ok(realm) => {
+                                                                // R15: ck.realm.create now returns
+                                                                // RealmCreateResponse with the new
+                                                                // `ck:realm:*` id under `realm_id`.
+                                                                let space_id = realm.realm_id.clone();
+                                                                selected_space.set(space_id.clone());
+                                                                created_space_id.set(space_id.clone());
                                                                 // Optimistic sidebar update goes
                                                                 // through the canonical store —
                                                                 // the `spaces` Signal is derived
@@ -1132,7 +1136,7 @@ pub fn SetupPanel(
                                                                     vec![actor.clone()]
                                                                 };
                                                                 state_store.write().save_space_projection(
-                                                                    space.space_id.clone(),
+                                                                    space_id.clone(),
                                                                     json!({
                                                                         // Yougen-local schema tag — used by the
                                                                         // sidebar (M-SIDEBAR-TIER-1) to split
@@ -1172,17 +1176,17 @@ pub fn SetupPanel(
                                                                         match crate::mls::runtime::ensure_creator_mls_snapshot(
                                                                             &mut store,
                                                                             secure.as_ref(),
-                                                                            &space.space_id,
+                                                                            &space_id,
                                                                             &actor,
                                                                             &device,
                                                                         ) {
                                                                             Ok(summary) => {
-                                                                                (store.mls_snapshot_for(&space.space_id), summary)
+                                                                                (store.mls_snapshot_for(&space_id), summary)
                                                                             }
                                                                             Err(err) => {
                                                                                 let message = format!(
                                                                                     "created {}; MLS initial group setup failed: {}",
-                                                                                    space.space_id,
+                                                                                    space_id,
                                                                                     err.user_message()
                                                                                 );
                                                                                 space_state.set(message.clone());
@@ -1204,12 +1208,12 @@ pub fn SetupPanel(
                                                                         .as_ref()
                                                                         .and_then(|genesis_summary| {
                                                                             let store = state_store.read();
-                                                                            if store.mls_genesis_emitted_for(&space.space_id) {
+                                                                            if store.mls_genesis_emitted_for(&space_id) {
                                                                                 return None;
                                                                             }
                                                                             match crate::views::kanban::build_creator_mls_genesis_event(
                                                                                 &store,
-                                                                                &space.space_id,
+                                                                                &space_id,
                                                                                 &actor,
                                                                                 &device,
                                                                                 Some(genesis_summary),
@@ -1218,7 +1222,7 @@ pub fn SetupPanel(
                                                                                 Err(err) => {
                                                                                     tracing::warn!(
                                                                                         error = %err,
-                                                                                        space = %space.space_id,
+                                                                                        space = %space_id,
                                                                                         "building ck.mls.genesis event failed",
                                                                                     );
                                                                                     None
@@ -1228,16 +1232,16 @@ pub fn SetupPanel(
                                                                     if let Some(genesis_event) = genesis_event {
                                                                         match api.submit_event_envelope(&genesis_event).await {
                                                                             Ok(_) => {
-                                                                                state_store.write().mark_mls_genesis_emitted(space.space_id.clone());
+                                                                                state_store.write().mark_mls_genesis_emitted(space_id.clone());
                                                                             }
                                                                             Err(err) => {
                                                                                 let text = err.to_string();
                                                                                 if text.contains("mls_genesis_already_exists") {
-                                                                                    state_store.write().mark_mls_genesis_emitted(space.space_id.clone());
+                                                                                    state_store.write().mark_mls_genesis_emitted(space_id.clone());
                                                                                 } else {
                                                                                     tracing::warn!(
                                                                                         error = %text,
-                                                                                        space = %space.space_id,
+                                                                                        space = %space_id,
                                                                                         "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
                                                                                     );
                                                                                 }
@@ -1259,7 +1263,7 @@ pub fn SetupPanel(
                                                                             Err(err) => {
                                                                                 tracing::warn!(
                                                                                     error = %err.user_message(),
-                                                                                    space = %space.space_id,
+                                                                                    space = %space_id,
                                                                                     "initial MLS history backup upload failed"
                                                                                 );
                                                                             }
@@ -1267,7 +1271,7 @@ pub fn SetupPanel(
                                                                     }
                                                                 }
 
-                                                                let mut steps = vec![format!("created {}", space.space_id)];
+                                                                let mut steps = vec![format!("created {}", space_id)];
                                                                 if invitees.is_empty() {
                                                                     steps.push("seeded owner only".to_owned());
                                                                 } else {

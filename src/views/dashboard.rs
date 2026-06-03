@@ -157,7 +157,7 @@ pub fn DashboardPanel(
                             }
                         },
                         div { class: "lbl", "Current {active_projection_kind_label}" }
-                        div { class: "val", "{space.name}" }
+                        div { class: "val", "{space.title}" }
                         div { class: "delta", {crate::i18n::tr("dashboard.resume_context")} }
                     }
                     Link {
@@ -236,8 +236,8 @@ pub fn DashboardPanel(
                                             .space_remark(&space.space_id);
                                         let display_name = remark
                                             .as_ref()
-                                            .map(|r| r.display_name(&space.name).to_owned())
-                                            .unwrap_or_else(|| space.name.clone());
+                                            .map(|r| r.display_name(&space.title).to_owned())
+                                            .unwrap_or_else(|| space.title.clone());
                                         let avatar_seed = display_name
                                             .chars()
                                             .next()
@@ -250,7 +250,7 @@ pub fn DashboardPanel(
                                         Link {
                                             class: "m-list-item",
                                             "data-testid": "dashboard-space-card",
-                                            title: "{space.name}",
+                                            title: "{space.title}",
                                             to: Route::Space { space_id: space.space_id.clone() },
                                             onclick: {
                                                 let id = space.space_id.clone();

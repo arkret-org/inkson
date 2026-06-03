@@ -1714,9 +1714,15 @@ pub fn SettingsPanel(
                                         .await
                                         {
                                             Ok(response) => {
+                                                // R20: `room_id` is the MIMI-draft wire term
+                                                // (interop-exempt from Room → Realm). On the
+                                                // Cokret app side it identifies a Flow, so we
+                                                // bind it to a `flow_id`-named local to keep
+                                                // the "Room" term confined to the interop layer.
+                                                let flow_id = &response.room_id;
                                                 mimi_receipt.set(format!(
                                                     "group-info {} participants {}",
-                                                    response.room_id,
+                                                    flow_id,
                                                     response.participants.len()
                                                 ));
                                                 status.set("MIMI groupInfo loaded".to_owned());

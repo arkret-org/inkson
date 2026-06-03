@@ -114,14 +114,32 @@ pub struct ConsentCellsResponse {
     pub cells: Vec<ConsentCellResponse>,
 }
 
+/// R15: result of `ck.realm.create`. Carries a `ck:realm:*` id under the
+/// canonical `realm_id` field (was previously squeezed into a shared
+/// `space_id` on `SpaceLifecycleResponse`). `state` replaces the old
+/// `deleted: bool`, matching the spec lifecycle-state enum
+/// (`active` / `archived` / `tombstoned`, `common-fields.md §5.1`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceLifecycleResponse {
+pub struct RealmCreateResponse {
+    pub ok: bool,
+    pub realm_id: String,
+    pub owner: String,
+    #[serde(default)]
+    pub members: Vec<String>,
+    pub state: String,
+}
+
+/// R15: result of `ck.space.create`. A Space (`ck:space:*`) lives inside a
+/// Realm and inherits its membership / encryption. `state` mirrors the spec
+/// lifecycle enum (see [`RealmCreateResponse`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpaceCreateResponse {
     pub ok: bool,
     pub space_id: String,
     pub owner: String,
     #[serde(default)]
     pub members: Vec<String>,
-    pub deleted: bool,
+    pub state: String,
 }
 
 // (Move/Anchor pipeline DTOs deleted; all writes now go through
@@ -241,18 +259,15 @@ impl ServerDescriptionExt for ServerDescription {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityDescribeResBody {
-    pub service_did: String,
-    pub registry_mode: String,
-    #[serde(default)]
-    pub supported_receipts: Vec<String>,
-    pub protocol_version: String,
-    #[serde(default)]
-    pub profiles: Vec<String>,
-}
-
-pub use cokret_sdk::model::IdentityResolveResBody;
+// R35: `ck.identity.describe` body. The SDK's canonical type is
+// `IdentityDescription` (same fields, with `service_did: Did` validated on
+// construction); the SDK's own `IdentityDescribeResBody` is a transparent
+// newtype around it. We re-export the inner struct under the yougen-local
+// name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
+// unchanged while the field shapes are now SDK-owned.
+pub use cokret_sdk::model::{
+    IdentityDescription as IdentityDescribeResBody, IdentityResolveResBody,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncDescribeResBody {
@@ -344,7 +359,13 @@ pub enum SpacePreviewKind {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SpacePreview {
     pub space_id: String,
-    pub name: String,
+    /// Canonical display name. Spec `realm.schema.json` / `space.schema.json`
+    /// both make `title` the required display field; `name` is reserved for
+    /// external protocol / algorithm / service labels. We accept the legacy
+    /// `name` wire key via `#[serde(alias = "name")]` for transitional
+    /// compatibility with older servers (R8).
+    #[serde(alias = "name")]
+    pub title: String,
     pub description: Option<String>,
     #[serde(default)]
     pub tags: std::collections::BTreeSet<String>,
@@ -375,7 +396,10 @@ impl<'de> Deserialize<'de> for SpacePreview {
             space_id: Option<String>,
             #[serde(default)]
             realm_id: Option<String>,
-            name: String,
+            // R8: canonical key is `title`; accept legacy `name` for
+            // transitional compatibility with older servers.
+            #[serde(alias = "name")]
+            title: String,
             description: Option<String>,
             #[serde(default)]
             tags: std::collections::BTreeSet<String>,
@@ -396,7 +420,7 @@ impl<'de> Deserialize<'de> for SpacePreview {
             .ok_or_else(|| serde::de::Error::missing_field("space_id"))?;
         Ok(Self {
             space_id,
-            name: wire.name,
+            title: wire.title,
             description: wire.description,
             tags: wire.tags,
             public: wire.public,
@@ -475,7 +499,7 @@ mod tests {
     ) -> SpacePreview {
         SpacePreview {
             space_id: id.to_owned(),
-            name: id.to_owned(),
+            title: id.to_owned(),
             description: None,
             tags: Default::default(),
             public: true,
@@ -703,13 +727,15 @@ impl ResolveHandleResponse {
 pub struct Mention {
     /// Principal DID of the mentioned subject (authoritative).
     pub subject_id: String,
+    /// Audit-only snapshot of the subject's display name at compose time.
+    // R26: canonical field order per spec `models/flow-and-message.md §9.4`
+    // places `display_name_at_time` before `handle_at_time`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_at_time: Option<String>,
     /// Audit-only snapshot of the canonical `<localpart>:<domain>` handle
     /// at compose time. Never the current display value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle_at_time: Option<String>,
-    /// Audit-only snapshot of the subject's display name at compose time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name_at_time: Option<String>,
     /// The original string the user typed (e.g. `@alice:acme.com`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mention_text_original: Option<String>,
@@ -1007,6 +1033,14 @@ pub struct MimiSubmitMessageResBody {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MimiGroupInfoResBody {
+    /// R20: wire field name `room_id` is preserved because it comes verbatim
+    /// from the MIMI draft (`draft-ietf-mimi-room-policy-03`), which is
+    /// interop-exempt from the `Room → Realm` rename
+    /// (forbidden-model-terms `allowed_contexts: [interop_module]`). On the
+    /// Cokret application side this identifier corresponds to a Flow; the
+    /// `Room` term must stay confined to the mls/mimi interop layer. Callers
+    /// crossing into the app layer SHOULD bind it to a `flow_id`-named local
+    /// to make the boundary explicit (see `views/settings/mod.rs`).
     pub room_id: String,
     pub mimi_room_uri: Option<String>,
     pub group_info: Value,

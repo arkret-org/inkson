@@ -110,11 +110,12 @@ use crate::models::{
     MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
     MimiProviderDirectoryResBody, MimiProxyDownloadResBody, MimiReportAbuseResBody,
     MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse, ModerationReportResBody,
-    OkResBody, PolicyCheckResBody, PushRegisterResponse, RealmJoinCandidate, ReceiptResponse,
-    ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse,
-    SearchSpacesResponse, ServerDescription, SnapshotHeadResponse, SpaceLifecycleResponse,
-    SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
-    TypingResponse, UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
+    OkResBody, PolicyCheckResBody, PushRegisterResponse, RealmCreateResponse, RealmJoinCandidate,
+    ReceiptResponse, ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse,
+    SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SnapshotHeadResponse,
+    SpaceCreateResponse, SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse,
+    SyncDescribeResBody, TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
+    WebrtcSignalResponse,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -981,7 +982,7 @@ impl CokretApi {
         trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
-    ) -> anyhow::Result<SpaceLifecycleResponse> {
+    ) -> anyhow::Result<RealmCreateResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -1039,12 +1040,12 @@ impl CokretApi {
             }
         }
 
-        Ok(SpaceLifecycleResponse {
+        Ok(RealmCreateResponse {
             ok: true,
-            space_id,
+            realm_id: space_id,
             owner: actor_id.to_owned(),
             members,
-            deleted: false,
+            state: "active".to_owned(),
         })
     }
 
@@ -1062,7 +1063,7 @@ impl CokretApi {
         kind: &str,
         parent_space_id: Option<&str>,
         default_realm_id: Option<&str>,
-    ) -> anyhow::Result<SpaceLifecycleResponse> {
+    ) -> anyhow::Result<SpaceCreateResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
@@ -1090,12 +1091,12 @@ impl CokretApi {
         )?;
         self.submit_event_envelope(&event).await?;
 
-        Ok(SpaceLifecycleResponse {
+        Ok(SpaceCreateResponse {
             ok: true,
             space_id,
             owner: actor_id.to_owned(),
             members: vec![actor_id.to_owned()],
-            deleted: false,
+            state: "active".to_owned(),
         })
     }
 
