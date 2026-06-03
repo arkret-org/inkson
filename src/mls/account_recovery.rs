@@ -353,6 +353,9 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
             )],
         },
         account_secret.as_bytes(),
+        // secret_storage class — recovery_policy_ref is an optional hint; omitted
+        // here (the MLS account-secret recovery flow doesn't bind a policy ref).
+        None,
     )
 }
 

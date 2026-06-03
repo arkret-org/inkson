@@ -1884,6 +1884,54 @@ impl ContrixApi {
         self.get_json("api/v1/keys/backups").await
     }
 
+    // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────
+
+    /// 6.1 — read the principal's currently accepted recovery policy.
+    /// Returns `{ "active_policy": <policy summary | null> }`.
+    pub async fn get_recovery_policy(&self) -> anyhow::Result<serde_json::Value> {
+        self.get_json("api/v1/identity/recovery-policy").await
+    }
+
+    /// 6.3 — open a recovery session bound to the active policy. `body` is the
+    /// `recovery-session.schema.json` `create_request`
+    /// (`principal_id`, `requesting_device_id`, `trust_domain`, `ssk_generation`,
+    /// optional `expected_recovery_policy_ref`). Returns the session JSON.
+    pub async fn create_recovery_session(
+        &self,
+        body: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json("api/v1/identity/recovery-sessions", body).await
+    }
+
+    /// 6.3 — submit a recovery proof (e.g. from
+    /// [`crate::recovery_proof::build_principal_signing_proof`]) for a pending
+    /// session. `body` is `{ "proof": <proof> }`.
+    pub async fn submit_recovery_proof(
+        &self,
+        recovery_session_id: &str,
+        body: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/identity/recovery-sessions/{recovery_session_id}/proofs"),
+            body,
+        )
+        .await
+    }
+
+    /// 6.3 — finalize a verified recovery session. `body` carries the client-
+    /// signed `device_authorize` material (`complete_request`).
+    pub async fn complete_recovery_session(
+        &self,
+        recovery_session_id: &str,
+        body: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.post_json(
+            &format!("api/v1/identity/recovery-sessions/{recovery_session_id}/complete"),
+            body,
+        )
+        .await
+    }
+
     /// CXP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery flow uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_class` is `None`, this falls

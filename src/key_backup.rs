@@ -28,6 +28,10 @@ pub const KEY_BACKUP_SIGNED_FIELDS: &[&str] = &[
     "contents",
     "ciphertext_digest",
     "frontier_ref",
+    // did_recovery backups MUST carry + sign this (key-backup.schema.json);
+    // other classes MAY carry it as a hint. Listed here so the signer covers it
+    // whenever present (the filter drops it when absent).
+    "recovery_policy_ref",
 ];
 
 /// The mandatory subset of [`KEY_BACKUP_SIGNED_FIELDS`] that MUST always be
@@ -553,6 +557,7 @@ pub fn build_recovery_vault_backup_body(
 /// so this uses `recovery_public_key` (a single passphrase must never control
 /// DID recovery). `recovery_key_ref` names the recovery policy verification
 /// method / DID `recoveryKeyAgreement`.
+#[allow(clippy::too_many_arguments)]
 pub fn build_did_recovery_backup_body(
     backup_id: &str,
     actor_did: &str,
@@ -560,6 +565,9 @@ pub fn build_did_recovery_backup_body(
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
     plaintext: &[u8],
+    // did_recovery backups MUST bind the active recovery policy.
+    policy_id: &str,
+    policy_version: u64,
 ) -> anyhow::Result<Value> {
     build_recovery_public_key_backup_body(
         backup_id,
@@ -575,6 +583,7 @@ pub fn build_did_recovery_backup_body(
             extra: Vec::new(),
         },
         plaintext,
+        Some((policy_id, policy_version)),
     )
 }
 
@@ -604,6 +613,7 @@ fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
 /// public key) can build this; only the recovery private key opens it — the
 /// fresh-device restore path. `recovery_key_ref` names the recovery policy
 /// verification method / DID `recoveryKeyAgreement` the public key belongs to.
+#[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body(
     backup_id: &str,
     actor_did: &str,
@@ -614,6 +624,11 @@ pub fn build_recovery_public_key_backup_body(
     subdomain: &str,
     item: &BackupItem<'_>,
     plaintext: &[u8],
+    // Active recovery policy this backup binds (key-backup.schema.json
+    // `recovery_policy_ref`). REQUIRED for `did_recovery`; an optional signed
+    // hint for other classes. The server cross-checks it against the actor's
+    // currently accepted recovery policy and rejects on mismatch.
+    recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let mut content = serde_json::Map::new();
     content.insert(
@@ -650,6 +665,14 @@ pub fn build_recovery_public_key_backup_body(
         && let Some(object) = body.as_object_mut()
     {
         object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
+    }
+    if let Some((policy_id, policy_version)) = recovery_policy_ref
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert(
+            "recovery_policy_ref".to_owned(),
+            json!({ "policy_id": policy_id, "policy_version": policy_version }),
+        );
     }
     attach_key_backup_genesis_series(&mut body);
     attach_key_backup_domain_separation(&mut body, class, subdomain);
@@ -1155,6 +1178,34 @@ mod tests {
     }
 
     #[test]
+    fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
+        // 6.2 — when recovery_policy_ref is on the envelope, the signer MUST
+        // cover it (so the policy binding can't be stripped/tampered).
+        let root = test_root();
+        let mut body =
+            build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
+        body["recovery_policy_ref"] = json!({
+            "policy_id": "cx:policy:01964137-0000-7000-8000-0000000000aa",
+            "policy_version": 3,
+        });
+        let signing_key = SigningKey::from_bytes(&[43u8; 32]);
+        sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", None)
+            .unwrap();
+        let signed: Vec<String> = body["auth_data"]["signed_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect();
+        assert!(
+            signed.contains(&"recovery_policy_ref".to_string()),
+            "recovery_policy_ref must be signed: {signed:?}"
+        );
+        verify_key_backup_auth_data(&body, &signing_key.verifying_key())
+            .expect("signed backup with recovery_policy_ref must verify");
+    }
+
+    #[test]
     fn sign_key_backup_with_active_device_is_noop_helper_signs_directly() {
         // The build-path integration uses the process-wide signer slot, which
         // races with other tests; the signing CORRECTNESS is covered by the
@@ -1221,6 +1272,8 @@ mod tests {
             &pk,
             "did:web:alice.example#recovery",
             b"recovery share",
+            "cx:policy:01964137-0000-7000-8000-0000000000aa",
+            1,
         )
         .unwrap();
 
@@ -1229,6 +1282,12 @@ mod tests {
             body["encryption"]["recipient_method"],
             "recovery_public_key"
         );
+        // 6.2 — did_recovery MUST carry recovery_policy_ref (top-level).
+        assert_eq!(
+            body["recovery_policy_ref"]["policy_id"],
+            "cx:policy:01964137-0000-7000-8000-0000000000aa"
+        );
+        assert_eq!(body["recovery_policy_ref"]["policy_version"], 1);
         assert!(
             body["series_id"]
                 .as_str()
@@ -1363,6 +1422,7 @@ mod tests {
                 extra: Vec::new(),
             },
             b"opaque mls snapshot bytes",
+            None,
         )
         .unwrap();
 

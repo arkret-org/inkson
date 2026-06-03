@@ -82,6 +82,7 @@ pub mod presence_rx;
 pub mod push;
 pub mod rank;
 pub mod recovery_crypto;
+pub mod recovery_proof;
 pub mod routes;
 pub mod secure_key_store;
 pub mod security_state;
