@@ -22,6 +22,7 @@ use getrandom::fill;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, Zeroizing};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -80,6 +81,15 @@ pub struct VaultKek {
     pub m_kib: u32,
     pub t: u32,
     pub p: u32,
+}
+
+impl Drop for VaultKek {
+    /// R16: the Argon2id root key is the master secret behind every vault
+    /// subkey; wipe it on drop (including dropped `Clone`s) so it doesn't
+    /// outlive its use in freed memory. The salt / params are non-secret.
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
 }
 
 /// Envelope metadata that the spec §7.5 nonce transcript and §7.1 AEAD AAD bind
@@ -147,10 +157,11 @@ pub fn derive_vault_kek_with_salt(
 
 /// HKDF-Expand the Argon2id root key into a 32-byte domain subkey
 /// (`HKDF(root, info)`, salt=none per key-management.md §7.1/§7.5).
-fn hkdf_subkey(root: &[u8; VAULT_KDF_OUTPUT_LEN], info: &[u8]) -> Result<[u8; 32]> {
+fn hkdf_subkey(root: &[u8; VAULT_KDF_OUTPUT_LEN], info: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
     let hk = Hkdf::<Sha256>::new(None, root);
-    let mut out = [0u8; 32];
-    hk.expand(info, &mut out)
+    // R16: wrap the derived subkey so it zeroizes on drop at every call site.
+    let mut out = Zeroizing::new([0u8; 32]);
+    hk.expand(info, out.as_mut())
         .map_err(|err| anyhow!("hkdf expand: {err}"))?;
     Ok(out)
 }
@@ -160,7 +171,7 @@ fn vault_aead_key(
     root: &[u8; VAULT_KDF_OUTPUT_LEN],
     backup_class: &str,
     subdomain: &str,
-) -> Result<[u8; 32]> {
+) -> Result<Zeroizing<[u8; 32]>> {
     let info = format!("cokret-key-backup/{backup_class}/{subdomain}/v1");
     hkdf_subkey(root, info.as_bytes())
 }
@@ -172,7 +183,7 @@ pub fn vault_key_commitment(root: &VaultKek) -> Result<String> {
     let commitment_key = hkdf_subkey(&root.key, HKDF_COMMITMENT_INFO)?;
     Ok(format!(
         "sha256:{}",
-        hex_lower(&Sha256::digest(commitment_key))
+        hex_lower(&Sha256::digest(&*commitment_key))
     ))
 }
 
@@ -197,7 +208,7 @@ fn vault_nonce(
     });
     let bytes = crate::canonical::canonical_json_bytes(&transcript)
         .map_err(|err| anyhow!("nonce transcript canonical json: {err}"))?;
-    let mut mac = <HmacSha256 as Mac>::new_from_slice(&nonce_key)
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(&*nonce_key)
         .map_err(|err| anyhow!("hmac key: {err}"))?;
     mac.update(&bytes);
     let tag = mac.finalize().into_bytes();
@@ -221,7 +232,7 @@ pub fn seal_vault(
 
     let aead_key = vault_aead_key(&root.key, ctx.backup_class, ctx.subdomain)?;
     let nonce = vault_nonce(root, ctx, &nonce_salt_b64)?;
-    let cipher = XChaCha20Poly1305::new((&aead_key).into());
+    let cipher = XChaCha20Poly1305::new((&*aead_key).into());
     let ciphertext = cipher
         .encrypt(
             XNonce::from_slice(&nonce),
@@ -286,7 +297,7 @@ pub fn open_vault(
     let ciphertext = B64
         .decode(ciphertext_b64.trim_end_matches('='))
         .context("ciphertext base64")?;
-    let cipher = XChaCha20Poly1305::new((&aead_key).into());
+    let cipher = XChaCha20Poly1305::new((&*aead_key).into());
     let plaintext = cipher
         .decrypt(
             XNonce::from_slice(&expected_nonce),
@@ -296,6 +307,12 @@ pub fn open_vault(
             },
         )
         .map_err(|_| anyhow!("vault decrypt failed: wrong passphrase or corrupt ciphertext"))?;
+    // R16: the recovered plaintext is the unwrapped backup payload (device
+    // signing key / recovery key / MLS state). The return type is kept as
+    // `Vec<u8>` to avoid churning every caller; callers in `key_backup` /
+    // `mls::account_recovery` SHOULD wrap it in `Zeroizing` once they own it.
+    // Internal subkeys (`aead_key`, HKDF subkeys, the `VaultKek` root) all
+    // zeroize on drop here.
     Ok(plaintext)
 }
 

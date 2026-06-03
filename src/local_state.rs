@@ -12,6 +12,7 @@ use cokret_sdk::EncryptedPayload;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use zeroize::Zeroize;
 
 use crate::hlc::Hlc;
 
@@ -73,18 +74,16 @@ pub struct MemberHandleCacheEntry {
     pub member_display_state_digest: Option<String>,
 }
 
+/// 同构,待合并(05-5):与 `discovery::ReadMarkerScope`、
+/// `presence_rx::ReadScopeEvent`字段一致,后续应收敛为单一 read_scope 类型。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadScope {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(
-        rename = "track_name",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_scope: Option<String>,
 }
@@ -205,10 +204,24 @@ pub struct LocalIdentityRecord {
     pub did_key: String,
 }
 
+impl Drop for LocalIdentityRecord {
+    /// R16: the hex-encoded ed25519 seed is long-lived secret material; wipe
+    /// it on drop so copies left over from hydrate / `to_record` round-trips
+    /// don't linger in freed heap. `did_key` is public and left untouched.
+    fn drop(&mut self) {
+        self.seed_hex.zeroize();
+    }
+}
+
 /// In-memory device identity: the per-device ed25519 signing key plus the
 /// derived `did:key`. Construct via [`LocalStateStore::ensure_local_identity`]
 /// (which generates+persists on first call) or [`LocalIdentity::from_record`]
 /// (round-tripping a persisted record).
+///
+/// R16: `signing_key` is `ed25519_dalek::SigningKey`, which derives
+/// `ZeroizeOnDrop` — its secret scalar is wiped automatically when this
+/// struct (or any `Clone` of it) is dropped, so no manual `Drop` is needed
+/// here and the `<redacted>` Debug formatting below is preserved.
 #[derive(Clone)]
 pub struct LocalIdentity {
     pub device_did: String,
@@ -3420,19 +3433,19 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
         Some(topic) if topic.starts_with("ck:thread:") => ReadScope {
             kind: "thread".to_owned(),
             object_ref: Some(topic.to_owned()),
-            track: None,
+            track_name: None,
             track_scope: None,
         },
         Some(topic) if topic.starts_with("ck:flow:") => ReadScope {
             kind: "flow".to_owned(),
             object_ref: Some(topic.to_owned()),
-            track: Some("discussion".to_owned()),
+            track_name: Some("discussion".to_owned()),
             track_scope: None,
         },
         _ => ReadScope {
             kind: "flow".to_owned(),
             object_ref: Some(default_flow_id_for_realm(realm_id)),
-            track: Some("discussion".to_owned()),
+            track_name: Some("discussion".to_owned()),
             track_scope: None,
         },
     }
@@ -3453,7 +3466,7 @@ fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {
         read_scope.kind.as_str(),
         read_scope.object_ref.as_deref().unwrap_or(""),
         read_scope
-            .track
+            .track_name
             .as_deref()
             .or(read_scope.track_scope.as_deref())
             .unwrap_or("")
@@ -4159,7 +4172,10 @@ mod tests {
         assert_eq!(marker.body.realm_id, "ck:space:demo");
         assert_eq!(marker.body.position.event_id, "ck:event:read-1");
         assert_eq!(marker.body.read_scope.kind, "flow");
-        assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
+        assert_eq!(
+            marker.body.read_scope.track_name.as_deref(),
+            Some("discussion")
+        );
         assert_eq!(
             marker.cx_read_cursor_operation(),
             serde_json::json!({
@@ -5472,7 +5488,7 @@ mod tests {
         store.set_contact_remark(
             did,
             crate::account_data::ContactRemark {
-                actor_did: did.to_owned(),
+                actor_id: did.to_owned(),
                 ..crate::account_data::ContactRemark::default()
             },
         );

@@ -2699,7 +2699,7 @@ pub fn SettingsPanel(
                                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                                 let remark = crate::account_data::ContactRemark {
                                     version: 1,
-                                    actor_did: actor_did.clone(),
+                                    actor_id: actor_did.clone(),
                                     local_name: local_name.clone(),
                                     saved_at: Some(now_rfc3339.clone()),
                                     updated_at: Some(now_rfc3339),

@@ -296,8 +296,8 @@ pub fn space_id_from_space_remark_key(key: &str) -> Option<&str> {
 
 /// Wire-key for an actor-private contact remark per
 /// `discovery/client-preferences.md` §3.6: `ck.contacts.actor.<did>`.
-pub fn contact_remark_account_data_key(actor_did: &str) -> String {
-    format!("ck.contacts.actor.{actor_did}")
+pub fn contact_remark_account_data_key(actor_id: &str) -> String {
+    format!("ck.contacts.actor.{actor_id}")
 }
 
 /// Inverse of [`contact_remark_account_data_key`]. Returns the DID segment
@@ -409,7 +409,12 @@ impl SpaceRemark {
 pub struct ContactRemark {
     #[serde(default = "default_space_remark_version")]
     pub version: u32,
-    pub actor_did: String,
+    /// Subject actor DID. Wire field `actor_id` per the v1 protocol naming
+    /// rule (single protocol subject uses `_id` even when the value is a
+    /// DID; see `forbidden-wire-fields.json` entry `actor_did`). `alias`
+    /// keeps already-stored `actor_did` rows hydratable.
+    #[serde(alias = "actor_did")]
+    pub actor_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -427,10 +432,10 @@ pub struct ContactRemark {
 }
 
 impl ContactRemark {
-    pub fn new(actor_did: impl Into<String>, local_name: impl Into<String>) -> Self {
+    pub fn new(actor_id: impl Into<String>, local_name: impl Into<String>) -> Self {
         Self {
             version: 1,
-            actor_did: actor_did.into(),
+            actor_id: actor_id.into(),
             local_name: local_name.into(),
             ..Self::default()
         }
@@ -902,17 +907,31 @@ mod tests {
         let remark = ContactRemark::new("did:web:alice.example", "Alice from Ops");
         let wire = serde_json::to_value(&remark).unwrap();
         assert_eq!(wire["version"], 1);
-        assert_eq!(wire["actor_did"], "did:web:alice.example");
+        assert_eq!(wire["actor_id"], "did:web:alice.example");
         assert_eq!(wire["local_name"], "Alice from Ops");
         assert!(wire.get("note").is_none());
         assert_eq!(remark.display_name("Alice"), "Alice from Ops");
 
         let empty = ContactRemark {
-            actor_did: "did:web:alice.example".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
             local_name: " ".to_owned(),
             ..ContactRemark::default()
         };
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn contact_remark_hydrates_legacy_actor_did_wire_key() {
+        // Rows stored before the actor_did → actor_id rename still
+        // deserialize via the serde alias.
+        let legacy = json!({
+            "version": 1,
+            "actor_did": "did:web:bob.example",
+            "local_name": "Bob"
+        });
+        let remark: ContactRemark = serde_json::from_value(legacy).unwrap();
+        assert_eq!(remark.actor_id, "did:web:bob.example");
+        assert_eq!(remark.local_name, "Bob");
     }
 
     #[test]

@@ -142,8 +142,12 @@ pub struct OrgProof {
 /// Display metadata for actors.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DisplayMetadata {
-    /// Actor DID.
-    pub actor_did: String,
+    /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
+    /// protocol subject uses `_id` even when the value is a DID; see
+    /// `forbidden-wire-fields.json` entry `actor_did`). `alias` keeps
+    /// already-stored `actor_did` payloads readable.
+    #[serde(alias = "actor_did")]
+    pub actor_id: String,
     /// Display name.
     pub display_name: Option<String>,
     /// Avatar URL.
@@ -165,9 +169,9 @@ pub struct DisplayMetadata {
 }
 
 impl DisplayMetadata {
-    pub fn new(actor_did: &str) -> Self {
+    pub fn new(actor_id: &str) -> Self {
         Self {
-            actor_did: actor_did.to_owned(),
+            actor_id: actor_id.to_owned(),
             display_name: None,
             avatar_url: None,
             status_message: None,
@@ -184,8 +188,12 @@ impl DisplayMetadata {
 /// Presence policy as defined by the spec.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PresencePolicy {
-    /// Actor DID.
-    pub actor_did: String,
+    /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
+    /// protocol subject uses `_id` even when the value is a DID; see
+    /// `forbidden-wire-fields.json` entry `actor_did`). `alias` keeps
+    /// already-stored `actor_did` payloads readable.
+    #[serde(alias = "actor_did")]
+    pub actor_id: String,
     /// Whether presence is enabled.
     pub enabled: bool,
     /// Per-space presence settings.
@@ -239,18 +247,16 @@ pub struct ReadMarker {
     pub set_at: Hlc,
 }
 
+/// 同构,待合并(05-5):与 `local_state::ReadScope`、
+/// `presence_rx::ReadScopeEvent`字段一致,后续应收敛为单一 read_scope 类型。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadMarkerScope {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(
-        rename = "track_name",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_scope: Option<String>,
 }
@@ -347,7 +353,7 @@ fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
         scope.kind.as_str(),
         scope.object_ref.as_deref().unwrap_or(""),
         scope
-            .track
+            .track_name
             .as_deref()
             .or(scope.track_scope.as_deref())
             .unwrap_or("")
@@ -452,7 +458,7 @@ impl DiscoveryManager {
     /// Set display metadata.
     pub fn set_display_metadata(&mut self, metadata: DisplayMetadata) {
         self.display_metadata
-            .insert(metadata.actor_did.clone(), metadata);
+            .insert(metadata.actor_id.clone(), metadata);
     }
 
     /// Get display metadata.
@@ -463,7 +469,7 @@ impl DiscoveryManager {
     /// Set presence policy.
     pub fn set_presence_policy(&mut self, policy: PresencePolicy) {
         self.presence_policies
-            .insert(policy.actor_did.clone(), policy);
+            .insert(policy.actor_id.clone(), policy);
     }
 
     /// Get presence policy.
@@ -510,7 +516,7 @@ mod tests {
     #[test]
     fn test_display_metadata() {
         let metadata = DisplayMetadata::new("did:web:alice");
-        assert_eq!(metadata.actor_did, "did:web:alice");
+        assert_eq!(metadata.actor_id, "did:web:alice");
         assert!(metadata.display_name.is_none());
     }
 
@@ -621,7 +627,7 @@ mod tests {
         ReadMarkerScope {
             kind: "flow".to_owned(),
             object_ref: Some("ck:flow:test".to_owned()),
-            track: Some("discussion".to_owned()),
+            track_name: Some("discussion".to_owned()),
             track_scope: None,
         }
     }

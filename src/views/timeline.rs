@@ -2228,7 +2228,7 @@ fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
     let scope = match (
         marker.body.read_scope.kind.as_str(),
         marker.body.read_scope.object_ref.as_deref(),
-        marker.body.read_scope.track.as_deref(),
+        marker.body.read_scope.track_name.as_deref(),
     ) {
         ("thread", Some(object_ref), _) => format!("thread {}", short_protocol_id(object_ref)),
         ("flow", Some(object_ref), Some(track)) => {

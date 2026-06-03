@@ -93,18 +93,16 @@ pub struct ReadMarkerEvent {
     pub position: ReadCursorPositionEvent,
 }
 
+/// 同构,待合并(05-5):与 `local_state::ReadScope`、
+/// `discovery::ReadMarkerScope`字段一致,后续应收敛为单一 read_scope 类型。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadScopeEvent {
     pub kind: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
-    #[serde(
-        rename = "track_name",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_scope: Option<String>,
 }
@@ -346,7 +344,7 @@ fn read_scope_key(read_scope: &ReadScopeEvent) -> String {
         read_scope.kind.as_str(),
         read_scope.object_ref.as_deref().unwrap_or(""),
         read_scope
-            .track
+            .track_name
             .as_deref()
             .or(read_scope.track_scope.as_deref())
             .unwrap_or("")
@@ -466,7 +464,7 @@ mod tests {
         );
         assert_eq!(parsed.actor_id, "did:web:alice");
         assert_eq!(parsed.read_scope.kind, "flow");
-        assert_eq!(parsed.read_scope.track.as_deref(), Some("discussion"));
+        assert_eq!(parsed.read_scope.track_name.as_deref(), Some("discussion"));
         assert_eq!(
             parsed.position.event_id,
             "ck:event:01904100-0000-7000-8000-000000000042"
@@ -531,7 +529,7 @@ mod tests {
             read_scope: ReadScopeEvent {
                 kind: "flow".to_owned(),
                 object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
-                track: Some("discussion".to_owned()),
+                track_name: Some("discussion".to_owned()),
                 track_scope: None,
             },
             position: ReadCursorPositionEvent {
@@ -544,7 +542,7 @@ mod tests {
         let scope = ReadScopeEvent {
             kind: "flow".to_owned(),
             object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
-            track: Some("discussion".to_owned()),
+            track_name: Some("discussion".to_owned()),
             track_scope: None,
         };
         let marker = agg
