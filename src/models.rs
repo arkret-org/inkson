@@ -88,6 +88,10 @@ pub struct ConsentCellResponse {
     pub cell_id: String,
     pub holder_did: String,
     pub peer_did: String,
+    // Spec consent-model.md §3: domain-prefixed `consent_scope` on the wire
+    // (soland's consent admin/holder surface emits this name). Rust field
+    // kept as `scope` so callers/views are unchanged.
+    #[serde(rename = "consent_scope")]
     pub scope: String,
     pub state: String,
     #[serde(default)]

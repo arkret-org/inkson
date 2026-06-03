@@ -915,7 +915,8 @@ impl ContrixApi {
             ),
             json!({
                 "peer_did": peer,
-                "scope": scope,
+                // Spec consent-model.md §3: domain-prefixed `consent_scope`.
+                "consent_scope": scope,
                 "expires_at": expires_at,
             }),
         )
@@ -935,7 +936,7 @@ impl ContrixApi {
             ),
             json!({
                 "peer_did": peer,
-                "scope": scope,
+                "consent_scope": scope,
             }),
         )
         .await
@@ -1240,7 +1241,7 @@ impl ContrixApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/admin/v1/spaces/{space_id}/anchorer"))
+        self.get_json(&format!("admin/spaces/{space_id}/anchorer"))
             .await
     }
 

@@ -269,7 +269,7 @@ pub fn SpaceAdminPanel(
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
     let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
-    // Read-only anchorer cell value fetched from /api/admin/v1/spaces/{id}/anchorer.
+    // Read-only anchorer cell value fetched from /admin/spaces/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
     let mut anchorer_cell_value = use_signal(String::new);
@@ -930,7 +930,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 // Anchorer cell (read-only, P0 M4) — fetches from
-                // /api/admin/v1/spaces/{id}/anchorer; surfaces the
+                // /admin/spaces/{id}/anchorer; surfaces the
                 // recovery-anchorer mode (single_did / threshold / open_set /
                 // mixed) on this admin page. A separate agent is implementing
                 // the endpoint on soland; on 404 we fall back to a clear
@@ -975,7 +975,7 @@ pub fn SpaceAdminPanel(
                                                 // data.
                                                 anchorer_cell_status.set(format!(
                                                     "anchorer endpoint unavailable ({}); \
-                                                     expected /api/admin/v1/spaces/{{id}}/anchorer \
+                                                     expected /admin/spaces/{{id}}/anchorer \
                                                      (separate agent shipping)",
                                                     err.display()
                                                 ));
