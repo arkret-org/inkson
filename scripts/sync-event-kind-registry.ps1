@@ -2,7 +2,7 @@
 #
 # Usage:
 #   pwsh ./scripts/sync-event-kind-registry.ps1
-#   pwsh ./scripts/sync-event-kind-registry.ps1 -SpecRoot D:/Works/cokret-dev/cokret-spec
+#   pwsh ./scripts/sync-event-kind-registry.ps1 -SpecRoot D:/Works/cokret/cokret-spec
 #
 # After running this, reconcile `known_event_kinds()` in src/conformance.rs to
 # match. The diff test in conformance.rs is the tripwire — it fails until both

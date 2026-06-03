@@ -19,13 +19,13 @@
 Clone the workspace and the sibling SDK:
 
 ```powershell
-git clone <cokret-dev> cokret-dev
-cd cokret-dev
+git clone <cokret> cokret
+cd cokret
 ls
 # yougen/ chime/ soland/ floria/ cokret-rust-sdk/ ...
 ```
 
-All commands below run from `cokret-dev/yougen/`.
+All commands below run from `cokret/yougen/`.
 
 ---
 
