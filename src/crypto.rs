@@ -1,6 +1,4 @@
 use cokret_sdk::EncryptedPayload;
-#[cfg(target_arch = "wasm32")]
-use cokret_sdk::{EncryptedPayloadScheme, Hash, KeyRefObject};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientEncryptedMessage {
@@ -201,44 +199,25 @@ fn compose_local_encrypted_message_inner(
     device.encrypt_message(message_id, &plaintext)
 }
 
+/// Wasm builds do not link the native MLS stack, so there is no real
+/// ciphertext to produce here. R17: the previous implementation emitted a
+/// hard-coded placeholder ciphertext (gated on
+/// `YOUGEN_ALLOW_PLACEHOLDER_CIPHERTEXT=1`) while still tagging it
+/// `scheme: MlsRfc9420` — a fake ciphertext masquerading as a real MLS
+/// payload. That fallback has been removed entirely: this path is now
+/// unconditionally fail-closed so no fake "MLS" ciphertext can ever reach the
+/// wire. The default build behavior is unchanged (it always bailed).
 #[cfg(target_arch = "wasm32")]
 fn compose_local_encrypted_message_inner(
     _principal_id: &str,
-    device_id: &str,
-    space_id: &str,
-    message_id: &str,
-    body: &str,
+    _device_id: &str,
+    _space_id: &str,
+    _message_id: &str,
+    _body: &str,
 ) -> anyhow::Result<ClientEncryptedMessage> {
-    if !wasm_placeholder_ciphertext_fallback_allowed() {
-        anyhow::bail!(
-            "MLS encryption is unavailable in this wasm build; refusing to emit placeholder ciphertext"
-        );
-    }
-    let payload_digest = Hash::new(format!(
-        "sha256:{:0>64}",
-        format!("{:x}", body.len() + device_id.len() + space_id.len())
-    ))?;
-    Ok(ClientEncryptedMessage {
-        message_id: message_id.to_owned(),
-        payload: EncryptedPayload {
-            scheme: EncryptedPayloadScheme::MlsRfc9420,
-            group_id: space_id.replace(':', "_"),
-            epoch: 0,
-            content_type: "application/vnd.cokret.message+json".to_owned(),
-            ciphertext: "b3BhcXVlLXdlYi1lbmNyeXB0ZWQtcGF5bG9hZA".to_owned(),
-            aad: Some(serde_json::json!({
-                "space_id": space_id,
-                "device_id": device_id
-            })),
-            payload_digest,
-            key_ref: Some(KeyRefObject::mls_rfc9420(space_id.replace(':', "_"), 0)),
-        },
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn wasm_placeholder_ciphertext_fallback_allowed() -> bool {
-    option_env!("YOUGEN_ALLOW_PLACEHOLDER_CIPHERTEXT") == Some("1")
+    anyhow::bail!(
+        "MLS encryption is unavailable in this wasm build; refusing to emit placeholder ciphertext"
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -1,6 +1,6 @@
 //! G3.Y2 — "promote a Flow's discussion to its own child Space" state.
 //!
-//! Spec: `models/flow-and-message.md §5` (`discussion_space_ref`) +
+//! Spec: `models/flow-and-message.md §5` (`scope_circle_id`) +
 //! `models/space-hierarchy.md §3-§4` (parent/child confirmed edge).
 //!
 //! The full promote flow needs three durable events:
@@ -8,7 +8,22 @@
 //!    parent.
 //! 2. `ck.space.child` on the parent + `ck.space.parent` on the child (the bidirectional
 //!    confirmation edge).
-//! 3. `ck.flow.update` on the original Flow, setting `discussion_space_ref = <new_space_id>`.
+//! 3. `ck.flow.update` on the original Flow, setting `scope_circle_id = <circle_id>`.
+//!
+//! WIRE FIELD NOTE (R3): the pre-inversion `discussion_space_ref` field was a
+//! `hard_reject` forbidden wire field (`registry/forbidden-wire-fields.json`,
+//! since 59ac1d4); the canonical replacement is `scope_circle_id`. Per
+//! `schemas/flow.schema.json` + `models/circle.md`, `scope_circle_id` points
+//! at an intra-Realm **Circle** (`ck:circle:<uuid7>`, MUST share the Flow's
+//! `realm_id`), NOT at a child Space. This module's promote flow currently
+//! mints a child *Space* (`ck:space:<uuid7>`), so the value it threads into
+//! `scope_circle_id` is Space-shaped, not Circle-shaped. Reworking promote to
+//! create / bind a Circle object is out of scope for this fix (it touches the
+//! whole promote object model). For now we only correct the forbidden wire
+//! key name so we no longer emit a `hard_reject` field; **the Circle semantics
+//! of the value remain to be reconciled in a follow-up** (the child-space id
+//! is not a valid `ck:circle:` id and will not satisfy flow.schema.json's
+//! pattern at the server).
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps
@@ -131,7 +146,15 @@ pub fn build_parent_edge_op(
 }
 
 /// Build the `ck.flow.update` that points the source Flow's
-/// `discussion_space_ref` at the new child Space.
+/// `scope_circle_id` at the promoted discussion scope.
+///
+/// NOTE (R3): `scope_circle_id` is the canonical replacement for the
+/// forbidden `discussion_space_ref` wire field. Per `schemas/flow.schema.json`
+/// + `models/circle.md` it MUST reference an intra-Realm Circle
+/// (`ck:circle:<uuid7>`), not a child Space. The value threaded here is still
+/// the freshly-minted child *Space* id — the Circle semantics of the value are
+/// to be reconciled in a follow-up (see module-level WIRE FIELD NOTE). The
+/// wire key name is corrected so we no longer emit a `hard_reject` field.
 pub fn build_flow_discussion_ref_op(
     parent_space_id: &str,
     actor: &str,
@@ -140,12 +163,9 @@ pub fn build_flow_discussion_ref_op(
 ) -> EventEnvelope {
     let mut patch = cokret_sdk::Patch::new();
     patch
-        .insert_op(
-            "discussion_space_ref",
-            cokret_sdk::PatchOp::set(child_space_id),
-        )
+        .insert_op("scope_circle_id", cokret_sdk::PatchOp::set(child_space_id))
         .unwrap_or_else(|err| {
-            panic!("invalid ck.patch.v1 discussion_space_ref patch: {err}");
+            panic!("invalid ck.patch.v1 scope_circle_id patch: {err}");
         });
     let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
         .and_then(|payload| payload.to_value())
@@ -251,9 +271,10 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000003",
         );
         assert_eq!(event.kind, "ck.flow.update");
+        // R3: the forbidden `discussion_space_ref` wire key MUST NOT appear.
         assert!(event.payload.get("discussion_space_ref").is_none());
         assert_eq!(
-            event.payload["patch"]["discussion_space_ref"]["value"],
+            event.payload["patch"]["scope_circle_id"]["value"],
             "ck:space:0196419b-0000-7000-8000-000000000003"
         );
         cokret_sdk::schema::event_payload_validator_catalog()

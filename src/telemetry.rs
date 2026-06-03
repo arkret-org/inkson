@@ -79,6 +79,15 @@ pub fn sentry_init(
         dsn: Some(dsn),
         attach_stacktrace: true,
         release: sentry::release_name!(),
+        // R18: never let the SDK attach default PII (IP address, request
+        // headers, usernames). Crash telemetry is opt-in but MUST stay
+        // privacy-preserving by default.
+        send_default_pii: false,
+        // R18: capture every error event (explicit rather than relying on the
+        // SDK default) while leaving performance tracing off — yougen does not
+        // emit transactions, so traces are not sampled.
+        sample_rate: 1.0,
+        traces_sample_rate: 0.0,
         ..Default::default()
     };
     let guard = sentry::init(options);

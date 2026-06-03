@@ -11,7 +11,7 @@ pub const PROFILE_MINIMAL_CLIENT: &str = "ck.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
 // the spec (artifacts/registry/deprecated-profile-ids.json, since 0a5ab85).
 // Replacement profile ids are ck.profile.chat_mvp.v1 / ck.profile.kanban_mvp.v1;
-// modality is otherwise expressed via Space schema, not via single-modality
+// modality is otherwise expressed via Realm schema, not via single-modality
 // profile gating.
 pub const PROFILE_CHAT_MVP: &str = "ck.profile.chat_mvp.v1";
 pub const PROFILE_KANBAN_MVP: &str = "ck.profile.kanban_mvp.v1";
