@@ -190,7 +190,7 @@ pub fn AppletsPanel(
                     .payload
                     .get("kind")
                     .and_then(Value::as_str)
-                    .map(|k| k.starts_with("cx.applet."))
+                    .map(|k| k.starts_with("ck.applet."))
                     .unwrap_or(false);
                 let matches_did = r
                     .payload

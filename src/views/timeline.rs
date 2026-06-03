@@ -432,7 +432,7 @@ pub fn TimelinePanel(
     let mut public_update_guard_status = use_signal(|| "public update guard ready".to_owned());
     let mut initial_sync_requested = use_signal(|| false);
     // Perf (P0): the composer used to persist the whole draft state and POST a
-    // `cx.typing` ephemeral on every keystroke. Debounce the draft persist and
+    // `ck.typing` ephemeral on every keystroke. Debounce the draft persist and
     // throttle typing to leading-edge + trailing-stop instead.
     let draft_saver = crate::perf::use_debouncer(800);
     let typing_throttle = crate::perf::use_typing_throttle(3_000, 4_000);
@@ -1586,7 +1586,7 @@ pub fn TimelinePanel(
                             spawn(async move {
                                 if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                     // Round R2/R3 (T02): send_typing constructs a
-                                    // cx.typing EphemeralEnvelope and POSTs it to
+                                    // ck.typing EphemeralEnvelope and POSTs it to
                                     // the broadcast ephemeral channel instead of
                                     // ck.events.submit.
                                     let _ = api

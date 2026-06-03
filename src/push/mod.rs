@@ -461,7 +461,7 @@ fn acquire_platform_push_key() -> String {
 // * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` + `pushManager.subscribe({
 //   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
 //   `applicationServerKey` is fetched from soland's push-bridge describe endpoint
-//   (cx.push.bridge.describe.v1), so deploys can rotate without rebuilding the client.
+//   (ck.push.bridge.describe.v1), so deploys can rotate without rebuilding the client.
 // * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — feature-gated stubs for native targets. The
 //   trait surface stays stable so a future `chime-fcm` / `chime-apns` adapter can drop in without
 //   churn.
@@ -1216,7 +1216,7 @@ mod tests {
     #[test]
     fn summarizes_push_bridge_contract() {
         let summary = summarize_push_gateway_bridge(&PushBridgeDescribeResponse {
-            contract: "cx.push.bridge.describe".to_owned(),
+            contract: "ck.push.bridge.describe".to_owned(),
             version: "2026-05-03".to_owned(),
             api_base_path: "/_cokret/edge/push".to_owned(),
             gateway: Default::default(),
@@ -1236,7 +1236,7 @@ mod tests {
             spec_version: None,
         });
 
-        assert!(summary.contains("cx.push.bridge.describe"));
+        assert!(summary.contains("ck.push.bridge.describe"));
         assert!(summary.contains("/_cokret/edge/push/notify"));
         assert!(summary.contains("e2ee_blind_wakeup"));
     }
@@ -1276,7 +1276,7 @@ mod tests {
     #[test]
     fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
         let ok = serde_json::json!({
-            "type": "cx.push.blind_wakeup.v1",
+            "type": "ck.push.blind_wakeup.v1",
             "reason": "background_sync_needed"
         });
         validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
@@ -1342,7 +1342,7 @@ mod tests {
     #[test]
     fn vapid_extractor_returns_none_when_webpush_not_advertised() {
         let mut describe = PushBridgeDescribeResponse::default();
-        describe.contract = "cx.push.bridge.describe.v1".to_owned();
+        describe.contract = "ck.push.bridge.describe.v1".to_owned();
         describe.version = "2026-05-09".to_owned();
         describe.gateway.supported_profiles = vec!["fcm".to_owned(), "apns".to_owned()];
         assert!(vapid_public_key_from_describe(&describe).is_none());

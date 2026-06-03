@@ -28,7 +28,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
 // build_signed_consent_revoke_v1 / format_submit_response and their
 // helpers have been removed — the consent demo card now builds
-// cx.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
+// ck.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
 // and submits them through ck.events.submit. The original Move-based
 // helpers + their wire-shape tests are preserved in git history.
 

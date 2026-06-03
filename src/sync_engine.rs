@@ -586,7 +586,7 @@ fn apply_account_data(
             }
             continue;
         }
-        // cx.contacts.space.<space_id> — actor-private Space remarks.
+        // ck.contacts.space.<space_id> — actor-private Space remarks.
         let Some(space_id) = crate::account_data::space_id_from_space_remark_key(data_type) else {
             continue;
         };

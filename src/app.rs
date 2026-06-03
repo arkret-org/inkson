@@ -6078,7 +6078,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)?;
-            if kind != "cx.realm.parent" {
+            if kind != "ck.realm.parent" {
                 return None;
             }
             for container in [
@@ -6129,7 +6129,7 @@ fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str);
-        if kind != Some("cx.realm.child") {
+        if kind != Some("ck.realm.child") {
             continue;
         }
         for container in [
@@ -10719,7 +10719,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // Hydrate Space remarks from the actor-private
                             // account_data projection (spec
                             // client-preferences.md §3.7). soland keys these
-                            // entries by `cx.contacts.space.<space_id>` and
+                            // entries by `ck.contacts.space.<space_id>` and
                             // returns the canonical SpaceRemark JSON in
                             // `content`. Entries for other namespaces are
                             // ignored here.

@@ -6,11 +6,11 @@
 //! Per spec event-kind-registry, only events that declare a `cell_family`
 //! belong on the Move/Anchor pipeline. Examples:
 //!
-//! - **Yes**: `ck.consent.grant` / `revoke`, `cx.capability.*`, `ck.member.state`,
-//!   `cx.realm.{create,update,destroy,...}`, `cx.space.{create,update,archive,restore,...}`
-//!   (container Spaces), `cx.flow.position`, `cx.anchorer.*`, `ck.mls.epoch`
-//! - **No**: `cx.message.*`, `cx.reaction.*`, `ck.read_cursor.advance`, `cx.relation.*`,
-//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/_cokret/self/events`)
+//! - **Yes**: `ck.consent.grant` / `revoke`, `ck.capability.*`, `ck.member.state`,
+//!   `ck.realm.{create,update,destroy,...}`, `ck.space.{create,update,archive,restore,...}`
+//!   (container Spaces), `ck.flow.position`, `ck.anchorer.*`, `ck.mls.epoch`
+//! - **No**: `ck.message.*`, `ck.reaction.*`, `ck.read_cursor.advance`, `ck.relation.*`,
+//!   `ck.redaction` — these stay on the durable Event Envelope endpoint (`/_cokret/self/events`)
 //!   per spec.
 //!
 //! # Signing model
@@ -368,7 +368,7 @@ pub fn build_space_organization_update_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    // TODO(realm-rework): cell family renamed from cx.component.space.organization.v1
+    // TODO(realm-rework): cell family renamed from ck.component.space.organization.v1
     // to ck.component.realm.organization.v1 in spec post-R1.7.
     let cell_id = format!("ck:cell:ck.component.realm.organization.v1:{space_id}");
     let effect = serde_json::json!({
@@ -379,7 +379,7 @@ pub fn build_space_organization_update_move(
 }
 
 /// Construct an MLS commit Move that updates the
-/// `cx.component.mls.epoch.v1` cas-register cell to `new_epoch` and
+/// `ck.component.mls.epoch.v1` cas-register cell to `new_epoch` and
 /// records the local actor's understanding of `covered_frontier`. The
 /// message Events can reference the observed frontier in their payload or
 /// auth refs; messages themselves are not cell Moves in the active spec.
@@ -388,7 +388,7 @@ pub fn build_space_organization_update_move(
 /// so the cas-register stays per-Space. `covered_frontier` is the
 /// governance frontier ref the new MLS epoch claims to cover; soland's
 /// projection compares this against
-/// `cx.component.governance.covered_frontier.v1` and only treats the
+/// `ck.component.governance.covered_frontier.v1` and only treats the
 /// epoch as binding once they match.
 pub fn build_mls_commit_move(
     issuer: &str,
@@ -399,7 +399,7 @@ pub fn build_mls_commit_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.mls.epoch.v1:{epoch_cell_subject}");
+    let cell_id = format!("ck:cell:ck.component.mls.epoch.v1:{epoch_cell_subject}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": {
@@ -1345,7 +1345,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.mls.epoch.v1:"),
+                .starts_with("ck:cell:ck.component.mls.epoch.v1:"),
             "MLS commit must target mls.epoch.v1 cell"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);

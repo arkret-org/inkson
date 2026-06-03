@@ -680,9 +680,9 @@ pub(crate) fn is_notification_account_data(value: &Value) -> bool {
             .get("kind")
             .or_else(|| value.get("type"))
             .and_then(Value::as_str),
-        Some("cx.notification")
-            | Some("cx.notification.v1")
-            | Some("cx.account.notification")
+        Some("ck.notification")
+            | Some("ck.notification.v1")
+            | Some("ck.account.notification")
             | Some("notification")
     )
 }
@@ -792,7 +792,7 @@ fn notification_is_invite(value: &Value) -> bool {
     ["notification_kind", "notification_type", "type", "kind"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
-        .any(|kind| matches!(kind, "invite" | "cx.invite" | "ck.invite.create"))
+        .any(|kind| matches!(kind, "invite" | "ck.invite" | "ck.invite.create"))
 }
 
 fn drop_joined_invite_notifications(
@@ -1123,7 +1123,7 @@ mod tests {
     fn hydrate_notifications_applies_push_rules_and_dnd() {
         let raw = vec![json!({
             "notification_id": "n1",
-            "kind": "cx.notification",
+            "kind": "ck.notification",
             "notification_type": "message",
             "realm_id": "ck:realm:quiet",
             "body": "hello"
@@ -1230,12 +1230,12 @@ mod tests {
     fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
         let account_data = vec![
             json!({
-                "kind": "cx.notification",
+                "kind": "ck.notification",
                 "notification_id": "n1",
                 "read": false
             }),
             json!({
-                "kind": "cx.profile",
+                "kind": "ck.profile",
                 "id": "profile"
             }),
         ];

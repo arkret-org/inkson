@@ -29,7 +29,7 @@ export function mockCokretContract(req) {
         "ck.events.query",
         "ck.directory.search_realms",
         "ck.keys.backups.list",
-        "cx.ephemeral.broadcast",
+        "ck.ephemeral.broadcast",
       ],
       limits: {},
     });
@@ -94,7 +94,7 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_cokret/self/ephemeral") {
-    if (!["ck.receipt.read", "cx.typing", "cx.presence", "ck.call.signal"].includes(body.kind)) {
+    if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
       return json(
         {
           ok: false,

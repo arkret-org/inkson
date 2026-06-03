@@ -1661,7 +1661,7 @@ fn chat_message_from_event_with_sidecar(
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| matches!(kind, "ck.content.poll.response" | "cx.content.poll.close"))
+        .is_some_and(|kind| matches!(kind, "ck.content.poll.response" | "ck.content.poll.close"))
     {
         return None;
     }
@@ -1842,7 +1842,7 @@ fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Valu
                 .is_some_and(|kind| {
                     matches!(
                         kind,
-                        "ck.content.poll" | "ck.content.poll.response" | "cx.content.poll.close"
+                        "ck.content.poll" | "ck.content.poll.response" | "ck.content.poll.close"
                     )
                 })
         })
@@ -1957,7 +1957,7 @@ fn typing_actors_from_sync_spaces(
         };
         for item in ephemeral {
             let kind = value_string_at(item, &["type", "kind"]).unwrap_or_default();
-            if kind != "cx.typing" {
+            if kind != "ck.typing" {
                 continue;
             }
             let Some(entries) = item.get("actors").and_then(Value::as_array) else {
@@ -2687,7 +2687,7 @@ pub fn ChatPanel(
     }
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut chat_draft = use_signal(String::new);
-    // Perf (P0): replace the per-keystroke `cx.typing` POST with a leading-edge
+    // Perf (P0): replace the per-keystroke `ck.typing` POST with a leading-edge
     // throttle (≤ once / 3s) plus a trailing `typing=false` once the user stops.
     let typing_throttle = crate::perf::use_typing_throttle(3_000, 4_000);
     // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
@@ -2697,13 +2697,13 @@ pub fn ChatPanel(
     let mut compose_dragover = use_signal(|| false);
     let mut compose_upload_status = use_signal(String::new);
     // A6.3 message pinning. Local-only scaffolding: the spec does not
-    // yet define a `cx.message.pin` event_kind, so we keep pin state in
+    // yet define a `ck.message.pin` event_kind, so we keep pin state in
     // a per-space Signal and surface it at the top of the discussion.
     // When soland exposes the pin endpoint (see TODO below) we'll
     // replace this with a real API call + projection sync.
     //
     // TODO(soland): replace `pinned_messages` with the canonical
-    // `cx.message.pin` event family per spec
+    // `ck.message.pin` event family per spec
     // `flow-and-message.md §8.6` once soland ships it.
     let mut pinned_messages = use_signal(Vec::<String>::new);
     // Currently-open context menu (right-click on a message). Stores
@@ -2738,7 +2738,7 @@ pub fn ChatPanel(
     let mut poll_draft = use_signal(|| Option::<crate::messaging::polls::PollDraft>::None);
     let mut poll_cards = use_signal(Vec::<crate::messaging::polls::PollCard>::new);
     // G3.Y2 — typing indicator. `typing_actors` lists the DIDs of
-    // other actors who have sent a `cx.typing` ephemeral within the
+    // other actors who have sent a `ck.typing` ephemeral within the
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
     // G3.Y2 — presence. Maps `actor_did -> "online"|"away"|"offline"`.
@@ -3676,7 +3676,7 @@ pub fn ChatPanel(
 
                 // G3.Y2 — typing indicator. Shown when one or more
                 // other actors in the active flow have sent a
-                // `cx.typing` ephemeral within `TYPING_TTL_SECONDS`.
+                // `ck.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
                 {
@@ -4948,7 +4948,7 @@ pub fn ChatPanel(
 
             // G3.Y2 — discussion promote confirmation modal. Renders
             // a single input for the child Space title + a confirm
-            // button that fires the ck.space.create + cx.space.child
+            // button that fires the ck.space.create + ck.space.child
             // + ck.space.parent + ck.flow.update batch.
             if crate::messaging::discussion_promote::discussion_promote_enabled()
                 && promote_discussion_draft.read().is_open()
@@ -6693,10 +6693,10 @@ mod tests {
         let value = json!({
             "events": [
                 {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
-                {"type": "cx.key.verify.request", "content": {"ignore_me": true}},
+                {"type": "ck.key.verify.request", "content": {"ignore_me": true}},
                 {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
                 {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-3"}},
-                {"type": "cx.device.message", "content": {"ignore_me": true}},
+                {"type": "ck.device.message", "content": {"ignore_me": true}},
             ]
         });
         let welcomes = crate::mls::runtime::collect_welcome_entries(&value);

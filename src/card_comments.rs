@@ -35,7 +35,7 @@ pub struct CardComment {
     /// Raw body text (Markdown allowed; soland renders it).
     pub body: String,
     /// DIDs extracted from `@did:web:...` patterns in the body.
-    /// `cx.message.create.payload.mentions[]` per spec §3 — yougen
+    /// `ck.message.create.payload.mentions[]` per spec §3 — yougen
     /// emits notifications only to these DIDs.
     pub mentions: Vec<String>,
 }

@@ -737,7 +737,7 @@ mod tests {
             let label = step.label();
             assert!(!label.is_empty(), "label cannot be empty");
             assert!(
-                !label.starts_with("cx."),
+                !label.starts_with("ck."),
                 "labels are human strings, not event kinds: got `{label}`"
             );
         }

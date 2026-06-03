@@ -328,9 +328,9 @@ pub fn SpaceAdminPanel(
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
     // MLS epoch + governance covered_frontier for the read-only widget.
-    // `mls_epoch` is the cas-register value of cx.component.mls.epoch.v1;
+    // `mls_epoch` is the cas-register value of ck.component.mls.epoch.v1;
     // `covered_frontier` is the
-    // cx.component.governance.covered_frontier.v1 cell value. Both come
+    // ck.component.governance.covered_frontier.v1 cell value. Both come
     // from the same anchor view the bottom-cells banner reads.
     let mls_epoch_label = anchor_view
         .mls_epoch
@@ -902,7 +902,7 @@ pub fn SpaceAdminPanel(
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
                         span { "MLS epoch & governance frontier" }
-                        span { "cx.component.mls.epoch.v1 · governance.covered_frontier.v1" }
+                        span { "ck.component.mls.epoch.v1 · governance.covered_frontier.v1" }
                     }
                     div { class: "muted",
                         "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_frontier value Move acceptance gates against. Updates as soon as sync surfaces a new anchor view — no fetch button needed."
@@ -1402,7 +1402,7 @@ pub fn SpaceAdminPanel(
                             div { class: "event", "data-testid": "member-row", "data-member-did": "{member}",
                         div { class: "event-head",
                             // A4b — member avatar slot. Avatars are
-                            // public via `cx.account.update_profile`
+                            // public via `ck.account.update_profile`
                             // (mirrored on this row via the
                             // `member-avatar` testid). v1 renders an
                             // initials-only placeholder; a follow-up
@@ -1922,9 +1922,9 @@ pub fn SpaceAdminPanel(
                 }
                 div { class: "actions",
                     span { class: "muted", "Audit-bound key share events:" }
-                    span { class: "badge blue", title: "cx.space_key.share", "Key share" }
-                    span { class: "badge", title: "cx.space_key.share_audit", "Audit entry" }
-                    span { class: "badge red", title: "cx.space_key.withheld", "Withheld" }
+                    span { class: "badge blue", title: "ck.space_key.share", "Key share" }
+                    span { class: "badge", title: "ck.space_key.share_audit", "Audit entry" }
+                    span { class: "badge red", title: "ck.space_key.withheld", "Withheld" }
                 }
                 div { class: "actions",
                     button { class: "secondary", "data-testid": "audited-e2ee-set-none", "No audit profile" }
@@ -2380,14 +2380,14 @@ pub fn SpaceAdminPanel(
             }
 
             // Policy events — authz/policy-server.md
-            // The three cx.policy.{rule,action,set} events feed the reducer's decision:
+            // The three ck.policy.{rule,action,set} events feed the reducer's decision:
             //   ck.policy.rule    — a single rule (match condition + effect + scope)
             //   ck.policy.action  — a single action template (referenced by rules)
             //   ck.policy.set     — bundles rules + actions into one published policy version
             div { class: "event", "data-testid": "policy-event-family",
                 div { class: "event-head",
                     span { "Policy authoring" }
-                    span { "cx.policy.{{rule,action,set}}" }
+                    span { "ck.policy.{{rule,action,set}}" }
                 }
                 div { class: "muted",
                     "Policy is the input the reducer and service node use to decide whether a request is acceptable. A policy is published as a set composed of rules + actions; one policy_version is written atomically."

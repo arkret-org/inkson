@@ -2,7 +2,7 @@
 //!
 //! The protocol treats notification state as a derived projection, not
 //! canonical Space truth. This module evaluates the actor-private
-//! `cx.push_rules` and `cx.dnd_schedule` account_data payloads against a
+//! `ck.push_rules` and `ck.dnd_schedule` account_data payloads against a
 //! locally visible event context. It also models the required E2EE fallback:
 //! server-side dispatch may issue a blind wakeup for client-side rules, but
 //! the client must not show a user-visible banner until it has decrypted and
@@ -152,11 +152,11 @@ pub fn parse_dnd_settings(value: &Value) -> Option<DndSettings> {
 }
 
 pub fn push_rules_from_account_data(entries: &[Value]) -> Option<PushRulesConfig> {
-    account_data_content(entries, "cx.push_rules").and_then(parse_push_rules)
+    account_data_content(entries, "ck.push_rules").and_then(parse_push_rules)
 }
 
 pub fn dnd_settings_from_account_data(entries: &[Value]) -> Option<DndSettings> {
-    account_data_content(entries, "cx.dnd_schedule").and_then(parse_dnd_settings)
+    account_data_content(entries, "ck.dnd_schedule").and_then(parse_dnd_settings)
 }
 
 pub fn evaluate_notification(
@@ -821,11 +821,11 @@ mod tests {
     fn account_data_helpers_extract_canonical_keys() {
         let entries = vec![
             json!({
-                "data_type": "cx.push_rules",
+                "data_type": "ck.push_rules",
                 "content": {"rules": [{"rule_id": "r1", "actions": ["notify"]}]}
             }),
             json!({
-                "data_type": "cx.dnd_schedule",
+                "data_type": "ck.dnd_schedule",
                 "content": {"dnd": {"enabled": true}}
             }),
         ];

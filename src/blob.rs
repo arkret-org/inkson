@@ -50,7 +50,7 @@ pub fn blob_typed_id(bytes: &[u8]) -> String {
     format!("ck:blob:sha256:{digest:x}")
 }
 
-/// Build a `cx.blob.register` event body describing an authenticated media
+/// Build a `ck.blob.register` event body describing an authenticated media
 /// upload. Pairs with a server-side `ck.blob.upload` to make the blob
 /// retrievable through the durable event chain.
 pub fn build_blob_register(
@@ -60,7 +60,7 @@ pub fn build_blob_register(
     metadata: &MediaMetadata,
 ) -> anyhow::Result<OperationBuilder> {
     let metadata_value = serde_json::to_value(metadata)?;
-    Ok(OperationBuilder::new(space_id, actor, "cx.blob.register")
+    Ok(OperationBuilder::new(space_id, actor, "ck.blob.register")
         .target_ref(blob_id)
         .body(json!({
             "blob_id": blob_id,
@@ -68,7 +68,7 @@ pub fn build_blob_register(
         })))
 }
 
-/// Build a `cx.blob.revoke` event — revokes prior download grants for the
+/// Build a `ck.blob.revoke` event — revokes prior download grants for the
 /// referenced blob without deleting the underlying bytes.
 pub fn build_blob_revoke(
     space_id: &str,
@@ -76,7 +76,7 @@ pub fn build_blob_revoke(
     blob_id: &str,
     reason: Option<&str>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.blob.revoke")
+    OperationBuilder::new(space_id, actor, "ck.blob.revoke")
         .target_ref(blob_id)
         .body(json!({
             "blob_id": blob_id,
@@ -84,7 +84,7 @@ pub fn build_blob_revoke(
         }))
 }
 
-/// Build a `cx.blob.grant` event — authenticated download grant for a blob.
+/// Build a `ck.blob.grant` event — authenticated download grant for a blob.
 /// `scope` indicates whether the grant is space-wide, flow-scoped, or
 /// per-actor (matches the SDK's [`DownloadGrantScope`]).
 pub fn build_blob_grant(
@@ -94,7 +94,7 @@ pub fn build_blob_grant(
     grant: &AuthenticatedDownloadGrant,
 ) -> anyhow::Result<OperationBuilder> {
     let grant_value = serde_json::to_value(grant)?;
-    Ok(OperationBuilder::new(space_id, actor, "cx.blob.grant")
+    Ok(OperationBuilder::new(space_id, actor, "ck.blob.grant")
         .target_ref(blob_id)
         .body(json!({
             "blob_id": blob_id,
@@ -107,7 +107,7 @@ pub fn build_blob_grant(
 /// timeline event bodies that carry a single attached blob.
 pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     Ok(json!({
-        "kind": "cx.content.attachment",
+        "kind": "ck.content.attachment",
         "metadata": serde_json::to_value(metadata)?,
     }))
 }
@@ -242,7 +242,7 @@ mod tests {
             Some("uploaded in error"),
         )
         .build("node");
-        assert_eq!(op.kind, "cx.blob.revoke");
+        assert_eq!(op.kind, "ck.blob.revoke");
         assert_eq!(op.payload["reason"], "uploaded in error");
     }
 

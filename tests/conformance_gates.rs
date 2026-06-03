@@ -12,8 +12,8 @@
 //!    immediately downstream.
 //!
 //! 2. **J2 — operation_id registry gate.** Recursively scans `yougen/src/**/*.rs` for `operation_id
-//!    = "cx.*"` literals and asserts each is in the canonical `operation-registry.json` OR
-//!    namespaced as `cx.extension.yougen.*`. Yougen has very few of these (typed Rust API, not
+//!    = "ck.*"` literals and asserts each is in the canonical `operation-registry.json` OR
+//!    namespaced as `ck.extension.yougen.*`. Yougen has very few of these (typed Rust API, not
 //!    HTTP), but the gate keeps the convention if any are added.
 
 use std::collections::BTreeSet;
@@ -563,7 +563,7 @@ fn yougen_operation_ids_are_registered_or_namespaced() {
             let scanned = code_portion(line);
             for cap in pattern.captures_iter(scanned) {
                 let op = &cap[1];
-                if op.starts_with("cx.extension.yougen.") {
+                if op.starts_with("ck.extension.yougen.") {
                     continue;
                 }
                 if canonical.contains(op) {
@@ -571,7 +571,7 @@ fn yougen_operation_ids_are_registered_or_namespaced() {
                 }
                 offenders.push(format!(
                     "{}:{}: unregistered operation_id `{op}` (not in canonical \
-                     registry and not namespaced as cx.extension.yougen.*)",
+                     registry and not namespaced as ck.extension.yougen.*)",
                     path.display(),
                     idx + 1
                 ));
@@ -583,7 +583,7 @@ fn yougen_operation_ids_are_registered_or_namespaced() {
         offenders.is_empty(),
         "yougen source declares operation_id values that are neither \
          in the canonical registry nor namespaced as \
-         cx.extension.yougen.*:\n  {}",
+         ck.extension.yougen.*:\n  {}",
         offenders.join("\n  ")
     );
 }

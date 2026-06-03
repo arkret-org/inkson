@@ -124,7 +124,7 @@ pub fn WebRtcCallPanel(
                 .payload
                 .get("kind")
                 .and_then(|v| v.as_str())
-                .map(|kind| kind.starts_with("cx.call."))
+                .map(|kind| kind.starts_with("ck.call."))
                 .unwrap_or(false)
         })
         .count();

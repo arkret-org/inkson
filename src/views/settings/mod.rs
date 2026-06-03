@@ -36,24 +36,24 @@ use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 use crate::workflows::blocked_release_workflows;
 
-/// `cx.account_data` key used by the read-receipt preferences entry. Spec:
+/// `ck.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
 pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ck.read_receipt.preferences";
 
-/// `cx.account_data` key used by the cross-device UI preferences entry
+/// `ck.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Space view). Spec:
 /// `discovery/client-preferences.md` §2.
 pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
-/// `cx.account_data` key used by the actor-private personal blocklist.
+/// `ck.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
 pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ck.account.blocklist";
 
-/// `cx.account_data` key used by notification push-rule preferences.
-pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "cx.push_rules";
+/// `ck.account_data` key used by notification push-rule preferences.
+pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ck.push_rules";
 
-/// `cx.account_data` key used by do-not-disturb preferences.
-pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "cx.dnd_schedule";
+/// `ck.account_data` key used by do-not-disturb preferences.
+pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
 
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAvatarCrop {
@@ -90,7 +90,7 @@ pub(crate) fn push_client_ui_account_data(
 
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
-/// also published via `cx.account.update_profile` so other actors see
+/// also published via `ck.account.update_profile` so other actors see
 /// it through the directory; mirroring the ref into `client.ui` keeps a
 /// second device that signs in primed before the profile lookup
 /// completes.
@@ -272,12 +272,12 @@ fn push_notification_rules_account_data(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for cx.push_rules returned {status}; local notification rules remain authoritative"
+                    "soland account_data PUT for ck.push_rules returned {status}; local notification rules remain authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "account_data PUT for cx.push_rules failed: {}",
+                    "account_data PUT for ck.push_rules failed: {}",
                     err.display()
                 );
             }
@@ -1009,12 +1009,12 @@ pub fn SettingsPanel(
                             // helper when a blob_ref is present), an
                             // upload control, and a clear button. The
                             // avatar is also published to soland's
-                            // `cx.account.update_profile` so the
+                            // `ck.account.update_profile` so the
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
                                     span { {crate::i18n::tr("settings.avatar.title")} }
-                                    span { title: "cx.account.update_profile", "Profile" }
+                                    span { title: "ck.account.update_profile", "Profile" }
                                 }
                                 div { class: "actions", style: "align-items: center; gap: 16px;",
                                     {
@@ -1248,7 +1248,7 @@ pub fn SettingsPanel(
                                                                                     Some(blob_ref.clone()),
                                                                                 );
                                                                                 // 2) Publish publicly via
-                                                                                //    `cx.account.update_profile`.
+                                                                                //    `ck.account.update_profile`.
                                                                                 //    Best-effort: log on failure but
                                                                                 //    keep the local cache intact.
                                                                                 match api
@@ -1358,7 +1358,7 @@ pub fn SettingsPanel(
                                     }
                                 }
                                 div { class: "muted",
-                                    "Published via cx.account.update_profile; mirrored to other devices via client.ui.avatar_blob_ref."
+                                    "Published via ck.account.update_profile; mirrored to other devices via client.ui.avatar_blob_ref."
                                 }
                             }
 
@@ -2343,13 +2343,13 @@ pub fn SettingsPanel(
                 // user has joined. Lets users disambiguate duplicate-titled
                 // Spaces without leaking the remark beyond this account.
                 // Pushed to soland via `ck.account_data.set` under
-                // `cx.contacts.space.<space_id>`; soland echoes the same
+                // `ck.contacts.space.<space_id>`; soland echoes the same
                 // entries back on the next `/sync` so other devices pick
                 // them up.
                 div { class: "event", "data-testid": "space-remarks-editor",
                     div { class: "event-head",
                         span { "Space remarks" }
-                        span { "cx.contacts.space.<space_id>" }
+                        span { "ck.contacts.space.<space_id>" }
                         HelpTip { text: "Private to this account. The remark replaces the public Space title in the sidebar / dashboard. Other Space members never see it." }
                     }
                     {

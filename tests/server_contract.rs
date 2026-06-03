@@ -24,7 +24,7 @@ fn yougen_accepts_server_contract_payloads() {
         "trust_domain": "ck:trust_domain:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
-        "supported_profiles": ["cx.schema.core.v1"],
+        "supported_profiles": ["ck.schema.core.v1"],
         "supported_features": [
             "account.subscribe",
             "sync.backfill",
@@ -44,8 +44,8 @@ fn yougen_accepts_server_contract_payloads() {
             "ck.directory.describe",
             "ck.directory.search_realms",
             "ck.directory.resolve_realm",
-            "cx.index.describe",
-            "cx.index.query",
+            "ck.index.describe",
+            "ck.index.query",
             "ck.authz.check",
             "ck.authz.get_effective_grants",
             "ck.authz.get_invites",
@@ -55,7 +55,7 @@ fn yougen_accepts_server_contract_payloads() {
         ],
         "supported_bindings": [{"kind": "http_json", "base_path": "/_cokret"}],
         "supported_reducer_profiles": ["ck.reducer.v1"],
-        "supported_schema_profiles": ["cx.schema.core.v1"],
+        "supported_schema_profiles": ["ck.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
         "plaintext_visibility": {"default": "encrypted"},
@@ -71,7 +71,7 @@ fn yougen_accepts_server_contract_payloads() {
     assert!(
         describe
             .supported_operations
-            .contains(&"cx.index.query".to_owned())
+            .contains(&"ck.index.query".to_owned())
     );
     assert_eq!(describe.supported_bindings[0]["base_path"], "/_cokret");
 
@@ -80,7 +80,7 @@ fn yougen_accepts_server_contract_payloads() {
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
-        "profiles": ["cx.identity.local-dev.v1"]
+        "profiles": ["ck.identity.local-dev.v1"]
     }))
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
@@ -141,11 +141,11 @@ fn yougen_accepts_server_contract_payloads() {
     let directory = parse_directory_describe(json!({
         "service_did": "did:web:server.local",
         "resource_types": ["space", "organization", "actor"],
-        "discovery_profiles": ["cx.profile.directory.v1"],
+        "discovery_profiles": ["ck.profile.directory.v1"],
         "restricted_query_proof": false
     }))
     .unwrap();
-    assert_eq!(directory.discovery_profiles[0], "cx.profile.directory.v1");
+    assert_eq!(directory.discovery_profiles[0], "ck.profile.directory.v1");
 
     let resolved = parse_resolve_realm(json!({
         "space_preview": {
@@ -422,7 +422,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
         "left_spaces": ["ck:space:left"],
         "to_device": [{"type": "ck.mls.welcome"}],
         "account_data": [{
-            "data_type": "cx.push_rules",
+            "data_type": "ck.push_rules",
             "content": {"global": {"enabled": true}}
         }],
         "device_lists": {"changed": [], "left": []},
@@ -463,11 +463,11 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 fn account_data_canonical_contact_and_space_remark_keys_contract() {
     assert_eq!(
         space_remark_account_data_key("ck:space:contract"),
-        "cx.contacts.space.ck:space:contract"
+        "ck.contacts.space.ck:space:contract"
     );
     assert_eq!(
         contact_remark_account_data_key("did:web:alice.example"),
-        "cx.contacts.actor.did:web:alice.example"
+        "ck.contacts.actor.did:web:alice.example"
     );
     assert_eq!(
         AccountDataKey::ClientReadReceipts.as_wire(),
@@ -475,11 +475,11 @@ fn account_data_canonical_contact_and_space_remark_keys_contract() {
     );
     assert_eq!(
         AccountDataKey::ClientNotifications.as_wire(),
-        "cx.push_rules"
+        "ck.push_rules"
     );
     assert_eq!(
         AccountDataKey::ClientDndSchedule.as_wire(),
-        "cx.dnd_schedule"
+        "ck.dnd_schedule"
     );
 }
 
@@ -514,7 +514,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     assert_no_secret("event", &event, secret);
 
     let blind_push = json!({
-        "type": "cx.push.blind_wakeup.v1",
+        "type": "ck.push.blind_wakeup.v1",
         "reason": "background_sync_needed"
     });
     validate_blind_wakeup_payload(&blind_push).unwrap();

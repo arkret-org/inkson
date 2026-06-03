@@ -510,7 +510,7 @@ pub fn DocumentPanel(
     let self_cursor_line = use_signal(|| 0u32);
     let self_cursor_col = use_signal(|| 0u32);
     // Remote cursors — populated by the cotest harness through
-    // `cx.presence` ephemerals; the panel currently renders whatever
+    // `ck.presence` ephemerals; the panel currently renders whatever
     // the projection layer has stamped here.
     // TODO(G3.Y4-followup): replace the locally-held Vec with a
     // subscription to `state_store`'s presence projection once the

@@ -342,8 +342,8 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.policy.rule",
         "ck.policy.set",
         // Presence / typing (discovery/profiles-presence)
-        "cx.presence",
-        "cx.typing",
+        "ck.presence",
+        "ck.typing",
         // Reaction
         "ck.reaction.add",
         "ck.reaction.remove",
@@ -352,7 +352,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.read_cursor.advance",
         "ck.receipt.read",
         // Redaction (cross-object — separate from ck.message.redact)
-        "cx.redaction",
+        "ck.redaction",
         // Relation
         "ck.relation.create",
         "ck.relation.tombstone",
@@ -365,17 +365,17 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         // Sovereign deployment (sync/sovereign-deployment)
         "ck.sovereign.did_policy",
         // Realm (security boundary) — R1.7 inversion renamed the former
-        // `cx.space.*` security events to `cx.realm.*` and freed the
-        // `cx.space.*` namespace for the container lifecycle below.
-        // T2.3 history: cx.space.lifecycle.set / cx.space.policy.set were
+        // `ck.space.*` security events to `ck.realm.*` and freed the
+        // `ck.space.*` namespace for the container lifecycle below.
+        // T2.3 history: ck.space.lifecycle.set / ck.space.policy.set were
         // removed by spec 0a5ab85 — they have no realm successor.
-        "cx.realm.child",
+        "ck.realm.child",
         "ck.realm.create",
         "ck.realm.organization",
-        "cx.realm.parent",
+        "ck.realm.parent",
         "ck.realm.update",
         "ck.realm.upgrade",
-        // Space (navigation container, post-R1.7) — former `cx.place.*`
+        // Space (navigation container, post-R1.7) — former `ck.place.*`
         // verbs over Board / List / Section containers.
         "ck.space.archive",
         "ck.space.create",
@@ -383,9 +383,9 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.space.tombstone",
         "ck.space.update",
         // MLS Space-key share (audited E2EE)
-        "cx.space_key.share",
-        "cx.space_key.share_audit",
-        "cx.space_key.withheld",
+        "ck.space_key.share",
+        "ck.space_key.share_audit",
+        "ck.space_key.withheld",
         // View (View projection)
         "ck.view.create",
         "ck.view.reconcile",
@@ -450,9 +450,9 @@ const EPHEMERAL_EVENT_KINDS: &[&str] = &[
     "ck.key.verification.ready",
     "ck.key.verification.request",
     "ck.key.verification.start",
-    "cx.presence",
+    "ck.presence",
     "ck.receipt.read",
-    "cx.typing",
+    "ck.typing",
 ];
 
 /// F-PROFILE-1: cheap fast-path version of "is `kind` in
@@ -870,12 +870,12 @@ mod tests {
             "operation_id": "op1",
             "space_id": "ck:space:s1",
             "actor": "did:web:alice",
-            "type": "cx.bogus.kind",
+            "type": "ck.bogus.kind",
             "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
         });
         match validate_structure(&event, "event") {
             Err(ValidationError::UnknownEventKind(kind)) => {
-                assert_eq!(kind, "cx.bogus.kind");
+                assert_eq!(kind, "ck.bogus.kind");
             }
             other => panic!("expected UnknownEventKind, got {other:?}"),
         }
@@ -885,8 +885,8 @@ mod tests {
     fn require_known_event_kind_accepts_canonical_and_rejects_garbage() {
         assert!(require_known_event_kind("ck.message.create").is_ok());
         assert!(require_known_event_kind("ck.flow.update").is_ok());
-        assert!(require_known_event_kind("cx.typing").is_ok());
-        let err = require_known_event_kind("cx.bogus.kind").expect_err("unknown kind must error");
+        assert!(require_known_event_kind("ck.typing").is_ok());
+        let err = require_known_event_kind("ck.bogus.kind").expect_err("unknown kind must error");
         assert!(matches!(err, ValidationError::UnknownEventKind(_)));
     }
 
@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn known_event_kinds_matches_registry_count() {
-        // C18 wire-break (spec 2026-05-08): cx.flow.branch.* (7 kinds) renamed
+        // C18 wire-break (spec 2026-05-08): ck.flow.branch.* (7 kinds) renamed
         // and pruned to ck.flow.track.{enable,disable,update,set_primary}
         // (4 kinds; spec dropped member/history_visibility/policy_components
         // because tracks no longer carry independent membership/visibility/
@@ -939,11 +939,11 @@ mod tests {
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
         // surface remains a subset (105 here).
-        // T2.3 wire-break: cx.space.lifecycle.set and cx.space.policy.set
+        // T2.3 wire-break: ck.space.lifecycle.set and ck.space.policy.set
         // were removed (artifacts/registry/removed-event-kinds.json,
         // hard_reject); net -2 from prior 107.
-        // R1.7 realm/space inversion: 6 former `cx.space.*` security events
-        // were renamed to `cx.realm.*`, and 5 new `cx.space.*` container
+        // R1.7 realm/space inversion: 6 former `ck.space.*` security events
+        // were renamed to `ck.realm.*`, and 5 new `ck.space.*` container
         // lifecycle kinds (archive/create/restore/tombstone/update) were
         // added — net +5 from prior 105.
         assert_eq!(known_event_kinds().len(), 110);
@@ -955,10 +955,10 @@ mod tests {
         // current-model §3 — unified track update (spec dc01ad7)
         assert!(kinds.contains(&"ck.flow.tracks.update"));
         // Legacy split events removed in the dc01ad7 unification.
-        assert!(!kinds.contains(&"cx.flow.track.enable"));
-        assert!(!kinds.contains(&"cx.flow.track.disable"));
-        assert!(!kinds.contains(&"cx.flow.track.update"));
-        assert!(!kinds.contains(&"cx.flow.track.set_primary"));
+        assert!(!kinds.contains(&"ck.flow.track.enable"));
+        assert!(!kinds.contains(&"ck.flow.track.disable"));
+        assert!(!kinds.contains(&"ck.flow.track.update"));
+        assert!(!kinds.contains(&"ck.flow.track.set_primary"));
         // current-model §4 — board / list workflow container
         assert!(kinds.contains(&"ck.flow.move"));
         assert!(kinds.contains(&"ck.flow.reorder"));
@@ -973,37 +973,37 @@ mod tests {
         // notification is *not* (it's a derived projection).
         assert!(kinds.contains(&"ck.read_cursor.advance"));
         assert!(kinds.contains(&"ck.receipt.read"));
-        assert!(!kinds.contains(&"cx.notification.dismiss"));
+        assert!(!kinds.contains(&"ck.notification.dismiss"));
         // audited-e2ee — attested + disclosed audit profiles
         assert!(kinds.contains(&"ck.audit.accessed"));
         assert!(kinds.contains(&"ck.audit.ryw_receipt"));
         // Removed by spec
-        assert!(!kinds.contains(&"cx.flow.convert"));
+        assert!(!kinds.contains(&"ck.flow.convert"));
         assert!(!kinds.contains(&"ck.mls.epoch"));
         // T2.3 (spec 0a5ab85): single 'set' kinds were decomposed into
         // per-component cells / typed lifecycle events.
-        assert!(!kinds.contains(&"cx.space.lifecycle.set"));
-        assert!(!kinds.contains(&"cx.space.policy.set"));
+        assert!(!kinds.contains(&"ck.space.lifecycle.set"));
+        assert!(!kinds.contains(&"ck.space.policy.set"));
         // R1.7 realm/space inversion: security-boundary events live in
-        // cx.realm.*; container lifecycle events live in cx.space.*.
+        // ck.realm.*; container lifecycle events live in ck.space.*.
         assert!(kinds.contains(&"ck.realm.create"));
         assert!(kinds.contains(&"ck.realm.update"));
-        assert!(kinds.contains(&"cx.realm.child"));
-        assert!(kinds.contains(&"cx.realm.parent"));
+        assert!(kinds.contains(&"ck.realm.child"));
+        assert!(kinds.contains(&"ck.realm.parent"));
         assert!(kinds.contains(&"ck.space.archive"));
         assert!(kinds.contains(&"ck.space.restore"));
         assert!(kinds.contains(&"ck.space.tombstone"));
-        // Renamed: cx.actor.profile.update -> ck.profile.update
+        // Renamed: ck.actor.profile.update -> ck.profile.update
         assert!(kinds.contains(&"ck.profile.update"));
-        assert!(!kinds.contains(&"cx.actor.profile.update"));
+        assert!(!kinds.contains(&"ck.actor.profile.update"));
     }
 
     #[test]
     fn known_event_kinds_have_protocol_namespace() {
         for kind in known_event_kinds() {
             assert!(
-                kind.starts_with("cx."),
-                "event kind `{kind}` must live in the cx.* namespace"
+                kind.starts_with("ck."),
+                "event kind `{kind}` must live in the ck.* namespace"
             );
             assert!(
                 !kind.contains(' '),
@@ -1015,24 +1015,24 @@ mod tests {
     /// Lock-down: registry counts at the time of last alignment.
     ///
     /// C18 wire-break (spec 2026-05-08) deliberately retired
-    /// `cx.flow.branch.{member,history_visibility,policy_components}` — three
+    /// `ck.flow.branch.{member,history_visibility,policy_components}` — three
     /// events that had no track-namespace successor — so the prior floor of
     /// 110 is no longer meaningful. Spec dc01ad7 (2026-05-18) then unified
     /// the four `ck.flow.track.{enable,disable,update,set_primary}` events
     /// into a single `ck.flow.tracks.update`, dropping three more entries.
     /// We pin to 102 to track the post-T2.3 count. The spec itself
     /// declares 131 active kinds at HEAD; yougen surfaces the typed subset
-    /// relevant to its UI flows. T2.3 dropped cx.space.lifecycle.set and
-    /// cx.space.policy.set (-2 from the prior 104 floor).
+    /// relevant to its UI flows. T2.3 dropped ck.space.lifecycle.set and
+    /// ck.space.policy.set (-2 from the prior 104 floor).
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
         // R1.7 realm/space inversion raised the floor from 102 to 107:
-        // the 6 renamed `cx.space.*` → `cx.realm.*` are net-zero, and the
+        // the 6 renamed `ck.space.*` → `ck.realm.*` are net-zero, and the
         // 5 new container lifecycle kinds add a stable floor of 107.
         assert!(
             kinds.len() >= 107,
-            "yougen surfaces {} event kinds; floor 107 set after R1.7 added cx.space.{{archive,create,restore,tombstone,update}} on top of the realm/space inversion.",
+            "yougen surfaces {} event kinds; floor 107 set after R1.7 added ck.space.{{archive,create,restore,tombstone,update}} on top of the realm/space inversion.",
             kinds.len()
         );
     }
@@ -1055,7 +1055,7 @@ mod tests {
 
     /// Lock-down: structural shape of each event kind.
     ///
-    /// All canonical event kinds follow the segment pattern `cx.<group>.<verb>[.<sub>]…`
+    /// All canonical event kinds follow the segment pattern `ck.<group>.<verb>[.<sub>]…`
     /// with lowercase ASCII + underscore; payloads in identifiers are forbidden.
     #[test]
     fn known_event_kinds_are_well_formed() {
@@ -1223,7 +1223,7 @@ mod tests {
 
     #[test]
     fn event_kind_wire_scope_returns_none_for_unknown_kind() {
-        assert_eq!(super::event_kind_wire_scope("cx.bogus.kind"), None);
+        assert_eq!(super::event_kind_wire_scope("ck.bogus.kind"), None);
     }
 
     #[test]
@@ -1237,8 +1237,8 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for kind in &kinds {
             assert!(
-                kind.starts_with("cx."),
-                "snapshot entry `{kind}` missing cx.* namespace"
+                kind.starts_with("ck."),
+                "snapshot entry `{kind}` missing ck.* namespace"
             );
             assert!(
                 seen.insert(kind.clone()),

@@ -827,7 +827,7 @@ impl CokretApi {
 
     /// A4b — update the authenticated principal's public profile
     /// (display_name / bio / avatar_url). Mirrors soland's
-    /// `cx.account.update_profile` wire shape: each field is
+    /// `ck.account.update_profile` wire shape: each field is
     /// `Option<String>`; `None` leaves the field untouched server-side,
     /// `Some("")` explicitly clears it. The server normalises empty
     /// strings to `None` on write.
@@ -859,7 +859,7 @@ impl CokretApi {
     /// `<base>/_cokret/self/blob/get?blob_ref=<…>&purpose=profile_avatar`
     /// shape that soland's
     /// `/blob/get` handler answers — callers can plug this directly
-    /// into `<img src=…>` or `cx.account.update_profile { avatar_url }`.
+    /// into `<img src=…>` or `ck.account.update_profile { avatar_url }`.
     pub fn blob_download_url(&self, blob_ref: &str) -> String {
         blob_download_url_for(self.base_url.as_str(), blob_ref)
     }
@@ -1795,7 +1795,7 @@ impl CokretApi {
             "yougen-txn-1",
             actor,
             device_id,
-            "cx.mls.test",
+            "ck.mls.test",
             json!({"ciphertext": "opaque-yougen-test"}),
         )
         .await
@@ -2494,7 +2494,7 @@ impl CokretApi {
     }
 
     /// Set Realm join_rule + history_visibility policy via two
-    /// `cx.realm.*` facet events.
+    /// `ck.realm.*` facet events.
     pub async fn set_space_policy_events(
         &self,
         space_id: &str,
@@ -2660,7 +2660,7 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
-    /// (`cx.typing`). They MUST flow through the canonical
+    /// (`ck.typing`). They MUST flow through the canonical
     /// `ck.ephemeral.send` operation (`POST /_cokret/self/ephemeral`), never
     /// through `ck.events.submit` or a deployment-local typing shim.
     pub async fn send_typing(
@@ -2748,7 +2748,7 @@ impl CokretApi {
     // ── Device & Crypto ─────────────────────────────────────────────
 
     /// User-driven device revoke. Hits soland's deployment-local
-    /// `cx.devices.revoke` (`POST /_cokret/self/devices/{device_id}/revoke`) —
+    /// `ck.devices.revoke` (`POST /_cokret/self/devices/{device_id}/revoke`) —
     /// NOT spec's `ck.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
     /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
@@ -2760,7 +2760,7 @@ impl CokretApi {
     }
 
     /// Rename a device the caller controls by updating its user-facing
-    /// `display_name`. Hits soland's `cx.devices.rename`
+    /// `display_name`. Hits soland's `ck.devices.rename`
     /// (`POST /_cokret/self/devices/{device_id}/rename`). `display_name` is the
     /// optional, mutable, UI-only device name per
     /// `crypto-media/device-lifecycle.md` §4; the canonical id is always
@@ -2778,7 +2778,7 @@ impl CokretApi {
     }
 
     /// G3.Y1 — list the principal's active devices via soland's
-    /// `cx.devices.list` (`GET /_cokret/self/devices`). Returns the raw JSON
+    /// `ck.devices.list` (`GET /_cokret/self/devices`). Returns the raw JSON
     /// response shape `{ "actor": ..., "current_device_id": ..., "devices": [...] }`.
     /// Each device record carries at minimum `device_id`,
     /// `is_current_session_device`, and a `verification_state` per
@@ -3160,7 +3160,7 @@ impl CokretApi {
     /// canonical ephemeral channel (`POST /_cokret/self/ephemeral`) instead of the
     /// durable `/_cokret/self/events` endpoint. The envelope MUST validate against
     /// `ck.schema.ephemeral_envelope.v1` (kind in
-    /// {`ck.call.signal`, `cx.presence`, `cx.typing`, `ck.receipt.read`}, and
+    /// {`ck.call.signal`, `ck.presence`, `ck.typing`, `ck.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
     /// signal kinds MUST NOT travel via `ck.events.submit`; this method is
     /// the single approved network path.
@@ -3330,7 +3330,7 @@ impl CokretApi {
     }
 
     /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.agent.rotate_key`.
-    /// Writes the `cx.agent.key.{revoke,authorize}` pair atomically.
+    /// Writes the `ck.agent.key.{revoke,authorize}` pair atomically.
     pub async fn agent_rotate_key(
         &self,
         agent_principal_id: &str,
@@ -3625,12 +3625,12 @@ fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
-/// fanout such as `cx.presence` / `ck.receipt.read`. 30 seconds is
+/// fanout such as `ck.presence` / `ck.receipt.read`. 30 seconds is
 /// comfortably below the 5-minute hard ceiling.
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
 const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 
-/// Round R2/R3 (T02) — build a `cx.typing` `EphemeralEnvelope`. Enforces
+/// Round R2/R3 (T02) — build a `ck.typing` `EphemeralEnvelope`. Enforces
 /// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
 pub fn build_typing_envelope(
     realm_id: &str,
@@ -3642,18 +3642,18 @@ pub fn build_typing_envelope(
     let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
     let realm_id_wire = scope_id_as_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.typing: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.typing: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.typing: {err}"))?;
     let device = device_id
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
             cokret_sdk::DeviceId::new(s)
-                .map_err(|err| anyhow::anyhow!("invalid device_id for cx.typing: {err}"))
+                .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))
         })
         .transpose()?;
     cokret_sdk::EphemeralEnvelope::new(
-        "cx.typing",
+        "ck.typing",
         realm,
         actor,
         device,
@@ -3704,7 +3704,7 @@ pub fn build_receipt_read_envelope(
     .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))
 }
 
-/// Round R2/R3 (T02) — build a `cx.presence` `EphemeralEnvelope`.
+/// Round R2/R3 (T02) — build a `ck.presence` `EphemeralEnvelope`.
 pub fn build_presence_envelope(
     realm_id: &str,
     actor_did: &str,
@@ -3714,9 +3714,9 @@ pub fn build_presence_envelope(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm = cokret_sdk::RealmId::new(realm_id)
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.presence: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.presence: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.presence: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
     payload.insert("actor_id".into(), Value::String(actor_did.to_owned()));
     payload.insert("status".into(), Value::String(status.to_owned()));
@@ -3724,7 +3724,7 @@ pub fn build_presence_envelope(
         payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
     }
     cokret_sdk::EphemeralEnvelope::new(
-        "cx.presence",
+        "ck.presence",
         realm,
         actor,
         None,
@@ -4210,7 +4210,7 @@ pub fn build_space_create_event(
         object["default_realm_id"] = Value::String(scope_id_as_realm_id(default_realm.trim()));
     }
 
-    let cell = space_cell("cx.component.space.create.v1", space_id);
+    let cell = space_cell("ck.component.space.create.v1", space_id);
     let preconditions = vec![Precondition {
         cell: cell.clone(),
         predicate: Predicate {
@@ -4253,7 +4253,7 @@ pub fn build_space_create_event(
 /// Build a Space lifecycle event (`ck.space.archive` /
 /// `ck.space.restore` / `ck.space.tombstone`) per spec
 /// realm-and-space.md §3.4. All three write the new `state` value
-/// into the `cx.component.space.state.v1` cell on the home Realm via
+/// into the `ck.component.space.state.v1` cell on the home Realm via
 /// an FSM transition.
 pub fn build_space_lifecycle_event(
     space_id: &str,
@@ -4277,7 +4277,7 @@ pub fn build_space_lifecycle_event(
         }
     };
     let created_at = event_timestamp();
-    let cell = space_cell("cx.component.space.state.v1", space_id);
+    let cell = space_cell("ck.component.space.state.v1", space_id);
     let preconditions = vec![Precondition {
         cell: cell.clone(),
         predicate: Predicate {
@@ -4669,7 +4669,7 @@ pub fn build_signed_device_verification_proof(
     signing_key: &ed25519_dalek::SigningKey,
 ) -> anyhow::Result<Value> {
     let mut body = json!({
-        "type": "cx.device.verification.proof.v1",
+        "type": "ck.device.verification.proof.v1",
         "from_actor": from_actor,
         "from_device": from_device,
         "target_device": target_device,
@@ -4751,7 +4751,7 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
 ///      a local shadow type that defaults it to `"unknown"`.
 ///
 /// If none match, we synthesise a minimal envelope tagged
-/// `cx.error.http_status` so downstream code always has something
+/// `ck.error.http_status` so downstream code always has something
 /// well-formed to surface.
 ///
 /// G3.Y3 — additionally, when `status` is 403 *and* the decoded
@@ -5470,7 +5470,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(envelope.kind, "cx.typing");
+        assert_eq!(envelope.kind, "ck.typing");
         assert_eq!(
             envelope.realm_id.to_string(),
             "ck:realm:0196419b-0000-7000-8000-000000000000"
@@ -5623,7 +5623,7 @@ mod tests {
         let directory = parse_directory_describe(json!({
             "service_did": "did:web:server.local",
             "resource_types": ["space", "organization", "actor"],
-            "discovery_profiles": ["cx.profile.directory.v1"],
+            "discovery_profiles": ["ck.profile.directory.v1"],
             "restricted_query_proof": false
         }))
         .unwrap();
@@ -6039,7 +6039,7 @@ mod tests {
         );
         assert_eq!(decoded.code(), "invalid_param");
 
-        // The SDK's ErrorEnvelope::new strips the `cx.error.` prefix in
+        // The SDK's ErrorEnvelope::new strips the `ck.error.` prefix in
         // `canonical_error_code` and we depend on that canonicalization so
         // downstream comparisons against the registry shape match.
         let fallback = decode_cokret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
@@ -6379,7 +6379,7 @@ mod tests {
         ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
         assert_eq!(
             proof["device_envelope"]["type"].as_str(),
-            Some("cx.device.verification.proof.v1")
+            Some("ck.device.verification.proof.v1")
         );
         assert_eq!(proof["signature"]["alg"].as_str(), Some("EdDSA"));
         assert_eq!(

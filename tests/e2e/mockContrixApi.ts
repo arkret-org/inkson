@@ -271,7 +271,7 @@ export async function mockCokretApi(page: Page) {
           "ck.events.describe",
           "ck.events.submit",
         ],
-        supported_schema_profiles: ["cx.schema.core.v1"],
+        supported_schema_profiles: ["ck.schema.core.v1"],
         supported_reducer_profiles: ["ck.reducer.v1"],
         supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
@@ -388,7 +388,7 @@ export async function mockCokretApi(page: Page) {
     if (url.pathname === "/_cokret/self/events/describe") {
       return json(route, {
         service_did: "did:web:server.local",
-        schema_profiles: ["cx.schema.core.v1"],
+        schema_profiles: ["ck.schema.core.v1"],
         reducer_profiles: ["ck.reducer.v1"],
         supported_event_types: [
           "ck.flow.create",
@@ -784,7 +784,7 @@ export async function mockCokretApi(page: Page) {
         to_device: { messages: [{ type: "ck.mls.welcome", content: { ciphertext: "opaque" } }] },
         account_data: { events: [
           {
-            kind: "cx.notification",
+            kind: "ck.notification",
             notification_id: "notif-msg-1",
             title: "New message",
             body: "Alice sent a message in Demo Space",
@@ -795,7 +795,7 @@ export async function mockCokretApi(page: Page) {
             read: false,
           },
           {
-            kind: "cx.notification",
+            kind: "ck.notification",
             notification_id: "notif-invite-1",
             invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
             title: "New invite",
@@ -931,7 +931,7 @@ export async function mockCokretApi(page: Page) {
         registry_mode: "development_local",
         supported_receipts: ["local"],
         protocol_version: "1.0",
-        profiles: ["cx.identity.local-dev.v1"],
+        profiles: ["ck.identity.local-dev.v1"],
       });
     }
 
@@ -1026,7 +1026,7 @@ export async function mockCokretApi(page: Page) {
 
     if (url.pathname === "/_cokret/self/ephemeral") {
       const body = await route.request().postDataJSON();
-      if (!["ck.receipt.read", "cx.typing", "cx.presence", "ck.call.signal"].includes(body.kind)) {
+      if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
         return json(route, {
           ok: false,
           error: { code: "invalid_param", message: "expected broadcast ephemeral kind" },

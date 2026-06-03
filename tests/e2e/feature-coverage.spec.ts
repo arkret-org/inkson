@@ -95,7 +95,7 @@ test.describe("feature coverage placeholders", () => {
   // ---- Identity / Device — three independent concerns ----
   // claude-design: desktop/devices.html, desktop/verify-device.html
   // spec: crypto-media/devices-and-auth.md §1.2
-  test("device verification: SAS match writes ck.device.authorize + cx.device.cross_sign", async ({ page }) => {
+  test("device verification: SAS match writes ck.device.authorize + ck.device.cross_sign", async ({ page }) => {
     // pin the SAS verification UI surface. The
     // full SAS exchange + cross_sign + ck.device.authorize event emit
     // happen inside the SDK + soland's identity store; this test

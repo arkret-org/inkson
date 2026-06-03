@@ -717,7 +717,7 @@ fn card_state_from_write_state(write_state: &str) -> CardState {
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
 /// mirrors the MoveSubmissionState classifier (`ck.space.create` /
 /// `ck.flow.create` /
-/// `cx.flow.position`) so the tracker UI can decorate state pills.
+/// `ck.flow.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`cokret_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST
@@ -6869,7 +6869,7 @@ fn value_is_plaintext_private_content(value: &Value) -> bool {
             let encrypted_profile = object
                 .get("profile")
                 .and_then(Value::as_str)
-                .is_some_and(|profile| profile == "cx.profile.encrypted_envelope.v1");
+                .is_some_and(|profile| profile == "ck.profile.encrypted_envelope.v1");
             !(encrypted_profile
                 || object.contains_key("encrypted_content")
                 || object.contains_key("ciphertext"))
@@ -9280,7 +9280,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
                 activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
-                audit_hint: "Audit records cx.flow.track.member and ck.message.create without granting discussion access.".to_owned(),
+                audit_hint: "Audit records ck.flow.track.member and ck.message.create without granting discussion access.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,

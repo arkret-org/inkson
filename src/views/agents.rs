@@ -82,7 +82,7 @@ pub fn agents_enabled() -> bool {
 
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
 ///
-/// `cx.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
+/// `ck.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
 /// `deactivated`). The badge text below mirrors the wire vocabulary
 /// surfaced by the soland `AgentResBody.state` field; unknown values
 /// fall through to the raw wire string so future state additions are
@@ -319,7 +319,7 @@ pub fn AgentsPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut agent_id = use_signal(String::new);
-    let mut protocol = use_signal(|| "cx.agent.v1".to_owned());
+    let mut protocol = use_signal(|| "ck.agent.v1".to_owned());
     let mut capabilities = use_signal(|| "flow.read".to_owned());
     let mut status = use_signal(String::new);
 
@@ -525,7 +525,7 @@ pub fn AgentsPanel(
                         "aria-label": "Agent invocation protocol",
                         "aria-describedby": "agent-register-form-help",
                         value: "{protocol}",
-                        placeholder: "protocol (cx.agent.v1)",
+                        placeholder: "protocol (ck.agent.v1)",
                         oninput: move |evt| protocol.set(evt.value()),
                     }
                     input {
@@ -1371,7 +1371,7 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Lifecycle: pause / resume / deactivate
-            // (cx.agent.{pause,resume,deactivate})
+            // (ck.agent.{pause,resume,deactivate})
             // Deactivate is destructive — gate on type-to-confirm.
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-lifecycle",
@@ -1583,7 +1583,7 @@ pub fn PersonalAgentAdminPanel(
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-admin-grant-kind-input",
-                        placeholder: "grant_kind (one of cx.agent.* capability actions)",
+                        placeholder: "grant_kind (one of ck.agent.* capability actions)",
                         value: "{grant_kind}",
                         oninput: move |e| grant_kind.set(e.value()),
                     }
@@ -2036,12 +2036,12 @@ mod tests {
             "ck:space:test",
             "did:web:alice.example",
             "did:web:agent.example",
-            "cx.agent.v1",
+            "ck.agent.v1",
             &["flow.read"],
         )
         .build("yougen");
         assert_eq!(op.payload["agent_id"], "did:web:agent.example");
-        assert_eq!(op.payload["endpoints"][0]["protocol"], "cx.agent.v1");
+        assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
         assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "flow.read");
         assert!(op.payload.get("protocol").is_none());
         assert!(op.payload.get("capabilities").is_none());

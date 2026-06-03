@@ -291,7 +291,7 @@ pub struct DeviceRevokeFullSnapshot {
 // the revoked device was a leaf in needs **two** Moves to fully advance:
 //
 // 1. an MLS commit Move that removes the device's leaf (`ck.mls.commit` via the
-//    `cx.component.mls.epoch.v1` cas-register), and
+//    `ck.component.mls.epoch.v1` cas-register), and
 // 2. an epoch-advance Move that bumps `covered_frontier` so subsequent message Events can reference
 //    the post-revocation MLS state.
 //

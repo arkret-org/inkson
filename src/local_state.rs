@@ -514,7 +514,7 @@ pub struct LocalAnchorView {
     #[serde(default)]
     pub bottom_cells: BTreeMap<String, BottomCellInfo>,
     /// The current MLS epoch as published in the
-    /// `cx.component.mls.epoch.v1` cas-register cell, when sync surfaces
+    /// `ck.component.mls.epoch.v1` cas-register cell, when sync surfaces
     /// it. `None` means the Space hasn't published an MLS epoch yet (no
     /// E2EE group or pre-genesis state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -748,14 +748,14 @@ impl LocalAnchorView {
                         .cloned()
                         .or_else(|| status.get("register").and_then(|r| r.get("value")).cloned())
                 };
-                if cell_ref.starts_with("ck:cell:cx.component.mls.epoch.v1")
+                if cell_ref.starts_with("ck:cell:ck.component.mls.epoch.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.mls_epoch = value
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref.starts_with("ck:cell:cx.component.governance.covered_frontier.v1")
+                if cell_ref.starts_with("ck:cell:ck.component.governance.covered_frontier.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.covered_frontier = value.as_str().map(str::to_owned).or_else(|| {
@@ -1039,7 +1039,7 @@ pub struct ClientLocalState {
     /// Actor-private Space remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
-    /// `data_type == "cx.contacts.space.<space_id>"`) and from user edits
+    /// `data_type == "ck.contacts.space.<space_id>"`) and from user edits
     /// in settings. Keyed by Space id so the sidebar / dashboard can join
     /// it against the public `SpacePreview.name` at render time and prefer
     /// `local_name` when set.
@@ -2390,7 +2390,7 @@ impl LocalStateStore {
 
     /// Replace the server-declared policy snapshot for a Space. Called from
     /// the sync path once the Anchor view (P0 M3) surfaces
-    /// `cx.component.space.read_receipt_policy.v1` cell value; tests use
+    /// `ck.component.space.read_receipt_policy.v1` cell value; tests use
     /// this to seed lock-state UI behavior.
     pub fn set_read_receipt_policy_snapshot(
         &mut self,
@@ -3242,7 +3242,7 @@ impl LocalStateStore {
 
     /// Drain the buffered telemetry log and POST each entry to soland's
     /// audit feed. The endpoint is 404-tolerant: until soland wires
-    /// `cx.audit.user_action.ingest`, the server returns 404 and we
+    /// `ck.audit.user_action.ingest`, the server returns 404 and we
     /// simply restore the buffer (so the entries survive for the next
     /// flush attempt). Any other error class drops the affected entry
     /// — they're best-effort telemetry, not durable audit.
@@ -4846,7 +4846,7 @@ mod tests {
     #[test]
     fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:ck.component.capability.grant.v1:cx.grant.01".to_owned();
+        let cell = "ck:cell:ck.component.capability.grant.v1:ck.grant.01".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4873,7 +4873,7 @@ mod tests {
     #[test]
     fn safer_winner_for_unknown_cell_family_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:cx.component.space.organization.v1:ck:space:demo".to_owned();
+        let cell = "ck:cell:ck.component.space.organization.v1:ck:space:demo".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -5031,10 +5031,10 @@ mod tests {
                 "frontier": ["ck:anchor:sha256:aaa"],
                 "leaves": [],
                 "cells": {
-                    "ck:cell:cx.component.mls.epoch.v1:ck:space:demo": {
+                    "ck:cell:ck.component.mls.epoch.v1:ck:space:demo": {
                         "value": 7
                     },
-                    "ck:cell:cx.component.governance.covered_frontier.v1:ck:space:demo": {
+                    "ck:cell:ck.component.governance.covered_frontier.v1:ck:space:demo": {
                         "register": { "value": "ck:state:sha256:abcd" }
                     }
                 }
@@ -5056,7 +5056,7 @@ mod tests {
             "anchor_view": {
                 "frontier": [],
                 "cells": {
-                    "ck:cell:cx.component.mls.epoch.v1:ck:space:demo": {
+                    "ck:cell:ck.component.mls.epoch.v1:ck:space:demo": {
                         "value": { "epoch": 42, "members": 3 }
                     }
                 }

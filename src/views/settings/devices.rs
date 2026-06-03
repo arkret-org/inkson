@@ -117,7 +117,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 /// `uuid_v7()` nonce. The current scaffold accepts any nonce.
 fn build_pair_payload(account_did: &str, current_device_id: &str, nonce: &str) -> String {
     let payload = json!({
-        "schema": "cx.device.pair.intent.v1",
+        "schema": "ck.device.pair.intent.v1",
         "account_did": account_did,
         "issuing_device_id": current_device_id,
         "nonce": nonce,
@@ -1089,7 +1089,7 @@ mod tests {
     fn pair_payload_carries_required_fields() {
         let raw = build_pair_payload("did:web:alice", "device-1", "abc-123");
         let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["schema"], "cx.device.pair.intent.v1");
+        assert_eq!(parsed["schema"], "ck.device.pair.intent.v1");
         assert_eq!(parsed["account_did"], "did:web:alice");
         assert_eq!(parsed["issuing_device_id"], "device-1");
         assert_eq!(parsed["nonce"], "abc-123");

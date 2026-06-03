@@ -325,7 +325,7 @@ pub struct RealmJoinCandidate {
 
 /// Sidebar tag distinguishing a security-boundary Realm from a
 /// product-organisation Space. Wire signal is either the
-/// `cx.schema.{realm,space}.v1` `schema` field on the projection
+/// `ck.schema.{realm,space}.v1` `schema` field on the projection
 /// body, or a yougen-local `__kind` tag used by the optimistic
 /// post-create save.
 // Default tag is `Realm` because legacy projections (no schema marker) were

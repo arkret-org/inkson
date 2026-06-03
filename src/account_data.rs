@@ -29,9 +29,9 @@ pub enum AccountDataKey {
     ClientPresence,
     /// `ck.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
-    /// `cx.push_rules` — per-space mute, sound, push routing.
+    /// `ck.push_rules` — per-space mute, sound, push routing.
     ClientNotifications,
-    /// `cx.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
+    /// `ck.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
     ClientDndSchedule,
     /// `client.language` — locale / RTL preferences.
     ClientLanguage,
@@ -46,8 +46,8 @@ impl AccountDataKey {
             Self::ClientReadReceipts => "ck.read_receipt.preferences",
             Self::ClientPresence => "client.presence",
             Self::ClientBlocklist => "ck.account.blocklist",
-            Self::ClientNotifications => "cx.push_rules",
-            Self::ClientDndSchedule => "cx.dnd_schedule",
+            Self::ClientNotifications => "ck.push_rules",
+            Self::ClientDndSchedule => "ck.dnd_schedule",
             Self::ClientLanguage => "client.language",
             Self::Custom(s) => s,
         }
@@ -59,8 +59,8 @@ impl AccountDataKey {
             "ck.read_receipt.preferences" => Self::ClientReadReceipts,
             "client.presence" => Self::ClientPresence,
             "ck.account.blocklist" => Self::ClientBlocklist,
-            "cx.push_rules" => Self::ClientNotifications,
-            "cx.dnd_schedule" => Self::ClientDndSchedule,
+            "ck.push_rules" => Self::ClientNotifications,
+            "ck.dnd_schedule" => Self::ClientDndSchedule,
             "client.language" => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
         }
@@ -187,7 +187,7 @@ impl AccountDataStore {
 /// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
 /// of the most-recently uploaded avatar reference. The blob_ref itself
 /// (`ck:blob:sha256:<hex>`) is public — the avatar is also published via
-/// `cx.account.update_profile` so other actors see it through the
+/// `ck.account.update_profile` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
 /// up the same blob without needing to re-fetch `/account/me`.
 pub fn build_client_ui_body(
@@ -278,20 +278,20 @@ pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<
 }
 
 /// Wire-key for an actor-private Space remark per
-/// `discovery/client-preferences.md` §3.7: `cx.contacts.space.<space_id>`.
+/// `discovery/client-preferences.md` §3.7: `ck.contacts.space.<space_id>`.
 ///
 /// The same string is the path segment passed to soland's
 /// `PUT /_cokret/self/account_data/{type}` endpoint. Callers should already have
 /// validated `space_id` shape (`ck:space:<uuid>`).
 pub fn space_remark_account_data_key(space_id: &str) -> String {
-    format!("cx.contacts.space.{space_id}")
+    format!("ck.contacts.space.{space_id}")
 }
 
 /// Inverse of [`space_remark_account_data_key`]. Returns the `space_id`
 /// segment when `key` is a Space-remark wire key; returns `None` for any
 /// other namespace. Used when hydrating `account_data` entries from `/sync`.
 pub fn space_id_from_space_remark_key(key: &str) -> Option<&str> {
-    key.strip_prefix("cx.contacts.space.")
+    key.strip_prefix("ck.contacts.space.")
 }
 
 /// Wire-key for an actor-private contact remark per
@@ -309,7 +309,7 @@ pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
 /// User-private Space remark per `discovery/client-preferences.md` §3.7.
 ///
 /// Persisted as the `content` payload under
-/// `cx.contacts.space.<space_id>` (the wire key built by
+/// `ck.contacts.space.<space_id>` (the wire key built by
 /// [`space_remark_account_data_key`]). The protocol treats the payload as
 /// opaque on the server; this struct is the canonical local shape so the
 /// settings UI and the sidebar agree.
@@ -334,7 +334,7 @@ pub struct SpaceRemark {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
     /// Spec §3.7 `tags` — private grouping labels; namespace shared with
-    /// `cx.tags.space.<space_id>` so the same label can drive both UIs.
+    /// `ck.tags.space.<space_id>` so the same label can drive both UIs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Spec §3.7 `pinned` — whether the Space sticks to the top of the
@@ -603,10 +603,10 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value
         .get("entries")
-        .ok_or_else(|| "cx.account.blocklist.entries missing".to_owned())?;
+        .ok_or_else(|| "ck.account.blocklist.entries missing".to_owned())?;
     let entries = entries
         .as_array()
-        .ok_or_else(|| "cx.account.blocklist.entries must be an array".to_owned())?;
+        .ok_or_else(|| "ck.account.blocklist.entries must be an array".to_owned())?;
     Ok(entries
         .iter()
         .filter_map(blocklist_entry_from_account_data_value)
@@ -794,8 +794,8 @@ mod tests {
             "ck.read_receipt.preferences",
             "client.presence",
             "ck.account.blocklist",
-            "cx.push_rules",
-            "cx.dnd_schedule",
+            "ck.push_rules",
+            "ck.dnd_schedule",
             "client.language",
         ] {
             assert_eq!(AccountDataKey::from_wire(s).as_wire(), s);
@@ -831,7 +831,7 @@ mod tests {
     fn space_remark_key_round_trip() {
         let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
         let key = space_remark_account_data_key(space_id);
-        assert_eq!(key, format!("cx.contacts.space.{space_id}"));
+        assert_eq!(key, format!("ck.contacts.space.{space_id}"));
         assert_eq!(space_id_from_space_remark_key(&key), Some(space_id));
         assert_eq!(
             space_id_from_space_remark_key("ck.read_receipt.preferences"),
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(key, format!("ck.contacts.actor.{did}"));
         assert_eq!(actor_did_from_contact_remark_key(&key), Some(did));
         assert_eq!(
-            actor_did_from_contact_remark_key("cx.contacts.space.x"),
+            actor_did_from_contact_remark_key("ck.contacts.space.x"),
             None
         );
     }

@@ -71,7 +71,7 @@ pub struct CallbackProcessRequest<'a> {
 /// Inputs for the audience-grant exchange leg. The orchestrator signs
 /// an introspection proof with `device_signing_key` so the principal
 /// server can verify the grant binding without a round-trip to coauth
-/// (per `cx.session_grant.introspection_proof.v1`).
+/// (per `ck.session_grant.introspection_proof.v1`).
 pub struct AudienceGrantExchange<'a> {
     pub principal_api: &'a CokretApi,
     pub session_grant_exchange_path: &'a str,

@@ -11,7 +11,7 @@
 //!
 //! - `CrossSigningPublishContent` / `SignedCrossSigningKey` / `CrossSigningBinding`: spec §5.1 wire
 //!   envelope.
-//! - `DeviceTrustBinding`: spec §5.2 `cx.device.authorize.cross_signing_binding` field.
+//! - `DeviceTrustBinding`: spec §5.2 `ck.device.authorize.cross_signing_binding` field.
 //! - `CrossSigningResetContent`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
 //!   `evaluate_trust_chain`: local state machine.
@@ -171,7 +171,7 @@ impl CrossSigningSetupPlan {
     /// `ck.cross_signing.reset` event is issued. Yougen mirrors the
     /// policy in [`ResetAuditPolicy`] (populated from incoming
     /// `ck.policy.set` events whose `policy_kind` is
-    /// `cx.policy.cross_signing.reset`) and gates plan construction
+    /// `ck.policy.cross_signing.reset`) and gates plan construction
     /// here so the UI never even surfaces the reset path when the
     /// caller would be rejected at submit time.
     pub fn try_build_reset(
@@ -250,7 +250,7 @@ impl CrossSigningSetupPlan {
 
 /// F-CXSIGN-RESET-1: snapshot of the deployment's cross-signing reset
 /// audit policy, learned from a `ck.policy.set` event whose
-/// `policy_kind == "cx.policy.cross_signing.reset"`.
+/// `policy_kind == "ck.policy.cross_signing.reset"`.
 ///
 /// Spec `crypto-media/device-lifecycle.md §14` requires the principal
 /// to be enrolled in the reset audit policy *before* a reset event
@@ -282,7 +282,7 @@ impl ResetAuditPolicy {
     /// Expected payload shape:
     /// ```json
     /// {
-    ///   "policy_kind": "cx.policy.cross_signing.reset",
+    ///   "policy_kind": "ck.policy.cross_signing.reset",
     ///   "enrollment_required": true,
     ///   "enrolled_principals": ["did:web:alice", "did:web:bob"],
     ///   "enrollment_hint": "Apply via /security/reset"
@@ -290,7 +290,7 @@ impl ResetAuditPolicy {
     /// ```
     pub fn from_policy_set_payload(payload: &serde_json::Value) -> Option<Self> {
         let kind = payload.get("policy_kind")?.as_str()?;
-        if kind != "cx.policy.cross_signing.reset" {
+        if kind != "ck.policy.cross_signing.reset" {
             return None;
         }
         let enrollment_required = payload
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn reset_policy_parses_canonical_cx_policy_set_payload() {
         let payload = serde_json::json!({
-            "policy_kind": "cx.policy.cross_signing.reset",
+            "policy_kind": "ck.policy.cross_signing.reset",
             "enrollment_required": true,
             "enrolled_principals": ["did:web:alice", "did:web:bob"],
             "enrollment_hint": "Apply via /security/reset"
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn reset_policy_ignores_unrelated_policy_kinds() {
         let payload = serde_json::json!({
-            "policy_kind": "cx.policy.space.moderation",
+            "policy_kind": "ck.policy.space.moderation",
             "enrollment_required": true
         });
         assert!(ResetAuditPolicy::from_policy_set_payload(&payload).is_none());

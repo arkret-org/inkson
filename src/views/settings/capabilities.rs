@@ -1,6 +1,6 @@
 //! G3.Y3 — Capability delegation viewer (`/settings/capabilities`).
 //!
-//! Read-only-ish UI for inspecting `cx.capability.*` rows attached to
+//! Read-only-ish UI for inspecting `ck.capability.*` rows attached to
 //! the current actor: capabilities held (subject), capabilities granted
 //! out (issuer), and the full delegation chain for each row. The cotest
 //! `authz/capability-chain` scenario is already 7 live; this view adds
@@ -342,14 +342,14 @@ mod tests {
     fn decodes_minimal_capability_row() {
         let value = json!({
             "capability_id": "cap-1",
-            "action": "cx.space.write_message",
+            "action": "ck.space.write_message",
             "issuer": "did:web:alice.example",
             "subject": "did:web:bob.example",
             "expires_at": "2026-12-31T00:00:00Z",
         });
         let row = decode_capability_row(&value).expect("should decode");
         assert_eq!(row.capability_id, "cap-1");
-        assert_eq!(row.action, "cx.space.write_message");
+        assert_eq!(row.action, "ck.space.write_message");
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
         assert!(row.chain.is_empty());
@@ -359,7 +359,7 @@ mod tests {
     fn decodes_delegation_chain() {
         let value = json!({
             "capability_id": "cap-2",
-            "action": "cx.space.write_message",
+            "action": "ck.space.write_message",
             "grantor": "did:web:bob.example",
             "grantee": "did:web:carol.example",
             "chain": [
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn returns_none_when_capability_id_missing() {
-        let value = json!({"action": "cx.space.read"});
+        let value = json!({"action": "ck.space.read"});
         assert!(decode_capability_row(&value).is_none());
     }
 

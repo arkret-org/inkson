@@ -3,7 +3,7 @@
 //! Wire shape (spec: `models/content-types.md §4.9`):
 //! * `ck.message.create` with `content.kind = ck.content.poll` creates a poll.
 //! * `ck.message.create` with `content.kind = ck.content.poll.response` records a response.
-//! * `ck.message.create` with `content.kind = cx.content.poll.close` closes a poll.
+//! * `ck.message.create` with `content.kind = ck.content.poll.close` closes a poll.
 //!
 //! Polls are enabled in the local 1.0 UI because soland now projects the
 //! content-type reducer state.
@@ -292,7 +292,7 @@ pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String
 }
 
 pub fn poll_close_id_from_content(content: &Value) -> Option<String> {
-    if content_kind(content) == Some("cx.content.poll.close") {
+    if content_kind(content) == Some("ck.content.poll.close") {
         poll_id_from_content(content)
     } else {
         None
@@ -381,7 +381,7 @@ fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
         .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
 }
 
-/// Build the `cx.content.poll.create` envelope for the wire.
+/// Build the `ck.content.poll.create` envelope for the wire.
 pub fn build_poll_create_op(
     space_id: &str,
     actor: &str,
@@ -447,10 +447,10 @@ pub fn build_poll_vote_op(
         .build("yougen")
 }
 
-/// Build the `cx.content.poll.close` envelope.
+/// Build the `ck.content.poll.close` envelope.
 pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
     let flow_id = flow_id_from_space_id(space_id);
-    let content = cokret_sdk::ContentBlock::new("cx.content.poll.close", "poll closed")
+    let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
         .with_field("poll_id", json!(poll_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
         flow_id_value(&flow_id),

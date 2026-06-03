@@ -990,8 +990,8 @@ pub mod cx_ops {
             .body(object_patch_payload_value(morph_id, patch))
     }
 
-    /// Build a `cx.policy.update` patch operation. The reducer-side
-    /// integration for cx.policy.* events is not yet wired in soland;
+    /// Build a `ck.policy.update` patch operation. The reducer-side
+    /// integration for ck.policy.* events is not yet wired in soland;
     /// in the meantime clients can apply policy patches via the
     /// `PATCH /_cokret/self/policies/{policy_id}` admin endpoint (`patch`
     /// body field). This builder is the future-proof event-stream
@@ -1002,7 +1002,7 @@ pub mod cx_ops {
         policy_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.policy.update")
+        OperationBuilder::new(space_id, actor, "ck.policy.update")
             .target_ref(policy_id)
             .body(json!({
                 "policy_id": policy_id,
@@ -1010,7 +1010,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.actor_profile.update` patch operation. Same
+    /// Build a `ck.actor_profile.update` patch operation. Same
     /// caveat as [`policy_update_patch`]: the reducer-side wiring is
     /// deferred; the builder keeps client code spec-shape correct.
     pub fn actor_profile_update_patch(
@@ -1019,7 +1019,7 @@ pub mod cx_ops {
         actor_profile_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.actor_profile.update")
+        OperationBuilder::new(space_id, actor, "ck.actor_profile.update")
             .target_ref(actor_profile_id)
             .body(json!({
                 "actor_profile_id": actor_profile_id,
@@ -1078,7 +1078,7 @@ pub mod cx_ops {
             .body(object_patch_payload_value(space_id, patch))
     }
 
-    /// Build a `cx.moderation.report.submit` operation. Note: this is
+    /// Build a `ck.moderation.report.submit` operation. Note: this is
     /// the event-stream form; today yougen also has a direct HTTP
     /// path via `api::Client::report_moderation`. Keep both — the
     /// HTTP path goes through `/_cokret/self/moderation/report` and is
@@ -1093,7 +1093,7 @@ pub mod cx_ops {
         description: Option<&str>,
         evidence_refs: Vec<String>,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.moderation.report.submit")
+        OperationBuilder::new(space_id, actor, "ck.moderation.report.submit")
             .target_ref(report_id)
             .body(json!({
                 "report_id": report_id,
@@ -1378,7 +1378,7 @@ pub mod cx_ops {
 
     // ── Conflict repair (admin-only) ────────────────────────────────
 
-    /// `cx.conflict.repair` event for bottom=expose cells. Admin / moderator
+    /// `ck.conflict.repair` event for bottom=expose cells. Admin / moderator
     /// only — soland's authz reducer rejects submissions without a valid
     /// `recovery_capability_ref` in the actor's grants.
     pub fn conflict_repair(
@@ -1434,7 +1434,7 @@ pub mod cx_ops {
                 proof: None,
             },
         ];
-        OperationBuilder::new(realm_id, actor, "cx.conflict.repair")
+        OperationBuilder::new(realm_id, actor, "ck.conflict.repair")
             .target_ref(cell_id)
             .body(json!({
                 "cell_id": cell_id,
@@ -1569,7 +1569,7 @@ pub mod cx_ops {
     //
     // Spec: `extensions/applet-integration.md` + canonical event-kind
     // registry rows `ck.applet.registration` / `ck.applet.discovery` /
-    // `cx.applet.protocol_session.{start,status}` / `ck.applet.bridge_error`.
+    // `ck.applet.protocol_session.{start,status}` / `ck.applet.bridge_error`.
     //
     // The builders below produce the wire shape soland validators and the
     // SDK reducer consume. Each carries the canonical `applet_id` (or
@@ -2542,7 +2542,7 @@ mod tests {
             "ck.account_data.set",
             "ck.flow.update",
             "ck.flow.tracks.update",
-            // R1.7 rename: former `cx.place.create` is the container
+            // R1.7 rename: former `ck.place.create` is the container
             // `ck.space.create`.
             "ck.space.create",
         ] {
@@ -2697,7 +2697,7 @@ mod tests {
     }
 
     /// Pin the canonical op_type + target_ref + body shape for every
-    /// `cx.applet.*` builder so server-side validators (soland operation
+    /// `ck.applet.*` builder so server-side validators (soland operation
     /// requirements) keep accepting them.
     #[test]
     fn applet_helpers_emit_canonical_kinds_and_target_refs() {
@@ -2763,10 +2763,10 @@ mod tests {
         let space = "ck:space:test";
         let actor = "did:web:alice.example";
 
-        let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
+        let endpoint = cx_ops::agent_endpoint(space, actor, agent, "ck.agent.v1", &["flow.read"])
             .build("node");
         assert_eq!(endpoint.kind, "ck.agent.endpoint");
-        assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "cx.agent.v1");
+        assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ck.agent.v1");
         assert_eq!(endpoint.local_target_ref(), Some(agent));
 
         let start = cx_ops::agent_protocol_session_start(

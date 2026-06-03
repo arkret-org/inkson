@@ -11,13 +11,13 @@
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | ck.flow.update, ck.message.create, derived projection              |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.flow.move, ck.flow.reorder, ck.space.update (board/list container)|
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.flow.tracks.update (unified), cx.message.*                      |
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.flow.tracks.update (unified), ck.message.*                      |
 // | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.flow.update on synthesis track                                  |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
-// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.policy.{rule,action,set}, cx.capability.{grant,revoke,delegate}  |
-// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ck.profile.update, ck.account.status, cx.identity.disclosure_*      |
+// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ck.policy.{rule,action,set}, ck.capability.{grant,revoke,delegate}  |
+// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ck.profile.update, ck.account.status, ck.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // Pending views (see `_todos.md`):
@@ -109,7 +109,7 @@ pub enum View {
     /// The only canonical events feeding this view are `ck.read_cursor.advance`,
     /// `ck.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not
-    /// on a synthetic `cx.notification.*` event.
+    /// on a synthetic `ck.notification.*` event.
     Notifications,
     Document,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key

@@ -1,4 +1,4 @@
-//! F-PRESENCE-RX-1: receive-side helpers for `cx.typing`, `cx.presence`,
+//! F-PRESENCE-RX-1: receive-side helpers for `ck.typing`, `ck.presence`,
 //! and `ck.read_cursor.advance` events.
 //!
 //! Yougen currently emits these three event kinds (see
@@ -11,9 +11,9 @@
 //! Spec sources:
 //! - `discovery/read-receipts.md §6` — `ck.read_cursor.advance` carries a
 //!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
-//! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_id, status, last_seen?}` with
+//! - `discovery/profiles-presence.md` — `ck.presence` carries `{actor_id, status, last_seen?}` with
 //!   status ∈ {`online`, `away`, `dnd`, `offline`}.
-//! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_id, flow_id,
+//! - `flow-and-message.md §10` — `ck.typing` is short-TTL signaling carrying `{actor_id, flow_id,
 //!   started_at}`.
 //!
 //! The parsers are deliberately permissive at the field level — they
@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Presence status as published in `cx.presence` payloads.
+/// Presence status as published in `ck.presence` payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceStatus {
@@ -61,7 +61,7 @@ impl PresenceStatus {
     }
 }
 
-/// `cx.typing` event parsed from the wire.
+/// `ck.typing` event parsed from the wire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypingEvent {
     pub actor_id: String,
@@ -73,7 +73,7 @@ pub struct TypingEvent {
     pub started_at: Option<i64>,
 }
 
-/// `cx.presence` event parsed from the wire.
+/// `ck.presence` event parsed from the wire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresenceEvent {
     pub actor_id: String,
@@ -146,28 +146,28 @@ impl std::fmt::Display for PresenceRxError {
 
 impl std::error::Error for PresenceRxError {}
 
-/// Parse a `cx.typing` envelope's payload into a [`TypingEvent`].
+/// Parse a `ck.typing` envelope's payload into a [`TypingEvent`].
 pub fn parse_typing(
     envelope: &crate::operation::EventEnvelope,
 ) -> Result<TypingEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "cx.typing")?;
+    require_kind(&envelope.kind, "ck.typing")?;
     let payload = &envelope.payload;
     Ok(TypingEvent {
-        actor_id: required_str(payload, "cx.typing", "actor_id")?.to_owned(),
-        flow_id: required_str(payload, "cx.typing", "flow_id")?.to_owned(),
+        actor_id: required_str(payload, "ck.typing", "actor_id")?.to_owned(),
+        flow_id: required_str(payload, "ck.typing", "flow_id")?.to_owned(),
         started_at: payload.get("started_at").and_then(|v| v.as_i64()),
     })
 }
 
-/// Parse a `cx.presence` envelope's payload into a [`PresenceEvent`].
+/// Parse a `ck.presence` envelope's payload into a [`PresenceEvent`].
 pub fn parse_presence(
     envelope: &crate::operation::EventEnvelope,
 ) -> Result<PresenceEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "cx.presence")?;
+    require_kind(&envelope.kind, "ck.presence")?;
     let payload = &envelope.payload;
-    let status_str = required_str(payload, "cx.presence", "status")?;
+    let status_str = required_str(payload, "ck.presence", "status")?;
     Ok(PresenceEvent {
-        actor_id: required_str(payload, "cx.presence", "actor_id")?.to_owned(),
+        actor_id: required_str(payload, "ck.presence", "actor_id")?.to_owned(),
         status: PresenceStatus::from_wire(status_str),
         last_seen: payload.get("last_seen").and_then(|v| v.as_i64()),
     })
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn parse_typing_extracts_actor_and_flow() {
         let env = envelope(
-            "cx.typing",
+            "ck.typing",
             json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1", "started_at": 1716000000}),
         );
         let parsed = parse_typing(&env).expect("parse");
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn parse_typing_started_at_is_optional() {
         let env = envelope(
-            "cx.typing",
+            "ck.typing",
             json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1"}),
         );
         let parsed = parse_typing(&env).expect("parse");
@@ -411,7 +411,7 @@ mod tests {
         let env = envelope("ck.message.create", json!({}));
         match parse_typing(&env) {
             Err(PresenceRxError::WrongKind { expected, actual }) => {
-                assert_eq!(expected, "cx.typing");
+                assert_eq!(expected, "ck.typing");
                 assert_eq!(actual, "ck.message.create");
             }
             other => panic!("expected WrongKind, got {other:?}"),
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn parse_typing_rejects_missing_required_field() {
-        let env = envelope("cx.typing", json!({"actor_id": "did:web:alice"}));
+        let env = envelope("ck.typing", json!({"actor_id": "did:web:alice"}));
         match parse_typing(&env) {
             Err(PresenceRxError::MissingField { field, .. }) => {
                 assert_eq!(field, "flow_id");
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn parse_presence_falls_back_to_offline_for_unknown_status() {
         let env = envelope(
-            "cx.presence",
+            "ck.presence",
             json!({"actor_id": "did:web:alice", "status": "bogus"}),
         );
         let parsed = parse_presence(&env).expect("parse");

@@ -18,7 +18,7 @@ impl ActionGroup {
     /// Returns the set of actions in this group.
     ///
     /// Action names are the **canonical, fully-qualified** forms from the
-    /// spec `capability-action-registry.json` (always `cx.` prefixed).
+    /// spec `capability-action-registry.json` (always `ck.` prefixed).
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
     /// fixtures, which write `actions: ["ck.flow.read", ...]` — under the
     /// previous bare-name table a wire-shaped grant from any conforming
@@ -28,10 +28,10 @@ impl ActionGroup {
         match self {
             Self::Common => &[
                 // R1.7 realm/space inversion: capabilities targeting the
-                // security boundary now live in the `cx.realm.*` namespace;
-                // container actions (former `cx.place.*`) take the
-                // `cx.space.*` slot.
-                "cx.realm.read",
+                // security boundary now live in the `ck.realm.*` namespace;
+                // container actions (former `ck.place.*`) take the
+                // `ck.space.*` slot.
+                "ck.realm.read",
                 "ck.realm.update",
                 "ck.space.create",
                 "ck.space.update",
@@ -44,10 +44,10 @@ impl ActionGroup {
                 "ck.flow.archive",
                 "ck.flow.restore",
                 "ck.relation.create",
-                "cx.relation.read",
+                "ck.relation.read",
                 "ck.relation.tombstone",
                 "ck.view.create",
-                "cx.view.read",
+                "ck.view.read",
                 "ck.view.update",
                 "ck.invite.create",
                 "ck.invite.accept",
@@ -71,12 +71,12 @@ impl ActionGroup {
                 "ck.reaction.remove",
                 "ck.typing.broadcast",
                 "ck.read_cursor.advance",
-                // R14: `cx.comment.*` are not in capability-action-registry.json
+                // R14: `ck.comment.*` are not in capability-action-registry.json
                 // (the registry has no comment action family). These remain
                 // yougen-local UI grouping placeholders only.
-                "cx.comment.create",
-                "cx.comment.update",
-                "cx.comment.redact",
+                "ck.comment.create",
+                "ck.comment.update",
+                "ck.comment.redact",
             ],
             Self::Morph => &[
                 "ck.morph.create",
@@ -84,10 +84,10 @@ impl ActionGroup {
                 "ck.morph.update",
                 "ck.morph.archive",
                 "ck.morph.restore",
-                // R14: `cx.morph.tombstone` is not in
+                // R14: `ck.morph.tombstone` is not in
                 // capability-action-registry.json; yougen-local UI grouping
                 // placeholder only.
-                "cx.morph.tombstone",
+                "ck.morph.tombstone",
             ],
             Self::Administrative => &[
                 "ck.capability.grant",
@@ -96,14 +96,14 @@ impl ActionGroup {
                 "ck.policy.set",
                 "ck.schema.define",
                 "ck.schema.update",
-                // R14: `cx.member.{invite,remove,role_change}` are not in
+                // R14: `ck.member.{invite,remove,role_change}` are not in
                 // capability-action-registry.json. Member lifecycle is driven
                 // by the `ck.circle.member.*` / `ck.invite.*` registry actions
                 // and the `ck.member.state` FSM; these three remain
                 // yougen-local UI grouping placeholders only.
-                "cx.member.invite",
-                "cx.member.remove",
-                "cx.member.role_change",
+                "ck.member.invite",
+                "ck.member.remove",
+                "ck.member.role_change",
             ],
         }
     }
@@ -648,13 +648,13 @@ mod tests {
     #[test]
     fn test_action_groups() {
         // F-CAP-FIX-1: spec capability-action-registry.json uses the
-        // fully-qualified `cx.<noun>.<verb>` form everywhere; the local
+        // fully-qualified `ck.<noun>.<verb>` form everywhere; the local
         // ActionGroup table mirrors that exactly. A bare-name lookup
         // (`flow.create`) is now an explicit miss so we catch any
         // regression that re-introduces the legacy short form.
-        // R1.7: security boundary actions live in cx.realm.*; container
-        // container actions live in cx.space.*.
-        assert!(ActionGroup::Common.contains("cx.realm.read"));
+        // R1.7: security boundary actions live in ck.realm.*; container
+        // container actions live in ck.space.*.
+        assert!(ActionGroup::Common.contains("ck.realm.read"));
         assert!(ActionGroup::Common.contains("ck.flow.create"));
         assert!(ActionGroup::Conversation.contains("ck.message.create"));
         assert!(ActionGroup::Administrative.contains("ck.capability.grant"));
@@ -666,7 +666,7 @@ mod tests {
     fn test_lifecycle_archive_restore_symmetry() {
         // Spec contract: every lifecycle family with `*.archive` MUST also
         // expose `*.restore` (canonical archived -> active transition). After
-        // R1.7 the former `cx.place.*` capabilities are now `cx.space.*`.
+        // R1.7 the former `ck.place.*` capabilities are now `ck.space.*`.
         assert!(ActionGroup::Common.contains("ck.flow.archive"));
         assert!(ActionGroup::Common.contains("ck.flow.restore"));
         assert!(ActionGroup::Common.contains("ck.space.archive"));
@@ -700,7 +700,7 @@ mod tests {
         engine.add_grant(CapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
             resource_selectors: vec![ResourceSelector::Wildcard],
-            actions: vec!["cx.realm.read".to_owned()],
+            actions: vec!["ck.realm.read".to_owned()],
             constraints: Vec::new(),
         });
         let resource = ResourceRef {

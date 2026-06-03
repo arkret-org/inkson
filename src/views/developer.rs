@@ -101,7 +101,7 @@ pub fn DeveloperToolsPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
             }
 
-            // Reuse the existing AuditPanel for cx.audit.* rows.
+            // Reuse the existing AuditPanel for ck.audit.* rows.
             AuditPanel { state_store: state_store }
         }
     }

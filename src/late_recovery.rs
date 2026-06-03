@@ -19,7 +19,7 @@
 //!    computation.
 //!
 //! Round 4 (spec a77b995) — the banner is now sourced from the
-//! `cx.audit.policy_access` event whose `access_kind ==
+//! `ck.audit.policy_access` event whose `access_kind ==
 //! e2ee_late_recovery` carries
 //! [`late_recovery_original_event_id`](cokret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
 //! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
@@ -75,7 +75,7 @@ impl LateRecoveredEvent {
 }
 
 impl LateRecoveredEvent {
-    /// Round 4 — construct from a `cx.audit.policy_access` payload
+    /// Round 4 — construct from a `ck.audit.policy_access` payload
     /// whose `access_kind` is
     /// [`AccessKind::E2EELateRecovery`](cokret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or

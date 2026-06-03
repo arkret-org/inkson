@@ -2,8 +2,8 @@
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
 //! turn them into [`crate::operation::EventEnvelope`] write actions. The
-//! goal is a single place for `views/*` to construct `cx.morph.*`,
-//! `cx.relation.*`, and `cx.container.*` operations without each call site
+//! goal is a single place for `views/*` to construct `ck.morph.*`,
+//! `ck.relation.*`, and `ck.container.*` operations without each call site
 //! re-discovering the SDK's struct layout.
 
 pub use cokret_sdk::{Morph, RealmId, Relation, RelationProfile};
@@ -38,7 +38,7 @@ pub fn build_morph_update(
 }
 
 /// Build a `ck.relation.create` operation. `kind` is a registered
-/// `relation_kind` (e.g. `cx.relation.parent_of`); `source` and `target` are
+/// `relation_kind` (e.g. `ck.relation.parent_of`); `source` and `target` are
 /// typed-id strings.
 pub fn build_relation_create(
     space_id: &str,
@@ -136,13 +136,13 @@ mod tests {
             "ck:space:s1",
             "did:web:alice",
             "ck:relation:r1",
-            "cx.relation.parent_of",
+            "ck.relation.parent_of",
             "ck:flow:f1",
             "ck:flow:f2",
         )
         .build("node");
         assert_eq!(op.kind, "ck.relation.create");
-        assert_eq!(op.payload["kind"], "cx.relation.parent_of");
+        assert_eq!(op.payload["kind"], "ck.relation.parent_of");
         assert_eq!(op.payload["source"], "ck:flow:f1");
         assert_eq!(op.payload["target"], "ck:flow:f2");
     }

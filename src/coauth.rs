@@ -1128,7 +1128,7 @@ pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow
 /// `challenge` / `issued_at` / `expires_at` exactly.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionGrantIntrospectionProofClaims {
-    /// Always `"cx.session_grant.introspection_proof.v1"`.
+    /// Always `"ck.session_grant.introspection_proof.v1"`.
     #[serde(rename = "type")]
     pub kind: String,
     pub grant_id: String,
@@ -1212,7 +1212,7 @@ pub fn build_session_grant_introspection_proof(
     }
     let now = chrono::Utc::now();
     let claims = SessionGrantIntrospectionProofClaims {
-        kind: "cx.session_grant.introspection_proof.v1".to_owned(),
+        kind: "ck.session_grant.introspection_proof.v1".to_owned(),
         grant_id: grant_id.to_owned(),
         grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
         audience: audience.to_owned(),
@@ -1839,7 +1839,7 @@ mod tests {
     }
 
     /// The introspection proof MUST be a valid Ed25519 JWS over the
-    /// canonical claims, MUST embed `cx.session_grant.introspection_proof.v1`
+    /// canonical claims, MUST embed `ck.session_grant.introspection_proof.v1`
     /// as `type`, MUST hash the grant JWT into `grant_jwt_hash`, and MUST
     /// round-trip the challenge / audience / grant_id verbatim. coauth's
     /// verifier requires every one of those exact strings - drift here
@@ -1873,7 +1873,7 @@ mod tests {
         let claims: SessionGrantIntrospectionProofClaims =
             serde_json::from_slice(&payload_bytes).unwrap();
         assert_eq!(
-            claims.kind, "cx.session_grant.introspection_proof.v1",
+            claims.kind, "ck.session_grant.introspection_proof.v1",
             "type claim must match coauth's spec"
         );
         assert_eq!(claims.grant_id, "01HABC123");

@@ -60,7 +60,7 @@ const PROBES: Probe[] = [
     method: "POST",
     path: "/_cokret/self/ephemeral",
     body: {
-      kind: "cx.typing",
+      kind: "ck.typing",
       realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000",
       actor_id: "did:web:alice.example",
       sent_at: "2026-04-28T12:00:00Z",

@@ -6,7 +6,7 @@
 //! The full promote flow needs three durable events:
 //! 1. `ck.space.create` for the new child Space, with `parent_space_id` pointing back at the
 //!    parent.
-//! 2. `cx.space.child` on the parent + `ck.space.parent` on the child (the bidirectional
+//! 2. `ck.space.child` on the parent + `ck.space.parent` on the child (the bidirectional
 //!    confirmation edge).
 //! 3. `ck.flow.update` on the original Flow, setting `discussion_space_ref = <new_space_id>`.
 //!
@@ -102,13 +102,13 @@ pub fn build_child_space_create_op(
         .build("yougen")
 }
 
-/// Build the parent-side `cx.space.child` confirmation edge.
+/// Build the parent-side `ck.space.child` confirmation edge.
 pub fn build_child_edge_op(
     parent_space_id: &str,
     actor: &str,
     child_space_id: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(parent_space_id, actor, "cx.space.child")
+    OperationBuilder::new(parent_space_id, actor, "ck.space.child")
         .target_ref(child_space_id)
         .body(json!({
             "child_space_id": child_space_id,
@@ -235,7 +235,7 @@ mod tests {
             kinds,
             vec![
                 "ck.space.create",
-                "cx.space.child",
+                "ck.space.child",
                 "ck.space.parent",
                 "ck.flow.update"
             ]
