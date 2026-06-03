@@ -100,7 +100,7 @@ pub fn build_consent_revoke_move(
     )
 }
 
-/// Round 4 (spec a77b995) — `ck.consent.revoke` v2 with REQUIRED
+/// Round 4 (spec a77b995) — `ck.consent.revoke` with REQUIRED
 /// `observed_dots` carried in the op payload. The receiver MUST NOT
 /// silently cascade revoke to dots not explicitly observed; an empty
 /// list is accepted only for non-causal revoke (which yougen's UI no

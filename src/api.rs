@@ -3737,7 +3737,7 @@ pub fn build_presence_envelope(
     .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
 }
 
-/// Round 4 (spec a77b995) — build a `ck.call.signal` v2 `EphemeralEnvelope`.
+/// Round 4 (spec a77b995) — build a `ck.call.signal` `EphemeralEnvelope`.
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical
@@ -3771,7 +3771,7 @@ pub fn build_call_signal_envelope_v1(
     let actor = cokret_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
-        anyhow::bail!("ck.call.signal v2 requires non-empty device_id (round 4 schema_violation)");
+        anyhow::bail!("ck.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
         cokret_sdk::DeviceId::new(device_id)

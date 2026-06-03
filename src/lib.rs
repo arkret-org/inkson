@@ -4,6 +4,10 @@
 // that line. Allow at the crate level rather than peppering individual
 // items with `#[allow(...)]`.
 #![allow(clippy::too_many_arguments)]
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 pub mod account_data;
 pub mod anchor_witness;

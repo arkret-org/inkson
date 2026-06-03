@@ -10443,8 +10443,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             description.service_type, description.protocol_version
                         ));
                         // Round 4 — cache the advertised trust_domain so
-                        // downstream signing flows (cross_signing.publish
-                        // v2, S2S transcripts) can pull a canonical
+                        // downstream signing flows (cross_signing.publish,
+                        // S2S transcripts) can pull a canonical
                         // value off local state without an extra round
                         // trip. Cleared when describe fails so a stale
                         // domain can't leak into the next flow.

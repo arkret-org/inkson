@@ -6061,7 +6061,7 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
 /// rename of the prior `identity_state_digest`; now folds the visible
 /// handle-claim digest set). `subject_id` is the disclosed principal DID
 /// — present only when the server disclosed it (gates the handle-claim
-/// evidence fields per the roster v2 dependentRequired rule).
+/// evidence fields per the R3.2 roster dependentRequired rule).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct RealmMemberRow {
     /// Actor DID. Carried as both `actor_id` and (legacy) `did`.
@@ -6069,7 +6069,7 @@ pub(super) struct RealmMemberRow {
     pub membership: Option<String>,
     pub identity_event_ids: Vec<String>,
     pub member_display_state_digest: Option<String>,
-    /// R3.2 roster v2 — disclosed principal/holder DID. `None` when the
+    /// R3.2 roster — disclosed principal/holder DID. `None` when the
     /// server did not disclose it (then the handle-claim fields are also
     /// absent). Drives §3.2.1 primary-handle selection + the
     /// "Why am I seeing this handle?" panel.
@@ -6198,7 +6198,7 @@ fn member_handle_fetch_key(realm_id: &str, subject_id: &str, digest: Option<&str
 }
 
 /// Collect the sorted roster of realm members from a cached space
-/// projection. R3.2 roster v2 wire shape per
+/// projection. R3.2 roster wire shape per
 /// `account-subscribe-frame.schema.json#/$defs/member_roster_entry`:
 /// `{actor_id, membership, subject_id?, identity_event_ids?,
 /// member_display_state_digest?, identity_events?, handle_claim_digests?,
@@ -6277,7 +6277,7 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                         .collect()
                 })
                 .unwrap_or_default();
-            // R3.2 roster v2 rename: `identity_state_digest` →
+            // R3.2 roster rename: `identity_state_digest` →
             // `member_display_state_digest` (no pre-R3.2 compat).
             let member_display_state_digest = map
                 .get("member_display_state_digest")
@@ -6285,7 +6285,7 @@ fn collect_member_rows(value: Option<&Value>, out: &mut BTreeMap<String, RealmMe
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
-            // R3.2 roster v2: disclosed principal/holder DID. Gates the
+            // R3.2 roster: disclosed principal/holder DID. Gates the
             // inline handle-claim evidence. dependentRequired is enforced
             // server-side; here we simply read what was disclosed.
             let subject_id = map
@@ -9497,7 +9497,7 @@ mod tests {
 
     #[test]
     fn realm_member_roster_reads_r32_wire_shape() {
-        // R3.2 (cokret-spec @ b56cab1): roster v2 entries carry
+        // R3.2 (cokret-spec @ b56cab1): roster entries carry
         // `actor_id` + `membership` + optional `subject_id` /
         // `identity_event_ids` / `member_display_state_digest`. Handle
         // strings only appear inside signed handle_claim evidence.
@@ -9553,17 +9553,17 @@ mod tests {
     }
 
     #[test]
-    fn realm_member_roster_reads_v2_digest_only() {
+    fn realm_member_roster_reads_r32_digest_only() {
         // Aggressive no-compat: only the R3.2 `member_display_state_digest`
         // key is read.
-        let v2 = json!({
+        let projection = json!({
             "members": [{
                 "actor_id": "did:web:acme.example:users:v2",
                 "membership": "join",
                 "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
             }]
         });
-        let rows = realm_member_roster(Some(&v2));
+        let rows = realm_member_roster(Some(&projection));
         assert_eq!(rows.len(), 1);
         assert!(rows[0].member_display_state_digest.is_some());
     }

@@ -1533,7 +1533,7 @@ fn mentions_from_value(value: &Value) -> Vec<StructuredMention> {
                             .or_else(|| item.get("mention_text_original").and_then(Value::as_str))
                             .unwrap_or(target)
                             .to_owned(),
-                        // R3.2 audit metadata: v2 field names only (no
+                        // R3.2 audit metadata: R3.2 field names only (no
                         // pre-R3.2 compat). These NEVER drive the current
                         // display value — the renderer runs §3.2.1 off
                         // `target` instead.

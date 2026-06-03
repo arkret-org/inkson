@@ -1084,7 +1084,7 @@ pub fn VerifyDevicePanel(
                                         //    PSK/SSK/USK + sign bindings +
                                         //    validate the publish content.
                                         //
-                                        // Round 4 — `ck.cross_signing.publish` v2
+                                        // Round 4 — `ck.cross_signing.publish`
                                         // requires `trust_domain` in the
                                         // canonical bind input. We thread the
                                         // active deployment's trust domain from

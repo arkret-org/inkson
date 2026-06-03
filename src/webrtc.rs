@@ -6,7 +6,7 @@
 //! durable event chain without re-discovering the body shape:
 //!
 //! - `ck.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
-//!   reducers MUST NOT use it as state input). Round 4 v2 wire shape; carries `device_id` + `proof`
+//!   reducers MUST NOT use it as state input). Round 4 wire shape; carries `device_id` + `proof`
 //!   + `payload.{call_id, signal_type, seq}`. Receivers use [`CallSignalReceiver`] to reject
 //!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
 //!     a rollback.
@@ -70,7 +70,7 @@ pub fn build_call_state(
 /// the renderer SHOULD emit a local `hangup` for the offending call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallSignalIngestOutcome {
-    /// Envelope passed v2 validation, the proof was present, and the
+    /// Envelope passed Round 4 validation, the proof was present, and the
     /// per-`(realm, call, actor, device)` seq advanced strictly forward.
     Accepted {
         payload: cokret_sdk::CallSignalPayload,
@@ -79,7 +79,7 @@ pub enum CallSignalIngestOutcome {
     /// signal and SHOULD emit a local `hangup` for `call_id`. The
     /// `seq` field carries the offending value for telemetry.
     SeqRollback { call_id: String, seq: u64 },
-    /// Envelope failed v2 validation (missing device_id / proof,
+    /// Envelope failed Round 4 validation (missing device_id / proof,
     /// non-canonical signal_type, malformed payload). The receiver drops
     /// the signal; UI MAY surface a "remote sent malformed signal" toast.
     Rejected { reason: String },
@@ -101,7 +101,7 @@ impl CallSignalReceiver {
         }
     }
 
-    /// Run the v2 envelope validator + per-key monotonicity guard. The
+    /// Run the Round 4 envelope validator + per-key monotonicity guard. The
     /// caller is responsible for the proof-verification step BEFORE
     /// invoking this (the SDK only asserts `proof.is_some()`).
     pub fn ingest(&mut self, envelope: &cokret_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn receiver_rejects_envelope_without_device_id_or_proof() {
         // Hand-build an envelope without proof to verify the receiver
-        // rejects it (the v2 schema requires proof).
+        // rejects it (the Round 4 schema requires proof).
         let env = cokret_sdk::EphemeralEnvelope::new(
             "ck.call.signal",
             cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),

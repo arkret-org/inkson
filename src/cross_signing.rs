@@ -745,7 +745,7 @@ mod tests {
     use super::*;
 
     /// Round 4 — every executor test thread needs a TypedTrustDomainId
-    /// for the v2 `ck.cross_signing.publish` shape.
+    /// for the Round 4 `ck.cross_signing.publish` shape.
     fn test_trust_domain() -> TypedTrustDomainId {
         TypedTrustDomainId::new("ck:trust_domain:example.net").unwrap()
     }

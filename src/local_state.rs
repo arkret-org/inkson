@@ -1073,7 +1073,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
-    /// connected principal server's `ServiceDescribe` v2 response.
+    /// connected principal server's Round 4 `ServiceDescribe` response.
     /// Threaded through to flows that need to canonicalise into
     /// transport / signing transcripts (e.g. `ck.cross_signing.publish`).
     /// `None` until the first successful `/server/describe` lands.

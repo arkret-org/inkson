@@ -171,7 +171,7 @@ pub const OP_EVENTS_SUBMIT: &str = "ck.events.submit";
 /// Yougen no longer maintains its own `ServerDescription` struct; the SDK
 /// type is now the single source of truth, matching the spec at
 /// `cokret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
-/// (17 required v2 fields, typed `claimed_profiles` / `compat_surfaces`,
+/// (17 required Round 4 fields, typed `claimed_profiles` / `compat_surfaces`,
 /// validated `Did` / `TypedTrustDomainId`). Because yougen cannot add
 /// inherent impls on a foreign type, the previous helper methods now live
 /// on this extension trait — call sites only need `use
