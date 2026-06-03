@@ -25,7 +25,7 @@
 //! set_push_token_provider(Arc::new(FcmPushTokenProvider));
 //! let outcome = register_via_chime(RegisterContext {
 //!     principal_server_url: "https://principal.example".into(),
-//!     floria_gateway_url: "https://push.example/api/v1/push/notify".into(),
+//!     floria_gateway_url: "https://push.example/_cokret/edge/push/notify".into(),
 //!     device_id: "dev-yougen".into(),
 //!     principal_id: Some("did:web:alice.example".into()),
 //!     bearer_token: Some(api_token),
@@ -442,7 +442,7 @@ mod tests {
     fn ctx(device: &str) -> RegisterContext {
         RegisterContext {
             principal_server_url: "https://principal.example".to_owned(),
-            floria_gateway_url: "https://push.example/api/v1/push/notify".to_owned(),
+            floria_gateway_url: "https://push.example/_cokret/edge/push/notify".to_owned(),
             device_id: device.to_owned(),
             principal_id: Some("did:web:alice.example".to_owned()),
             bearer_token: Some("session-secret".to_owned()),
@@ -465,7 +465,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
             principal_server_url: "https://principal.example/".to_owned(),
-            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
             session_expires_at: None,
             stored_at: Utc::now(),
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(request.push_key, "apns:01234567890abcdef");
         assert_eq!(
             request.push_gateway,
-            "https://push.example/api/v1/push/notify"
+            "https://push.example/_cokret/edge/push/notify"
         );
         assert_eq!(request.app_id.as_deref(), Some("yougen"));
         assert_eq!(request.platform.as_deref(), Some(current_platform_str()));

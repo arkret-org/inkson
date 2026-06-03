@@ -215,7 +215,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // pattern requires `7<...>` in time-hi field).
     let bogus = serde_json::json!({
         "event_id": "ck:event:not-a-uuid",
-        "kind": "cx.realm.create",
+        "kind": "ck.realm.create",
         "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
@@ -236,7 +236,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
         "event_id": "ck:event:0196419b-0000-7777-8000-000000000003",
-        "kind": "cx.realm.create",
+        "kind": "ck.realm.create",
         "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
@@ -255,7 +255,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     });
     assert!(
         !validator.is_valid(&reducer_missing_required),
-        "validator accepted a reducer-input cx.realm.create envelope \
+        "validator accepted a reducer-input ck.realm.create envelope \
          missing preconditions/effects/anchor_ref; the conditional `if/then` \
          branch on event-envelope.schema.json is not being evaluated"
     );
@@ -331,7 +331,7 @@ fn build_space_lifecycle_event_archive_matches_event_schema() {
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_DID,
-        "cx.space.archive",
+        "ck.space.archive",
     )
     .expect("build_space_lifecycle_event(archive) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -344,7 +344,7 @@ fn build_space_lifecycle_event_restore_matches_event_schema() {
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_DID,
-        "cx.space.restore",
+        "ck.space.restore",
     )
     .expect("build_space_lifecycle_event(restore) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -357,7 +357,7 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_DID,
-        "cx.space.tombstone",
+        "ck.space.tombstone",
     )
     .expect("build_space_lifecycle_event(tombstone) succeeds");
     stamp_wire_fields(&mut envelope);
@@ -369,7 +369,7 @@ fn build_space_state_event_join_rule_matches_event_schema() {
     let mut envelope = api::build_space_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_DID,
-        "cx.realm.join_rule",
+        "ck.realm.join_rule",
         serde_json::json!("invite"),
     )
     .expect("build_space_state_event(join_rule) succeeds");
@@ -382,7 +382,7 @@ fn build_space_state_event_history_visibility_matches_event_schema() {
     let mut envelope = api::build_space_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_DID,
-        "cx.realm.history_visibility",
+        "ck.realm.history_visibility",
         serde_json::json!("shared"),
     )
     .expect("build_space_state_event(history_visibility) succeeds");
@@ -459,8 +459,8 @@ fn build_member_state_event_matches_event_schema() {
     .expect("build_realm_bootstrap_events succeeds");
     let mut envelope = events
         .into_iter()
-        .find(|event| event.kind == "cx.member.state")
-        .expect("bootstrap chain emits one cx.member.state envelope for the invitee");
+        .find(|event| event.kind == "ck.member.state")
+        .expect("bootstrap chain emits one ck.member.state envelope for the invitee");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_member_state_event[invite]", &envelope);
 }

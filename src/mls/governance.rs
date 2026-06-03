@@ -1,4 +1,4 @@
-//! MLS Governance Binding helpers (`cx.profile.mls_governance_binding.full.v1`).
+//! MLS Governance Binding helpers (`ck.profile.mls_governance_binding.full.v1`).
 //!
 //! Spec: `crypto-media/encryption-and-audit.md` §10. Every MLS commit MUST
 //! carry preconditions binding it to:
@@ -13,7 +13,7 @@
 //!
 //! This module wraps `cokret_sdk::mls_move::*` so yougen can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
-//! It is not the `cx.mls.commit` event payload type; event payloads must use
+//! It is not the `ck.mls.commit` event payload type; event payloads must use
 //! `cokret_sdk::MlsCommitPayload` and `cokret_sdk::MlsGovernanceBindingPayload`.
 
 use cokret_sdk::mls_move::{
@@ -111,7 +111,7 @@ impl GovernanceBindingPayload {
 
     /// Render the binding as the legacy/internal Move tuple JSON shape.
     ///
-    /// Do not use this as a `cx.mls.commit` event payload. That wire surface
+    /// Do not use this as a `ck.mls.commit` event payload. That wire surface
     /// is sealed by `cokret_sdk::MlsCommitPayload`.
     pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
@@ -129,9 +129,9 @@ impl GovernanceBindingPayload {
     }
 }
 
-/// The `cx.profile.mls_governance_binding.full.v1` profile id. Mirrors the
+/// The `ck.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
 
 #[cfg(test)]
 mod tests {

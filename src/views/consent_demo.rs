@@ -5,7 +5,7 @@
 //! The flow is:
 //!
 //! 1. user types `consent_id` + `tag` in the form;
-//! 2. on click, build a `cx.consent.grant` Move via
+//! 2. on click, build a `ck.consent.grant` Move via
 //!    [`crate::move_builder::build_consent_grant_move`];
 //! 3. sign with a deterministic placeholder ed25519 key (yougen does not yet have OS keychain /
 //!    WebAuthn / HSM key management — see `TODO(real-key-management)` below);
@@ -17,7 +17,7 @@
 //! relations / redactions — per spec event-kind-registry, only events
 //! that declare a `cell_family` use the Move/Anchor path. The demo's
 //! purpose is to prove the wire path works for ONE such event
-//! (`cx.consent.grant`); follow-up tasks port member admin / space
+//! (`ck.consent.grant`); follow-up tasks port member admin / space
 //! organization / capability / etc. UIs to the same pattern.
 
 use dioxus::prelude::*;
@@ -29,7 +29,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 // build_signed_consent_revoke_v1 / format_submit_response and their
 // helpers have been removed — the consent demo card now builds
 // cx.consent.{grant,revoke} events via cx_ops::consent_grant / consent_revoke
-// and submits them through cx.events.submit. The original Move-based
+// and submits them through ck.events.submit. The original Move-based
 // helpers + their wire-shape tests are preserved in git history.
 
 /// The consent-grant demo card. Rendered inside the Privacy section of
@@ -51,10 +51,10 @@ pub fn ConsentGrantDemoCard(
         div { class: "event", "data-testid": "consent-grant-demo",
             div { class: "event-head",
                 span { "Grant consent (Move PoC)" }
-                span { "cx.consent.grant · cell-driven" }
+                span { "ck.consent.grant · cell-driven" }
             }
             div { class: "muted",
-                "Submits a cx.consent.grant event via cx.events.submit; soland's reducer folds the OrSet add into the cx.component.consent.grant.v1 cell."
+                "Submits a ck.consent.grant event via ck.events.submit; soland's reducer folds the OrSet add into the ck.component.consent.grant.v1 cell."
             }
             label { "Space ID" }
             input {
@@ -114,7 +114,7 @@ pub fn ConsentGrantDemoCard(
                             .await
                             {
                                 Ok(response) => status.set(format!(
-                                    "cx.consent.grant event {} state=accepted",
+                                    "ck.consent.grant event {} state=accepted",
                                     short_protocol_id(&response.event_id)
                                 )),
                                 Err(err) => status
@@ -168,7 +168,7 @@ pub fn ConsentGrantDemoCard(
                             .await
                             {
                                 Ok(response) => status.set(format!(
-                                    "cx.consent.revoke event {} state=accepted",
+                                    "ck.consent.revoke event {} state=accepted",
                                     short_protocol_id(&response.event_id)
                                 )),
                                 Err(err) => status.set(format!(
@@ -299,10 +299,10 @@ pub fn RevokeAllConsentCard(
         div { class: "event", "data-testid": "revoke-all-consent-card",
             div { class: "event-head",
                 span { "Revoke all consent (scope=any)" }
-                span { class: "badge red", title: "cx.consent.revoke", "scope=any" }
+                span { class: "badge red", title: "ck.consent.revoke", "scope=any" }
             }
             div { class: "muted",
-                "Revoking with scope=any submits one cx.consent.revoke event per subscope; soland's reducer collapses them into a single OrSet remove fanout. This is irreversible — the recipient must re-issue consent if you change your mind."
+                "Revoking with scope=any submits one ck.consent.revoke event per subscope; soland's reducer collapses them into a single OrSet remove fanout. This is irreversible — the recipient must re-issue consent if you change your mind."
             }
             label { "Space ID" }
             input {
@@ -381,7 +381,7 @@ pub fn RevokeAllConsentCard(
                                         return;
                                     }
                                 };
-                                // Build one cx.consent.revoke event per
+                                // Build one ck.consent.revoke event per
                                 // subscope. The server-side reducer collapses
                                 // these into a single OrSet fanout under
                                 // scope=any. TODO(round23-T17): once the SDK

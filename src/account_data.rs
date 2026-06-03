@@ -1,10 +1,10 @@
 //! Client-side account_data layer per `discovery/client-preferences.md`.
 //!
 //! Spec: actor-private preferences (UI state, read-receipt overrides, presence
-//! gating, blocklist, language) are stored as `cx.account_data.set` events with
+//! gating, blocklist, language) are stored as `ck.account_data.set` events with
 //! actor-private wire scope. Yougen previously kept these as ad-hoc fields on
 //! `LocalState`; this module centralizes the storage shape so
-//! `cx.account_data.set` writes have a single canonical entry point.
+//! `ck.account_data.set` writes have a single canonical entry point.
 
 use std::collections::BTreeMap;
 
@@ -23,11 +23,11 @@ use crate::operation::OperationBuilder;
 pub enum AccountDataKey {
     /// `client.ui` — sidebar collapsed, theme, default view per Space.
     ClientUi,
-    /// `cx.read_receipt.preferences` — global + per-space + per-flow send override.
+    /// `ck.read_receipt.preferences` — global + per-space + per-flow send override.
     ClientReadReceipts,
     /// `client.presence` — per-space typing / online / last-seen toggles.
     ClientPresence,
-    /// `cx.account.blocklist` — actor-private personal blocklist entries.
+    /// `ck.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
     /// `cx.push_rules` — per-space mute, sound, push routing.
     ClientNotifications,
@@ -43,9 +43,9 @@ impl AccountDataKey {
     pub fn as_wire(&self) -> &str {
         match self {
             Self::ClientUi => "client.ui",
-            Self::ClientReadReceipts => "cx.read_receipt.preferences",
+            Self::ClientReadReceipts => "ck.read_receipt.preferences",
             Self::ClientPresence => "client.presence",
-            Self::ClientBlocklist => "cx.account.blocklist",
+            Self::ClientBlocklist => "ck.account.blocklist",
             Self::ClientNotifications => "cx.push_rules",
             Self::ClientDndSchedule => "cx.dnd_schedule",
             Self::ClientLanguage => "client.language",
@@ -56,9 +56,9 @@ impl AccountDataKey {
     pub fn from_wire(s: &str) -> Self {
         match s {
             "client.ui" => Self::ClientUi,
-            "cx.read_receipt.preferences" => Self::ClientReadReceipts,
+            "ck.read_receipt.preferences" => Self::ClientReadReceipts,
             "client.presence" => Self::ClientPresence,
-            "cx.account.blocklist" => Self::ClientBlocklist,
+            "ck.account.blocklist" => Self::ClientBlocklist,
             "cx.push_rules" => Self::ClientNotifications,
             "cx.dnd_schedule" => Self::ClientDndSchedule,
             "client.language" => Self::ClientLanguage,
@@ -87,7 +87,7 @@ pub struct AccountDataRecord {
 /// F-ACCT-SNAP-1: tracks the server-declared snapshot head this store was
 /// last reconciled to (per `sync/account-data-sync.md`). A new device can
 /// hydrate from `snapshot_head` instead of replaying every historic
-/// `cx.account_data.set` event; once the snapshot endpoint surfaces a
+/// `ck.account_data.set` event; once the snapshot endpoint surfaces a
 /// fingerprint matching this value, the client knows it's caught up and
 /// can resume incremental sync from the live event stream.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,7 +174,7 @@ impl AccountDataStore {
 // Spec: `discovery/client-preferences.md` §2 — the `client.ui`
 // account-data key carries cross-device UI preferences. Yougen persists
 // theme + sidebar state locally and best-effort syncs them across
-// devices via `cx.account_data.set`.
+// devices via `ck.account_data.set`.
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Build the canonical `content` body for the `client.ui` account-data
@@ -281,7 +281,7 @@ pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<
 /// `discovery/client-preferences.md` §3.7: `cx.contacts.space.<space_id>`.
 ///
 /// The same string is the path segment passed to soland's
-/// `PUT /api/v1/account_data/{type}` endpoint. Callers should already have
+/// `PUT /_cokret/self/account_data/{type}` endpoint. Callers should already have
 /// validated `space_id` shape (`ck:space:<uuid>`).
 pub fn space_remark_account_data_key(space_id: &str) -> String {
     format!("cx.contacts.space.{space_id}")
@@ -295,15 +295,15 @@ pub fn space_id_from_space_remark_key(key: &str) -> Option<&str> {
 }
 
 /// Wire-key for an actor-private contact remark per
-/// `discovery/client-preferences.md` §3.6: `cx.contacts.actor.<did>`.
+/// `discovery/client-preferences.md` §3.6: `ck.contacts.actor.<did>`.
 pub fn contact_remark_account_data_key(actor_did: &str) -> String {
-    format!("cx.contacts.actor.{actor_did}")
+    format!("ck.contacts.actor.{actor_did}")
 }
 
 /// Inverse of [`contact_remark_account_data_key`]. Returns the DID segment
 /// when `key` is an actor contact remark.
 pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
-    key.strip_prefix("cx.contacts.actor.")
+    key.strip_prefix("ck.contacts.actor.")
 }
 
 /// User-private Space remark per `discovery/client-preferences.md` §3.7.
@@ -315,7 +315,7 @@ pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
 /// settings UI and the sidebar agree.
 ///
 /// All fields are spec-aligned; the struct intentionally mirrors the §3.6
-/// `cx.contacts.actor.<did>` shape so future cross-actor / cross-Space
+/// `ck.contacts.actor.<did>` shape so future cross-actor / cross-Space
 /// editing UIs can be unified.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpaceRemark {
@@ -403,7 +403,7 @@ impl SpaceRemark {
 /// User-private actor/contact remark per
 /// `discovery/client-preferences.md` §3.6.
 ///
-/// Stored under `cx.contacts.actor.<did>` and intentionally never embedded in
+/// Stored under `ck.contacts.actor.<did>` and intentionally never embedded in
 /// public profile, mention, message, search, or push payloads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactRemark {
@@ -454,7 +454,7 @@ impl ContactRemark {
 }
 
 /// A single local actor-DID entry in the actor-private personal blocklist
-/// (`cx.account.blocklist` per `discovery/client-preferences.md` §3.5).
+/// (`ck.account.blocklist` per `discovery/client-preferences.md` §3.5).
 ///
 /// The local UI model stays compact (`did`, optional reason, timestamp).
 /// [`build_blocklist_account_data_body`] expands it to the canonical account
@@ -555,7 +555,7 @@ const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
     "directory",
 ];
 
-/// Canonical wire body for the `cx.account.blocklist` account-data entry.
+/// Canonical wire body for the `ck.account.blocklist` account-data entry.
 /// The settings UI calls this just before PUTting via
 /// [`crate::api::CokretApi::set_account_data`]; keep the shape aligned with
 /// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
@@ -594,7 +594,7 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     })
 }
 
-/// Parse the `cx.account.blocklist` account-data content body. Malformed
+/// Parse the `ck.account.blocklist` account-data content body. Malformed
 /// actor entries are skipped instead of partially corrupting the local UI.
 /// This parser intentionally accepts legacy rows written by earlier yougen
 /// and cotest fixtures: `{ did, reason, blocked_at }`,
@@ -687,9 +687,9 @@ fn blocklist_entry_from_parts(
     Some(entry)
 }
 
-/// Build a `cx.account_data.set` operation envelope for `key` -> `value`.
+/// Build a `ck.account_data.set` operation envelope for `key` -> `value`.
 ///
-/// `cx.account_data.set` is classified `actor_private_event` in
+/// `ck.account_data.set` is classified `actor_private_event` in
 /// `conformance.rs:393`; reducers MUST NOT include it in shared Space state.
 pub fn build_account_data_set(
     space_id: &str,
@@ -697,7 +697,7 @@ pub fn build_account_data_set(
     key: &AccountDataKey,
     value: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.account_data.set").body(serde_json::json!({
+    OperationBuilder::new(space_id, actor, "ck.account_data.set").body(serde_json::json!({
         "key": key.as_wire(),
         "value": value,
     }))
@@ -791,9 +791,9 @@ mod tests {
     fn key_round_trip() {
         for s in [
             "client.ui",
-            "cx.read_receipt.preferences",
+            "ck.read_receipt.preferences",
             "client.presence",
-            "cx.account.blocklist",
+            "ck.account.blocklist",
             "cx.push_rules",
             "cx.dnd_schedule",
             "client.language",
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(key, format!("cx.contacts.space.{space_id}"));
         assert_eq!(space_id_from_space_remark_key(&key), Some(space_id));
         assert_eq!(
-            space_id_from_space_remark_key("cx.read_receipt.preferences"),
+            space_id_from_space_remark_key("ck.read_receipt.preferences"),
             None
         );
     }
@@ -843,7 +843,7 @@ mod tests {
     fn contact_remark_key_round_trip() {
         let did = "did:web:alice.example";
         let key = contact_remark_account_data_key(did);
-        assert_eq!(key, format!("cx.contacts.actor.{did}"));
+        assert_eq!(key, format!("ck.contacts.actor.{did}"));
         assert_eq!(actor_did_from_contact_remark_key(&key), Some(did));
         assert_eq!(
             actor_did_from_contact_remark_key("cx.contacts.space.x"),
@@ -1147,8 +1147,8 @@ mod tests {
             json!({"send": false}),
         )
         .build("node");
-        assert_eq!(op.kind, "cx.account_data.set");
-        assert_eq!(op.payload["key"], "cx.read_receipt.preferences");
+        assert_eq!(op.kind, "ck.account_data.set");
+        assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
         assert_eq!(op.payload["value"]["send"], false);
     }
 }

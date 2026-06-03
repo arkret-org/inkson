@@ -1,7 +1,7 @@
 //! Audit view — read-only inspector for audited E2EE events.
 //!
-//! Surfaces `cx.audit.accessed` (attested-audit reads) and
-//! `cx.audit.ryw_receipt` (disclosed-audit write receipts) from the local
+//! Surfaces `ck.audit.accessed` (attested-audit reads) and
+//! `ck.audit.ryw_receipt` (disclosed-audit write receipts) from the local
 //! raw-operation log, so administrators / users can verify the audit
 //! channel is firing under the active policy.
 //!
@@ -33,7 +33,7 @@ fn extract_string(value: &Value, key: &str) -> Option<String> {
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(kind.as_str(), "cx.audit.accessed" | "cx.audit.ryw_receipt") {
+    if !matches!(kind.as_str(), "ck.audit.accessed" | "ck.audit.ryw_receipt") {
         return None;
     }
     Some(AuditRow {
@@ -56,11 +56,11 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
         .collect();
     let attested_count = rows
         .iter()
-        .filter(|row| row.kind == "cx.audit.accessed")
+        .filter(|row| row.kind == "ck.audit.accessed")
         .count();
     let receipt_count = rows
         .iter()
-        .filter(|row| row.kind == "cx.audit.ryw_receipt")
+        .filter(|row| row.kind == "ck.audit.ryw_receipt")
         .count();
 
     rsx! {
@@ -68,18 +68,18 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
             div { class: "event",
                 div { class: "event-head",
                     span { "Audit log" }
-                    HelpTip { text: "Attested-audit Spaces require every successful decrypt to emit a cx.audit.accessed event. Disclosed-audit Spaces require every write to emit a cx.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
+                    HelpTip { text: "Attested-audit Spaces require every successful decrypt to emit a ck.audit.accessed event. Disclosed-audit Spaces require every write to emit a ck.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Access events" }
                         span { "data-testid": "audit-accessed-count", "{attested_count}" }
-                        div { class: "muted", "cx.audit.accessed (attested policy)" }
+                        div { class: "muted", "ck.audit.accessed (attested policy)" }
                     }
                     div { class: "metric",
                         strong { "Write receipts" }
                         span { "data-testid": "audit-receipt-count", "{receipt_count}" }
-                        div { class: "muted", "cx.audit.ryw_receipt (disclosed policy)" }
+                        div { class: "muted", "ck.audit.ryw_receipt (disclosed policy)" }
                     }
                     div { class: "metric",
                         strong { "Total observed" }
@@ -153,14 +153,14 @@ mod tests {
         let row = classify_audit_row(
             "op-1",
             &json!({
-                "kind": "cx.audit.accessed",
+                "kind": "ck.audit.accessed",
                 "space_id": "ck:space:s1",
                 "target_event_id": "ck:event:abc",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
-        assert_eq!(row.kind, "cx.audit.accessed");
+        assert_eq!(row.kind, "ck.audit.accessed");
         assert_eq!(row.space_id.as_deref(), Some("ck:space:s1"));
         assert_eq!(row.target_event_id.as_deref(), Some("ck:event:abc"));
     }
@@ -170,12 +170,12 @@ mod tests {
         let row = classify_audit_row(
             "op-2",
             &json!({
-                "kind": "cx.audit.ryw_receipt",
+                "kind": "ck.audit.ryw_receipt",
                 "source_event_id": "ck:event:xyz",
             }),
         )
         .expect("should classify");
-        assert_eq!(row.kind, "cx.audit.ryw_receipt");
+        assert_eq!(row.kind, "ck.audit.ryw_receipt");
         assert_eq!(row.target_event_id.as_deref(), Some("ck:event:xyz"));
     }
 
@@ -184,7 +184,7 @@ mod tests {
         let none = classify_audit_row(
             "op-3",
             &json!({
-                "kind": "cx.message.create",
+                "kind": "ck.message.create",
                 "space_id": "ck:space:s1",
             }),
         );

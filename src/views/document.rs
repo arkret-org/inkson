@@ -2,7 +2,7 @@
 //!
 //! - Every edit is mirrored to `LocalStateStore.private_data` so the draft survives navigation and
 //!   offline use.
-//! - Save Version emits a real `cx.morph.create` (first time) or `cx.morph.update` (subsequent
+//! - Save Version emits a real `ck.morph.create` (first time) or `ck.morph.update` (subsequent
 //!   saves). The morph_id is persisted per-Space so subsequent saves target the same Morph.
 //! - The header sync badge reports the result of the most recent submit: `Synced` / `Pending sync`
 //!   / `Local draft`. Failed submits fall back to local draft without losing the user's edits.
@@ -75,7 +75,7 @@ pub struct RemoteCursor {
 }
 
 /// One comment thread anchored to a `[start, end)` range within the
-/// document. Spec contract is `cx.message.create` on the document
+/// document. Spec contract is `ck.message.create` on the document
 /// Flow's discussion track (`models/flow-and-message.md` §4.3) with a
 /// payload that carries `anchor_range`. The thread is identified by
 /// the originating message's event_id.
@@ -165,7 +165,7 @@ fn morph_id_storage_key(space_id: &str) -> String {
 }
 
 /// Mint a fresh document Morph id. The id is local-only until the
-/// matching `cx.morph.create` event is accepted; once accepted, the
+/// matching `ck.morph.create` event is accepted; once accepted, the
 /// reducer takes ownership.
 fn mint_morph_id() -> String {
     format!("ck:morph:{}", crate::operation::uuid_v7())
@@ -1368,7 +1368,7 @@ pub fn DocumentPanel(
                                                 );
                                                 // TODO(G3.Y4-followup):
                                                 // submit a real
-                                                // cx.morph.update with
+                                                // ck.morph.update with
                                                 // state_witness +
                                                 // inclusion_proof per
                                                 // spec

@@ -73,8 +73,8 @@ pub enum Route {
     SettingsRecovery,
 
     /// G3.Y1 — local key-backup status + manual trigger / restore
-    /// buttons. Backed by soland's `cx.schema.key_backup.v1` endpoints
-    /// (`PUT/GET /api/v1/keys/backups/{backup_id}`) plus the local MLS
+    /// buttons. Backed by soland's `ck.schema.key_backup.v1` endpoints
+    /// (`PUT/GET /_cokret/self/keys/backups/{backup_id}`) plus the local MLS
     /// snapshot bookkeeping in `mls_persistence`.
     #[route("/settings/security", crate::app::RouterView)]
     SettingsSecurity,
@@ -174,7 +174,7 @@ pub enum Route {
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
     /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
     /// directly navigating to `/search`. Backed by soland's
-    /// `POST /api/v1/index/search` substring scan.
+    /// `POST /_cokret/self/index/search` substring scan.
     #[route("/search", crate::app::RouterView)]
     Search,
 }

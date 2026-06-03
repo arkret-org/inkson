@@ -1,9 +1,9 @@
 //! G3.Y2 — poll composer + result tally state.
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`):
-//! * `cx.message.create` with `content.kind = cx.content.poll` creates a poll.
-//! * `cx.message.create` with `content.kind = cx.content.poll.response` records a response.
-//! * `cx.message.create` with `content.kind = cx.content.poll.close` closes a poll.
+//! * `ck.message.create` with `content.kind = ck.content.poll` creates a poll.
+//! * `ck.message.create` with `content.kind = ck.content.poll.response` records a response.
+//! * `ck.message.create` with `content.kind = cx.content.poll.close` closes a poll.
 //!
 //! Polls are enabled in the local 1.0 UI because soland now projects the
 //! content-type reducer state.
@@ -189,7 +189,7 @@ impl PollCard {
     }
 
     pub fn from_content(message_id: String, content: &Value) -> Option<Self> {
-        if content_kind(content) != Some("cx.content.poll") {
+        if content_kind(content) != Some("ck.content.poll") {
             return None;
         }
         let poll_id = poll_id_from_content(content).unwrap_or_else(|| message_id.clone());
@@ -263,7 +263,7 @@ impl PollCard {
 }
 
 pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String>)> {
-    if content_kind(content) != Some("cx.content.poll.response") {
+    if content_kind(content) != Some("ck.content.poll.response") {
         return None;
     }
     let poll_id = poll_id_from_content(content)?;
@@ -396,7 +396,7 @@ pub fn build_poll_create_op(
         .enumerate()
         .map(|(idx, label)| json!({"id": format!("opt-{idx}"), "label": label.trim()}))
         .collect();
-    let content = cokret_sdk::ContentBlock::new("cx.content.poll", draft.question.trim())
+    let content = cokret_sdk::ContentBlock::new("ck.content.poll", draft.question.trim())
         .with_field("poll_id", json!(poll_id))
         .with_field("question", json!(draft.question.trim()))
         .with_field("options", Value::Array(options))
@@ -407,11 +407,11 @@ pub fn build_poll_create_op(
         sdk_payload_value(content.to_value(), "poll create content serialize"),
     )
     .with_message_id(poll_id);
-    let mut envelope = OperationBuilder::new(space_id, actor, "cx.message.create")
+    let mut envelope = OperationBuilder::new(space_id, actor, "ck.message.create")
         .target_ref(flow_id)
         .body(sdk_payload_value(
             payload.to_value(),
-            "poll cx.message.create payload serialize",
+            "poll ck.message.create payload serialize",
         ))
         .build("yougen");
     let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
@@ -420,7 +420,7 @@ pub fn build_poll_create_op(
     envelope
 }
 
-/// Build the `cx.content.poll.response` envelope for a single-select
+/// Build the `ck.content.poll.response` envelope for a single-select
 /// vote. The multi-select variant is left for the soland-side reducer
 /// work referenced above.
 pub fn build_poll_vote_op(
@@ -430,7 +430,7 @@ pub fn build_poll_vote_op(
     option_id: &str,
 ) -> EventEnvelope {
     let flow_id = flow_id_from_space_id(space_id);
-    let content = cokret_sdk::ContentBlock::new("cx.content.poll.response", "poll response")
+    let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
         .with_field("poll_id", json!(poll_id))
         .with_field("choice", json!(option_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
@@ -438,11 +438,11 @@ pub fn build_poll_vote_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize"),
     );
-    OperationBuilder::new(space_id, actor, "cx.message.create")
+    OperationBuilder::new(space_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
-            "poll vote cx.message.create payload serialize",
+            "poll vote ck.message.create payload serialize",
         ))
         .build("yougen")
 }
@@ -457,11 +457,11 @@ pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventE
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize"),
     );
-    OperationBuilder::new(space_id, actor, "cx.message.create")
+    OperationBuilder::new(space_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
-            "poll close cx.message.create payload serialize",
+            "poll close ck.message.create payload serialize",
         ))
         .build("yougen")
 }
@@ -550,7 +550,7 @@ mod tests {
             "poll-x",
             &draft,
         );
-        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(op.kind, "ck.message.create");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("encrypted").is_none());
         assert!(op.payload.get("poll_id").is_none());
@@ -569,7 +569,7 @@ mod tests {
     #[test]
     fn poll_card_from_content_reads_results() {
         let content = json!({
-            "kind": "cx.content.poll",
+            "kind": "ck.content.poll",
             "poll_id": "poll-1",
             "question": "ship?",
             "options": [

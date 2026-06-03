@@ -20,12 +20,12 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError, unwrap_secret
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
 /// P4 (CXP-0007 hygiene): the previous hard-coded
-/// `https://push.example/api/v1/push/notify` placeholder is gone.
+/// `https://push.example/_cokret/edge/push/notify` placeholder is gone.
 /// We now read `YOUGEN_FLORIA_URL` at the call site (see
 /// [`floria_gateway_url`]); when it's unset in dev we point at
 /// localhost, when it's unset in prod we return an empty string and
 /// the registration code no-ops rather than POSTing to a fake host.
-const DEV_FLORIA_GATEWAY: &str = "http://localhost:9001/api/v1/push/notify";
+const DEV_FLORIA_GATEWAY: &str = "http://localhost:9001/_cokret/edge/push/notify";
 /// Returned by [`floria_gateway_url`] when the env var is unset and
 /// we're NOT in a debug build. The chime register-device path treats
 /// an empty gateway URL as "no push registration" and short-circuits
@@ -348,7 +348,7 @@ fn push_preferences() -> PushPreferences {
 /// F-BUILD-FIX-1: chime's `build_register_device_request` moved the push
 /// gateway URL off `PushPreferences` and onto a per-call `GatewayBinding`.
 /// Yougen only registers against a single configured gateway (the floria
-/// `/api/v1/push/notify` endpoint by default), so this helper resolves the
+/// `/_cokret/edge/push/notify` endpoint by default), so this helper resolves the
 /// runtime gateway URL into a freshly-constructed binding for every
 /// register / state-rebuild call site.
 fn default_gateway_binding() -> GatewayBinding {
@@ -1218,10 +1218,10 @@ mod tests {
         let summary = summarize_push_gateway_bridge(&PushBridgeDescribeResponse {
             contract: "cx.push.bridge.describe".to_owned(),
             version: "2026-05-03".to_owned(),
-            api_base_path: "/api/v1/push".to_owned(),
+            api_base_path: "/_cokret/edge/push".to_owned(),
             gateway: Default::default(),
             notify: chime::PushBridgeDescribeNotifyDescriptor {
-                notify_path: "/api/v1/push/notify".to_owned(),
+                notify_path: "/_cokret/edge/push/notify".to_owned(),
                 ..Default::default()
             },
             privacy: chime::PushBridgeDescribePrivacyDescriptor {
@@ -1237,7 +1237,7 @@ mod tests {
         });
 
         assert!(summary.contains("cx.push.bridge.describe"));
-        assert!(summary.contains("/api/v1/push/notify"));
+        assert!(summary.contains("/_cokret/edge/push/notify"));
         assert!(summary.contains("e2ee_blind_wakeup"));
     }
 

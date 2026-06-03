@@ -132,7 +132,7 @@ const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
 ];
 
 // Spec realm-and-space.md §2.3 — `federation_policy` reducer-derived
-// from `cx.realm.policy` events but seeded at create time. `open` is
+// from `ck.realm.policy` events but seeded at create time. `open` is
 // forbidden when security_class=high_assurance.
 const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
     (
@@ -214,9 +214,9 @@ enum SetupSection {
     Overview,
     /// Realm bootstrap flow (legacy slug `spaces` for URL stability —
     /// the form actually creates a Realm; the wire event is
-    /// `cx.realm.create`).
+    /// `ck.realm.create`).
     Spaces,
-    /// Phase 3 — `cx.space.create` form: pick a Realm, pick a kind,
+    /// Phase 3 — `ck.space.create` form: pick a Realm, pick a kind,
     /// optionally pick a parent Space. The Space lives inside the
     /// Realm and inherits all security semantics from it.
     NewSpace,
@@ -228,7 +228,7 @@ impl SetupSection {
             "" => Self::Spaces,
             "overview" => Self::Overview,
             // Canonical slug for the Realm bootstrap surface — the
-            // form actually creates a Realm (cx.realm.create), so the
+            // form actually creates a Realm (ck.realm.create), so the
             // URL should say "realms". `spaces` is kept as a legacy
             // alias for any bookmark / external link that was minted
             // before the rename and would otherwise 404.
@@ -437,7 +437,7 @@ pub fn SetupPanel(
     let mut realm_federation_policy = use_signal(|| "restricted".to_owned());
     let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
     let mut realm_digest_algorithm = use_signal(|| "sha256".to_owned());
-    // Phase 3 — `cx.space.create` form state. The Space inherits all
+    // Phase 3 — `ck.space.create` form state. The Space inherits all
     // security from its home Realm, so the only choices are which
     // Realm to live in, the human-visible metadata, and `kind`.
     let mut new_space_realm_id = use_signal(String::new);
@@ -491,7 +491,7 @@ pub fn SetupPanel(
                 .and_then(|kind| kind.as_str())
                 .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
             {
-                Some("space") | Some("cx.schema.space.v1") => "space",
+                Some("space") | Some("ck.schema.space.v1") => "space",
                 _ => "realm",
             };
             if kind == "realm" {
@@ -537,7 +537,7 @@ pub fn SetupPanel(
             .and_then(|kind| kind.as_str())
             .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
         {
-            Some("space") | Some("cx.schema.space.v1") => "space",
+            Some("space") | Some("ck.schema.space.v1") => "space",
             _ => "realm",
         }
     };
@@ -1191,9 +1191,9 @@ pub fn SetupPanel(
                                                                             }
                                                                         }
                                                                     };
-                                                                    // Emit the one-time cx.mls.genesis for the
+                                                                    // Emit the one-time ck.mls.genesis for the
                                                                     // freshly-created creator group at epoch 0,
-                                                                    // BEFORE any cx.mls.commit can bump the epoch.
+                                                                    // BEFORE any ck.mls.commit can bump the epoch.
                                                                     // A duplicate (mls_genesis_already_exists) is
                                                                     // treated as success. Failure is non-fatal:
                                                                     // soland lazily defaults a never-seen group to
@@ -1219,7 +1219,7 @@ pub fn SetupPanel(
                                                                                     tracing::warn!(
                                                                                         error = %err,
                                                                                         space = %space.space_id,
-                                                                                        "building cx.mls.genesis event failed",
+                                                                                        "building ck.mls.genesis event failed",
                                                                                     );
                                                                                     None
                                                                                 }
@@ -1238,7 +1238,7 @@ pub fn SetupPanel(
                                                                                     tracing::warn!(
                                                                                         error = %text,
                                                                                         space = %space.space_id,
-                                                                                        "cx.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                                        "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
                                                                                     );
                                                                                 }
                                                                             }
@@ -1650,7 +1650,7 @@ pub fn SetupPanel(
                                         let parent_id = new_space_parent_id();
                                         let default_realm_id = new_space_default_realm_id();
                                         let actor = account_did();
-                                        new_space_state.set("Submitting cx.space.create...".to_owned());
+                                        new_space_state.set("Submitting ck.space.create...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token) {
                                                 Ok(api) => {
@@ -1757,7 +1757,7 @@ pub fn SetupPanel(
                             div { class: "setup-summary-row setup-summary-row-stack",
                                 strong { "Wire shape" }
                                 span { class: "muted",
-                                    "cx.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch cx.space.archive / restore / tombstone."
+                                    "ck.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ck.space.archive / restore / tombstone."
                                 }
                             }
                         }
@@ -1790,11 +1790,11 @@ pub fn SetupPanel(
                                                 let actor = account_did();
                                                 let space_id = new_space_created_id();
                                                 let realm_id = new_space_realm_id();
-                                                new_space_state.set("Submitting cx.space.archive...".to_owned());
+                                                new_space_state.set("Submitting ck.space.archive...".to_owned());
                                                 spawn(async move {
                                                     match authed_api(&base, api_token) {
                                                         Ok(api) => match api.change_space_lifecycle(
-                                                            &space_id, &realm_id, &actor, "cx.space.archive",
+                                                            &space_id, &realm_id, &actor, "ck.space.archive",
                                                         ).await {
                                                             Ok(()) => new_space_state.set(format!(
                                                                 "Archived {}",
@@ -1821,11 +1821,11 @@ pub fn SetupPanel(
                                                 let actor = account_did();
                                                 let space_id = new_space_created_id();
                                                 let realm_id = new_space_realm_id();
-                                                new_space_state.set("Submitting cx.space.restore...".to_owned());
+                                                new_space_state.set("Submitting ck.space.restore...".to_owned());
                                                 spawn(async move {
                                                     match authed_api(&base, api_token) {
                                                         Ok(api) => match api.change_space_lifecycle(
-                                                            &space_id, &realm_id, &actor, "cx.space.restore",
+                                                            &space_id, &realm_id, &actor, "ck.space.restore",
                                                         ).await {
                                                             Ok(()) => new_space_state.set(format!(
                                                                 "Restored {}",
@@ -1852,11 +1852,11 @@ pub fn SetupPanel(
                                                 let actor = account_did();
                                                 let space_id = new_space_created_id();
                                                 let realm_id = new_space_realm_id();
-                                                new_space_state.set("Submitting cx.space.tombstone...".to_owned());
+                                                new_space_state.set("Submitting ck.space.tombstone...".to_owned());
                                                 spawn(async move {
                                                     match authed_api(&base, api_token) {
                                                         Ok(api) => match api.change_space_lifecycle(
-                                                            &space_id, &realm_id, &actor, "cx.space.tombstone",
+                                                            &space_id, &realm_id, &actor, "ck.space.tombstone",
                                                         ).await {
                                                             Ok(()) => new_space_state.set(format!(
                                                                 "Tombstoned {} (irreversible)",

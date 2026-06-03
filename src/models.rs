@@ -35,7 +35,7 @@ pub struct AccountResponse {
     pub created_at: String,
 }
 
-/// A4b — response shape for `POST /api/v1/account/profile`. Mirrors
+/// A4b — response shape for `POST /_cokret/self/account/profile`. Mirrors
 /// soland's `UpdateProfileResponse` wire shape so the settings UI can
 /// reconcile its local cache with whatever the server actually stored
 /// (the server normalises empty strings to `None`).
@@ -51,7 +51,7 @@ pub struct UpdateProfileResponse {
     pub avatar_url: Option<String>,
 }
 
-/// A6.1 — response shape for `POST /api/v1/index/search`. Mirrors
+/// A6.1 — response shape for `POST /_cokret/self/index/search`. Mirrors
 /// soland's index search payload: each result row carries a `kind`
 /// (`message` | `space`), an `object_id`, and surface-specific extras
 /// (sender / thread_id / content for messages, title / summary for
@@ -125,7 +125,7 @@ pub struct SpaceLifecycleResponse {
 }
 
 // (Move/Anchor pipeline DTOs deleted; all writes now go through
-// cx.events.submit via SubmitEventResponse.)
+// ck.events.submit via SubmitEventResponse.)
 
 /// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
@@ -137,16 +137,16 @@ pub enum AccountDataSetOutcome {
     /// echoed body for any server-derived metadata, but most callers can
     /// ignore the `Value`.
     Stored { response: serde_json::Value },
-    /// Server doesn't yet support `PUT /api/v1/account_data/{type}` — the
+    /// Server doesn't yet support `PUT /_cokret/self/account_data/{type}` — the
     /// client logged a `tracing::warn` and the local state remains the
     /// authoritative copy.
     Unsupported { status: reqwest::StatusCode },
 }
 
-pub const PROFILE_CORE_EVENT_STORE: &str = "cx.profile.core_event_store.v1";
-pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "cx.profile.principal_server_events_api.v1";
-pub const OP_EVENTS_DESCRIBE: &str = "cx.events.describe";
-pub const OP_EVENTS_SUBMIT: &str = "cx.events.submit";
+pub const PROFILE_CORE_EVENT_STORE: &str = "ck.profile.core_event_store.v1";
+pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ck.profile.principal_server_events_api.v1";
+pub const OP_EVENTS_DESCRIBE: &str = "ck.events.describe";
+pub const OP_EVENTS_SUBMIT: &str = "ck.events.submit";
 
 /// Yougen-side convenience methods over the SDK's [`ServerDescription`].
 ///
@@ -845,7 +845,7 @@ pub struct SubmitEventResponse {
 }
 
 /// Round R2/R3 (T02) — server response shape for the
-/// `POST /api/v1/ephemeral` channel. The endpoint is fire-and-forget — the
+/// `POST /_cokret/self/ephemeral` channel. The endpoint is fire-and-forget — the
 /// server's only obligation is to return `accepted: true` (signal entered
 /// the broadcast fanout) or surface a structured rejection. No event id is
 /// minted because ephemeral signals are never durable.
@@ -1200,7 +1200,7 @@ pub struct AgentGrantDetachResBody {
     pub todos: Vec<String>,
 }
 
-/// CXP-0008 / CXP-0009 §6 + B-F: `cx.agent.sidecar_thread.ensure` MUST
+/// CXP-0008 / CXP-0009 §6 + B-F: `ck.agent.sidecar_thread.ensure` MUST
 /// default `home_policy = "context_realm_preferred"`. This is encoded
 /// in the request body's optional `context_realm_id` plus the
 /// `home_policy` discriminator.

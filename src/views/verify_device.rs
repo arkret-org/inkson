@@ -33,14 +33,14 @@ enum VerifyMethod {
 
 /// Walk a `DeviceMessagesReceiveResBody` JSON representation and
 /// return the first non-empty `body.key` (or `content.key`) string
-/// carried by a `cx.key.verification.key` typed envelope.
+/// carried by a `ck.key.verification.key` typed envelope.
 ///
 /// The receive endpoint returns `{ "events": [...] }`; the helper
 /// returns `None` if no matching envelope is present so the poll loop
 /// can keep retrying without surfacing noise.
 fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
     fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
-        if entry.get("type").and_then(|t| t.as_str()) != Some("cx.key.verification.key") {
+        if entry.get("type").and_then(|t| t.as_str()) != Some("ck.key.verification.key") {
             return None;
         }
         let body = entry
@@ -77,9 +77,9 @@ mod verification_key_poll_tests {
     fn picks_key_out_of_flat_events_list() {
         let resp = json!({
             "events": [
-                {"type": "cx.mls.welcome", "body": {"unrelated": true}},
+                {"type": "ck.mls.welcome", "body": {"unrelated": true}},
                 {
-                    "type": "cx.key.verification.key",
+                    "type": "ck.key.verification.key",
                     "body": {"key": "bob-pub-b64==", "from_device": "ck:device:abc"},
                 },
             ]
@@ -94,7 +94,7 @@ mod verification_key_poll_tests {
     fn returns_none_when_no_verification_key_present() {
         let resp = json!({
             "events": [
-                {"type": "cx.mls.welcome", "body": {"welcome_blob": "..."}},
+                {"type": "ck.mls.welcome", "body": {"welcome_blob": "..."}},
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -104,7 +104,7 @@ mod verification_key_poll_tests {
     fn ignores_envelope_with_blank_key() {
         let resp = json!({
             "events": [
-                {"type": "cx.key.verification.key", "body": {"key": "   "}}
+                {"type": "ck.key.verification.key", "body": {"key": "   "}}
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -115,7 +115,7 @@ mod verification_key_poll_tests {
         let resp = json!({
             "events": [
                 {
-                    "type": "cx.key.verification.key",
+                    "type": "ck.key.verification.key",
                     "body": {
                         "device_envelope": {
                             "local_public_key": "signed-pub-b64=="
@@ -206,8 +206,8 @@ pub fn VerifyDevicePanel(
     let mut sas_send_status = use_signal(String::new);
 
     // Once the user generates their
-    // own ephemeral keypair, start polling `/api/v1/device_messages`
-    // every ~3 s looking for a `cx.key.verification.key` envelope from
+    // own ephemeral keypair, start polling `/_cokret/self/device_messages`
+    // every ~3 s looking for a `ck.key.verification.key` envelope from
     // the peer device. When one arrives, auto-fill `peer_public_b64`
     // so the SAS pair recomputes from the real X25519 shared secret
     // without the user copy-pasting. Polling stops once a peer key
@@ -435,8 +435,8 @@ pub fn VerifyDevicePanel(
                         }
                         // X25519 key exchange controls. Generate
                         // this side's ephemeral keypair, ship the
-                        // public half via `/api/v1/device_messages`
-                        // (type=`cx.key.verification.key`), and
+                        // public half via `/_cokret/self/device_messages`
+                        // (type=`ck.key.verification.key`), and
                         // accept the peer's public key (either
                         // pasted manually or auto-filled by the
                         // device_message poll).
@@ -523,7 +523,7 @@ pub fn VerifyDevicePanel(
                                                             "yougen-sas-key",
                                                             &account,
                                                             &target,
-                                                            "cx.key.verification.key",
+                                                            "ck.key.verification.key",
                                                             signed_content,
                                                         )
                                                         .await
@@ -1086,7 +1086,7 @@ pub fn VerifyDevicePanel(
                                         //    PSK/SSK/USK + sign bindings +
                                         //    validate the publish content.
                                         //
-                                        // Round 4 — `cx.cross_signing.publish` v2
+                                        // Round 4 — `ck.cross_signing.publish` v2
                                         // requires `trust_domain` in the
                                         // canonical bind input. We thread the
                                         // active deployment's trust domain from
@@ -1248,8 +1248,8 @@ mod cross_signing_view_tests {
     fn initial_plan_lists_publish_and_device_authorized_events() {
         let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ck:device:01a");
         let kinds = plan.event_kinds();
-        assert!(kinds.contains(&"cx.cross_signing.publish"));
-        assert!(kinds.contains(&"cx.device.authorize"));
+        assert!(kinds.contains(&"ck.cross_signing.publish"));
+        assert!(kinds.contains(&"ck.device.authorize"));
         assert!(matches!(plan.mode, CrossSigningSetupMode::InitialSetup));
     }
 }

@@ -109,7 +109,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                         strong { "Participant identity" }
                         span { "data-testid": "media-binding-participant-check", "Cross-checked" }
                         div { class: "muted",
-                            "ParticipantConnected cross-checked against cx.call.state.participants[]; unknown → participant_identity_unrecognised."
+                            "ParticipantConnected cross-checked against ck.call.state.participants[]; unknown → participant_identity_unrecognised."
                         }
                     }
                     div { class: "metric",
@@ -138,18 +138,18 @@ mod tests {
         store.append_raw_operation(
             "op-1".to_owned(),
             Some("ck:space:s".to_owned()),
-            json!({"kind": "cx.call.signal"}),
+            json!({"kind": "ck.call.signal"}),
         );
         store.append_raw_operation(
             "op-2".to_owned(),
             Some("ck:space:s".to_owned()),
-            json!({"kind": "cx.call.state"}),
+            json!({"kind": "ck.call.state"}),
         );
         // NOT counted
         store.append_raw_operation(
             "op-3".to_owned(),
             Some("ck:space:s".to_owned()),
-            json!({"kind": "cx.message.create"}),
+            json!({"kind": "ck.message.create"}),
         );
 
         let state = store.load();

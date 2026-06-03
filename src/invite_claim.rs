@@ -1,6 +1,6 @@
 //! Round 4 (spec a77b995) — invite-claim flow helpers.
 //!
-//! The round-4 `cx.invite.claim` wire shape requires the claimant to
+//! The round-4 `ck.invite.claim` wire shape requires the claimant to
 //! produce:
 //!
 //! 1. A `subject_proof` — a device-signed assertion that the device presenting the claim controls
@@ -119,7 +119,7 @@ impl InviteTerminalState {
 }
 
 /// Round 4 — device-signed `subject_proof` carried inside
-/// `cx.invite.claim`. The signature is detached EdDSA over the canonical
+/// `ck.invite.claim`. The signature is detached EdDSA over the canonical
 /// JSON of [`InviteSubjectProofBody`].
 ///
 /// `verification_method` is the DID-URL pointing at the device verification method;
@@ -182,10 +182,10 @@ impl InviteBindingTranscript {
     }
 }
 
-/// Round 4 — assemble a `cx.invite.claim` event body carrying the
+/// Round 4 — assemble a `ck.invite.claim` event body carrying the
 /// device-signed [`InviteSubjectProof`] + the
 /// [`InviteBindingTranscript`]. The device signing key MUST be the
-/// keypair registered on the claimant's `cx.device.authorize` event.
+/// keypair registered on the claimant's `ck.device.authorize` event.
 ///
 /// Returns the raw JSON body for the caller to wrap in an
 /// `OperationBuilder` / `EventEnvelope` and submit through

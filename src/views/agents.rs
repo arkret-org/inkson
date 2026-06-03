@@ -4,13 +4,13 @@
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:
-//!   * `cx.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
+//!   * `ck.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
 //!     requirement.
-//!   * `cx.agent.protocol_session.{start,status,result}` track agent invocations. The terminal
+//!   * `ck.agent.protocol_session.{start,status,result}` track agent invocations. The terminal
 //!     `result` event carries a typed result payload + the audit_binding proof so the audit
 //!     timeline can verify the agent's output corresponds to the signed input.
 //!
-//! Incoming `cx.agent.protocol_session.result` events fetched from
+//! Incoming `ck.agent.protocol_session.result` events fetched from
 //! soland are decoded + verified via
 //! `cokret_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
@@ -19,7 +19,7 @@
 //! G3.Y4 additions:
 //!   * `agent-protocol-handoff-button` initiates a handoff to a registered agent endpoint.
 //!   * `agent-protocol-handoff-confirm-button` confirms the handoff intent and emits the
-//!     `cx.agent.protocol_session.start` event via soland's `agent_bridge` route.
+//!     `ck.agent.protocol_session.start` event via soland's `agent_bridge` route.
 //!   * `agent-protocol-handoff-status` carries the pending → approved → running → completed/failed
 //!     lifecycle via `data-state`.
 //!   * `agent-protocol-transcript-panel` lists each incremental status step as
@@ -118,7 +118,7 @@ pub fn agent_state_is_terminal(state: &str) -> bool {
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
 /// machine is purely client-side (the durable counterpart is the
-/// `cx.agent.protocol_session.{start,status,result}` family); the
+/// `ck.agent.protocol_session.{start,status,result}` family); the
 /// panel uses it to gate which sub-controls are visible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandoffState {
@@ -204,14 +204,14 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if first_kind != "cx.agent.protocol_session.start" {
+    if first_kind != "ck.agent.protocol_session.start" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     let last_kind = match kind_of(events.last().unwrap()) {
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if last_kind != "cx.agent.protocol_session.result" {
+    if last_kind != "ck.agent.protocol_session.result" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     // Middle events MUST be status events.
@@ -220,7 +220,7 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
             Some(k) => k,
             None => return AuditChainVerifyOutcome::ChainBreak,
         };
-        if k != "cx.agent.protocol_session.status" {
+        if k != "ck.agent.protocol_session.status" {
             return AuditChainVerifyOutcome::ChainBreak;
         }
     }
@@ -287,7 +287,7 @@ impl AuditVerifyStatus {
     }
 }
 
-/// Verify a soland `cx.agent.protocol_session.result` payload's
+/// Verify a soland `ck.agent.protocol_session.result` payload's
 /// `audit_binding` block. Yougen delegates the `binding_kind` switch
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
@@ -387,7 +387,7 @@ pub fn AgentsPanel(
                             .get("event_kind")
                             .and_then(Value::as_str)
                             .unwrap_or("");
-                        if kind != "cx.agent.protocol_session.result" {
+                        if kind != "ck.agent.protocol_session.result" {
                             continue;
                         }
                         let event_id = event
@@ -424,7 +424,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "cx.agent.endpoint")
+                .map(|k| k == "ck.agent.endpoint")
                 .unwrap_or(false)
         })
         .cloned()
@@ -435,7 +435,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("cx.agent.protocol_session."))
+                .map(|k| k.starts_with("ck.agent.protocol_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -446,7 +446,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "cx.agent.protocol_session.result")
+                .map(|k| k == "ck.agent.protocol_session.result")
                 .unwrap_or(false)
         })
         .cloned()
@@ -506,10 +506,10 @@ pub fn AgentsPanel(
                 "aria-describedby": "agent-register-form-help",
                 div { class: "event-head",
                     span { id: "agent-register-form-heading", "Register an automated member" }
-                    span { class: "badge", title: "cx.agent.endpoint", "Bot endpoint" }
+                    span { class: "badge", title: "ck.agent.endpoint", "Bot endpoint" }
                 }
                 div { id: "agent-register-form-help", class: "muted",
-                    "Fill in agent_id + protocol + comma-separated capabilities. Submits a cx.agent.endpoint envelope."
+                    "Fill in agent_id + protocol + comma-separated capabilities. Submits a ck.agent.endpoint envelope."
                 }
                 div { class: "workflow-form",
                     input {
@@ -684,7 +684,7 @@ pub fn AgentsPanel(
                     }
                 }
             }
-            // Incoming `cx.agent.protocol_session.result` events
+            // Incoming `ck.agent.protocol_session.result` events
             // fetched from soland, with per-event Ed25519
             // audit-binding verification badge.
             div { class: "event", "data-testid": "agent-incoming-results",
@@ -702,7 +702,7 @@ pub fn AgentsPanel(
                 }
                 if incoming_results.read().is_empty() {
                     div { class: "muted", "data-testid": "agent-incoming-empty",
-                        "No result events fetched yet. The runtime emits these after a cx.agent.protocol_session.start lands."
+                        "No result events fetched yet. The runtime emits these after a ck.agent.protocol_session.start lands."
                     }
                 } else {
                     for (event_id, payload) in incoming_results.read().iter() {
@@ -763,7 +763,7 @@ pub fn AgentsPanel(
                     }
                 }
                 div { class: "muted",
-                    "Initiates a cx.agent.protocol_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
+                    "Initiates a ck.agent.protocol_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
                 }
                 div { class: "workflow-form",
                     input {
@@ -819,7 +819,7 @@ pub fn AgentsPanel(
                                             "handoff to {target_label} approved; submitting start event"
                                         ));
                                         transcript_steps.write().push((
-                                            "cx.agent.protocol_session.start".to_owned(),
+                                            "ck.agent.protocol_session.start".to_owned(),
                                             format!("start handoff to {target_label}"),
                                         ));
                                         spawn(async move {
@@ -849,7 +849,7 @@ pub fn AgentsPanel(
                                                         resp.event_id
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "cx.agent.protocol_session.status".to_owned(),
+                                                        "ck.agent.protocol_session.status".to_owned(),
                                                         "running (in-process echo bridge)".to_owned(),
                                                     ));
                                                     // Experimental-only surface:
@@ -866,7 +866,7 @@ pub fn AgentsPanel(
                                                         err.display()
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "cx.agent.protocol_session.status".to_owned(),
+                                                        "ck.agent.protocol_session.status".to_owned(),
                                                         format!("failed: {}", err.display()),
                                                     ));
                                                 }
@@ -892,13 +892,13 @@ pub fn AgentsPanel(
                                 // ends are present.
                                 let synthesized = vec![
                                     serde_json::json!({
-                                        "kind": "cx.agent.protocol_session.start"
+                                        "kind": "ck.agent.protocol_session.start"
                                     }),
                                 ];
                                 let mut chain = synthesized;
                                 for (_, payload) in incoming_results.read().iter() {
                                     chain.push(serde_json::json!({
-                                        "kind": "cx.agent.protocol_session.result",
+                                        "kind": "ck.agent.protocol_session.result",
                                         "payload": payload,
                                     }));
                                 }
@@ -976,11 +976,11 @@ pub fn AgentsPanel(
 // shows a placeholder explaining the constraint.
 //
 // Action-approve dialog: when the UI receives a notification of kind
-// `cx.agent.action_request` (delivered via chime's push frame
+// `ck.agent.action_request` (delivered via chime's push frame
 // parser), the controller MUST review the payload digest + expiry +
 // single-use nonce status before approving. The `ActionApproveDialog`
 // component carries that flow; on confirm it submits a
-// `cx.agent.action_approve` event.
+// `ck.agent.action_approve` event.
 // ═══════════════════════════════════════════════════════════════════
 
 /// Render an `actor_kind` badge for a single envelope. Pure helper so
@@ -1053,9 +1053,9 @@ pub fn SidecarThreadGuard(
 }
 
 /// State machine for the action_approve dialog. The dialog gates the
-/// controller's review of an incoming `cx.agent.action_request`
+/// controller's review of an incoming `ck.agent.action_request`
 /// notification (digest + expiry + single-use nonce status) before a
-/// `cx.agent.action_approve` event is published.
+/// `ck.agent.action_approve` event is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionApproveDialogState {
     /// No request to review.
@@ -1066,7 +1066,7 @@ pub enum ActionApproveDialogState {
     Submitting,
     /// Approve event landed; dialog can close.
     Submitted,
-    /// Controller explicitly rejected (or a `cx.agent.action_reject`
+    /// Controller explicitly rejected (or a `ck.agent.action_reject`
     /// is being submitted).
     Rejected,
     /// The single-use nonce was already consumed by another approve
@@ -1148,7 +1148,7 @@ pub fn PersonalAgentAdminPanel(
     let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
     let mut new_agent_id = use_signal(String::new);
     let mut rotate_vm = use_signal(String::new);
-    let mut grant_kind = use_signal(|| "cx.agent.action_request".to_owned());
+    let mut grant_kind = use_signal(|| "ck.agent.action_request".to_owned());
     let mut grant_scope_json = use_signal(|| "{}".to_owned());
     let mut sidecar_realm = use_signal(String::new);
     let mut deactivate_confirm = use_signal(String::new);
@@ -1170,7 +1170,7 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // List + refresh (cx.agent.list)
+            // List + refresh (ck.agent.list)
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-list",
                 div { class: "event-head",
@@ -1251,7 +1251,7 @@ pub fn PersonalAgentAdminPanel(
                                         },
                                         "Select"
                                     }
-                                    // cx.agent.get
+                                    // ck.agent.get
                                     button {
                                         class: "secondary",
                                         "data-testid": "agent-admin-get-button",
@@ -1293,14 +1293,14 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // Provision (cx.agent.provision)
+            // Provision (ck.agent.provision)
             // TODO(P3-impl): expand to a full form with initial_grants
             // picker driven by the 14-capability-action registry.
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-provision",
                 div { class: "event-head",
                     span { "Provision agent" }
-                    span { class: "badge blue", "cx.agent.provision" }
+                    span { class: "badge blue", "ck.agent.provision" }
                 }
                 div { class: "muted",
                     "Provisions a new native personal agent: DID issuance + first agent-key authorize + controller grant attach (orchestrated server-side)."
@@ -1505,12 +1505,12 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // Rotate key (cx.agent.rotate_key)
+            // Rotate key (ck.agent.rotate_key)
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-rotate-key",
                 div { class: "event-head",
                     span { "Rotate runtime key" }
-                    span { class: "badge blue", "cx.agent.rotate_key" }
+                    span { class: "badge blue", "ck.agent.rotate_key" }
                 }
                 div { class: "workflow-form",
                     input {
@@ -1566,7 +1566,7 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Grant attach / detach
-            // (cx.agent.grant.attach / cx.agent.grant.detach)
+            // (ck.agent.grant.attach / ck.agent.grant.detach)
             // TODO(P3-impl): wire a 14-capability-action picker
             // (CAP_ACTION_AGENT_*); for now the grant_kind is a
             // free-form input so cotest journey vectors can drive the
@@ -1575,7 +1575,7 @@ pub fn PersonalAgentAdminPanel(
             div { class: "event", "data-testid": "agent-admin-grants",
                 div { class: "event-head",
                     span { "Capability grants" }
-                    span { class: "badge blue", "cx.agent.grant.attach / detach" }
+                    span { class: "badge blue", "ck.agent.grant.attach / detach" }
                 }
                 div { class: "muted",
                     "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CXP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
@@ -1690,13 +1690,13 @@ pub fn PersonalAgentAdminPanel(
 
             // ───────────────────────────────────────────────────────
             // Sidecar thread ensure
-            // (cx.agent.sidecar_thread.ensure)
+            // (ck.agent.sidecar_thread.ensure)
             // Default home_policy = context_realm_preferred (B-F).
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-sidecar-ensure",
                 div { class: "event-head",
                     span { "Sidecar thread (ensure)" }
-                    span { class: "badge blue", "cx.agent.sidecar_thread.ensure" }
+                    span { class: "badge blue", "ck.agent.sidecar_thread.ensure" }
                 }
                 div { class: "muted",
                     "Default home policy: context_realm_preferred (CXP-0009 §3 / B-F). Pass a context realm_id to bind the sidecar Circle to a specific Realm; leave blank for the active Realm."
@@ -1793,7 +1793,7 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
             // TODO(P3-impl): replace these placeholders with live
             // data once soland's exposure projection lands. The wire
             // shape is documented in CXP-0009 §3 and the related
-            // account-data type `cx.agent.sidecar_projection.v1`.
+            // account-data type `ck.agent.sidecar_projection.v1`.
             div { class: "metric-grid",
                 div { class: "metric",
                     strong { "Device list" }
@@ -1803,7 +1803,7 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
                 div { class: "metric",
                     strong { "Agent runtime endpoint" }
                     span { class: "badge amber", "TODO(P3-impl)" }
-                    div { class: "muted", "Awaiting cx.agent.endpoint resolution" }
+                    div { class: "muted", "Awaiting ck.agent.endpoint resolution" }
                 }
                 div { class: "metric",
                     strong { "Last action_approve nonce" }
@@ -1817,8 +1817,8 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
 
 /// Action-approve dialog component. Renders the payload digest,
 /// expiry, and single-use nonce status of an incoming
-/// `cx.agent.action_request` notification; on confirm it submits a
-/// `cx.agent.action_approve` event.
+/// `ck.agent.action_request` notification; on confirm it submits a
+/// `ck.agent.action_approve` event.
 ///
 /// TODO(P3-impl): the action_request payload pipe goes through
 /// chime's push frame parser (chime P3) → this dialog. Today the
@@ -1893,7 +1893,7 @@ pub fn ActionApproveDialog(
                             let digest = digest.clone();
                             let api_token = token();
                             spawn(async move {
-                                // Submit a cx.agent.action_approve
+                                // Submit a ck.agent.action_approve
                                 // event. The payload carries the
                                 // request_id + the digest we approved
                                 // so the reducer can match it back to
@@ -1902,7 +1902,7 @@ pub fn ActionApproveDialog(
                                 let op = crate::operation::OperationBuilder::new(
                                     &space,
                                     &actor,
-                                    "cx.agent.action_approve",
+                                    "ck.agent.action_approve",
                                 )
                                 .body(json!({
                                     "request_id": request_id,
@@ -2261,22 +2261,22 @@ mod tests {
     #[test]
     fn verify_audit_chain_requires_start_then_result() {
         // Missing start
-        let events = vec![json!({"kind": "cx.agent.protocol_session.result"})];
+        let events = vec![json!({"kind": "ck.agent.protocol_session.result"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Missing result
-        let events = vec![json!({"kind": "cx.agent.protocol_session.start"})];
+        let events = vec![json!({"kind": "ck.agent.protocol_session.start"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Middle event is not a status
         let events = vec![
-            json!({"kind": "cx.agent.protocol_session.start"}),
-            json!({"kind": "cx.message.create"}),
-            json!({"kind": "cx.agent.protocol_session.result"}),
+            json!({"kind": "ck.agent.protocol_session.start"}),
+            json!({"kind": "ck.message.create"}),
+            json!({"kind": "ck.agent.protocol_session.result"}),
         ];
         assert_eq!(
             verify_audit_chain(&events),
@@ -2287,9 +2287,9 @@ mod tests {
     #[test]
     fn verify_audit_chain_signature_invalid_when_audit_binding_is_garbage() {
         let events = vec![
-            json!({"kind": "cx.agent.protocol_session.start"}),
+            json!({"kind": "ck.agent.protocol_session.start"}),
             json!({
-                "kind": "cx.agent.protocol_session.result",
+                "kind": "ck.agent.protocol_session.result",
                 "payload": {
                     "audit_binding": {
                         "binding_kind": "ed25519_v1",
@@ -2332,10 +2332,10 @@ mod tests {
             },
         });
         let events = vec![
-            json!({"kind": "cx.agent.protocol_session.start"}),
-            json!({"kind": "cx.agent.protocol_session.status"}),
+            json!({"kind": "ck.agent.protocol_session.start"}),
+            json!({"kind": "ck.agent.protocol_session.status"}),
             json!({
-                "kind": "cx.agent.protocol_session.result",
+                "kind": "ck.agent.protocol_session.result",
                 "payload": result_payload,
             }),
         ];

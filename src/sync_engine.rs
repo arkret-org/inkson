@@ -1,7 +1,7 @@
 //! Background account subscribe sync loop.
 //!
 //! Background engine that keeps the local store + UI signals continuously
-//! aligned with `/api/v1/account/subscribe` instead of refreshing only on
+//! aligned with `/_cokret/self/account/subscribe` instead of refreshing only on
 //! app boot, the Refresh button, or a server switch.
 //!
 //! Design contract (matches the "正经做法" laid out in the design
@@ -381,7 +381,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
                 let view = LocalAnchorView::from_sync_body(body);
                 store.set_anchor_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
-                // R3.1 MID-2 — harvest inlined `cx.member.identity.update`
+                // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
                 // surface needs to resolve a display identity.
@@ -433,7 +433,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
 
 /// R3.1 MID-2 — walk a space projection's `members[]` roster looking
 /// for inlined `identity_events[]` arrays. Each
-/// `cx.member.identity.update` envelope is recorded on the
+/// `ck.member.identity.update` envelope is recorded on the
 /// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
 /// `state.events[]` form where the roster only carries
 /// `identity_event_ids[]` and the events themselves live in the
@@ -505,7 +505,7 @@ fn ingest_member_identity_events_from_projection(
             // Otherwise hydrate envelopes from `state.events[]` keyed
             // by id. Missing references are dropped silently — the
             // server will resend them on the next subscribe frame, or
-            // a `cx.events.query` backfill will catch up.
+            // a `ck.events.query` backfill will catch up.
             if let Some(refs) = map.get("identity_event_ids").and_then(Value::as_array) {
                 let mut resolved: Vec<Value> = Vec::new();
                 for r in refs {
@@ -556,8 +556,8 @@ fn apply_account_data(
             }
             continue;
         }
-        // cx.account.blocklist — personal block list.
-        if data_type == "cx.account.blocklist" {
+        // ck.account.blocklist — personal block list.
+        if data_type == "ck.account.blocklist" {
             let Some(content) = entry.get("content") else {
                 continue;
             };
@@ -565,13 +565,13 @@ fn apply_account_data(
                 Ok(entries) => store.set_client_blocklist(entries),
                 Err(error) => {
                     tracing::warn!(
-                        "sync engine: ignoring malformed cx.account.blocklist account_data: {error}",
+                        "sync engine: ignoring malformed ck.account.blocklist account_data: {error}",
                     );
                 }
             }
             continue;
         }
-        // cx.contacts.actor.<did> — actor-private contact remarks.
+        // ck.contacts.actor.<did> — actor-private contact remarks.
         if let Some(actor_did) = crate::account_data::actor_did_from_contact_remark_key(data_type) {
             let Some(content) = entry.get("content") else {
                 continue;

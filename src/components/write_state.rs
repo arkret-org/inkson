@@ -43,7 +43,7 @@ pub enum WriteState {
     /// Reducer soft failure (schema / capability passed but the transition
     /// is illegal).
     SoftFailed,
-    /// CAS / position-edge conflict (concurrent `cx.flow.move`).
+    /// CAS / position-edge conflict (concurrent `ck.flow.move`).
     CasConflict,
     /// Capability check passed but the write is quarantined by moderation
     /// policy.

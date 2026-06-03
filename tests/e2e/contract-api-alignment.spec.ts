@@ -25,40 +25,40 @@ type Probe = {
 };
 
 const PROBES: Probe[] = [
-  { label: "server_describe", method: "GET", path: "/api/v1/server/describe" },
+  { label: "server_describe", method: "GET", path: "/_cokret/describe" },
   {
     label: "events_submit",
     method: "POST",
-    path: "/api/v1/events",
+    path: "/_cokret/self/events",
     body: {
       event_id: "ck:event:alignment-1",
-      kind: "cx.message.create",
+      kind: "ck.message.create",
       realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000",
       actor_id: "did:web:alice.example",
       created_at: "2026-04-28T12:00:00Z",
       payload: { body: "alignment probe" },
     },
   },
-  { label: "events_list", method: "GET", path: "/api/v1/events" },
-  { label: "account_me", method: "GET", path: "/api/v1/account/me" },
-  { label: "directory_describe", method: "GET", path: "/api/v1/directory/describe" },
+  { label: "events_list", method: "GET", path: "/_cokret/self/events/query" },
+  { label: "account_me", method: "GET", path: "/_cokret/self/account/me" },
+  { label: "directory_describe", method: "GET", path: "/_cokret/find/directory/describe" },
   {
     label: "directory_search_realms",
     method: "POST",
-    path: "/api/v1/directory/search-realms",
+    path: "/_cokret/find/directory/search-realms",
     body: { query: "demo", limit: 20 },
   },
-  { label: "keys_backups", method: "GET", path: "/api/v1/keys/backups" },
+  { label: "keys_backups", method: "GET", path: "/_cokret/self/keys/backups" },
   {
     label: "devices_pairing_challenge",
     method: "POST",
-    path: "/api/v1/devices/pairing-challenge",
+    path: "/_cokret/self/devices/pairing-challenge",
     body: { device_id: "dev_alignment_probe" },
   },
   {
     label: "ephemeral_typing",
     method: "POST",
-    path: "/api/v1/ephemeral",
+    path: "/_cokret/self/ephemeral",
     body: {
       kind: "cx.typing",
       realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000",

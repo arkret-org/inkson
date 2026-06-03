@@ -8,15 +8,15 @@
 //! - `identity/identity-did.md` §3 — the default principal DID method is `did:webvh`; `did:web` is
 //!   kept for testing/local flows and is not recommended for production.
 //! - `identity/identity-handles.md` — handles are only human-readable entry points.
-//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → cx.session.grant; device
-//!   authorization → cx.device.authorize; device verification → cx.key.verification.*.
+//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → ck.session.grant; device
+//!   authorization → ck.device.authorize; device verification → ck.key.verification.*.
 //! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS / recovery key.
 //!
 //! Steps:
 //!   1. Choose a DID method (default: did:webvh; did:web is test/local only; placeholder methods
 //!      are visible but not selectable).
 //!   2. Bind a handle.
-//!   3. Generate the local device key + cx.device.authorize.
+//!   3. Generate the local device key + ck.device.authorize.
 //!   4. Configure a recovery policy (vault passphrase / SSS guardian / recovery key).
 
 use dioxus::prelude::*;
@@ -452,7 +452,7 @@ pub fn OnboardingPanel(
                     // unrecoverable. The UI hard-blocks the
                     // "Authorize device" → retirement transition
                     // until the first did_recovery envelope is
-                    // observed via `GET /api/v1/keys/backups`.
+                    // observed via `GET /_cokret/self/keys/backups`.
                     FirstBackupGate {
                         base_url: base_url.clone(),
                         token,
@@ -560,7 +560,7 @@ pub fn OnboardingPanel(
 
 /// CXP B-C — first-backup gate. The inception key cannot retire
 /// until a `backup_class=did_recovery` envelope has been published.
-/// This component polls `GET /api/v1/keys/backups?backup_class=did_recovery`
+/// This component polls `GET /_cokret/self/keys/backups?backup_class=did_recovery`
 /// and renders a hard-blocked panel until at least one such envelope
 /// is observed. On `ok=true` the gate flips to "satisfied".
 #[component]

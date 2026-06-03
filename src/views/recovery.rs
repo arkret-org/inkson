@@ -4,7 +4,7 @@
 //!
 //! - **Encrypted Cloud Vault**: the passphrase is stretched on-device with Argon2id
 //!   (`recovery_crypto::derive_vault_kek`) and the resulting key encrypts a JSON payload with
-//!   XChaCha20-Poly1305 before being POSTed to `PUT /api/v1/keys/backups/{backup_id}` via
+//!   XChaCha20-Poly1305 before being POSTed to `PUT /_cokret/self/keys/backups/{backup_id}` via
 //!   [`crate::api::CokretApi::put_key_backup`]. The server never sees the passphrase or the
 //!   plaintext.
 //! - **Recovery Key**: 256 bits of entropy, formatted as Crockford-base32 groups. The plaintext
@@ -49,7 +49,7 @@ struct Guardian {
 }
 
 /// One row in the "List existing backups" table — server-side metadata
-/// only. The server returns the full `cx.schema.key_backup.v1` envelope
+/// only. The server returns the full `ck.schema.key_backup.v1` envelope
 /// (encryption block + ciphertext) and we decode just the fields the
 /// restore UI actually needs: identification, KDF salt, AEAD nonce.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,8 +359,8 @@ pub fn RecoveryPanel(
             //   - `recovery-receipt.schema.json` — receipt_id, principal_id,
             //     recovery_session_id, proof_summary[], completion_timestamp.
             //
-            // Soland exposes list / inspect endpoints (`/api/v1/recovery/policies`
-            // and `/api/v1/recovery/receipts`). Wiring lands in R3.1; this
+            // Soland exposes list / inspect endpoints (`/_cokret/self/recovery/policies`
+            // and `/_cokret/self/recovery/receipts`). Wiring lands in R3.1; this
             // stub keeps the panel + testids stable so the QA harness can
             // assert presence today and verify content once the live fetch
             // is wired.
@@ -375,7 +375,7 @@ pub fn RecoveryPanel(
                     HelpTip { text: "The recovery policy declares which proof kinds (device_quorum, recovery_unlock, threshold_recovery, trusted_recovery_service, principal_signing) and what threshold must be met before a recovery_session can complete. Backup unlock alone is not DID ownership proof; receipts carry the proof_summary for audit." }
                 }
                 div { class: "muted",
-                    "TODO(R3.1): wire to /api/v1/recovery/policies + /api/v1/recovery/receipts. "
+                    "TODO(R3.1): wire to /_cokret/self/recovery/policies + /_cokret/self/recovery/receipts. "
                     "The panel surface and testids below stay stable so QA can assert on them today."
                 }
                 div { class: "metric-grid", "data-testid": "recovery-policy-overview",
@@ -512,7 +512,7 @@ pub fn RecoveryPanel(
                     }
                     div { class: "metric",
                         strong { "Storage" }
-                        span { "PUT /api/v1/keys/backups" }
+                        span { "PUT /_cokret/self/keys/backups" }
                         div { class: "muted", "Ciphertext only; the server cannot decrypt" }
                     }
                 }

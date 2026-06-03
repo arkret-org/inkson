@@ -5,7 +5,7 @@
 //!
 //! - 6.1: fetch + parse the active recovery policy.
 //! - 6.3: open a recovery session, sign + submit a `principal_signing` proof,
-//!   then complete with client-supplied `cx.device.authorize` material.
+//!   then complete with client-supplied `ck.device.authorize` material.
 //!
 //! The wire shapes match `cokret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
@@ -119,8 +119,8 @@ pub async fn submit_principal_signing_proof(
 }
 
 /// 6.3 — complete a verified session by REFERENCING the durable control events
-/// the client already submitted to `POST /events`: an accepted `cx.device.authorize`
-/// and `cx.device.list_update` (recovery-session.schema.json `complete_request`).
+/// the client already submitted to `POST /events`: an accepted `ck.device.authorize`
+/// and `ck.device.list_update` (recovery-session.schema.json `complete_request`).
 /// The server resolves + verifies each by id; it does not author control events.
 pub async fn complete_recovery_session(
     api: &CokretApi,
@@ -141,7 +141,7 @@ pub async fn complete_recovery_session(
 /// 6.3 — `principal_signing` recovery driver: open session → sign + submit proof
 /// → complete by referencing the already-submitted authorize + list_update event
 /// ids. (Submitting those two control events to `POST /events` — the
-/// SSK-signed `cx.device.authorize` + `cx.device.list_update` with the next
+/// SSK-signed `ck.device.authorize` + `ck.device.list_update` with the next
 /// principal-control-stream actor_seq — is the caller's step; this returns the
 /// `complete_response`.)
 #[allow(clippy::too_many_arguments)]

@@ -408,10 +408,10 @@ pub async fn enqueue_message_send(
     space_id: &str,
     body: serde_json::Value,
 ) -> Result<(), OfflineError> {
-    let op = QueuedOperationBuilder::new("/api/v1/events/submit", "POST")
+    let op = QueuedOperationBuilder::new("/_cokret/self/events", "POST")
         .with_body(body)
         .with_space(space_id)
-        .with_op_type("cx.message.create")
+        .with_op_type("ck.message.create")
         .build();
     global_queue().enqueue(op).await
 }
@@ -433,7 +433,7 @@ pub async fn enqueue_settings_write(
 /// budget than messages because the user can re-toggle the preference
 /// trivially.
 pub async fn enqueue_push_pref_write(body: serde_json::Value) -> Result<(), OfflineError> {
-    let op = QueuedOperationBuilder::new("/api/v1/push/preferences", "PUT")
+    let op = QueuedOperationBuilder::new("/_cokret/edge/push/preferences", "PUT")
         .with_body(body)
         .with_op_type("push.prefs")
         .with_max_retries(2)
@@ -492,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn test_offline_queue_enqueue_dequeue() {
         let queue = OfflineQueue::new(100);
-        let op = QueuedOperationBuilder::new("api/v1/events", "POST")
+        let op = QueuedOperationBuilder::new("_cokret/self/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
             .build();
         let op_id = op.id.clone();
@@ -510,18 +510,18 @@ mod tests {
         let queue = OfflineQueue::new(2);
 
         for i in 0..2 {
-            let op = QueuedOperationBuilder::new(&format!("api/v1/op/{i}"), "POST").build();
+            let op = QueuedOperationBuilder::new(&format!("_cokret/self/op/{i}"), "POST").build();
             queue.enqueue(op).await.unwrap();
         }
 
-        let op = QueuedOperationBuilder::new("api/v1/op/overflow", "POST").build();
+        let op = QueuedOperationBuilder::new("_cokret/self/op/overflow", "POST").build();
         assert!(queue.enqueue(op).await.is_err());
     }
 
     #[tokio::test]
     async fn test_offline_queue_clear() {
         let queue = OfflineQueue::new(100);
-        let op = QueuedOperationBuilder::new("api/v1/events", "POST").build();
+        let op = QueuedOperationBuilder::new("_cokret/self/events", "POST").build();
         queue.enqueue(op).await.unwrap();
 
         queue.clear().await;
@@ -533,7 +533,7 @@ mod tests {
         let queue = OfflineQueue::new(100);
 
         for i in 0..3 {
-            let op = QueuedOperationBuilder::new(&format!("api/v1/op/{i}"), "POST").build();
+            let op = QueuedOperationBuilder::new(&format!("_cokret/self/op/{i}"), "POST").build();
             queue.enqueue(op).await.unwrap();
         }
 
@@ -549,13 +549,13 @@ mod tests {
     async fn test_offline_queue_remove_where() {
         let queue = OfflineQueue::new(100);
 
-        let op1 = QueuedOperationBuilder::new("api/v1/events", "POST")
+        let op1 = QueuedOperationBuilder::new("_cokret/self/events", "POST")
             .with_op_type("message")
             .build();
-        let op2 = QueuedOperationBuilder::new("api/v1/reactions", "POST")
+        let op2 = QueuedOperationBuilder::new("_cokret/self/reactions", "POST")
             .with_op_type("reaction")
             .build();
-        let op3 = QueuedOperationBuilder::new("api/v1/events", "POST")
+        let op3 = QueuedOperationBuilder::new("_cokret/self/events", "POST")
             .with_op_type("message")
             .build();
 
@@ -586,14 +586,14 @@ mod tests {
 
     #[test]
     fn test_queued_operation_builder() {
-        let op = QueuedOperationBuilder::new("api/v1/events", "POST")
+        let op = QueuedOperationBuilder::new("_cokret/self/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
             .with_space("ck:space:test")
             .with_op_type("message")
             .with_max_retries(5)
             .build();
 
-        assert_eq!(op.endpoint, "api/v1/events");
+        assert_eq!(op.endpoint, "_cokret/self/events");
         assert_eq!(op.method, "POST");
         assert_eq!(op.space_id, Some("ck:space:test".to_owned()));
         assert_eq!(op.op_type, Some("message".to_owned()));
@@ -623,7 +623,7 @@ mod tests {
             .await
             .unwrap();
         let head = global_queue().peek().await.unwrap();
-        assert_eq!(head.op_type.as_deref(), Some("cx.message.create"));
+        assert_eq!(head.op_type.as_deref(), Some("ck.message.create"));
         assert_eq!(head.space_id.as_deref(), Some("ck:space:test"));
         assert_eq!(head.method, "POST");
         global_queue().clear().await;
@@ -637,7 +637,7 @@ mod tests {
             .await
             .unwrap();
         let head = global_queue().peek().await.unwrap();
-        assert_eq!(head.endpoint, "/api/v1/push/preferences");
+        assert_eq!(head.endpoint, "/_cokret/edge/push/preferences");
         assert_eq!(head.max_retries, 2);
         global_queue().clear().await;
     }
@@ -647,7 +647,7 @@ mod tests {
         let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
         global_queue().clear().await;
         assert_eq!(pending_count().await, 0);
-        enqueue_settings_write("/api/v1/account/data/blocklist", serde_json::json!({}))
+        enqueue_settings_write("/_cokret/self/account/data/blocklist", serde_json::json!({}))
             .await
             .unwrap();
         assert_eq!(pending_count().await, 1);

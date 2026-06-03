@@ -728,7 +728,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "space_admin.mls_remove_hint",
-        "Decrypt the local MLS snapshot, run remove_member_by_principal against the target device, and submit cx.mls.commit. Post-commit state is re-encrypted on success.",
+        "Decrypt the local MLS snapshot, run remove_member_by_principal against the target device, and submit ck.mls.commit. Post-commit state is re-encrypted on success.",
     );
     dict.set("space_admin.mls_remove_button", "Build & submit MLS Remove");
     dict.set(
@@ -873,7 +873,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.palette", "Open command palette");
     dict.set("shortcuts.list.palette_mac", "Open command palette (macOS)");
     dict.set("shortcuts.list.send", "Send the current message");
-    // Personal blocklist (A5) — actor-private `cx.account.blocklist`
+    // Personal blocklist (A5) — actor-private `ck.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the
     // member-row context action, and the timeline/chat "blocked user"
     // placeholder row.
@@ -1710,7 +1710,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("space_admin.mls_remove_header", "MLS 移除（设备吊销）");
     dict.set(
         "space_admin.mls_remove_hint",
-        "用本设备 MLS 快照密钥解密群状态，运行 remove_member_by_principal，提交 cx.mls.commit；成功后重新加密持久化新一轮 epoch。",
+        "用本设备 MLS 快照密钥解密群状态，运行 remove_member_by_principal，提交 ck.mls.commit；成功后重新加密持久化新一轮 epoch。",
     );
     dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
     dict.set(

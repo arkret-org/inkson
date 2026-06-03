@@ -3,7 +3,7 @@
 //! This module captures the client-side wire contract for the new media
 //! binding profile that landed in cokret-spec round R3:
 //!
-//! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token and `participant_binding`
+//! - **CALL-1** — `ck.call.media.token_exchange`: obtain a backend token and `participant_binding`
 //!   from soland's `POST /rtc/token` endpoint via the SDK helper
 //!   [`cokret_sdk::media::call_media_token_exchange`].
 //! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
@@ -12,7 +12,7 @@
 //!   `cx-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32). Any backend-supplied key is rejected
 //!   with `e2ee_key_source_unauthorised`.
 //! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be cross-checked against
-//!   `cx.call.state.participants[]`. A mismatch fails closed with
+//!   `ck.call.state.participants[]`. A mismatch fails closed with
 //!   `participant_identity_unrecognised`.
 //! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations that bypass the Cokret
 //!   authenticated blob upload (`recording_artifact_pipeline_bypassed`).
@@ -29,7 +29,7 @@
 
 use std::collections::BTreeSet;
 
-/// Stable label registered on the `cx.profile.media_service_binding.v1`
+/// Stable label registered on the `ck.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`webrtc-signaling.md
 /// §10.5 / §11`). The MLS exporter MUST be invoked with exactly this
 /// label, length=19, and empty Context. KDF.Nh=32 is enforced by the
@@ -42,7 +42,7 @@ pub const SFRAME_FRAME_KEY_LENGTH: u16 = 19;
 /// Empty context for the MLS exporter call (matches spec §11).
 pub const SFRAME_FRAME_KEY_CONTEXT: &[u8] = &[];
 
-/// Spec-mandated TTL ceiling for media tokens (`cx.call.media.token_exchange`).
+/// Spec-mandated TTL ceiling for media tokens (`ck.call.media.token_exchange`).
 /// Soland defaults to 300s; the ceiling is 600s.
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = 600;
 
@@ -58,17 +58,17 @@ pub enum RtcClientError {
     FocusUnavailableForClient,
     /// Server-reported focus disagrees with the call-state commit.
     FocusMismatch,
-    /// `cx.realm.media_service.foci[].type` not one of the five
+    /// `ck.realm.media_service.foci[].type` not one of the five
     /// canonical enums (`livekit | mediasoup | janus | cokret-native
     /// | moq-relay`).
     UnknownFocusType,
     /// Token issuer kid does not resolve to the current
-    /// `cx.realm.media_service.service_id`.
+    /// `ck.realm.media_service.service_id`.
     TokenIssuerUnauthorised,
     /// `participant_binding` failed signature / TTL / tuple validation.
     ParticipantBindingInvalid,
     /// SFU reported a `ParticipantConnected` whose identity is NOT in
-    /// `cx.call.state.participants[]`. Receiver MUST fail closed.
+    /// `ck.call.state.participants[]`. Receiver MUST fail closed.
     ParticipantIdentityUnrecognised,
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
@@ -180,7 +180,7 @@ pub fn validate_frame_key_source(source: FrameKeySource) -> Result<(), RtcClient
 }
 
 /// MEDIA-2 — cross-checks an SFU-reported `ParticipantConnected`
-/// identity against the `cx.call.state.participants[]` projection.
+/// identity against the `ck.call.state.participants[]` projection.
 ///
 /// `expected_identities` is the set of `participant_identity` values
 /// stamped onto the durable call state by the soland reducer. A
@@ -216,7 +216,7 @@ pub enum EgressDestination {
 /// is rejected with [`RtcClientError::RecordingArtifactPipelineBypassed`].
 ///
 /// TODO(R3.1): wire this predicate into the renderer's Egress
-/// configuration before any `cx.call.recording.start` envelope is
+/// configuration before any `ck.call.recording.start` envelope is
 /// signed.
 pub fn validate_recording_destination(
     destination: EgressDestination,
@@ -242,7 +242,7 @@ pub fn validate_recording_destination(
 /// TODO(R3.1): once the SDK exposes a transport-backed helper, replace
 /// this stub with a real `async fn token_exchange` that:
 ///   1. POSTs the request to `/rtc/token`.
-///   2. Verifies `service_signature.kid` against the current `cx.realm.media_service.service_id`.
+///   2. Verifies `service_signature.kid` against the current `ck.realm.media_service.service_id`.
 ///   3. Validates `participant_binding` (signature, TTL ≤ 600s, all tuple fields match the call
 ///      state).
 ///   4. Returns `Err(RtcClientError::FocusUnavailableForClient)` when soland replies with that

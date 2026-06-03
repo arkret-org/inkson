@@ -38,7 +38,7 @@ use crate::workflows::blocked_release_workflows;
 
 /// `cx.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
-pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "cx.read_receipt.preferences";
+pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ck.read_receipt.preferences";
 
 /// `cx.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Space view). Spec:
@@ -47,7 +47,7 @@ pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
 /// `cx.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
-pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "cx.account.blocklist";
+pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ck.account.blocklist";
 
 /// `cx.account_data` key used by notification push-rule preferences.
 pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "cx.push_rules";
@@ -73,7 +73,7 @@ fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
 }
 
 /// A4a — push the current `client.ui` payload (theme + sidebar
-/// collapsed) to soland's `cx.account_data.set` endpoint so other
+/// collapsed) to soland's `ck.account_data.set` endpoint so other
 /// devices pick up the same preference. Same graceful-degradation
 /// contract as [`push_read_receipt_account_data`].
 ///
@@ -151,7 +151,7 @@ pub(crate) fn build_read_receipt_preferences_body(
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
-/// preferences to soland's `cx.account_data.set` PUT
+/// preferences to soland's `ck.account_data.set` PUT
 /// endpoint. Read latest values from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 /// Swallows 404/501/405 via [`AccountDataSetOutcome::Unsupported`] so older
@@ -211,13 +211,13 @@ pub(crate) fn push_blocklist_account_data(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for cx.account.blocklist returned {status}; \
+                    "soland account_data PUT for ck.account.blocklist returned {status}; \
                      local blocklist remains authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "account_data PUT for cx.account.blocklist failed: {}",
+                    "account_data PUT for ck.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -373,7 +373,7 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
 }
 
 /// Spec client-preferences.md §3.7: push (or tombstone) a Space remark to
-/// soland via `cx.account_data.set`. Same graceful-degradation contract as
+/// soland via `ck.account_data.set`. Same graceful-degradation contract as
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
 /// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
@@ -708,7 +708,7 @@ pub fn SettingsPanel(
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so the timeline view can resolve
-    // (flow → space → default) before sending `cx.receipt.read`.
+    // (flow → space → default) before sending `ck.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
     let mut read_receipt_space_overrides =
@@ -745,9 +745,9 @@ pub fn SettingsPanel(
     let mut new_contact_remark_name = use_signal(String::new);
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
-    // `cx.account_data.set("client.ui", { avatar_blob_ref })` and is
+    // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is
     // *also* published publicly to soland's
-    // `POST /api/v1/account/profile { avatar_url }` so the directory
+    // `POST /_cokret/self/account/profile { avatar_url }` so the directory
     // can index it. `avatar_upload_status` carries the inline
     // progress / error message.
     let initial_avatar_blob_ref = state_store
@@ -1631,7 +1631,7 @@ pub fn SettingsPanel(
                             "Delete Backup"
                         }
                     }
-                    div { class: "muted", "Contract: cx.schema.key_backup.v1 over /api/v1/keys/backups/*." }
+                    div { class: "muted", "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*." }
                 }
                             // X11.1 — persistent MLS recovery-passphrase entry.
                             // Always reachable here (Security & recovery),
@@ -1654,7 +1654,7 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "mimi-interop-panel",
                     div { class: "event-head", span { "MIMI Provider Facade" } span { "interop projection" } }
-                    div { class: "muted", "Profile: cx.profile.mimi_interop.v1" }
+                    div { class: "muted", "Profile: ck.profile.mimi_interop.v1" }
                     div { class: "metric-grid", "data-testid": "mimi-draft-pinning",
                         div { class: "metric", strong { "Protocol" } span { "draft-ietf-mimi-protocol-06" } }
                         div { class: "metric", strong { "Content" } span { "draft-ietf-mimi-content-08" } }
@@ -2115,7 +2115,7 @@ pub fn SettingsPanel(
                     }
                     div { class: "event-head",
                         span { "Read receipts" }
-                        span { title: "cx.read_receipt.preferences", "Preferences" }
+                        span { title: "ck.read_receipt.preferences", "Preferences" }
                     }
                     label {
                         input {
@@ -2130,7 +2130,7 @@ pub fn SettingsPanel(
                                     "Read receipts: default = {}",
                                     if send { "send" } else { "skip" }
                                 ));
-                                // Also push to soland's cx.account_data.set
+                                // Also push to soland's ck.account_data.set
                                 // so other devices pick up the change.
                                 // Endpoint may 404/501 — we swallow and keep
                                 // local authoritative.
@@ -2157,17 +2157,17 @@ pub fn SettingsPanel(
                                 });
                             },
                         }
-                        " Send read receipts (cx.receipt.read) by default "
+                        " Send read receipts (ck.receipt.read) by default "
                         HelpTip { text: "Resolution order is (flow → space → default). When a Space declares a read-receipt policy with disclosure=required or disabled, the server policy overrides this preference." }
                     }
                     div { class: "event-head",
                         span { "Per-space overrides" }
                         span { "{read_receipt_space_overrides().len()} configured" }
-                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a cx.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
+                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a ck.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
                     }
                     for (space_id, send) in read_receipt_space_overrides() {
                             // Policy lock — when soland publishes a
-                            // cx.realm.read_receipt_policy with disclosure=
+                            // ck.realm.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
                             // sync (P0 M3) wires the snapshot, this returns
@@ -2342,7 +2342,7 @@ pub fn SettingsPanel(
                 // Actor-private local alias / note / pin for each Space the
                 // user has joined. Lets users disambiguate duplicate-titled
                 // Spaces without leaking the remark beyond this account.
-                // Pushed to soland via `cx.account_data.set` under
+                // Pushed to soland via `ck.account_data.set` under
                 // `cx.contacts.space.<space_id>`; soland echoes the same
                 // entries back on the next `/sync` so other devices pick
                 // them up.
@@ -2538,7 +2538,7 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "contact-remarks-editor",
                     div { class: "event-head",
                         span { "Contact remarks" }
-                        span { "cx.contacts.actor.<did>" }
+                        span { "ck.contacts.actor.<did>" }
                         HelpTip { text: "Private to this account. The local name is shown only on this device/account and is synced through actor-private account_data." }
                     }
                     {
@@ -2729,13 +2729,13 @@ pub fn SettingsPanel(
 
                 // Progressive disclosure — identity-handles.md §16
                 // Four canonical events drive selective claim sharing:
-                //   cx.identity.disclosure_policy   — actor sets which fields are
+                //   ck.identity.disclosure_policy   — actor sets which fields are
                 //                                     released to which audience.
-                //   cx.identity.disclosure_receipt  — receiver acknowledges what
+                //   ck.identity.disclosure_receipt  — receiver acknowledges what
                 //                                     they observed (audit trail).
-                //   cx.identity.presentation_request  — relying party asks for a
+                //   ck.identity.presentation_request  — relying party asks for a
                 //                                       claim presentation.
-                //   cx.identity.presentation_response — actor satisfies the request
+                //   ck.identity.presentation_response — actor satisfies the request
                 //                                       with a verifiable presentation.
                             div { class: "event", "data-testid": "progressive-disclosure",
                     div { class: "event-head",
@@ -2746,22 +2746,22 @@ pub fn SettingsPanel(
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { "Disclosure policy" }
-                            span { title: "cx.identity.disclosure_policy", "Policy" }
+                            span { title: "ck.identity.disclosure_policy", "Policy" }
                             div { class: "muted", "Declares which fields are visible to which audience" }
                         }
                         div { class: "metric",
                             strong { "Presentation request" }
-                            span { title: "cx.identity.presentation_request", "Request" }
+                            span { title: "ck.identity.presentation_request", "Request" }
                             div { class: "muted", "Counterparty-initiated claim request (carries purpose + minimum field set)" }
                         }
                         div { class: "metric",
                             strong { "Presentation response" }
-                            span { title: "cx.identity.presentation_response", "Response" }
+                            span { title: "ck.identity.presentation_response", "Response" }
                             div { class: "muted", "Your verifiable presentation; only authorized fields are revealed" }
                         }
                         div { class: "metric",
                             strong { "Disclosure receipt" }
-                            span { title: "cx.identity.disclosure_receipt", "Receipt" }
+                            span { title: "ck.identity.disclosure_receipt", "Receipt" }
                             div { class: "muted", "Audit trail; redactable but the hash chain is preserved" }
                         }
                     }
@@ -2774,15 +2774,15 @@ pub fn SettingsPanel(
 
                 // ── YG-HC-1 — Handle management (issuer-managed) ─────
                 // Per spec §3.2.3 / §3.4 yougen MUST NOT set or override
-                // handles via cx.profile.update / cx.member.identity.update.
-                // Handles come from signed cx.schema.handle_claim.v1
+                // handles via ck.profile.update / ck.member.identity.update.
+                // Handles come from signed ck.schema.handle_claim.v1
                 // evidence issued by the org's coauth issuer. So instead
                 // of an "edit your handle" affordance we show a managed
                 // notice + a link out to the issuer flow.
                             div { class: "event", "data-testid": "handle-managed-by-org",
                     div { class: "event-head",
                         span { "Handle" }
-                        span { title: "cx.schema.handle_claim.v1", "managed by your organization" }
+                        span { title: "ck.schema.handle_claim.v1", "managed by your organization" }
                         HelpTip { text: "Handles are issued and revoked by your organization's handle issuer (coauth), not from this client. yougen never writes a handle via profile or member-identity events — it only displays signed handle claims. To request or change a handle, use your organization's issuer flow." }
                     }
                     div { class: "muted",
@@ -2822,7 +2822,7 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { {crate::i18n::tr("settings.privacy.blocked_users.title")} }
                         span { class: "badge", "{blocklist_snapshot.read().len()}" }
-                        HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use cx.account.blocklist." }
+                        HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use ck.account.blocklist." }
                     }
                     div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
                         {
@@ -3010,8 +3010,8 @@ pub fn SettingsPanel(
 
                         // ── Consent grant event PoC ────
                         // First user-facing button on the anchored cell pipeline. Builds a
-                        // cx.consent.grant event, signs with a deterministic demo ed25519 key
-                        // (TODO real-key-management), and submits it through cx.events.submit.
+                        // ck.consent.grant event, signs with a deterministic demo ed25519 key
+                        // (TODO real-key-management), and submits it through ck.events.submit.
                         if crate::views::agents::agents_enabled() {
                             crate::views::consent_demo::ConsentGrantDemoCard {
                                 base_url,
@@ -3023,14 +3023,14 @@ pub fn SettingsPanel(
                         // ── Account Data (actor-private View preferences) ─────
                         // models/views.md §2.6 + identity/account-lifecycle.md
                         // Edits to a shared View's filter / sort / columns are written via
-                        // cx.view.update (visible to everyone). Personal View preferences
+                        // ck.view.update (visible to everyone). Personal View preferences
                         // (collapsed state, ad-hoc filter, column widths) are written via
-                        // cx.account_data.set to the actor-private channel and never
+                        // ck.account_data.set to the actor-private channel and never
                         // broadcast to the Space.
                         div { class: "event", "data-testid": "account-data-prefs",
                     div { class: "event-head",
                         span { "Personal preferences" }
-                        span { title: "cx.account_data.set", "Actor-private" }
+                        span { title: "ck.account_data.set", "Actor-private" }
                         HelpTip { text: "The preferences below write to your account's actor-private channel and never sync to other Space members. To change a shared View's settings, use that View's Edit button." }
                     }
                     div { class: "metric-grid",
@@ -3051,7 +3051,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "Profile space override" }
-                            span { title: "cx.profile.space_override", "Per-space profile" }
+                            span { title: "ck.profile.space_override", "Per-space profile" }
                             div { class: "muted", "Show a different profile or handle inside a specific Space" }
                         }
                     }
@@ -3304,7 +3304,7 @@ mod tests {
         assert!(is_likely_valid_did("did:webvh:authority.example:zKey"));
     }
 
-    /// The canonical `cx.read_receipt.preferences` body shape other devices
+    /// The canonical `ck.read_receipt.preferences` body shape other devices
     /// read via `/sync` account_data. Locks the field names
     /// (`default_send`, `space_overrides`, `flow_overrides`) so a future
     /// rename can't silently desync devices.
@@ -3328,11 +3328,11 @@ mod tests {
     /// when reading the entry back from `/sync`.
     #[test]
     fn read_receipt_account_data_key_matches_spec() {
-        assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "cx.read_receipt.preferences");
+        assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "ck.read_receipt.preferences");
     }
 
     #[test]
     fn blocklist_account_data_key_matches_spec() {
-        assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "cx.account.blocklist");
+        assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ck.account.blocklist");
     }
 }

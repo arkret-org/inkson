@@ -301,7 +301,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/api/v1/session-grants/refresh",
+                "https://example.test/_cokret/gate/session-grants/refresh",
                 None,
             )
             .unwrap();
@@ -333,7 +333,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/api/v1/session-grants/refresh",
+                "https://example.test/_cokret/gate/session-grants/refresh",
                 Some("access-token-1"),
             )
             .unwrap();
@@ -348,7 +348,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/api/v1/session-grants/refresh",
+                "https://example.test/_cokret/gate/session-grants/refresh",
                 None,
             )
             .unwrap();
@@ -375,7 +375,7 @@ mod tests {
         let mut store = isolated_store("convenience");
         let proof = mint_dpop_proof(
             &mut store,
-            "https://example.test/api/v1/auth/passkey/finish",
+            "https://example.test/_cokret/gate/auth/passkey/finish",
             "POST",
             None,
         )

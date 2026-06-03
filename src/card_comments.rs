@@ -3,12 +3,12 @@
 //!
 //! Spec sources:
 //! - `flow-and-message.md §4.3` — discussion tracks attached to a Flow surface as
-//!   `cx.message.create` events keyed by `payload.thread_root = <card_flow_id>`.
+//!   `ck.message.create` events keyed by `payload.thread_root = <card_flow_id>`.
 //! - `space-and-place.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
 //!   is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
-//! that constructs the canonical `cx.message.create` op. The UI
+//! that constructs the canonical `ck.message.create` op. The UI
 //! drawer + projection wiring are follow-ups; this revision is the
 //! data-layer half that can be unit-tested in isolation.
 //!
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// F-CARD-COMMENT-1: a single comment row attached to a kanban
-/// card. Mirrors the on-the-wire `cx.message.create` payload minus
+/// card. Mirrors the on-the-wire `ck.message.create` payload minus
 /// the protocol-level envelope fields (`event_id`, `hlc`, etc.) —
 /// callers turn this into a full envelope via the standard
 /// `OperationBuilder` path.
@@ -57,7 +57,7 @@ impl CardComment {
     }
 }
 
-/// F-CARD-COMMENT-1: build the `cx.message.create` payload that
+/// F-CARD-COMMENT-1: build the `ck.message.create` payload that
 /// the reducer accepts as a comment row on `card_flow_id`. Mirrors
 /// the canonical envelope shape — caller wraps this in their
 /// `OperationBuilder` to produce a signed Move.

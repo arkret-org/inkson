@@ -4,17 +4,17 @@
 //! moderation decision the reducer emits MUST give the affected user an
 //! "Appeal this decision" entrypoint. The four-event lifecycle is:
 //!
-//! - `cx.moderation.appeal.submit`   — user files the appeal
-//! - `cx.moderation.appeal.review`   — reviewer takes the file
-//! - `cx.moderation.appeal.decision` — reviewer decides (uphold / overturn / modify)
-//! - `cx.moderation.appeal.close`    — appeal terminal
+//! - `ck.moderation.appeal.submit`   — user files the appeal
+//! - `ck.moderation.appeal.review`   — reviewer takes the file
+//! - `ck.moderation.appeal.decision` — reviewer decides (uphold / overturn / modify)
+//! - `ck.moderation.appeal.close`    — appeal terminal
 //!
 //! This module exposes:
 //!
 //! 1. `AppealState` — UI-side projection of the four wire states the user sees (submitted /
 //!    under_review / decided / closed).
 //! 2. `AppealSubmitter` component — renders the entrypoint button near a moderation decision and
-//!    submits the `cx.moderation.appeal.submit` event via the durable event channel.
+//!    submits the `ck.moderation.appeal.submit` event via the durable event channel.
 //!
 //! The full reviewer surface (Review/Decision/Close authoring) is admin
 //! scope and lives in `space_admin.rs` once wired. See
@@ -30,10 +30,10 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 /// User-facing projection of the four moderation appeal wire states.
 ///
 /// Wire kinds (Round R2/R3):
-/// - `cx.moderation.appeal.submit`   → [`AppealState::Submitted`]
-/// - `cx.moderation.appeal.review`   → [`AppealState::UnderReview`]
-/// - `cx.moderation.appeal.decision` → [`AppealState::Decided { .. }`]
-/// - `cx.moderation.appeal.close`    → [`AppealState::Closed`]
+/// - `ck.moderation.appeal.submit`   → [`AppealState::Submitted`]
+/// - `ck.moderation.appeal.review`   → [`AppealState::UnderReview`]
+/// - `ck.moderation.appeal.decision` → [`AppealState::Decided { .. }`]
+/// - `ck.moderation.appeal.close`    → [`AppealState::Closed`]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppealState {
     None,
@@ -46,9 +46,9 @@ pub enum AppealState {
 impl AppealState {
     pub fn from_latest_event_kind(kind: &str, payload: &Value) -> Self {
         match kind {
-            "cx.moderation.appeal.submit" => Self::Submitted,
-            "cx.moderation.appeal.review" => Self::UnderReview,
-            "cx.moderation.appeal.decision" => {
+            "ck.moderation.appeal.submit" => Self::Submitted,
+            "ck.moderation.appeal.review" => Self::UnderReview,
+            "ck.moderation.appeal.decision" => {
                 let verdict = payload
                     .get("verdict")
                     .and_then(|v| v.as_str())
@@ -56,7 +56,7 @@ impl AppealState {
                     .to_owned();
                 Self::Decided { verdict }
             }
-            "cx.moderation.appeal.close" => Self::Closed,
+            "ck.moderation.appeal.close" => Self::Closed,
             _ => Self::None,
         }
     }
@@ -72,9 +72,9 @@ impl AppealState {
     }
 }
 
-/// Construct the canonical `cx.moderation.appeal.submit` event payload as
+/// Construct the canonical `ck.moderation.appeal.submit` event payload as
 /// an [`OperationBuilder`]. The wire shape matches
-/// [`cokret_sdk::AppealSubmitPayload`] / `cx.schema.moderation_appeal.v1`.
+/// [`cokret_sdk::AppealSubmitPayload`] / `ck.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
 /// - `decision_event_id` — the `ck:event:` id of the original moderation decision being appealed
@@ -118,7 +118,7 @@ pub fn build_appeal_submit_op(
 
     let body = serde_json::to_value(&payload)?;
     Ok(
-        OperationBuilder::new(&realm_id, appellant, "cx.moderation.appeal.submit")
+        OperationBuilder::new(&realm_id, appellant, "ck.moderation.appeal.submit")
             .target_ref(decision_event_id)
             .body(body),
     )
@@ -173,7 +173,7 @@ pub fn AppealEntrypoint(
             "aria-label": "Appeal this moderation decision",
             div { class: "event-head",
                 span { "Appeal this moderation decision" }
-                span { class: "badge", "cx.moderation.appeal.submit" }
+                span { class: "badge", "ck.moderation.appeal.submit" }
             }
             div {
                 class: "muted",
@@ -264,16 +264,16 @@ mod tests {
     #[test]
     fn appeal_state_from_kind_recognises_all_four_wire_kinds() {
         assert_eq!(
-            AppealState::from_latest_event_kind("cx.moderation.appeal.submit", &json!({})),
+            AppealState::from_latest_event_kind("ck.moderation.appeal.submit", &json!({})),
             AppealState::Submitted
         );
         assert_eq!(
-            AppealState::from_latest_event_kind("cx.moderation.appeal.review", &json!({})),
+            AppealState::from_latest_event_kind("ck.moderation.appeal.review", &json!({})),
             AppealState::UnderReview
         );
         assert_eq!(
             AppealState::from_latest_event_kind(
-                "cx.moderation.appeal.decision",
+                "ck.moderation.appeal.decision",
                 &json!({"verdict": "uphold"}),
             ),
             AppealState::Decided {
@@ -281,7 +281,7 @@ mod tests {
             }
         );
         assert_eq!(
-            AppealState::from_latest_event_kind("cx.moderation.appeal.close", &json!({})),
+            AppealState::from_latest_event_kind("ck.moderation.appeal.close", &json!({})),
             AppealState::Closed
         );
     }
@@ -298,7 +298,7 @@ mod tests {
         )
         .expect("build appeal op")
         .build("test-node");
-        assert_eq!(op.kind, "cx.moderation.appeal.submit");
+        assert_eq!(op.kind, "ck.moderation.appeal.submit");
         assert_eq!(
             op.payload["realm_id"],
             "ck:realm:01904100-0000-7000-8000-000000000001"
@@ -310,7 +310,7 @@ mod tests {
             .unwrap();
         registry
             .validate_value(
-                "cx.schema.moderation_appeal.v1#/$defs/submit_payload",
+                "ck.schema.moderation_appeal.v1#/$defs/submit_payload",
                 &op.payload,
             )
             .unwrap();

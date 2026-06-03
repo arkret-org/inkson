@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
 
-/// Build a `cx.morph.create` operation. Body shape mirrors
+/// Build a `ck.morph.create` operation. Body shape mirrors
 /// `models/morph.md` §3 (typed Morph object).
 pub fn build_morph_create(
     space_id: &str,
@@ -19,12 +19,12 @@ pub fn build_morph_create(
     morph: &Morph,
 ) -> anyhow::Result<OperationBuilder> {
     let value = serde_json::to_value(morph)?;
-    Ok(OperationBuilder::new(space_id, actor, "cx.morph.create")
+    Ok(OperationBuilder::new(space_id, actor, "ck.morph.create")
         .target_ref(space_id)
         .body(json!({"morph": value})))
 }
 
-/// Build a `cx.morph.update` operation. `patch` is a JSON object of fields to
+/// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
 pub fn build_morph_update(
     space_id: &str,
@@ -32,12 +32,12 @@ pub fn build_morph_update(
     morph_id: &str,
     patch: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.morph.update")
+    OperationBuilder::new(space_id, actor, "ck.morph.update")
         .target_ref(morph_id)
         .body(json!({"morph_id": morph_id, "patch": patch}))
 }
 
-/// Build a `cx.relation.create` operation. `kind` is a registered
+/// Build a `ck.relation.create` operation. `kind` is a registered
 /// `relation_kind` (e.g. `cx.relation.parent_of`); `source` and `target` are
 /// typed-id strings.
 pub fn build_relation_create(
@@ -48,7 +48,7 @@ pub fn build_relation_create(
     source: &str,
     target: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.relation.create")
+    OperationBuilder::new(space_id, actor, "ck.relation.create")
         .target_ref(relation_id)
         .body(json!({
             "relation_id": relation_id,
@@ -58,14 +58,14 @@ pub fn build_relation_create(
         }))
 }
 
-/// Build a `cx.relation.tombstone` operation by id.
+/// Build a `ck.relation.tombstone` operation by id.
 pub fn build_relation_delete(space_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.relation.tombstone")
+    OperationBuilder::new(space_id, actor, "ck.relation.tombstone")
         .target_ref(relation_id)
         .body(json!({"relation_id": relation_id}))
 }
 
-/// Build a `cx.container.move_item` operation. Payload shape mirrors
+/// Build a `ck.container.move_item` operation. Payload shape mirrors
 /// `container_position_payload`: `container_ref`, `source_ref`, `target_ref`,
 /// and the new ordering `rank`.
 pub fn build_container_move_item(
@@ -76,7 +76,7 @@ pub fn build_container_move_item(
     target_ref: &str,
     rank: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.container.move_item")
+    OperationBuilder::new(space_id, actor, "ck.container.move_item")
         .target_ref(container_ref)
         .body(json!({
             "container_ref": container_ref,
@@ -86,7 +86,7 @@ pub fn build_container_move_item(
         }))
 }
 
-/// Build a `cx.container.rebalance` operation. The required position fields
+/// Build a `ck.container.rebalance` operation. The required position fields
 /// remain at top level; `items` carries optional profile-specific batch detail.
 pub fn build_container_rebalance(
     space_id: &str,
@@ -101,7 +101,7 @@ pub fn build_container_rebalance(
         .into_iter()
         .map(|(item_ref, rank)| json!({"item_ref": item_ref, "rank": rank}))
         .collect();
-    OperationBuilder::new(space_id, actor, "cx.container.rebalance")
+    OperationBuilder::new(space_id, actor, "ck.container.rebalance")
         .target_ref(container_ref)
         .body(json!({
             "container_ref": container_ref,
@@ -125,7 +125,7 @@ mod tests {
             json!({"morph_type": "task"}),
         )
         .build("node");
-        assert_eq!(op.kind, "cx.morph.update");
+        assert_eq!(op.kind, "ck.morph.update");
         assert_eq!(op.payload["morph_id"], "ck:morph:abc");
         assert_eq!(op.payload["patch"]["morph_type"], "task");
     }
@@ -141,7 +141,7 @@ mod tests {
             "ck:flow:f2",
         )
         .build("node");
-        assert_eq!(op.kind, "cx.relation.create");
+        assert_eq!(op.kind, "ck.relation.create");
         assert_eq!(op.payload["kind"], "cx.relation.parent_of");
         assert_eq!(op.payload["source"], "ck:flow:f1");
         assert_eq!(op.payload["target"], "ck:flow:f2");
@@ -158,7 +158,7 @@ mod tests {
             "r0",
         )
         .build("node");
-        assert_eq!(op.kind, "cx.container.move_item");
+        assert_eq!(op.kind, "ck.container.move_item");
         assert_eq!(
             op.local_target_ref(),
             Some("ck:space:0196419b-0000-7000-8000-000000000001")
@@ -187,7 +187,7 @@ mod tests {
             ],
         )
         .build("node");
-        assert_eq!(op.kind, "cx.container.rebalance");
+        assert_eq!(op.kind, "ck.container.rebalance");
         assert_eq!(
             op.payload["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"

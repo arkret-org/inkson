@@ -44,7 +44,7 @@ pub fn NeedsVerificationBadge(active: bool) -> Element {
 
 /// Realm classification used by [`RealmClassBadge`]. Sourced from the
 /// Realm's `security_class` field (`principal` | `collaboration`)
-/// surfaced by `cx.realm.create`.
+/// surfaced by `ck.realm.create`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RealmClass {
     /// The user's home Realm — carries the federation identity, the

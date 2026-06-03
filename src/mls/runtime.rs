@@ -146,7 +146,7 @@ pub struct InitialMlsSnapshotSummary {
     pub group_id: String,
     pub epoch: u64,
     /// Base64 TLS-serialized ratchet tree of the freshly created group —
-    /// used to seed the `cx.mls.genesis` event's `ratchet_tree_digest`.
+    /// used to seed the `ck.mls.genesis` event's `ratchet_tree_digest`.
     pub ratchet_tree: String,
     /// `sha256:<hex>` digest over the group's current key schedule (epoch
     /// authenticator). Used as the genesis `group_info_digest`.
@@ -326,7 +326,7 @@ pub fn ensure_creator_mls_snapshot(
     Ok(Some(summary))
 }
 
-/// Build the canonical `cx.mls.genesis` payload for a freshly-created creator
+/// Build the canonical `ck.mls.genesis` payload for a freshly-created creator
 /// group.
 ///
 /// `governance_binding` MUST be a realm/circle binding at epoch `0 -> 0`
@@ -723,7 +723,7 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
         return welcomes;
     };
     for entry in events {
-        if entry.get("type").and_then(|t| t.as_str()) == Some("cx.mls.welcome")
+        if entry.get("type").and_then(|t| t.as_str()) == Some("ck.mls.welcome")
             && let Some(content) = entry.get("content")
         {
             welcomes.push(content.clone());
@@ -871,7 +871,7 @@ pub fn encrypt_values_with_device_snapshot(
     // X14 — persist-on-accept: do NOT save the post-commit snapshot here.
     // The caller MUST call `state_store.save_mls_snapshot(space_id,
     // new_envelope)` ONLY after the server ACCEPTS the corresponding
-    // `cx.mls.commit` event. Persisting before acceptance let the local
+    // `ck.mls.commit` event. Persisting before acceptance let the local
     // snapshot epoch race ahead of the server's accepted epoch whenever a
     // commit POST failed/was cancelled, so every later write computed
     // `expected_prev_epoch = local_epoch - 1 > server_epoch` and the server
@@ -899,9 +899,9 @@ pub fn encrypt_values_with_device_snapshot(
 /// `aad` into the payload digest, and return the structured
 /// [`cokret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
-/// The caller assembles the spec-canonical `cx.schema.encrypted_envelope.v1`
+/// The caller assembles the spec-canonical `ck.schema.encrypted_envelope.v1`
 /// wire shape via [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it
-/// knows the `cx.mls.commit` event id that bounds this epoch (used as the
+/// knows the `ck.mls.commit` event id that bounds this epoch (used as the
 /// envelope `key_ref.group_state_ref`). `aad` MUST be the canonical
 /// `EncryptedEnvelopeAadV1` value, so the digest verification round-trips.
 pub fn encrypt_message_with_device_snapshot(
@@ -947,7 +947,7 @@ pub fn encrypt_message_with_device_snapshot(
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
     // X14 — persist-on-accept: see `encrypt_values_with_device_snapshot`.
     // The caller persists `new_envelope` ONLY after the server accepts the
-    // `cx.mls.commit`, keeping `snapshot.epoch == server.epoch` in lockstep
+    // `ck.mls.commit`, keeping `snapshot.epoch == server.epoch` in lockstep
     // and preventing the permanent `mls_epoch_skew` that optimistic
     // pre-accept persistence caused.
     let new_envelope = crate::mls::persistence::encrypt_state(
@@ -1087,7 +1087,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // a JSON object whose `key` is the real emoji / short tag.
     let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.reaction.add");
+    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.reaction.add");
     let aad_value =
         serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let encrypted_payload = group
@@ -1445,11 +1445,11 @@ mod tests {
         // schema so the full payload passes strict client/server validation.
         let catalog = cokret_sdk::schema::event_payload_validator_catalog();
         if catalog
-            .missing_payload_validators_for(std::iter::once("cx.mls.genesis"))
+            .missing_payload_validators_for(std::iter::once("ck.mls.genesis"))
             .is_empty()
         {
             catalog
-                .validate_payload("cx.mls.genesis", &payload)
+                .validate_payload("ck.mls.genesis", &payload)
                 .expect("genesis payload must satisfy the registered schema");
         }
     }
@@ -1657,7 +1657,7 @@ mod tests {
     /// X14 — persist-on-accept contract: `encrypt_values_with_device_snapshot`
     /// MUST NOT advance the persisted snapshot. The stored snapshot epoch only
     /// moves when the caller saves the returned envelope (which it does ONLY
-    /// after the server accepts the `cx.mls.commit`). This is the invariant
+    /// after the server accepts the `ck.mls.commit`). This is the invariant
     /// that keeps `snapshot.epoch == server.epoch` in lockstep and prevents the
     /// permanent `mls_epoch_skew` that optimistic pre-accept persistence caused.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1965,7 +1965,7 @@ mod welcome_outcome_tests {
         // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
         let messages = json!({
             "events": [
-                { "type": "cx.mls.welcome", "content": { "not": "a welcome" } }
+                { "type": "ck.mls.welcome", "content": { "not": "a welcome" } }
             ]
         });
         let outcome = apply_welcome_messages_with_device_snapshot(

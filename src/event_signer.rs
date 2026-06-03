@@ -175,7 +175,7 @@ impl YougenEventSigner {
     /// active backend — works for the in-process seed signer AND external / HSM
     /// signers alike (the SDK `EventSigner::sign` returns raw signature bytes;
     /// for EdDSA that is the 64-byte Ed25519 signature). Used for the
-    /// `cx.schema.key_backup.v1` `auth_data.signature` (key-management.md
+    /// `ck.schema.key_backup.v1` `auth_data.signature` (key-management.md
     /// §7.4.1), whose wire form is a single base64url token, not a dotted JWS.
     pub fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>, EventSignerError> {
         self.inner
@@ -490,7 +490,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:bob.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:bob.example", "ck.message.create")
                 .body(json!({"body": "hi"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -522,7 +522,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:alice.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:alice.example", "ck.message.create")
                 .body(json!({"body": "actor-rooted"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -552,7 +552,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:carol.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:carol.example", "ck.message.create")
                 .body(json!({"body": "verifiable"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -622,7 +622,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:dave.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:dave.example", "ck.message.create")
                 .body(json!({"body": "auto"}))
                 .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
@@ -640,7 +640,7 @@ mod tests {
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:eve.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:eve.example", "ck.message.create")
                 .body(json!({"body": "no"}))
                 .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();

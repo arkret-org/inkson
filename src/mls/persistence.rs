@@ -17,14 +17,14 @@
 //! Also exposes the multi-device Welcome shuttle
 //! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
 //! used to ship a typed `MlsWelcomeEnvelope` over soland's
-//! `/api/v1/device_messages` (with `type = "cx.mls.welcome"`). The
+//! `/_cokret/self/device_messages` (with `type = "ck.mls.welcome"`). The
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
 //! [`cokret_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
-//!    `cx.schema.key_backup.v1` request body used by `PUT /api/v1/keys/backups/{backup_id}`. The
+//!    `ck.schema.key_backup.v1` request body used by `PUT /_cokret/self/keys/backups/{backup_id}`. The
 //!    blob is opaque to soland; device-secret-derived encryption keeps the server zero-knowledge of
 //!    group keys.
 //!
@@ -73,7 +73,7 @@ use sha2::{Digest, Sha256};
 
 /// Number of SHA-256 rounds applied during device-secret stretching. The
 /// trade-off is cost-on-restore vs cost-of-brute-force; 600k matches
-/// the `cx.profile.key_backup.memory_hard.v1` PBKDF2 floor.
+/// the `ck.profile.key_backup.memory_hard.v1` PBKDF2 floor.
 /// Tests use the exact same constant — we don't ship a "test mode"
 /// reduction because the test surface is fast enough already.
 pub const KDF_ITERATIONS: u32 = 600_000;
@@ -89,7 +89,7 @@ pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 /// Typed envelope wrapping an encrypted MLS group state
 /// record. Persisted via `LocalStateStore` and (for cross-device
 /// restore) shipped as the `ciphertext` body of a
-/// `PUT /api/v1/keys/backups/{backup_id}` call. The fields here are
+/// `PUT /_cokret/self/keys/backups/{backup_id}` call. The fields here are
 /// the minimum required for tamper detection + outdated-snapshot
 /// detection; everything else (signing key set / openmls provider
 /// storage entries) lives inside the key-backup `ciphertext`.
@@ -351,13 +351,13 @@ impl MlsSnapshotEnvelope {
                 // mls_history is wrapped under a `secret_storage` key
                 // (`mls_group_secrets_backup_key`), recovered after the account
                 // secret is unlocked. The legacy `device_snapshot_secret` wire
-                // value is not in the `cx.schema.key_backup.v1` enum and has
+                // value is not in the `ck.schema.key_backup.v1` enum and has
                 // been removed.
                 "recipient_method": "secret_storage_key",
                 "recipient_key_ref": "mls_group_secrets_backup_key",
                 "aead": {
                     "name": "xchacha20_poly1305",
-                    "aead_profile": "cx.aead.xchacha20_poly1305.v1",
+                    "aead_profile": "ck.aead.xchacha20_poly1305.v1",
                     "nonce": nonce
                 }
             },

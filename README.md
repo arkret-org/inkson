@@ -38,7 +38,7 @@ several client-visible changes. See [`CHANGELOG.md`](CHANGELOG.md)
 `[Unreleased]` and [`../_todos.md`](../_todos.md) for the canonical
 wire-breaking list.
 
-- **`cx.call.signal` v2** — 13 signal types, required device `proof`,
+- **`ck.call.signal` v2** — 13 signal types, required device `proof`,
   per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
   aborts the call.
 - **Typed `EventsSubscribe` frames** — NDJSON parser switched to
@@ -63,9 +63,9 @@ Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
 normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
-  call-signal no longer travel through the durable `cx.events.submit`
-  path. They go through a dedicated `cx.schema.ephemeral_envelope.v1`
-  channel (broadcast) or `cx.schema.device_message.v1` (to-device key
+  call-signal no longer travel through the durable `ck.events.submit`
+  path. They go through a dedicated `ck.schema.ephemeral_envelope.v1`
+  channel (broadcast) or `ck.schema.device_message.v1` (to-device key
   verification). This is transparent to end users but is a
   wire-breaking change for any third-party client built against the
   old yougen behaviour.
@@ -118,7 +118,7 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/api/v1/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/_cokret/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
 The e2e suite under `tests/e2e/` is **mock-only**: it pins yougen's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Cokret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `yougen` and a real `soland` process. Any test that needs a live server should be added there, not here.
 

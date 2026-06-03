@@ -5,21 +5,21 @@
 //! the spec's three signaling event kinds so the renderer can publish into the
 //! durable event chain without re-discovering the body shape:
 //!
-//! - `cx.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
+//! - `ck.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
 //!   reducers MUST NOT use it as state input). Round 4 v2 wire shape; carries `device_id` + `proof`
 //!   + `payload.{call_id, signal_type, seq}`. Receivers use [`CallSignalReceiver`] to reject
 //!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
 //!     a rollback.
-//! - `cx.call.state` — durable call state transitions (start / answer / end).
-//! - `cx.call.recording.start` — durable opt-in recording marker.
+//! - `ck.call.state` — durable call state transitions (start / answer / end).
+//! - `ck.call.recording.start` — durable opt-in recording marker.
 
 use serde_json::json;
 
 use crate::operation::OperationBuilder;
 
-// NOTE: `cx.call.signal` is an ephemeral kind and MUST route through
-// `EphemeralEnvelope` (`cx.schema.ephemeral_envelope.v1`), NOT through
-// `cx.events.submit`. The canonical builder lives in
+// NOTE: `ck.call.signal` is an ephemeral kind and MUST route through
+// `EphemeralEnvelope` (`ck.schema.ephemeral_envelope.v1`), NOT through
+// `ck.events.submit`. The canonical builder lives in
 // `crate::api::build_call_signal_envelope_v1` and accepts the v1
 // canonical signal_type values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
@@ -27,7 +27,7 @@ use crate::operation::OperationBuilder;
 // NOT re-introduce a durable `OperationBuilder`-based helper or a parallel
 // `CallSignalKind` enum here — it would violate the wire spec.
 
-/// Call lifecycle state for `cx.call.state`.
+/// Call lifecycle state for `ck.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallState {
     Ringing,
@@ -47,7 +47,7 @@ impl CallState {
     }
 }
 
-/// Build a `cx.call.state` event — durable call lifecycle transition.
+/// Build a `ck.call.state` event — durable call lifecycle transition.
 pub fn build_call_state(
     space_id: &str,
     actor: &str,
@@ -55,7 +55,7 @@ pub fn build_call_state(
     state: CallState,
     reason: Option<&str>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.call.state")
+    OperationBuilder::new(space_id, actor, "ck.call.state")
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
@@ -64,7 +64,7 @@ pub fn build_call_state(
         }))
 }
 
-/// Round 4 — outcome of feeding an incoming `cx.call.signal` envelope
+/// Round 4 — outcome of feeding an incoming `ck.call.signal` envelope
 /// through the receiver. Carries the canonical
 /// [`cokret_sdk::CallSignalPayload`] when accepted; on a seq rollback
 /// the renderer SHOULD emit a local `hangup` for the offending call.
@@ -85,7 +85,7 @@ pub enum CallSignalIngestOutcome {
     Rejected { reason: String },
 }
 
-/// Round 4 — typed receiver for incoming `cx.call.signal` envelopes.
+/// Round 4 — typed receiver for incoming `ck.call.signal` envelopes.
 ///
 /// Wraps [`cokret_sdk::CallSignalState`] so the renderer can plug a
 /// single state into the signal stream and get back a typed outcome
@@ -117,7 +117,7 @@ impl CallSignalReceiver {
             Some(d) => d,
             None => {
                 return CallSignalIngestOutcome::Rejected {
-                    reason: "cx.call.signal envelope missing device_id".to_owned(),
+                    reason: "ck.call.signal envelope missing device_id".to_owned(),
                 };
             }
         };
@@ -130,7 +130,7 @@ impl CallSignalReceiver {
         if let Err(err) = self.state.observe(&key, payload.seq) {
             tracing::warn!(
                 target: "yougen::webrtc",
-                "cx.call.signal seq rollback: {err}"
+                "ck.call.signal seq rollback: {err}"
             );
             return CallSignalIngestOutcome::SeqRollback {
                 call_id: payload.call_id.as_str().to_owned(),
@@ -147,7 +147,7 @@ impl Default for CallSignalReceiver {
     }
 }
 
-/// Build a `cx.call.recording.start` event — durable opt-in recording marker.
+/// Build a `ck.call.recording.start` event — durable opt-in recording marker.
 /// The spec REQUIRES this be written before any recording stream begins so
 /// participants have an auditable signal.
 pub fn build_call_recording_start(
@@ -157,7 +157,7 @@ pub fn build_call_recording_start(
     recording_id: &str,
     consent_actors: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.call.recording.start")
+    OperationBuilder::new(space_id, actor, "ck.call.recording.start")
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
@@ -174,7 +174,7 @@ mod tests {
     fn call_signal_classifies_as_ephemeral_in_registry() {
         use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("cx.call.signal"),
+            event_kind_wire_scope("ck.call.signal"),
             Some(EventKindWireScope::Ephemeral)
         );
     }
@@ -183,7 +183,7 @@ mod tests {
     fn call_state_durable_kind_lookup() {
         use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("cx.call.state"),
+            event_kind_wire_scope("ck.call.state"),
             Some(EventKindWireScope::Durable)
         );
     }
@@ -198,7 +198,7 @@ mod tests {
             None,
         )
         .build("node");
-        assert_eq!(op.kind, "cx.call.state");
+        assert_eq!(op.kind, "ck.call.state");
         assert_eq!(op.payload["state"], "connected");
     }
 
@@ -212,7 +212,7 @@ mod tests {
             vec!["did:web:alice".into(), "did:web:bob".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "cx.call.recording.start");
+        assert_eq!(op.kind, "ck.call.recording.start");
         assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
     }
 
@@ -238,7 +238,7 @@ mod tests {
     fn v1_builder_accepts_canonical_signal_types() {
         for st in cokret_sdk::CALL_SIGNAL_TYPES {
             let env = make_v1_envelope(1, st);
-            assert_eq!(env.kind, "cx.call.signal");
+            assert_eq!(env.kind, "ck.call.signal");
             assert!(env.device_id.is_some());
         }
     }
@@ -279,7 +279,7 @@ mod tests {
         // Hand-build an envelope without proof to verify the receiver
         // rejects it (the v2 schema requires proof).
         let env = cokret_sdk::EphemeralEnvelope::new(
-            "cx.call.signal",
+            "ck.call.signal",
             cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             cokret_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(

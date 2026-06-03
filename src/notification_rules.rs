@@ -594,7 +594,7 @@ mod tests {
 
     fn message_context() -> NotificationEvalContext {
         NotificationEvalContext {
-            event_kind: "cx.message.create".to_owned(),
+            event_kind: "ck.message.create".to_owned(),
             notification_type: "message".to_owned(),
             realm_id: "ck:realm:demo".to_owned(),
             flow_id: Some("ck:flow:demo".to_owned()),

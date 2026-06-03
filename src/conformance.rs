@@ -7,23 +7,23 @@ use serde_json::Value;
 
 use crate::models::{ServerDescription, ServerDescriptionExt};
 
-pub const PROFILE_MINIMAL_CLIENT: &str = "cx.profile.minimal_client.v1";
+pub const PROFILE_MINIMAL_CLIENT: &str = "ck.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
 // the spec (artifacts/registry/deprecated-profile-ids.json, since 0a5ab85).
-// Replacement profile ids are cx.profile.chat_mvp.v1 / cx.profile.kanban_mvp.v1;
+// Replacement profile ids are ck.profile.chat_mvp.v1 / ck.profile.kanban_mvp.v1;
 // modality is otherwise expressed via Space schema, not via single-modality
 // profile gating.
-pub const PROFILE_CHAT_MVP: &str = "cx.profile.chat_mvp.v1";
-pub const PROFILE_KANBAN_MVP: &str = "cx.profile.kanban_mvp.v1";
-pub const PROFILE_FULL_CLIENT: &str = "cx.profile.full_client.v1";
-pub const PROFILE_E2EE_CLIENT: &str = "cx.profile.e2ee_client.v1";
-pub const PROFILE_FEDERATION_MINIMAL: &str = "cx.profile.federation_minimal.v1";
+pub const PROFILE_CHAT_MVP: &str = "ck.profile.chat_mvp.v1";
+pub const PROFILE_KANBAN_MVP: &str = "ck.profile.kanban_mvp.v1";
+pub const PROFILE_FULL_CLIENT: &str = "ck.profile.full_client.v1";
+pub const PROFILE_E2EE_CLIENT: &str = "ck.profile.e2ee_client.v1";
+pub const PROFILE_FEDERATION_MINIMAL: &str = "ck.profile.federation_minimal.v1";
 // T0.3: push_gateway is a gateway role profile (not a client role). yougen
 // is a client and MUST NOT declare itself as supporting the push_gateway
 // profile (no entry in client_profile_declarations()). The constant is kept
 // only so the settings panel can read whether the *server* advertises a
 // push gateway endpoint.
-pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
+pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
 /// Yougen ships the canonical event payload through
@@ -31,7 +31,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// and the `covered_frontier_cell` add-effect through [`cokret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
 
 /// Conformance profile declarations per cokret-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,7 +172,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         // .v1_1_extension_implementation`. v1 core conformance does NOT
         // require them; servers that don't ship them stay v1 core compliant.
         ClientProfileDeclaration {
-            profile_id: "cx.profile.applet_service.v1",
+            profile_id: "ck.profile.applet_service.v1",
             label: "applet_service",
             description: "Applet integration: bridge / bot registration, ghost actor, portal Space (extensions/applet-integration).",
             local_supported: false,
@@ -180,7 +180,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1_1Extension,
         },
         ClientProfileDeclaration {
-            profile_id: "cx.profile.agent_runtime.v1",
+            profile_id: "ck.profile.agent_runtime.v1",
             label: "agent_runtime",
             description: "Agent runtime: A2A / ACP / MCP protocol session events (extensions/agent-protocol-interop).",
             local_supported: false,
@@ -188,7 +188,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1_1Extension,
         },
         ClientProfileDeclaration {
-            profile_id: "cx.profile.mimi_interop.v1",
+            profile_id: "ck.profile.mimi_interop.v1",
             label: "mimi_interop",
             description: "MIMI interop: provider facade, room binding, ciphertext envelope (extensions/mimi-interop).",
             local_supported: false,
@@ -231,165 +231,165 @@ pub fn known_event_kinds() -> Vec<&'static str> {
     // count assertions in `mod tests` below.
     vec![
         // Account / actor profile
-        "cx.account.blocklist",
-        "cx.account.status",
-        "cx.account_data.set",
-        "cx.profile.create",
-        "cx.profile.update",
-        "cx.profile.space_override",
+        "ck.account.blocklist",
+        "ck.account.status",
+        "ck.account_data.set",
+        "ck.profile.create",
+        "ck.profile.update",
+        "ck.profile.space_override",
         // Agent (extensions/agent-protocol-interop — v1.1+ but kinds are core)
-        "cx.agent.endpoint",
-        "cx.agent.protocol_session.result",
-        "cx.agent.protocol_session.start",
-        "cx.agent.protocol_session.status",
+        "ck.agent.endpoint",
+        "ck.agent.protocol_session.result",
+        "ck.agent.protocol_session.start",
+        "ck.agent.protocol_session.status",
         // Applet (extensions/applet-integration — v1.1+ but kinds are core)
-        "cx.applet.bridge_error",
-        "cx.applet.protocol_session.start",
-        "cx.applet.protocol_session.status",
-        "cx.applet.registration",
+        "ck.applet.bridge_error",
+        "ck.applet.protocol_session.start",
+        "ck.applet.protocol_session.status",
+        "ck.applet.registration",
         // Range-completeness attestation (sync/operations-sync §4.2 + new in C45).
         // Non-reducer; used by audit layer to assert no silent omission within a
         // declared (from_frontier, to_frontier) interval.
-        "cx.attestation.range_completeness",
+        "ck.attestation.range_completeness",
         // Audited E2EE (crypto-media/audited-e2ee.md)
-        "cx.audit.accessed",
-        "cx.audit.ryw_receipt",
+        "ck.audit.accessed",
+        "ck.audit.ryw_receipt",
         // WebRTC call (crypto-media/webrtc-signaling)
-        "cx.call.recording.start",
-        "cx.call.signal",
-        "cx.call.state",
+        "ck.call.recording.start",
+        "ck.call.signal",
+        "ck.call.state",
         // Capability (authz/capabilities)
-        "cx.capability.delegate",
-        "cx.capability.derived",
-        "cx.capability.grant",
-        "cx.capability.revoke",
+        "ck.capability.delegate",
+        "ck.capability.derived",
+        "ck.capability.grant",
+        "ck.capability.revoke",
         // Container / position edge (board/list rebalance)
-        "cx.container.move_item",
-        "cx.container.rebalance",
+        "ck.container.move_item",
+        "ck.container.rebalance",
         // Devices (crypto-media/device-lifecycle)
-        "cx.device.authorize",
-        "cx.device.list_update",
-        "cx.device.revoke",
+        "ck.device.authorize",
+        "ck.device.list_update",
+        "ck.device.revoke",
         // Identity (DID proof + progressive disclosure §16 + C45 accountability grant)
-        "cx.did.proof",
+        "ck.did.proof",
         // Round C45: issuer-signed endorsement that a subject DID is
         // accountable to the issuer; required to verify
         // `Actor Profile.accountable_principal_ids[]`. See zh/models/actor.md §3.3.1.
-        "cx.identity.accountability_grant",
-        "cx.identity.disclosure_policy",
-        "cx.identity.disclosure_receipt",
-        "cx.identity.presentation_request",
-        "cx.identity.presentation_response",
+        "ck.identity.accountability_grant",
+        "ck.identity.disclosure_policy",
+        "ck.identity.disclosure_receipt",
+        "ck.identity.presentation_request",
+        "ck.identity.presentation_response",
         // Flow / track (current-model §3-§4)
-        "cx.flow.archive",
-        "cx.flow.create",
-        "cx.flow.move",
-        "cx.flow.reorder",
-        "cx.flow.restore",
+        "ck.flow.archive",
+        "ck.flow.create",
+        "ck.flow.move",
+        "ck.flow.reorder",
+        "ck.flow.restore",
         // Per cokret-spec dc01ad7 the four
-        // `cx.flow.track.{enable,disable,update,set_primary}`
-        // events were unified into a single `cx.flow.tracks.update`
-        // carrying a `cx.patch.v1` JSON Patch against `Flow.tracks`.
-        "cx.flow.tracks.update",
-        "cx.flow.update",
+        // `ck.flow.track.{enable,disable,update,set_primary}`
+        // events were unified into a single `ck.flow.tracks.update`
+        // carrying a `ck.patch.v1` JSON Patch against `Flow.tracks`.
+        "ck.flow.tracks.update",
+        "ck.flow.update",
         // Invite (sync/third-party-invites + identity/invites)
-        "cx.invite.accept",
-        "cx.invite.cancel",
-        "cx.invite.claim",
-        "cx.invite.create",
-        "cx.invite.revoke",
-        "cx.invite.third_party",
+        "ck.invite.accept",
+        "ck.invite.cancel",
+        "ck.invite.claim",
+        "ck.invite.create",
+        "ck.invite.revoke",
+        "ck.invite.third_party",
         // Key verification (device-lifecycle §7-§9)
-        "cx.key.verification.accept",
-        "cx.key.verification.cancel",
-        "cx.key.verification.done",
-        "cx.key.verification.key",
-        "cx.key.verification.mac",
-        "cx.key.verification.ready",
-        "cx.key.verification.request",
-        "cx.key.verification.start",
+        "ck.key.verification.accept",
+        "ck.key.verification.cancel",
+        "ck.key.verification.done",
+        "ck.key.verification.key",
+        "ck.key.verification.mac",
+        "ck.key.verification.ready",
+        "ck.key.verification.request",
+        "ck.key.verification.start",
         // Membership
-        "cx.member.state",
+        "ck.member.state",
         // Message (object-model-standard §5.1-§5.3)
-        "cx.message.create",
-        "cx.message.redact",
-        "cx.message.revise",
+        "ck.message.create",
+        "ck.message.redact",
+        "ck.message.revise",
         // MIMI interop (extensions/mimi-interop — v1.1+)
-        "cx.mimi.room_binding",
+        "ck.mimi.room_binding",
         // MLS (encryption-and-audit)
-        "cx.mls.commit",
-        "cx.mls.commit_failed",
-        "cx.mls.genesis",
-        "cx.mls.keypackage",
-        "cx.mls.proposal",
-        "cx.mls.welcome",
+        "ck.mls.commit",
+        "ck.mls.commit_failed",
+        "ck.mls.genesis",
+        "ck.mls.keypackage",
+        "ck.mls.proposal",
+        "ck.mls.welcome",
         // Moderation (governance/content-moderation)
-        "cx.moderation.franking_proof",
-        "cx.moderation.report",
+        "ck.moderation.franking_proof",
+        "ck.moderation.report",
         // Morph (C45 — schema_migrate is the first-class schema_refs[]
         // evolution event with explicit compatibility_class; replaces ad-hoc
-        // schema_refs[] writes via cx.morph.update).
-        "cx.morph.archive",
-        "cx.morph.create",
-        "cx.morph.restore",
-        "cx.morph.schema_migrate",
-        "cx.morph.update",
+        // schema_refs[] writes via ck.morph.update).
+        "ck.morph.archive",
+        "ck.morph.create",
+        "ck.morph.restore",
+        "ck.morph.schema_migrate",
+        "ck.morph.update",
         // Organization (identity-did §6 + content-moderation)
-        "cx.organization.discovery",
-        "cx.organization.moderation_policy",
+        "ck.organization.discovery",
+        "ck.organization.moderation_policy",
         // Policy (authz/policy-server)
-        "cx.policy.action",
-        "cx.policy.rule",
-        "cx.policy.set",
+        "ck.policy.action",
+        "ck.policy.rule",
+        "ck.policy.set",
         // Presence / typing (discovery/profiles-presence)
         "cx.presence",
         "cx.typing",
         // Reaction
-        "cx.reaction.add",
-        "cx.reaction.remove",
+        "ck.reaction.add",
+        "ck.reaction.remove",
         // Read receipts / markers (discovery/read-receipts §6); notification
         // itself is a derived projection, not a canonical event.
-        "cx.read_cursor.advance",
-        "cx.receipt.read",
-        // Redaction (cross-object — separate from cx.message.redact)
+        "ck.read_cursor.advance",
+        "ck.receipt.read",
+        // Redaction (cross-object — separate from ck.message.redact)
         "cx.redaction",
         // Relation
-        "cx.relation.create",
-        "cx.relation.tombstone",
-        "cx.relation.update",
+        "ck.relation.create",
+        "ck.relation.tombstone",
+        "ck.relation.update",
         // Schema evolution
-        "cx.schema.define",
-        "cx.schema.update",
+        "ck.schema.define",
+        "ck.schema.update",
         // Session grant (device-lifecycle §1.2)
-        "cx.session.grant",
+        "ck.session.grant",
         // Sovereign deployment (sync/sovereign-deployment)
-        "cx.sovereign.did_policy",
+        "ck.sovereign.did_policy",
         // Realm (security boundary) — R1.7 inversion renamed the former
         // `cx.space.*` security events to `cx.realm.*` and freed the
         // `cx.space.*` namespace for the container lifecycle below.
         // T2.3 history: cx.space.lifecycle.set / cx.space.policy.set were
         // removed by spec 0a5ab85 — they have no realm successor.
         "cx.realm.child",
-        "cx.realm.create",
-        "cx.realm.organization",
+        "ck.realm.create",
+        "ck.realm.organization",
         "cx.realm.parent",
-        "cx.realm.update",
-        "cx.realm.upgrade",
+        "ck.realm.update",
+        "ck.realm.upgrade",
         // Space (navigation container, post-R1.7) — former `cx.place.*`
         // verbs over Board / List / Section containers.
-        "cx.space.archive",
-        "cx.space.create",
-        "cx.space.restore",
-        "cx.space.tombstone",
-        "cx.space.update",
+        "ck.space.archive",
+        "ck.space.create",
+        "ck.space.restore",
+        "ck.space.tombstone",
+        "ck.space.update",
         // MLS Space-key share (audited E2EE)
         "cx.space_key.share",
         "cx.space_key.share_audit",
         "cx.space_key.withheld",
         // View (View projection)
-        "cx.view.create",
-        "cx.view.reconcile",
-        "cx.view.update",
+        "ck.view.create",
+        "ck.view.reconcile",
+        "ck.view.update",
     ]
 }
 
@@ -433,25 +433,25 @@ impl EventKindWireScope {
 
 /// Event kinds whose wire_scope is `actor_private_event`.
 const ACTOR_PRIVATE_EVENT_KINDS: &[&str] = &[
-    "cx.account.blocklist",
-    "cx.account_data.set",
-    "cx.read_cursor.advance",
+    "ck.account.blocklist",
+    "ck.account_data.set",
+    "ck.read_cursor.advance",
 ];
 
 /// Event kinds whose wire_scope is `ephemeral_event`. Reducers must NOT take
 /// these as state input — they are short-TTL signaling only.
 const EPHEMERAL_EVENT_KINDS: &[&str] = &[
-    "cx.call.signal",
-    "cx.key.verification.accept",
-    "cx.key.verification.cancel",
-    "cx.key.verification.done",
-    "cx.key.verification.key",
-    "cx.key.verification.mac",
-    "cx.key.verification.ready",
-    "cx.key.verification.request",
-    "cx.key.verification.start",
+    "ck.call.signal",
+    "ck.key.verification.accept",
+    "ck.key.verification.cancel",
+    "ck.key.verification.done",
+    "ck.key.verification.key",
+    "ck.key.verification.mac",
+    "ck.key.verification.ready",
+    "ck.key.verification.request",
+    "ck.key.verification.start",
     "cx.presence",
-    "cx.receipt.read",
+    "ck.receipt.read",
     "cx.typing",
 ];
 
@@ -742,19 +742,19 @@ mod tests {
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "cx.profile.minimal_client.v1" && p.supported)
+                .any(|p| p.profile_id == "ck.profile.minimal_client.v1" && p.supported)
         );
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "cx.profile.chat_mvp.v1" && p.supported)
+                .any(|p| p.profile_id == "ck.profile.chat_mvp.v1" && p.supported)
         );
         // T0.3: yougen is a client, push_gateway is a gateway role — it
         // MUST NOT appear in the client's supported profile set.
         assert!(
             !profiles
                 .iter()
-                .any(|p| p.profile_id == "cx.profile.push_gateway.v1")
+                .any(|p| p.profile_id == "ck.profile.push_gateway.v1")
         );
     }
 
@@ -763,7 +763,7 @@ mod tests {
         // Server advertises exactly the operations SDK's
         // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
         // client should be ready. `chat_mvp` additionally requires
-        // `cx.account.subscribe` which the fixture intentionally omits, so
+        // `ck.account.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
@@ -773,9 +773,9 @@ mod tests {
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
             "supported_features": [],
             "supported_operations": [
-                "cx.events.get",
-                "cx.events.query",
-                "cx.server.describe",
+                "ck.events.get",
+                "ck.events.query",
+                "ck.server.describe",
             ],
             "supported_bindings": [],
             "auth_metadata": {},
@@ -806,8 +806,8 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("cx.account.subscribe")),
-            "expected chat_mvp to flag missing cx.account.subscribe, got {:?}",
+                .any(|missing| missing.contains("ck.account.subscribe")),
+            "expected chat_mvp to flag missing ck.account.subscribe, got {:?}",
             chat.missing
         );
     }
@@ -855,7 +855,7 @@ mod tests {
             "operation_id": "op1",
             "space_id": "ck:space:s1",
             "actor": "did:web:alice",
-            "type": "cx.message.create",
+            "type": "ck.message.create",
             "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
         });
         assert!(validate_structure(&event, "event").is_ok());
@@ -883,8 +883,8 @@ mod tests {
 
     #[test]
     fn require_known_event_kind_accepts_canonical_and_rejects_garbage() {
-        assert!(require_known_event_kind("cx.message.create").is_ok());
-        assert!(require_known_event_kind("cx.flow.update").is_ok());
+        assert!(require_known_event_kind("ck.message.create").is_ok());
+        assert!(require_known_event_kind("ck.flow.update").is_ok());
         assert!(require_known_event_kind("cx.typing").is_ok());
         let err = require_known_event_kind("cx.bogus.kind").expect_err("unknown kind must error");
         assert!(matches!(err, ValidationError::UnknownEventKind(_)));
@@ -923,18 +923,18 @@ mod tests {
     #[test]
     fn known_event_kinds_matches_registry_count() {
         // C18 wire-break (spec 2026-05-08): cx.flow.branch.* (7 kinds) renamed
-        // and pruned to cx.flow.track.{enable,disable,update,set_primary}
+        // and pruned to ck.flow.track.{enable,disable,update,set_primary}
         // (4 kinds; spec dropped member/history_visibility/policy_components
         // because tracks no longer carry independent membership/visibility/
         // policy — see Flow.discussion_realm_ref). Net -3 from prior 110.
         // Follow-on wire-break (spec dc01ad7, 2026-05-18): the four track
-        // events above unified into a single `cx.flow.tracks.update` carrying
-        // a `cx.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
+        // events above unified into a single `ck.flow.tracks.update` carrying
+        // a `ck.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
         // Round C45 (spec 5ed365c, 2026-05-18 main): +3 new event kinds
-        // (cx.attestation.range_completeness / cx.identity.accountability_grant /
-        // cx.morph.schema_migrate). The two `.v1`-suffixed audit kinds were
-        // renamed in-place (cx.audit.epoch_key_destruction[.v1] and
-        // cx.realm.audit_policy_downgrade[.v1] — yougen does not yet surface
+        // (ck.attestation.range_completeness / ck.identity.accountability_grant /
+        // ck.morph.schema_migrate). The two `.v1`-suffixed audit kinds were
+        // renamed in-place (ck.audit.epoch_key_destruction[.v1] and
+        // ck.realm.audit_policy_downgrade[.v1] — yougen does not yet surface
         // those typed kinds, so the rename doesn't shift the count).
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
@@ -953,48 +953,48 @@ mod tests {
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
         // current-model §3 — unified track update (spec dc01ad7)
-        assert!(kinds.contains(&"cx.flow.tracks.update"));
+        assert!(kinds.contains(&"ck.flow.tracks.update"));
         // Legacy split events removed in the dc01ad7 unification.
         assert!(!kinds.contains(&"cx.flow.track.enable"));
         assert!(!kinds.contains(&"cx.flow.track.disable"));
         assert!(!kinds.contains(&"cx.flow.track.update"));
         assert!(!kinds.contains(&"cx.flow.track.set_primary"));
         // current-model §4 — board / list workflow container
-        assert!(kinds.contains(&"cx.flow.move"));
-        assert!(kinds.contains(&"cx.flow.reorder"));
+        assert!(kinds.contains(&"ck.flow.move"));
+        assert!(kinds.contains(&"ck.flow.reorder"));
         // device-lifecycle §1.2 (login / authorization / verification three axes)
-        assert!(kinds.contains(&"cx.session.grant"));
-        assert!(kinds.contains(&"cx.device.authorize"));
-        assert!(kinds.contains(&"cx.device.revoke"));
+        assert!(kinds.contains(&"ck.session.grant"));
+        assert!(kinds.contains(&"ck.device.authorize"));
+        assert!(kinds.contains(&"ck.device.revoke"));
         // device-lifecycle §7-§9 verification ceremony events.
-        assert!(kinds.contains(&"cx.key.verification.start"));
-        assert!(kinds.contains(&"cx.key.verification.done"));
+        assert!(kinds.contains(&"ck.key.verification.start"));
+        assert!(kinds.contains(&"ck.key.verification.done"));
         // discovery/read-receipts §6 — read marker is a wire event,
         // notification is *not* (it's a derived projection).
-        assert!(kinds.contains(&"cx.read_cursor.advance"));
-        assert!(kinds.contains(&"cx.receipt.read"));
+        assert!(kinds.contains(&"ck.read_cursor.advance"));
+        assert!(kinds.contains(&"ck.receipt.read"));
         assert!(!kinds.contains(&"cx.notification.dismiss"));
         // audited-e2ee — attested + disclosed audit profiles
-        assert!(kinds.contains(&"cx.audit.accessed"));
-        assert!(kinds.contains(&"cx.audit.ryw_receipt"));
+        assert!(kinds.contains(&"ck.audit.accessed"));
+        assert!(kinds.contains(&"ck.audit.ryw_receipt"));
         // Removed by spec
         assert!(!kinds.contains(&"cx.flow.convert"));
-        assert!(!kinds.contains(&"cx.mls.epoch"));
+        assert!(!kinds.contains(&"ck.mls.epoch"));
         // T2.3 (spec 0a5ab85): single 'set' kinds were decomposed into
         // per-component cells / typed lifecycle events.
         assert!(!kinds.contains(&"cx.space.lifecycle.set"));
         assert!(!kinds.contains(&"cx.space.policy.set"));
         // R1.7 realm/space inversion: security-boundary events live in
         // cx.realm.*; container lifecycle events live in cx.space.*.
-        assert!(kinds.contains(&"cx.realm.create"));
-        assert!(kinds.contains(&"cx.realm.update"));
+        assert!(kinds.contains(&"ck.realm.create"));
+        assert!(kinds.contains(&"ck.realm.update"));
         assert!(kinds.contains(&"cx.realm.child"));
         assert!(kinds.contains(&"cx.realm.parent"));
-        assert!(kinds.contains(&"cx.space.archive"));
-        assert!(kinds.contains(&"cx.space.restore"));
-        assert!(kinds.contains(&"cx.space.tombstone"));
-        // Renamed: cx.actor.profile.update -> cx.profile.update
-        assert!(kinds.contains(&"cx.profile.update"));
+        assert!(kinds.contains(&"ck.space.archive"));
+        assert!(kinds.contains(&"ck.space.restore"));
+        assert!(kinds.contains(&"ck.space.tombstone"));
+        // Renamed: cx.actor.profile.update -> ck.profile.update
+        assert!(kinds.contains(&"ck.profile.update"));
         assert!(!kinds.contains(&"cx.actor.profile.update"));
     }
 
@@ -1018,8 +1018,8 @@ mod tests {
     /// `cx.flow.branch.{member,history_visibility,policy_components}` — three
     /// events that had no track-namespace successor — so the prior floor of
     /// 110 is no longer meaningful. Spec dc01ad7 (2026-05-18) then unified
-    /// the four `cx.flow.track.{enable,disable,update,set_primary}` events
-    /// into a single `cx.flow.tracks.update`, dropping three more entries.
+    /// the four `ck.flow.track.{enable,disable,update,set_primary}` events
+    /// into a single `ck.flow.tracks.update`, dropping three more entries.
     /// We pin to 102 to track the post-T2.3 count. The spec itself
     /// declares 131 active kinds at HEAD; yougen surfaces the typed subset
     /// relevant to its UI flows. T2.3 dropped cx.space.lifecycle.set and

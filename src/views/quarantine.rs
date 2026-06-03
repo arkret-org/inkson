@@ -1,10 +1,10 @@
 //! Invite-quarantine UI surface.
 //!
 //! Lists quarantined invites observed by coauth's
-//! `GET /admin/v1/invite-quarantine` (admin scope) — or the per-user
+//! `GET /_cokret/local/admin/invite-quarantine` (admin scope) — or the per-user
 //! self-scope endpoint when the local actor lacks admin scope. Admins
 //! get approve / reject buttons that POST
-//! `/admin/v1/invite-quarantine/{id}/resolve`; everyone else sees a
+//! `/_cokret/local/admin/invite-quarantine/{id}/resolve`; everyone else sees a
 //! read-only "your invites pending review" list.
 //!
 //! Wire shape (coauth side):

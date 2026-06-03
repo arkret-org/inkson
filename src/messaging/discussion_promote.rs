@@ -4,11 +4,11 @@
 //! `models/space-hierarchy.md §3-§4` (parent/child confirmed edge).
 //!
 //! The full promote flow needs three durable events:
-//! 1. `cx.space.create` for the new child Space, with `parent_space_id` pointing back at the
+//! 1. `ck.space.create` for the new child Space, with `parent_space_id` pointing back at the
 //!    parent.
-//! 2. `cx.space.child` on the parent + `cx.space.parent` on the child (the bidirectional
+//! 2. `cx.space.child` on the parent + `ck.space.parent` on the child (the bidirectional
 //!    confirmation edge).
-//! 3. `cx.flow.update` on the original Flow, setting `discussion_space_ref = <new_space_id>`.
+//! 3. `ck.flow.update` on the original Flow, setting `discussion_space_ref = <new_space_id>`.
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps
@@ -73,7 +73,7 @@ impl PromoteIds {
     }
 }
 
-/// Build the `cx.space.create` envelope for the new child Space.
+/// Build the `ck.space.create` envelope for the new child Space.
 pub fn build_child_space_create_op(
     parent_space_id: &str,
     actor: &str,
@@ -81,12 +81,12 @@ pub fn build_child_space_create_op(
     title: &str,
 ) -> EventEnvelope {
     let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    OperationBuilder::new(parent_space_id, actor, "cx.space.create")
+    OperationBuilder::new(parent_space_id, actor, "ck.space.create")
         .target_ref(&ids.child_space_id)
         .body(json!({
             "object": {
                 "id": ids.child_space_id,
-                "schema": "cx.schema.space.v1",
+                "schema": "ck.schema.space.v1",
                 "realm_id": scope_id_as_realm_id(parent_space_id),
                 "kind": "space",
                 "title": title.trim(),
@@ -116,13 +116,13 @@ pub fn build_child_edge_op(
         .build("yougen")
 }
 
-/// Build the child-side `cx.space.parent` confirmation edge.
+/// Build the child-side `ck.space.parent` confirmation edge.
 pub fn build_parent_edge_op(
     child_space_id: &str,
     actor: &str,
     parent_space_id: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(child_space_id, actor, "cx.space.parent")
+    OperationBuilder::new(child_space_id, actor, "ck.space.parent")
         .target_ref(parent_space_id)
         .body(json!({
             "parent_space_id": parent_space_id,
@@ -130,7 +130,7 @@ pub fn build_parent_edge_op(
         .build("yougen")
 }
 
-/// Build the `cx.flow.update` that points the source Flow's
+/// Build the `ck.flow.update` that points the source Flow's
 /// `discussion_space_ref` at the new child Space.
 pub fn build_flow_discussion_ref_op(
     parent_space_id: &str,
@@ -145,15 +145,15 @@ pub fn build_flow_discussion_ref_op(
             cokret_sdk::PatchOp::set(child_space_id),
         )
         .unwrap_or_else(|err| {
-            panic!("invalid cx.patch.v1 discussion_space_ref patch: {err}");
+            panic!("invalid ck.patch.v1 discussion_space_ref patch: {err}");
         });
     let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
         .and_then(|payload| payload.to_value())
         .unwrap_or_else(|err| {
-            panic!("invalid cx.flow.update object_patch_payload: {err}");
+            panic!("invalid ck.flow.update object_patch_payload: {err}");
         });
 
-    OperationBuilder::new(parent_space_id, actor, "cx.flow.update")
+    OperationBuilder::new(parent_space_id, actor, "ck.flow.update")
         .target_ref(flow_id)
         .body(payload)
         .build("yougen")
@@ -234,10 +234,10 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                "cx.space.create",
+                "ck.space.create",
                 "cx.space.child",
-                "cx.space.parent",
-                "cx.flow.update"
+                "ck.space.parent",
+                "ck.flow.update"
             ]
         );
     }
@@ -250,7 +250,7 @@ mod tests {
             "ck:flow:0196419b-0000-7000-8000-000000000002",
             "ck:space:0196419b-0000-7000-8000-000000000003",
         );
-        assert_eq!(event.kind, "cx.flow.update");
+        assert_eq!(event.kind, "ck.flow.update");
         assert!(event.payload.get("discussion_space_ref").is_none());
         assert_eq!(
             event.payload["patch"]["discussion_space_ref"]["value"],
@@ -260,7 +260,7 @@ mod tests {
             .validate_payload(&event.kind, &event.payload)
             .unwrap_or_else(|err| {
                 panic!(
-                    "discussion promote cx.flow.update payload violates spec: {err}\npayload: {}",
+                    "discussion promote ck.flow.update payload violates spec: {err}\npayload: {}",
                     serde_json::to_string_pretty(&event.payload).unwrap()
                 );
             });

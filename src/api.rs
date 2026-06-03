@@ -122,19 +122,19 @@ use crate::operation::{
 };
 
 /// B-F / CXP-0009 §3 — default home-policy discriminator passed on
-/// `cx.agent.sidecar_thread.ensure`. The spec rolled the default from
+/// `ck.agent.sidecar_thread.ensure`. The spec rolled the default from
 /// "default home realm" to "context realm preferred"; yougen MUST emit
 /// this token unless the caller explicitly overrides it.
 pub const SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED: &str = "context_realm_preferred";
 
 /// Returns the canonical default home-policy string for the
-/// `cx.agent.sidecar_thread.ensure` request body's `home_policy` field.
+/// `ck.agent.sidecar_thread.ensure` request body's `home_policy` field.
 pub fn sidecar_home_policy_default() -> &'static str {
     SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED
 }
 
 /// Generic wrapper for soland's
-/// `/api/v1/projection/{spaces|flows}` lifecycle endpoints. Keeps
+/// `/_cokret/self/projection/{spaces|flows}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `flows` / `morphs` collection keys plus
@@ -157,7 +157,7 @@ pub struct LifecycleProjectionResponse<T> {
 /// Server-side Space-container projection row.
 ///
 /// Soland serves these rows from
-/// `GET /api/v1/projection/spaces`.
+/// `GET /_cokret/self/projection/spaces`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
     #[serde(alias = "space_id")]
@@ -176,7 +176,7 @@ pub struct SpaceContainerProjectionView {
     pub parent_space_id: Option<String>,
 }
 
-/// Server-side Flow row from `GET /api/v1/projection/flows`.
+/// Server-side Flow row from `GET /_cokret/self/projection/flows`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct FlowProjectionView {
     pub flow_id: String,
@@ -209,7 +209,7 @@ pub struct FlowProjectionView {
 }
 
 /// Server-side Morph row from
-/// `GET /api/v1/projection/morphs`. Same enum as Flow per spec §5.1.
+/// `GET /_cokret/self/projection/morphs`. Same enum as Flow per spec §5.1.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
@@ -235,7 +235,7 @@ pub struct CokretApi {
     chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
     network_state: Arc<RwLock<NetworkState>>,
     cancel_token: Option<CancellationToken>,
-    /// H1 — cached `GET /api/v1/events/describe` response. Used so callers
+    /// H1 — cached `GET /_cokret/self/events/describe` response. Used so callers
     /// like `submit_events_batch` can consult `capabilities.batch_submit`
     /// without re-hitting the network on every batch.
     events_describe_cache: Arc<OnceCell<EventsDescribeResBody>>,
@@ -310,7 +310,7 @@ impl Default for RetryPolicy {
     }
 }
 
-/// Context for `cx.directory.resolve_handle`.
+/// Context for `ck.directory.resolve_handle`.
 ///
 /// Protocol distinction: `lookup` / `mention` are display-safe resolves;
 /// `member_add` / `invite` request Realm/audience-bound membership-builder
@@ -731,13 +731,13 @@ impl CokretApi {
     }
 
     pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
-        self.get_json("api/v1/server/describe").await
+        self.get_json("_cokret/describe").await
     }
 
     pub async fn auth_bridge_describe(
         &self,
     ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
-        self.get_json("api/v1/auth/bridge/describe").await
+        self.get_json("_cokret/gate/auth/bridge/describe").await
     }
 
     pub async fn dev_login(
@@ -746,7 +746,7 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
         self.post_json(
-            "api/v1/auth/dev-login",
+            "_cokret/gate/auth/dev-login",
             json!({
                 "actor": actor,
                 "device_id": device_id,
@@ -794,7 +794,7 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
         self.exchange_session_grant_at(
-            "api/v1/auth/session-grant/exchange",
+            "_cokret/gate/auth/session-grant/exchange",
             grant_jwt,
             principal_id,
             device_id,
@@ -810,7 +810,7 @@ impl CokretApi {
         device_id: Option<&str>,
     ) -> anyhow::Result<AccountResponse> {
         self.post_json(
-            "api/v1/account/register",
+            "_cokret/self/account/register",
             json!({
                 "did": did,
                 "handle": handle,
@@ -822,7 +822,7 @@ impl CokretApi {
     }
 
     pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
-        self.get_json("api/v1/account/me").await
+        self.get_json("_cokret/self/account/me").await
     }
 
     /// A4b — update the authenticated principal's public profile
@@ -844,7 +844,7 @@ impl CokretApi {
         avatar_url: Option<&str>,
     ) -> anyhow::Result<UpdateProfileResponse> {
         self.post_json(
-            "api/v1/account/profile",
+            "_cokret/self/account/profile",
             json!({
                 "display_name": display_name,
                 "bio": bio,
@@ -856,7 +856,7 @@ impl CokretApi {
 
     /// A4b — resolve a `ck:blob:sha256:<hex>` reference to its
     /// authenticated download URL on this Principal Server. Returns the
-    /// `<base>/api/v1/blob/get?blob_ref=<…>&purpose=profile_avatar`
+    /// `<base>/_cokret/self/blob/get?blob_ref=<…>&purpose=profile_avatar`
     /// shape that soland's
     /// `/blob/get` handler answers — callers can plug this directly
     /// into `<img src=…>` or `cx.account.update_profile { avatar_url }`.
@@ -865,7 +865,7 @@ impl CokretApi {
     }
 
     pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
-        self.post_json("api/v1/contacts/request", json!({"target": target}))
+        self.post_json("_cokret/self/contacts/request", json!({"target": target}))
             .await
     }
 
@@ -875,7 +875,7 @@ impl CokretApi {
         scope: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "api/v1/contacts/request",
+            "_cokret/self/contacts/request",
             json!({"target": target, "scope": scope}),
         )
         .await
@@ -887,18 +887,18 @@ impl CokretApi {
         action: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "api/v1/contacts/respond",
+            "_cokret/self/contacts/respond",
             json!({"requester": requester, "action": action}),
         )
         .await
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
-        self.get_json("api/v1/contacts").await
+        self.get_json("_cokret/self/contacts").await
     }
 
     pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsResponse> {
-        self.get_json("api/v1/consent/cells").await
+        self.get_json("_cokret/self/consent/cells").await
     }
 
     pub async fn grant_consent_cell(
@@ -910,7 +910,7 @@ impl CokretApi {
     ) -> anyhow::Result<ConsentCellResponse> {
         self.post_json(
             &format!(
-                "api/v1/consent/cells/{}/grant",
+                "_cokret/self/consent/cells/{}/grant",
                 url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
             ),
             json!({
@@ -931,7 +931,7 @@ impl CokretApi {
     ) -> anyhow::Result<ConsentCellResponse> {
         self.post_json(
             &format!(
-                "api/v1/consent/cells/{}/revoke",
+                "_cokret/self/consent/cells/{}/revoke",
                 url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
             ),
             json!({
@@ -943,20 +943,20 @@ impl CokretApi {
     }
 
     pub async fn logout(&self) -> anyhow::Result<LogoutResponse> {
-        self.post_json("api/v1/auth/logout", json!({})).await
+        self.post_json("_cokret/gate/auth/logout", json!({})).await
     }
 
-    /// Build + submit the spec-canonical `cx.realm.create` event bundle
-    /// (and its facet follow-ups) via `cx.events.submit`
-    /// (`POST /api/v1/events`).
+    /// Build + submit the spec-canonical `ck.realm.create` event bundle
+    /// (and its facet follow-ups) via `ck.events.submit`
+    /// (`POST /_cokret/self/events`).
     ///
     /// Per spec realm-and-space.md §2.6 the create event itself is the
     /// genesis-member declaration for `created_by`. The
     /// server reducer bootstraps the member set atomically with the
     /// metadata, so the same actor's per-facet follow-ups
-    /// (`cx.realm.join_rule` / `cx.realm.history_visibility` /
-    /// `cx.realm.discovery` / `cx.realm.plaintext_visible_services` /
-    /// invitee `cx.member.state` invites) all pass the regular
+    /// (`ck.realm.join_rule` / `ck.realm.history_visibility` /
+    /// `ck.realm.discovery` / `ck.realm.plaintext_visible_services` /
+    /// invitee `ck.member.state` invites) all pass the regular
     /// `space_has_member` authz check naturally.
     ///
     /// All five create-locked fields per spec §2.3 (`encryption_profile`,
@@ -985,12 +985,12 @@ impl CokretApi {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
-                "actor_id is required for canonical cx.realm.create"
+                "actor_id is required for canonical ck.realm.create"
             ));
         }
         let title = title.trim();
         if title.is_empty() {
-            return Err(anyhow::anyhow!("title is required for cx.realm.create"));
+            return Err(anyhow::anyhow!("title is required for ck.realm.create"));
         }
 
         // R1.7: the security boundary (formerly Space) is now Realm.
@@ -1014,7 +1014,7 @@ impl CokretApi {
             &plaintext_visible_services,
         )?;
         // Genesis Realm bootstrap has no prior snapshot head. The
-        // `cx.realm.create` precondition asserts `head_eq null`; follow-up
+        // `ck.realm.create` precondition asserts `head_eq null`; follow-up
         // facet events in the same batch are admitted after soland
         // materialises the creator membership from the create event.
         // Sign every envelope before they reach the wire; the batch
@@ -1049,7 +1049,7 @@ impl CokretApi {
     }
 
     /// Create a Space (product-structure container) inside an existing
-    /// Realm. Emits `cx.space.create` per spec realm-and-space.md §3.
+    /// Realm. Emits `ck.space.create` per spec realm-and-space.md §3.
     /// Unlike `create_realm`, this does NOT bootstrap MLS / membership
     /// / federation — those live on the Realm and Space inherits them.
     #[allow(clippy::too_many_arguments)]
@@ -1065,16 +1065,16 @@ impl CokretApi {
     ) -> anyhow::Result<SpaceLifecycleResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
-            return Err(anyhow::anyhow!("actor_id is required for cx.space.create"));
+            return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
         }
         let title = title.trim();
         if title.is_empty() {
-            return Err(anyhow::anyhow!("title is required for cx.space.create"));
+            return Err(anyhow::anyhow!("title is required for ck.space.create"));
         }
         let realm_id = realm_id.trim();
         if realm_id.is_empty() {
             return Err(anyhow::anyhow!(
-                "realm_id is required for cx.space.create — Space must live inside a Realm"
+                "realm_id is required for ck.space.create — Space must live inside a Realm"
             ));
         }
         let space_id = format!("ck:space:{}", uuid_v7());
@@ -1100,7 +1100,7 @@ impl CokretApi {
     }
 
     /// CXP-0007 P3B.2.6 — POST a new Circle to soland's
-    /// `/api/v1/circles` administrative surface. The strict-subset
+    /// `/_cokret/self/circles` administrative surface. The strict-subset
     /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
     /// reducer; this client also runs
     /// [`crate::components::validate_strict_subset`] before sending so
@@ -1132,7 +1132,7 @@ impl CokretApi {
         let title = title.trim();
         if realm_id.is_empty() || actor_id.is_empty() || title.is_empty() {
             return Err(anyhow::anyhow!(
-                "realm_id / actor_id / title are all required for cx.circle.create"
+                "realm_id / actor_id / title are all required for ck.circle.create"
             ));
         }
 
@@ -1167,7 +1167,7 @@ impl CokretApi {
             "directory_visibility": serde_json::to_value(visibility)?,
             "initial_members": initial_members,
         });
-        self.post_json("/api/v1/circles", body).await
+        self.post_json("/_cokret/self/circles", body).await
     }
 
     /// CXP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
@@ -1178,9 +1178,11 @@ impl CokretApi {
     pub async fn list_circles(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
         let realm_id = realm_id.trim();
         if realm_id.is_empty() {
-            return Err(anyhow::anyhow!("realm_id is required for /api/v1/circles"));
+            return Err(anyhow::anyhow!(
+                "realm_id is required for /_cokret/self/circles"
+            ));
         }
-        let path = format!("/api/v1/circles?realm_id={}", realm_id);
+        let path = format!("/_cokret/self/circles?realm_id={}", realm_id);
         self.get_json(&path).await
     }
 
@@ -1212,8 +1214,8 @@ impl CokretApi {
     }
 
     /// Member-state FSM transition (kick / ban / unban / leave) on the
-    /// Realm's `cx.component.member.state.v1` cell. Submits a `cx.member.state`
-    /// event via `cx.events.submit`; deployment-local member REST shims are
+    /// Realm's `ck.component.member.state.v1` cell. Submits a `ck.member.state`
+    /// event via `ck.events.submit`; deployment-local member REST shims are
     /// intentionally not used.
     pub async fn transition_member_state(
         &self,
@@ -1245,15 +1247,15 @@ impl CokretApi {
             .await
     }
 
-    /// PUT a per-account `cx.account_data.set` entry. Thin wrapper around
-    /// `PUT /api/v1/account_data/{type}` so settings UIs can push preferences
-    /// (e.g. `cx.read_receipt.preferences`) up to soland for cross-device
+    /// PUT a per-account `ck.account_data.set` entry. Thin wrapper around
+    /// `PUT /_cokret/self/account_data/{type}` so settings UIs can push preferences
+    /// (e.g. `ck.read_receipt.preferences`) up to soland for cross-device
     /// sync. When the endpoint returns 404 / 501 / 405 we treat the outcome
     /// as `Unsupported` and let the caller swallow it (local state stays
     /// authoritative). Anything else surfaces as `Err`.
     ///
     /// Structural: the body is `{ "content": <value> }` — soland's existing
-    /// `cx.account_data.set` pipeline treats the path's `{type}` segment as
+    /// `ck.account_data.set` pipeline treats the path's `{type}` segment as
     /// the canonical account-data key.
     pub async fn set_account_data(
         &self,
@@ -1262,7 +1264,7 @@ impl CokretApi {
     ) -> anyhow::Result<AccountDataSetOutcome> {
         let body = json!({ "content": content });
         let result: anyhow::Result<Value> = self
-            .put_json(&format!("api/v1/account_data/{type_key}"), body)
+            .put_json(&format!("_cokret/self/account_data/{type_key}"), body)
             .await;
         match result {
             Ok(value) => Ok(AccountDataSetOutcome::Stored { response: value }),
@@ -1296,7 +1298,7 @@ impl CokretApi {
     /// (treated as success) and is logged at debug level; other errors
     /// propagate.
     pub async fn delete_account_data(&self, type_key: &str) -> anyhow::Result<()> {
-        let path = format!("api/v1/account_data/{type_key}");
+        let path = format!("_cokret/self/account_data/{type_key}");
         let result: anyhow::Result<Value> = self.delete_json(&path).await;
         match result {
             Ok(_) => Ok(()),
@@ -1317,12 +1319,12 @@ impl CokretApi {
     }
 
     pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResBody> {
-        self.get_json("api/v1/identity/describe").await
+        self.get_json("_cokret/root/identity/describe").await
     }
 
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveResBody> {
         self.post_json(
-            "api/v1/identity/resolve",
+            "_cokret/root/identity/resolve",
             json!({"did": did, "include": []}),
         )
         .await
@@ -1330,17 +1332,17 @@ impl CokretApi {
 
     pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
         self.get_json(&format!(
-            "api/v1/profile/presence?did={}",
+            "_cokret/self/profile/presence?did={}",
             query_component(did)
         ))
         .await
     }
 
     pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
-        self.get_json("api/v1/account/describe").await
+        self.get_json("_cokret/self/account/describe").await
     }
 
-    /// `cx.account.subscribe` snapshot fold. The server returns NDJSON frames;
+    /// `ck.account.subscribe` snapshot fold. The server returns NDJSON frames;
     /// this consumes the first `delta` frame and keeps the rest of the app on
     /// the existing folded `ClientSyncResponse` projection path.
     pub async fn account_subscribe_snapshot(
@@ -1371,7 +1373,7 @@ impl CokretApi {
         if let Some(token) = after {
             validate_cursor(token)?;
         }
-        let mut url = self.endpoint("api/v1/account/subscribe")?;
+        let mut url = self.endpoint("_cokret/self/account/subscribe")?;
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("catchup", "true");
@@ -1397,11 +1399,11 @@ impl CokretApi {
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/notifications").await
+        self.get_json("_cokret/self/notifications").await
     }
 
     pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
-        self.post_json("api/v1/notifications/mark-all-read", json!({}))
+        self.post_json("_cokret/self/notifications/mark-all-read", json!({}))
             .await
     }
 
@@ -1417,24 +1419,25 @@ impl CokretApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-realms", body).await
+        self.post_json("_cokret/find/directory/search-realms", body)
+            .await
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescribeResBody> {
-        self.get_json("api/v1/directory/describe").await
+        self.get_json("_cokret/find/directory/describe").await
     }
 
     pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmResponse> {
         self.post_json(
-            "api/v1/directory/resolve-realm",
+            "_cokret/find/directory/resolve-realm",
             json!({"realm_id": realm_id}),
         )
         .await
     }
 
     /// R3.3 (CXP-0011) — resolve a shareable object address (Realm / Flow /
-    /// Message) to a directory preview via `cx.directory.resolve_target`
-    /// (`POST /api/v1/directory/resolve-target`).
+    /// Message) to a directory preview via `ck.directory.resolve_target`
+    /// (`POST /_cokret/find/directory/resolve-target`).
     ///
     /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
     /// derived from [`cokret_sdk::model::parse_address`]; `token` is present
@@ -1460,18 +1463,18 @@ impl CokretApi {
             token: token.map(str::to_owned),
         };
         self.post_json(
-            "api/v1/directory/resolve-target",
+            "_cokret/find/directory/resolve-target",
             serde_json::to_value(&body)?,
         )
         .await
     }
 
-    /// Query durable events through the current `/api/v1/events` surface.
+    /// Query durable events through the current `/_cokret/self/events` surface.
     pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResBody> {
         self.get_json(&events_query_path(space_id)).await
     }
 
-    /// Stream the canonical `/api/v1/events/subscribe` NDJSON response and
+    /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
     /// Round 4 (spec a77b995) — the parser is now typed against
@@ -1530,7 +1533,9 @@ impl CokretApi {
     }
 
     pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
-        self.get_json(&format!("api/v1/snapshot/head?realm_id={realm_id}"))
+        self.get_json(&format!(
+            "_cokret/self/snapshot/head?realm_id={realm_id}"
+        ))
             .await
     }
 
@@ -1541,7 +1546,7 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<AuthzCheckResBody> {
         self.post_json(
-            "api/v1/authz/check",
+            "_cokret/self/authz/check",
             json!({
                 "actor": actor,
                 "action": action,
@@ -1552,12 +1557,14 @@ impl CokretApi {
     }
 
     pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<EffectiveGrantsResBody> {
-        self.get_json(&format!("api/v1/authz/effective-grants?subject={subject}"))
-            .await
+        self.get_json(&format!(
+            "_cokret/self/authz/effective-grants?subject={subject}"
+        ))
+        .await
     }
 
     pub async fn invites(&self) -> anyhow::Result<InvitesResponse> {
-        self.get_json("api/v1/authz/invites").await
+        self.get_json("_cokret/self/authz/invites").await
     }
 
     pub async fn register_push_device(&self) -> anyhow::Result<PushRegisterResponse> {
@@ -1651,7 +1658,7 @@ impl CokretApi {
     pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         self.post_json(
-            "api/v1/keys/upload",
+            "_cokret/self/keys/upload",
             json!({
                 "device_id": device_id,
                 "one_time_keys": {
@@ -1681,7 +1688,7 @@ impl CokretApi {
         algorithm: &str,
     ) -> anyhow::Result<KeysClaimResBody> {
         self.post_json(
-            "api/v1/keys/claim",
+            "_cokret/self/keys/claim",
             json!({"one_time_keys": {actor: {device_id: algorithm}}}),
         )
         .await
@@ -1693,14 +1700,14 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<KeysQueryResBody> {
         self.post_json(
-            "api/v1/keys/query",
+            "_cokret/self/keys/query",
             json!({"device_keys": {actor: [device_id]}}),
         )
         .await
     }
 
     /// Publish an MLS `MlsKeyPackageRecord` to
-    /// soland's `/api/v1/keys/upload` endpoint so peers can fetch it via
+    /// soland's `/_cokret/self/keys/upload` endpoint so peers can fetch it via
     /// `query_keys` and `add_member()` against it. Other key fields
     /// (one_time_keys / fallback_keys / device_signature) carry their
     /// default-test shape; soland tolerates them being placeholder when
@@ -1713,7 +1720,7 @@ impl CokretApi {
     ) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
         self.post_json(
-            "api/v1/keys/upload",
+            "_cokret/self/keys/upload",
             json!({
                 "device_id": device_id,
                 "one_time_keys": {
@@ -1838,8 +1845,8 @@ impl CokretApi {
         )
     }
 
-    /// POST a typed `cx.schema.device_message.v1` envelope to soland's
-    /// `/api/v1/device_messages` endpoint. Used by device
+    /// POST a typed `ck.schema.device_message.v1` envelope to soland's
+    /// `/_cokret/self/device_messages` endpoint. Used by device
     /// verification flows (R3) and any other flow that needs to deliver a
     /// message to a specific (actor, device_id) pair without going through
     /// Space history. The body shape is the canonical
@@ -1854,7 +1861,7 @@ impl CokretApi {
         message_type: &str,
         content: serde_json::Value,
     ) -> anyhow::Result<DeviceMessagesSendResBody> {
-        let path = "api/v1/device_messages";
+        let path = "_cokret/self/device_messages";
         let payload =
             build_device_message_envelope(target_actor, target_device_id, message_type, content);
         let request = self
@@ -1867,7 +1874,7 @@ impl CokretApi {
     }
 
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResBody> {
-        self.get_json("api/v1/device_messages").await
+        self.get_json("_cokret/self/device_messages").await
     }
 
     pub async fn put_key_backup(
@@ -1877,12 +1884,12 @@ impl CokretApi {
     ) -> anyhow::Result<serde_json::Value> {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
-        self.put_json(&format!("api/v1/keys/backups/{backup_id}"), payload)
+        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), payload)
             .await
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/keys/backups").await
+        self.get_json("_cokret/self/keys/backups").await
     }
 
     // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────
@@ -1890,7 +1897,7 @@ impl CokretApi {
     /// 6.1 — read the principal's currently accepted recovery policy.
     /// Returns `{ "active_policy": <policy summary | null> }`.
     pub async fn get_recovery_policy(&self) -> anyhow::Result<serde_json::Value> {
-        self.get_json("api/v1/identity/recovery-policy").await
+        self.get_json("_cokret/root/identity/recovery-policy").await
     }
 
     /// 6.3 — open a recovery session bound to the active policy. `body` is the
@@ -1901,7 +1908,7 @@ impl CokretApi {
         &self,
         body: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        self.post_json("api/v1/identity/recovery-sessions", body).await
+        self.post_json("_cokret/root/identity/recovery-sessions", body).await
     }
 
     /// 6.3 — submit a recovery proof (e.g. from
@@ -1913,7 +1920,7 @@ impl CokretApi {
         body: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
-            &format!("api/v1/identity/recovery-sessions/{recovery_session_id}/proofs"),
+            &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
             body,
         )
         .await
@@ -1927,7 +1934,7 @@ impl CokretApi {
         body: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
         self.post_json(
-            &format!("api/v1/identity/recovery-sessions/{recovery_session_id}/complete"),
+            &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
             body,
         )
         .await
@@ -1936,7 +1943,7 @@ impl CokretApi {
     /// CXP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery flow uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_class` is `None`, this falls
-    /// back to the legacy plain `GET /api/v1/keys/backups` shape.
+    /// back to the legacy plain `GET /_cokret/self/keys/backups` shape.
     ///
     /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
     /// query parameters; the chain reconstruction MUST decrypt only
@@ -1963,19 +1970,19 @@ impl CokretApi {
             query.push(("backup_class".to_owned(), class.to_owned()));
         }
         if query.is_empty() {
-            return self.get_json("api/v1/keys/backups").await;
+            return self.get_json("_cokret/self/keys/backups").await;
         }
         let query_string = query
             .into_iter()
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join("&");
-        self.get_json(&format!("api/v1/keys/backups?{query_string}"))
+        self.get_json(&format!("_cokret/self/keys/backups?{query_string}"))
             .await
     }
 
     pub async fn get_key_backup(&self, backup_id: &str) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("api/v1/keys/backups/{backup_id}"))
+        self.get_json(&format!("_cokret/self/keys/backups/{backup_id}"))
             .await
     }
 
@@ -1987,7 +1994,7 @@ impl CokretApi {
         let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_did, backup_id);
         let request = self
             .http
-            .delete(self.endpoint(&format!("api/v1/keys/backups/{backup_id}"))?)
+            .delete(self.endpoint(&format!("_cokret/self/keys/backups/{backup_id}"))?)
             .header(crate::key_backup::KEY_BACKUP_DELETE_PROOF_HEADER, proof);
         self.send_json(self.prepare_request(request), Method::DELETE)
             .await
@@ -2009,7 +2016,7 @@ impl CokretApi {
         let realm = cokret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id for /blob/presign: {err}"))?;
         self.post_json(
-            "api/v1/blob/presign",
+            "_cokret/self/blob/presign",
             json!({
                 "realm_id": realm.as_str(),
                 "content_type": content_type,
@@ -2022,7 +2029,7 @@ impl CokretApi {
     pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResBody> {
         let request = self
             .http
-            .post(self.endpoint("api/v1/blob/upload")?)
+            .post(self.endpoint("_cokret/self/blob/upload")?)
             .header("content-type", "application/octet-stream")
             .body(bytes);
         self.send_json(self.prepare_request(request), Method::POST)
@@ -2063,7 +2070,7 @@ impl CokretApi {
         };
         let mut request = self
             .http
-            .post(self.endpoint("api/v1/blob/upload")?)
+            .post(self.endpoint("_cokret/self/blob/upload")?)
             .header("content-type", content_type)
             .body(bytes);
         if let Some(space_id) = space_id.filter(|value| !value.trim().is_empty()) {
@@ -2084,7 +2091,7 @@ impl CokretApi {
         let envelope = serde_json::to_string(&asset.envelope)?;
         let request = self
             .http
-            .post(self.endpoint("api/v1/blob/upload")?)
+            .post(self.endpoint("_cokret/self/blob/upload")?)
             .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
             .header("x-cokret-space-id", space_id)
             .header("x-cokret-blob-encrypted", "true")
@@ -2098,7 +2105,7 @@ impl CokretApi {
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let blob_ref = query_component(canonical_blob_ref(blob_ref));
         let request = self.http.get(self.endpoint(&format!(
-            "api/v1/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
+            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
         ))?);
         self.send_bytes(self.prepare_request(request), Method::GET)
             .await
@@ -2112,7 +2119,7 @@ impl CokretApi {
         reporter: &str,
     ) -> anyhow::Result<ModerationReportResBody> {
         self.post_json(
-            "api/v1/moderation/report",
+            "_cokret/self/moderation/report",
             json!({
                 "space_id": space_id,
                 "target_ref": target_ref,
@@ -2139,7 +2146,7 @@ impl CokretApi {
         let request = self
             .http
             .post(
-                self.endpoint("api/v1/audit/user-action")
+                self.endpoint("_cokret/self/audit/user-action")
                     .map_err(|err| AuditPostError::Other(err.to_string()))?,
             )
             .json(&payload);
@@ -2172,7 +2179,7 @@ impl CokretApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-organizations", body)
+        self.post_json("_cokret/find/directory/search-organizations", body)
             .await
     }
 
@@ -2188,11 +2195,11 @@ impl CokretApi {
         if let Some(cursor) = next_cursor {
             body["next_cursor"] = json!(cursor);
         }
-        self.post_json("api/v1/directory/search-actors", body).await
+        self.post_json("_cokret/find/directory/search-actors", body).await
     }
 
     /// A6.1 — global cross-space message search backed by soland's
-    /// `POST /api/v1/index/search`. The server accepts `space_ids` to
+    /// `POST /_cokret/self/index/search`. The server accepts `space_ids` to
     /// scope the search; pass an empty slice for "search everywhere I
     /// have access to". `object_kinds` defaults to `["message"]` when
     /// `None`, mirroring the panel's primary affordance.
@@ -2217,7 +2224,7 @@ impl CokretApi {
             "object_kinds": kinds,
             "space_ids": space_ids,
         });
-        self.post_json("api/v1/index/search", body).await
+        self.post_json("_cokret/self/index/search", body).await
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
@@ -2237,7 +2244,7 @@ impl CokretApi {
         context: ResolveHandleContext<'_>,
     ) -> anyhow::Result<ResolveHandleResponse> {
         self.post_json(
-            "api/v1/directory/resolve-handle",
+            "_cokret/find/directory/resolve-handle",
             resolve_handle_request_body(handle, context),
         )
         .await
@@ -2298,7 +2305,7 @@ impl CokretApi {
         Ok(invitee.to_owned())
     }
 
-    /// R3.2 (cokret-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
+    /// R3.2 (cokret-spec @ b56cab1) — `ck.directory.list_handles_for_subject`.
     ///
     /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
     /// DID, return the current context-visible signed handle claims +
@@ -2346,7 +2353,7 @@ impl CokretApi {
         };
         let res: cokret_sdk::model::DirectoryListHandlesForSubjectResBody = self
             .post_json(
-                "api/v1/directory/list-handles-for-subject",
+                "_cokret/find/directory/list-handles-for-subject",
                 serde_json::to_value(&body)?,
             )
             .await?;
@@ -2367,7 +2374,7 @@ impl CokretApi {
         recording_policy: &str,
     ) -> anyhow::Result<CreateWebrtcSessionResponse> {
         self.post_json(
-            "api/v1/webrtc/sessions",
+            "_cokret/self/webrtc/sessions",
             json!({
                 "realm_id": realm_id,
                 "participants": participants,
@@ -2389,7 +2396,7 @@ impl CokretApi {
         payload: Value,
     ) -> anyhow::Result<WebrtcSignalResponse> {
         self.post_json(
-            &format!("api/v1/webrtc/sessions/{session_id}/signals"),
+            &format!("_cokret/self/webrtc/sessions/{session_id}/signals"),
             json!({
                 "message_type": message_type,
                 "seq": seq,
@@ -2410,15 +2417,15 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<CallRecordingStartResponse> {
         self.post_json(
-            &format!("api/v1/calls/{session_id}/recording/start"),
+            &format!("_cokret/self/calls/{session_id}/recording/start"),
             json!({ "realm_id": realm_id }),
         )
         .await
     }
 
-    // ── Space / Realm Management (all writes go through cx.events.submit) ─
+    // ── Space / Realm Management (all writes go through ck.events.submit) ─
 
-    /// Update a Realm's metadata via `cx.realm.update` event (spec-canonical).
+    /// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
     /// `patch` carries the merge-shape body the server reducer applies to the
     /// realm row.
     pub async fn update_realm_metadata(
@@ -2449,7 +2456,7 @@ impl CokretApi {
         self.update_realm_metadata(realm_id, actor_id, patch).await
     }
 
-    /// Update a structural Space object's metadata via `cx.space.update`.
+    /// Update a structural Space object's metadata via `ck.space.update`.
     /// The event is submitted to the Space's home Realm (`realm_id`), while
     /// `space_id` identifies the Space object being patched.
     pub async fn update_space_metadata(
@@ -2465,18 +2472,18 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
-    /// Archive a Space via `cx.space.archive` event (spec-canonical).
+    /// Archive a Space via `ck.space.archive` event (spec-canonical).
     pub async fn archive_space(
         &self,
         space_id: &str,
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, "cx.space.archive")
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.archive")
             .await
     }
 
-    /// Tombstone a Space via `cx.space.tombstone` event (spec-canonical).
+    /// Tombstone a Space via `ck.space.tombstone` event (spec-canonical).
     /// Successor of the old deployment-local Space delete REST shim.
     pub async fn delete_space(
         &self,
@@ -2484,7 +2491,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, "cx.space.tombstone")
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.tombstone")
             .await
     }
 
@@ -2505,16 +2512,16 @@ impl CokretApi {
         }
         if history_visibility.trim() == "restricted" {
             return Err(anyhow::anyhow!(
-                "restricted history_visibility requires cx.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
+                "restricted history_visibility requires ck.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
             ));
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
         for event in [
-            build_space_state_event(space_id, actor_id, "cx.realm.join_rule", json!(join_rule))?,
+            build_space_state_event(space_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
             build_space_state_event(
                 space_id,
                 actor_id,
-                "cx.realm.history_visibility",
+                "ck.realm.history_visibility",
                 json!(history_visibility),
             )?,
         ] {
@@ -2528,7 +2535,7 @@ impl CokretApi {
         })
     }
 
-    /// Create an invite via `cx.invite.create` event (spec-canonical). The
+    /// Create an invite via `ck.invite.create` event (spec-canonical). The
     /// `invite_id` is generated client-side so the caller can correlate
     /// optimistic UI rows with the eventual server projection.
     pub async fn invite_to_space(
@@ -2553,7 +2560,7 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
-    /// Accept an invite via `cx.invite.accept` event (spec-canonical).
+    /// Accept an invite via `ck.invite.accept` event (spec-canonical).
     pub async fn accept_space_invite(
         &self,
         space_id: &str,
@@ -2570,7 +2577,7 @@ impl CokretApi {
 
     /// Join a Realm through an outstanding invite. The invite projection
     /// records are discovery state; the membership change itself is the
-    /// canonical `cx.member.state` invite -> join transition.
+    /// canonical `ck.member.state` invite -> join transition.
     pub async fn join_realm_from_invite(
         &self,
         realm_id: &str,
@@ -2612,7 +2619,7 @@ impl CokretApi {
         routed.submit_event_envelope(event).await
     }
 
-    /// Reject an invite via `cx.invite.cancel` event (spec-canonical).
+    /// Reject an invite via `ck.invite.cancel` event (spec-canonical).
     pub async fn reject_space_invite(
         &self,
         space_id: &str,
@@ -2626,7 +2633,7 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
-    /// Leave a Realm via `cx.member.state` event (`join → leave` FSM).
+    /// Leave a Realm via `ck.member.state` event (`join → leave` FSM).
     pub async fn leave_space(
         &self,
         realm_id: &str,
@@ -2643,7 +2650,7 @@ impl CokretApi {
         .await
     }
 
-    /// Ban a member via `cx.member.state` event (`join → ban` FSM).
+    /// Ban a member via `ck.member.state` event (`join → ban` FSM).
     pub async fn ban_member(
         &self,
         realm_id: &str,
@@ -2656,8 +2663,8 @@ impl CokretApi {
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`cx.typing`). They MUST flow through the canonical
-    /// `cx.ephemeral.send` operation (`POST /api/v1/ephemeral`), never
-    /// through `cx.events.submit` or a deployment-local typing shim.
+    /// `ck.ephemeral.send` operation (`POST /_cokret/self/ephemeral`), never
+    /// through `ck.events.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
         space_id: &str,
@@ -2672,9 +2679,9 @@ impl CokretApi {
         })
     }
 
-    /// Round R2/R3 (T02) — read receipts (`cx.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST flow through `cx.ephemeral.send`; the
-    /// `cx.events.submit` durable path and deployment-local `/receipts`
+    /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
+    /// ephemeral. They MUST flow through `ck.ephemeral.send`; the
+    /// `ck.events.submit` durable path and deployment-local `/receipts`
     /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
@@ -2683,10 +2690,10 @@ impl CokretApi {
         event_id: &str,
         receipt_type: &str,
     ) -> anyhow::Result<ReceiptResponse> {
-        // Only `cx.receipt.read` is an ephemeral receipt; other receipt
+        // Only `ck.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
-        if receipt_type != "cx.receipt.read" {
+        if receipt_type != "ck.receipt.read" {
             anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
         let envelope = build_receipt_read_envelope(space_id, actor, event_id)?;
@@ -2699,13 +2706,13 @@ impl CokretApi {
     // ── Views — collection projection (T20) ─────────────────────────
     //
     // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
-    // POST /api/v1/views/{view_id}/projection returns the typed
+    // POST /_cokret/self/views/{view_id}/projection returns the typed
     // CollectionProjectionResBody defined in cokret_core::model.
     pub async fn collection_projection(
         &self,
         view_id: &str,
     ) -> anyhow::Result<cokret_sdk::CollectionProjectionResBody> {
-        self.post_json(&format!("api/v1/views/{view_id}/projection"), json!({}))
+        self.post_json(&format!("_cokret/self/views/{view_id}/projection"), json!({}))
             .await
     }
 
@@ -2719,7 +2726,7 @@ impl CokretApi {
         // `ck:space:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
         let realm_id = scope_id_as_realm_id(space_id);
-        let path = format!("api/v1/projection/spaces?realm_id={realm_id}");
+        let path = format!("_cokret/self/projection/spaces?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
@@ -2728,29 +2735,29 @@ impl CokretApi {
         space_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
         let realm_id = scope_id_as_realm_id(space_id);
-        let path = format!("api/v1/projection/flows?realm_id={realm_id}");
+        let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
     pub async fn document_projection(&self, morph_id: &str) -> anyhow::Result<Value> {
-        self.get_json(&format!("api/v1/projection/documents/{morph_id}"))
+        self.get_json(&format!("_cokret/self/projection/documents/{morph_id}"))
             .await
     }
 
     // ── Device & Crypto ─────────────────────────────────────────────
 
     /// User-driven device revoke. Hits soland's deployment-local
-    /// `cx.devices.revoke` (`POST /api/v1/devices/{device_id}/revoke`) —
-    /// NOT spec's `cx.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
+    /// `cx.devices.revoke` (`POST /_cokret/self/devices/{device_id}/revoke`) —
+    /// NOT spec's `ck.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
     /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
-        self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
+        self.post_json(&format!("_cokret/self/devices/{device_id}/revoke"), json!({}))
             .await
     }
 
     /// Rename a device the caller controls by updating its user-facing
     /// `display_name`. Hits soland's `cx.devices.rename`
-    /// (`POST /api/v1/devices/{device_id}/rename`). `display_name` is the
+    /// (`POST /_cokret/self/devices/{device_id}/rename`). `display_name` is the
     /// optional, mutable, UI-only device name per
     /// `crypto-media/device-lifecycle.md` §4; the canonical id is always
     /// `device_id`. Returns the updated device record JSON.
@@ -2760,42 +2767,42 @@ impl CokretApi {
         display_name: &str,
     ) -> anyhow::Result<Value> {
         self.post_json(
-            &format!("api/v1/devices/{device_id}/rename"),
+            &format!("_cokret/self/devices/{device_id}/rename"),
             json!({ "display_name": display_name }),
         )
         .await
     }
 
     /// G3.Y1 — list the principal's active devices via soland's
-    /// `cx.devices.list` (`GET /api/v1/devices`). Returns the raw JSON
+    /// `cx.devices.list` (`GET /_cokret/self/devices`). Returns the raw JSON
     /// response shape `{ "actor": ..., "current_device_id": ..., "devices": [...] }`.
     /// Each device record carries at minimum `device_id`,
     /// `is_current_session_device`, and a `verification_state` per
     /// `routing/identity/device.rs::device_list`.
     pub async fn list_devices(&self) -> anyhow::Result<Value> {
-        self.get_json("api/v1/devices").await
+        self.get_json("_cokret/self/devices").await
     }
 
     /// G3.Y1 — request a short-lived pairing challenge from soland.
-    /// `POST /api/v1/devices/pairing-challenge`. The current device is
+    /// `POST /_cokret/self/devices/pairing-challenge`. The current device is
     /// the one calling; the response carries an opaque challenge that
     /// the new sibling device folds into its QR payload before
     /// soliciting [`authorize_device_pairing`].
     pub async fn device_pairing_challenge(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/devices/pairing-challenge", body)
+        self.post_json("_cokret/self/devices/pairing-challenge", body)
             .await
     }
 
     /// G3.Y1 — finalize device pairing. The current device authorises
     /// the sibling device payload from the QR scan and registers it in
-    /// soland's device inventory. `POST /api/v1/devices/authorize-pairing`.
+    /// soland's device inventory. `POST /_cokret/self/devices/authorize-pairing`.
     pub async fn authorize_device_pairing(&self, body: Value) -> anyhow::Result<Value> {
-        self.post_json("api/v1/devices/authorize-pairing", body)
+        self.post_json("_cokret/self/devices/authorize-pairing", body)
             .await
     }
 
     pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustResponse> {
-        self.get_json("api/v1/devices/trust").await
+        self.get_json("_cokret/self/devices/trust").await
     }
 
     pub async fn verify_device(
@@ -2806,14 +2813,14 @@ impl CokretApi {
     ) -> anyhow::Result<VerifyDeviceResponse> {
         ensure_device_verification_proof_is_signed(&proof)?;
         self.post_json(
-            &format!("api/v1/devices/{device_id}/verify"),
+            &format!("_cokret/self/devices/{device_id}/verify"),
             json!({"method": method, "proof": proof}),
         )
         .await
     }
 
     pub async fn rotate_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsRotateResponse> {
-        self.post_json("api/v1/mls/rotate", json!({"group_id": group_id}))
+        self.post_json("_cokret/self/mls/rotate", json!({"group_id": group_id}))
             .await
     }
 
@@ -2826,7 +2833,7 @@ impl CokretApi {
         resource: &str,
     ) -> anyhow::Result<PolicyCheckResBody> {
         self.post_json(
-            "api/v1/policy/check",
+            "_cokret/self/policy/check",
             json!({"actor": actor, "action": action, "resource": resource}),
         )
         .await
@@ -2835,14 +2842,14 @@ impl CokretApi {
     // ── MIMI Provider Facade ─────────────────────────────────────
 
     pub async fn mimi_provider_directory(&self) -> anyhow::Result<MimiProviderDirectoryResBody> {
-        self.get_json("api/v1/mimi/provider-directory").await
+        self.get_json("_cokret/open/mimi/provider-directory").await
     }
 
     pub async fn mimi_key_material(
         &self,
         request: Value,
     ) -> anyhow::Result<MimiKeyMaterialResBody> {
-        self.post_json("api/v1/mimi/key-material", request).await
+        self.post_json("_cokret/open/mimi/key-material", request).await
     }
 
     pub async fn mimi_room_update(
@@ -2850,7 +2857,7 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiRoomUpdateResBody> {
-        self.put_json(&format!("api/v1/mimi/flows/{room_id}/update"), request)
+        self.put_json(&format!("_cokret/open/mimi/flows/{room_id}/update"), request)
             .await
     }
 
@@ -2859,7 +2866,7 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiNotifyResBody> {
-        self.post_json(&format!("api/v1/mimi/flows/{room_id}/notify"), request)
+        self.post_json(&format!("_cokret/open/mimi/flows/{room_id}/notify"), request)
             .await
     }
 
@@ -2868,28 +2875,28 @@ impl CokretApi {
         room_id: &str,
         request: Value,
     ) -> anyhow::Result<MimiSubmitMessageResBody> {
-        self.post_json(&format!("api/v1/mimi/flows/{room_id}/messages"), request)
+        self.post_json(&format!("_cokret/open/mimi/flows/{room_id}/messages"), request)
             .await
     }
 
     pub async fn mimi_group_info(&self, room_id: &str) -> anyhow::Result<MimiGroupInfoResBody> {
-        self.get_json(&format!("api/v1/mimi/flows/{room_id}/group-info"))
+        self.get_json(&format!("_cokret/open/mimi/flows/{room_id}/group-info"))
             .await
     }
 
     pub async fn mimi_request_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
-        self.post_json("api/v1/mimi/consent/request", request).await
+        self.post_json("_cokret/open/mimi/consent/request", request).await
     }
 
     pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiConsentResBody> {
-        self.post_json("api/v1/mimi/consent/update", request).await
+        self.post_json("_cokret/open/mimi/consent/update", request).await
     }
 
     pub async fn mimi_identifier_query(
         &self,
         request: Value,
     ) -> anyhow::Result<MimiIdentifierQueryResBody> {
-        self.post_json("api/v1/mimi/identifiers/query", request)
+        self.post_json("_cokret/open/mimi/identifiers/query", request)
             .await
     }
 
@@ -2897,14 +2904,14 @@ impl CokretApi {
         &self,
         request: Value,
     ) -> anyhow::Result<MimiReportAbuseResBody> {
-        self.post_json("api/v1/mimi/report-abuse", request).await
+        self.post_json("_cokret/open/mimi/report-abuse", request).await
     }
 
     pub async fn mimi_proxy_download(
         &self,
         request: Value,
     ) -> anyhow::Result<MimiProxyDownloadResBody> {
-        self.post_json("api/v1/mimi/proxy-download", request).await
+        self.post_json("_cokret/open/mimi/proxy-download", request).await
     }
 
     // ── Identity (extended) ─────────────────────────────────────────
@@ -2915,13 +2922,13 @@ impl CokretApi {
         operation: Value,
     ) -> anyhow::Result<SubmitDidOperationResBody> {
         self.post_json(
-            "api/v1/identity/submit-did-operation",
+            "_cokret/root/identity/submit-did-operation",
             json!({"did": did, "operation": operation}),
         )
         .await
     }
 
-    /// Round 4 (spec a77b995) — `GET /api/v1/events/frontier` as the
+    /// Round 4 (spec a77b995) — `GET /_cokret/self/events/frontier` as the
     /// `account_client` variant. Wire-breaking: the round-4
     /// `account_client` variant carries `peer_role`, `frontier`,
     /// `actor_seq_upper_bounds` ONLY — it does NOT include
@@ -2935,7 +2942,7 @@ impl CokretApi {
     pub async fn events_frontier_account_client(
         &self,
     ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientResponse> {
-        let body: Value = self.get_json("api/v1/events/frontier").await?;
+        let body: Value = self.get_json("_cokret/self/events/frontier").await?;
         let frontier: cokret_sdk::EventsFrontierAccountClientResponse =
             serde_json::from_value(body).map_err(|err| {
                 anyhow::anyhow!(
@@ -2956,7 +2963,7 @@ impl CokretApi {
     }
 
     pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResBody> {
-        self.get_json("api/v1/events/describe").await
+        self.get_json("_cokret/self/events/describe").await
     }
 
     /// H1 — return a cached `events_describe` body. The first call performs
@@ -2987,14 +2994,14 @@ impl CokretApi {
             .unwrap_or(false)
     }
 
-    /// Submit a typed [`EventEnvelope`] over `cx.events.submit`. The
+    /// Submit a typed [`EventEnvelope`] over `ck.events.submit`. The
     /// active-signer registry is the SINGLE source of detached JWS
     /// proofs — if no signer is installed this fails closed with
     /// `no active signer configured` rather than sending an unsigned
     /// or placeholder-signed envelope.
     ///
     /// For reducer-input event kinds, `anchor_ref` is auto-filled from
-    /// the current Realm anchor (`/api/v1/snapshot/head`) when the
+    /// the current Realm anchor (`/_cokret/self/snapshot/head`) when the
     /// caller did not supply one.
     pub async fn submit_event_envelope(
         &self,
@@ -3005,8 +3012,8 @@ impl CokretApi {
         // Real anchor_ref for reducer-input kinds. The simple heuristic
         // is: any envelope that already carries `effects[]` is a
         // reducer-input write and MUST point at the current Realm
-        // anchor head. Non-reducer kinds (cx.read_cursor.advance,
-        // cx.account_data.set, cx.account.blocklist, etc.) have no
+        // anchor head. Non-reducer kinds (ck.read_cursor.advance,
+        // ck.account_data.set, ck.account.blocklist, etc.) have no
         // effects and keep `anchor_ref: None`.
         if signed.anchor_ref.is_none() && !signed.effects.is_empty() {
             let anchor = self.current_anchor_for(&signed.realm_id).await?;
@@ -3031,14 +3038,14 @@ impl CokretApi {
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
         let value = serde_json::to_value(&signed)?;
-        let request = self.http.post(self.endpoint("api/v1/events")?).json(&value);
+        let request = self.http.post(self.endpoint("_cokret/self/events")?).json(&value);
         let request = self.with_write_request_headers(request, &idempotency_key);
         self.send_json_retryable(self.prepare_request(request), Method::POST)
             .await
     }
 
-    /// `cx.events.submit` in batch form over typed envelopes. Spec binds
-    /// events.submit to `POST /api/v1/events` and distinguishes the three
+    /// `ck.events.submit` in batch form over typed envelopes. Spec binds
+    /// events.submit to `POST /_cokret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
     /// [`cokret_sdk::EventsSubmitBatchRequest`],
     /// [`cokret_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
@@ -3093,7 +3100,7 @@ impl CokretApi {
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let value = serde_json::to_value(&body)?;
-        let request = self.http.post(self.endpoint("api/v1/events")?).json(&value);
+        let request = self.http.post(self.endpoint("_cokret/self/events")?).json(&value);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
@@ -3107,7 +3114,7 @@ impl CokretApi {
 
     /// Resolve the current anchor head for `realm_id` to be stamped onto
     /// outgoing reducer-input events as `anchor_ref`. Wraps
-    /// `GET /api/v1/snapshot/head?realm_id=...` and returns the
+    /// `GET /_cokret/self/snapshot/head?realm_id=...` and returns the
     /// `ck:anchor:sha256:<hex>` ref the server projects as the realm's
     /// head.
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
@@ -3126,12 +3133,12 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
-    /// canonical ephemeral channel (`POST /api/v1/ephemeral`) instead of the
-    /// durable `/api/v1/events` endpoint. The envelope MUST validate against
-    /// `cx.schema.ephemeral_envelope.v1` (kind in
-    /// {`cx.call.signal`, `cx.presence`, `cx.typing`, `cx.receipt.read`}, and
+    /// canonical ephemeral channel (`POST /_cokret/self/ephemeral`) instead of the
+    /// durable `/_cokret/self/events` endpoint. The envelope MUST validate against
+    /// `ck.schema.ephemeral_envelope.v1` (kind in
+    /// {`ck.call.signal`, `cx.presence`, `cx.typing`, `ck.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
-    /// signal kinds MUST NOT travel via `cx.events.submit`; this method is
+    /// signal kinds MUST NOT travel via `ck.events.submit`; this method is
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
@@ -3159,12 +3166,12 @@ impl CokretApi {
             );
         }
         let body = serde_json::to_value(envelope)?;
-        self.post_json("api/v1/ephemeral", body).await
+        self.post_json("_cokret/self/ephemeral", body).await
     }
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the
-    /// `cx.key.verification.*` family) MUST travel on the device-message
-    /// channel, NOT through `cx.events.submit` or the broadcast ephemeral
+    /// `ck.key.verification.*` family) MUST travel on the device-message
+    /// channel, NOT through `ck.events.submit` or the broadcast ephemeral
     /// channel. Thin convenience wrapper around
     /// [`Self::send_device_message_envelope`] that asserts the kind belongs
     /// to the to-device ephemeral family.
@@ -3176,9 +3183,9 @@ impl CokretApi {
         message_type: &str,
         content: Value,
     ) -> anyhow::Result<DeviceMessagesSendResBody> {
-        if !message_type.starts_with("cx.key.verification.") {
+        if !message_type.starts_with("ck.key.verification.") {
             anyhow::bail!(
-                "to-device ephemeral submit: message_type {message_type:?} is not in the cx.key.verification.* family"
+                "to-device ephemeral submit: message_type {message_type:?} is not in the ck.key.verification.* family"
             );
         }
         self.send_device_message_envelope(
@@ -3197,7 +3204,7 @@ impl CokretApi {
         &self,
         request: &IceConfigRequest,
     ) -> anyhow::Result<IceConfigResponse> {
-        self.post_json("cokret/v1/ice-config", serde_json::to_value(request)?)
+        self.post_json("_cokret/self/rtc/ice-config", serde_json::to_value(request)?)
             .await
     }
 
@@ -3209,42 +3216,42 @@ impl CokretApi {
     // `// TODO(P3-impl)` stubs.
     // ────────────────────────────────────────────────────────────────
 
-    /// `POST /auth/account/agent-key-pair` — `cx.account.agent_key_pair`.
+    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.account.agent_key_pair`.
     /// Authorizes a fresh agent runtime key pair against an agent
     /// principal.
     pub async fn agent_key_pair(
         &self,
         body: &AgentKeyPairReqBody,
     ) -> anyhow::Result<AgentKeyPairResBody> {
-        self.post_json("auth/account/agent-key-pair", serde_json::to_value(body)?)
+        self.post_json("_cokret/gate/account/agent-key-pair", serde_json::to_value(body)?)
             .await
     }
 
-    /// `POST /api/v1/agents` — `cx.agent.provision`. Provisions a new
+    /// `POST /_cokret/self/agents` — `ck.agent.provision`. Provisions a new
     /// personal agent: DID issuance + first agent key authorize +
     /// controller grant attach in one orchestrated request.
     pub async fn agent_provision(
         &self,
         body: &AgentProvisionReqBody,
     ) -> anyhow::Result<AgentResBody> {
-        self.post_json("api/v1/agents", serde_json::to_value(body)?)
+        self.post_json("_cokret/self/agents", serde_json::to_value(body)?)
             .await
     }
 
-    /// `GET /api/v1/agents` — `cx.agent.list`. Returns the
+    /// `GET /_cokret/self/agents` — `ck.agent.list`. Returns the
     /// controller-self list of agents (soland enforces caller binding).
     pub async fn agent_list(&self) -> anyhow::Result<AgentListResBody> {
-        self.get_json("api/v1/agents").await
+        self.get_json("_cokret/self/agents").await
     }
 
-    /// `GET /api/v1/agents/{id}` — `cx.agent.get`.
+    /// `GET /_cokret/self/agents/{id}` — `ck.agent.get`.
     pub async fn agent_get(&self, agent_principal_id: &str) -> anyhow::Result<AgentResBody> {
         let agent_principal_id = path_component(agent_principal_id);
-        self.get_json(&format!("api/v1/agents/{agent_principal_id}"))
+        self.get_json(&format!("_cokret/self/agents/{agent_principal_id}"))
             .await
     }
 
-    /// `POST /api/v1/agents/{id}/pause` — `cx.agent.pause` (durable
+    /// `POST /_cokret/self/agents/{id}/pause` — `ck.agent.pause` (durable
     /// reducer-input event). Auth Server flushes capability cache with
     /// reason `agent_paused`.
     pub async fn agent_pause(
@@ -3254,13 +3261,13 @@ impl CokretApi {
     ) -> anyhow::Result<AgentLifecycleResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/pause"),
+            &format!("_cokret/self/agents/{agent_principal_id}/pause"),
             serde_json::to_value(body)?,
         )
         .await
     }
 
-    /// `POST /api/v1/agents/{id}/resume` — `cx.agent.resume`.
+    /// `POST /_cokret/self/agents/{id}/resume` — `ck.agent.resume`.
     pub async fn agent_resume(
         &self,
         agent_principal_id: &str,
@@ -3268,15 +3275,15 @@ impl CokretApi {
     ) -> anyhow::Result<AgentLifecycleResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/resume"),
+            &format!("_cokret/self/agents/{agent_principal_id}/resume"),
             serde_json::to_value(body)?,
         )
         .await
     }
 
-    /// `POST /api/v1/agents/{id}/deactivate` — `cx.agent.deactivate`.
-    /// Triggers a cascade: `cx.agent.key.revoke` +
-    /// `cx.capability.revoke` + runtime endpoint revocation on the
+    /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.agent.deactivate`.
+    /// Triggers a cascade: `ck.agent.key.revoke` +
+    /// `ck.capability.revoke` + runtime endpoint revocation on the
     /// soland side. Destructive — callers MUST gate this on an
     /// explicit "DEACTIVATE" type-to-confirm dialog.
     pub async fn agent_deactivate(
@@ -3286,13 +3293,13 @@ impl CokretApi {
     ) -> anyhow::Result<AgentLifecycleResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/deactivate"),
+            &format!("_cokret/self/agents/{agent_principal_id}/deactivate"),
             serde_json::to_value(body)?,
         )
         .await
     }
 
-    /// `POST /api/v1/agents/{id}/rotate-key` — `cx.agent.rotate_key`.
+    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.agent.rotate_key`.
     /// Writes the `cx.agent.key.{revoke,authorize}` pair atomically.
     pub async fn agent_rotate_key(
         &self,
@@ -3301,13 +3308,13 @@ impl CokretApi {
     ) -> anyhow::Result<AgentRotateKeyResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/rotate-key"),
+            &format!("_cokret/self/agents/{agent_principal_id}/rotate-key"),
             serde_json::to_value(body)?,
         )
         .await
     }
 
-    /// `POST /api/v1/agents/{id}/grants` — `cx.agent.grant.attach`.
+    /// `POST /_cokret/self/agents/{id}/grants` — `ck.agent.grant.attach`.
     /// Attaches a capability grant scoped to the agent. `grant_kind`
     /// SHOULD be one of the 14 CXP-0008 capability actions.
     pub async fn agent_grant_attach(
@@ -3317,14 +3324,14 @@ impl CokretApi {
     ) -> anyhow::Result<AgentGrantResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/grants"),
+            &format!("_cokret/self/agents/{agent_principal_id}/grants"),
             serde_json::to_value(body)?,
         )
         .await
     }
 
-    /// `DELETE /api/v1/agents/{id}/grants/{grant_id}` —
-    /// `cx.agent.grant.detach`.
+    /// `DELETE /_cokret/self/agents/{id}/grants/{grant_id}` —
+    /// `ck.agent.grant.detach`.
     pub async fn agent_grant_detach(
         &self,
         agent_principal_id: &str,
@@ -3333,13 +3340,13 @@ impl CokretApi {
         let agent_principal_id = path_component(agent_principal_id);
         let grant_id = path_component(grant_id);
         self.delete_json(&format!(
-            "api/v1/agents/{agent_principal_id}/grants/{grant_id}"
+            "_cokret/self/agents/{agent_principal_id}/grants/{grant_id}"
         ))
         .await
     }
 
-    /// `POST /api/v1/agents/{id}/sidecar-thread/ensure` —
-    /// `cx.agent.sidecar_thread.ensure`. Idempotently derives the
+    /// `POST /_cokret/self/agents/{id}/sidecar-thread/ensure` —
+    /// `ck.agent.sidecar_thread.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
     /// between the controller and the native agent. Defaults
     /// `home_policy = "context_realm_preferred"` per CXP-0009 §3 / B-F.
@@ -3356,7 +3363,7 @@ impl CokretApi {
         }
         let agent_principal_id = path_component(agent_principal_id);
         self.post_json(
-            &format!("api/v1/agents/{agent_principal_id}/sidecar-thread/ensure"),
+            &format!("_cokret/self/agents/{agent_principal_id}/sidecar-thread/ensure"),
             serde_json::to_value(&body)?,
         )
         .await
@@ -3588,7 +3595,7 @@ fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
-/// fanout such as `cx.presence` / `cx.receipt.read`. 30 seconds is
+/// fanout such as `cx.presence` / `ck.receipt.read`. 30 seconds is
 /// comfortably below the 5-minute hard ceiling.
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
 const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
@@ -3634,7 +3641,7 @@ pub fn build_typing_envelope(
     .map_err(|err| anyhow::anyhow!("typing envelope rejected: {err}"))
 }
 
-/// Round R2/R3 (T02) — build a `cx.receipt.read` `EphemeralEnvelope`.
+/// Round R2/R3 (T02) — build a `ck.receipt.read` `EphemeralEnvelope`.
 pub fn build_receipt_read_envelope(
     realm_id: &str,
     actor_did: &str,
@@ -3644,11 +3651,11 @@ pub fn build_receipt_read_envelope(
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = scope_id_as_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.receipt.read: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
-        "cx.receipt.read",
+        "ck.receipt.read",
         realm,
         actor,
         None,
@@ -3656,7 +3663,7 @@ pub fn build_receipt_read_envelope(
         expires_at,
         json!({
             "receipt_type": "read",
-            "schema": "cx.schema.read_receipt.v1",
+            "schema": "ck.schema.read_receipt.v1",
             "realm_id": realm_id_wire,
             "actor_id": actor_did,
             "event_id": event_id,
@@ -3699,7 +3706,7 @@ pub fn build_presence_envelope(
     .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
 }
 
-/// Round 4 (spec a77b995) — build a `cx.call.signal` v2 `EphemeralEnvelope`.
+/// Round 4 (spec a77b995) — build a `ck.call.signal` v2 `EphemeralEnvelope`.
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical
@@ -3729,21 +3736,21 @@ pub fn build_call_signal_envelope_v1(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm = cokret_sdk::RealmId::new(realm_id)
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.call.signal: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
-        anyhow::bail!("cx.call.signal v2 requires non-empty device_id (round 4 schema_violation)");
+        anyhow::bail!("ck.call.signal v2 requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
         cokret_sdk::DeviceId::new(device_id)
-            .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))?,
+            .map_err(|err| anyhow::anyhow!("invalid device_id for ck.call.signal: {err}"))?,
     );
     if !cokret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
-        anyhow::bail!("cx.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
+        anyhow::bail!("ck.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
     let call = cokret_sdk::CallId::new(call_id)
-        .map_err(|err| anyhow::anyhow!("invalid call_id for cx.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid call_id for ck.call.signal: {err}"))?;
     let payload = cokret_sdk::CallSignalPayload {
         call_id: call,
         signal_type: signal_type.to_owned(),
@@ -3752,9 +3759,9 @@ pub fn build_call_signal_envelope_v1(
     };
     payload
         .validate_signal_type()
-        .map_err(|err| anyhow::anyhow!("cx.call.signal payload rejected: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ck.call.signal payload rejected: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
-        "cx.call.signal",
+        "ck.call.signal",
         realm,
         actor,
         device,
@@ -3820,7 +3827,7 @@ impl BlobPresignError {
 pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     let base = base_url.trim_end_matches('/');
     let blob_ref = query_component(canonical_blob_ref(blob_ref));
-    format!("{base}/api/v1/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
+    format!("{base}/_cokret/self/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
 }
 
 fn canonical_blob_ref(blob_ref: &str) -> &str {
@@ -3913,15 +3920,15 @@ pub fn build_realm_bootstrap_events(
     plaintext_visible_services: &[String],
 ) -> anyhow::Result<Vec<EventEnvelope>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
-    // by the reducer from `cx.realm.create`'s `created_by == actor_id`
+    // by the reducer from `ck.realm.create`'s `created_by == actor_id`
     // (renamed from `created_by_principal` at spec head 37ce729).
-    // The bootstrap MUST NOT emit an explicit `cx.member.state{join}` for
+    // The bootstrap MUST NOT emit an explicit `ck.member.state{join}` for
     // the creator — the reducer writes that cell atomically with the
     // create event.
     let mut events: Vec<EventEnvelope> = Vec::new();
     if history_visibility.trim() == "restricted" {
         return Err(anyhow::anyhow!(
-            "restricted history_visibility requires a cx.realm.history_sharing_policy event in the same ordered batch"
+            "restricted history_visibility requires a ck.realm.history_sharing_policy event in the same ordered batch"
         ));
     }
     let invitees = parse_realm_bootstrap_members(invitees)?;
@@ -3944,19 +3951,19 @@ pub fn build_realm_bootstrap_events(
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.realm.join_rule",
+        "ck.realm.join_rule",
         json!(join_rule),
     )?);
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.realm.history_visibility",
+        "ck.realm.history_visibility",
         json!(history_visibility),
     )?);
     events.push(build_space_state_event(
         space_id,
         actor_id,
-        "cx.realm.discovery",
+        "ck.realm.discovery",
         json!(discoverability),
     )?);
 
@@ -4003,18 +4010,18 @@ pub fn build_realm_create_event(
         };
     let realm_object_id = scope_id_as_realm_id(space_id);
     let envelope_realm_id = scope_id_as_realm_id(space_id);
-    let cell = space_cell("cx.component.realm.create.v1", &envelope_realm_id);
+    let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
     let mut object = json!({
         "id": realm_object_id,
-        "schema": "cx.schema.realm.v1",
+        "schema": "ck.schema.realm.v1",
         "title": title,
         "trust_domain": trust_domain,
         // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
         // `created_by_principal` → `created_by`. No serde alias —
         // aggressive migration.
         "created_by": actor_id,
-        "schema_refs": ["cx.schema.realm.v1"],
+        "schema_refs": ["ck.schema.realm.v1"],
         "default_discoverability": discoverability,
         "default_join_rule": join_rule,
         "history_visibility": history_visibility,
@@ -4041,7 +4048,7 @@ pub fn build_realm_create_event(
         object["plaintext_visible_services"] = Value::Array(plaintext_services);
     }
 
-    // cx.component.realm.create.v1 is a cas-register cell; the
+    // ck.component.realm.create.v1 is a cas-register cell; the
     // genesis write asserts head_eq null and sets the realm metadata.
     let preconditions = vec![Precondition {
         cell: cell.clone(),
@@ -4066,13 +4073,13 @@ pub fn build_realm_create_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(space_id, actor_id, "cx.realm.create")
+    let mut envelope = OperationBuilder::new(space_id, actor_id, "ck.realm.create")
         .target_ref(space_id)
         .body(json!({ "object": object }))
         .preconditions(preconditions)
         .effects(effects)
         .requirements(EventRequirements {
-            schema: vec!["cx.schema.realm.v1".to_owned()],
+            schema: vec!["ck.schema.realm.v1".to_owned()],
             reducer: None,
             features: Vec::new(),
             critical_extensions: Vec::new(),
@@ -4130,7 +4137,7 @@ fn derived_recovery_member_did(controller_or_actor: &str) -> String {
     format!("{}:recovery:anchorer", controller_or_actor.trim())
 }
 
-/// Build a `cx.space.create` event per spec realm-and-space.md §3.2.
+/// Build a `ck.space.create` event per spec realm-and-space.md §3.2.
 /// Space is the product-structure container (workspace / project /
 /// folder / board / list); it lives inside a Realm (`realm_id`) and
 /// has no membership / policy / E2EE of its own — all security
@@ -4149,7 +4156,7 @@ pub fn build_space_create_event(
     let created_at = event_timestamp();
     let mut object = json!({
         "id": space_id,
-        "schema": "cx.schema.space.v1",
+        "schema": "ck.schema.space.v1",
         "realm_id": scope_id_as_realm_id(realm_id),
         "kind": kind,
         "title": title,
@@ -4197,13 +4204,13 @@ pub fn build_space_create_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "cx.space.create")
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
         .target_ref(space_id)
         .body(json!({ "object": object }))
         .preconditions(preconditions)
         .effects(effects)
         .requirements(EventRequirements {
-            schema: vec!["cx.schema.space.v1".to_owned()],
+            schema: vec!["ck.schema.space.v1".to_owned()],
             reducer: None,
             features: Vec::new(),
             critical_extensions: Vec::new(),
@@ -4213,8 +4220,8 @@ pub fn build_space_create_event(
     Ok(envelope)
 }
 
-/// Build a Space lifecycle event (`cx.space.archive` /
-/// `cx.space.restore` / `cx.space.tombstone`) per spec
+/// Build a Space lifecycle event (`ck.space.archive` /
+/// `ck.space.restore` / `ck.space.tombstone`) per spec
 /// realm-and-space.md §3.4. All three write the new `state` value
 /// into the `cx.component.space.state.v1` cell on the home Realm via
 /// an FSM transition.
@@ -4225,14 +4232,14 @@ pub fn build_space_lifecycle_event(
     kind: &str,
 ) -> anyhow::Result<EventEnvelope> {
     let (prior_state, next_state) = match kind {
-        "cx.space.archive" => ("active", "archived"),
-        "cx.space.restore" => ("archived", "active"),
+        "ck.space.archive" => ("active", "archived"),
+        "ck.space.restore" => ("archived", "active"),
         // For tombstone, prior state may be either active or archived.
         // We assert via head_in {active, archived}, but the typed
         // helper only knows head_eq — so we model the explicit head_eq
         // against the most common source state (active). Reducer-side
         // FSM logic accepts the transition regardless of head form.
-        "cx.space.tombstone" => ("active", "tombstoned"),
+        "ck.space.tombstone" => ("active", "tombstoned"),
         other => {
             return Err(anyhow::anyhow!(
                 "unsupported Space lifecycle event kind {other}"
@@ -4274,8 +4281,8 @@ pub fn build_space_lifecycle_event(
     Ok(envelope)
 }
 
-/// Build a Realm facet state event (`cx.realm.join_rule`,
-/// `cx.realm.history_visibility`, `cx.realm.discovery`, ...).
+/// Build a Realm facet state event (`ck.realm.join_rule`,
+/// `ck.realm.history_visibility`, `ck.realm.discovery`, ...).
 pub fn build_space_state_event(
     space_id: &str,
     actor_id: &str,
@@ -4283,13 +4290,13 @@ pub fn build_space_state_event(
     value: Value,
 ) -> anyhow::Result<EventEnvelope> {
     let cell_family = match kind {
-        "cx.realm.join_rule" => "cx.component.realm.join_rule.v1",
-        "cx.realm.history_visibility" => "cx.component.realm.history_visibility.v1",
-        "cx.realm.history_sharing_policy" => "cx.component.realm.history_sharing_policy.v1",
-        "cx.realm.preview_policy" => "cx.component.realm.preview_policy.v1",
-        "cx.realm.discovery" => "cx.component.realm.discovery.v1",
-        "cx.realm.schema" => "cx.component.realm.schema.v1",
-        "cx.realm.policy_components" => "cx.component.realm.policy_components.v1",
+        "ck.realm.join_rule" => "ck.component.realm.join_rule.v1",
+        "ck.realm.history_visibility" => "ck.component.realm.history_visibility.v1",
+        "ck.realm.history_sharing_policy" => "ck.component.realm.history_sharing_policy.v1",
+        "ck.realm.preview_policy" => "ck.component.realm.preview_policy.v1",
+        "ck.realm.discovery" => "ck.component.realm.discovery.v1",
+        "ck.realm.schema" => "ck.component.realm.schema.v1",
+        "ck.realm.policy_components" => "ck.component.realm.policy_components.v1",
         other => {
             return Err(anyhow::anyhow!(
                 "unsupported Realm state event kind {other}"
@@ -4339,7 +4346,7 @@ pub fn build_realm_history_sharing_policy_event(
     build_space_state_event(
         space_id,
         actor_id,
-        "cx.realm.history_sharing_policy",
+        "ck.realm.history_sharing_policy",
         policy,
     )
 }
@@ -4349,10 +4356,10 @@ pub fn build_realm_preview_policy_event(
     actor_id: &str,
     policy: Value,
 ) -> anyhow::Result<EventEnvelope> {
-    build_space_state_event(space_id, actor_id, "cx.realm.preview_policy", policy)
+    build_space_state_event(space_id, actor_id, "ck.realm.preview_policy", policy)
 }
 
-/// Build a `cx.realm.plaintext_visible_services` event when the caller
+/// Build a `ck.realm.plaintext_visible_services` event when the caller
 /// supplies at least one service DID. Returns `None` when the input
 /// list is empty so the bootstrap chain can skip emission entirely.
 pub fn build_plaintext_visible_services_event(
@@ -4389,7 +4396,7 @@ pub fn build_plaintext_visible_services_event(
     let created_at = event_timestamp();
     let realm_id_wire = scope_id_as_realm_id(space_id);
     let cell = space_cell(
-        "cx.component.realm.plaintext_visible_services.v1",
+        "ck.component.realm.plaintext_visible_services.v1",
         &realm_id_wire,
     );
     let preconditions = vec![Precondition {
@@ -4419,7 +4426,7 @@ pub fn build_plaintext_visible_services_event(
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
     let mut envelope =
-        OperationBuilder::new(space_id, actor_id, "cx.realm.plaintext_visible_services")
+        OperationBuilder::new(space_id, actor_id, "ck.realm.plaintext_visible_services")
             .body(body_value)
             .preconditions(preconditions)
             .effects(effects)
@@ -4446,7 +4453,7 @@ fn build_member_state_event(
     )
 }
 
-/// Build a generic `cx.member.state` event on `cx.component.member.state.v1`,
+/// Build a generic `ck.member.state` event on `ck.component.member.state.v1`,
 /// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
 /// member ban, `null → join` invite-accept). `reason` shows up in the audit
 /// trail.
@@ -4523,7 +4530,7 @@ fn build_member_state_transition_event_with_binding(
     let realm_id_wire = scope_id_as_realm_id(realm_id);
     let cell = format!(
         "{}:{}",
-        space_cell("cx.component.member.state.v1", &realm_id_wire),
+        space_cell("ck.component.member.state.v1", &realm_id_wire),
         member_actor_id
     );
     let preconditions = if let Some(prior) = from_state {
@@ -4564,7 +4571,7 @@ fn build_member_state_transition_event_with_binding(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(realm_id, actor_id, "cx.member.state")
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.member.state")
         .target_ref(member_actor_id)
         .body(payload)
         .preconditions(preconditions)
@@ -4586,7 +4593,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
     format!("ck:cell:{cell_family}:{space_id}")
 }
 
-/// Build the canonical `cx.schema.device_message.v1` envelope:
+/// Build the canonical `ck.schema.device_message.v1` envelope:
 ///
 /// ```json
 /// {
@@ -4999,7 +5006,10 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
 }
 
 fn events_query_path(space_id: &str) -> String {
-    format!("api/v1/events?realms={}", query_component(space_id))
+    format!(
+        "_cokret/self/events/query?realms={}",
+        query_component(space_id)
+    )
 }
 
 // Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
@@ -5011,7 +5021,7 @@ fn events_subscribe_path(
     include_history: Option<bool>,
 ) -> String {
     let mut url = format!(
-        "api/v1/events/subscribe?realms={}",
+        "_cokret/self/events/subscribe?realms={}",
         query_component(space_id)
     );
     if let Some(after) = after {
@@ -5161,7 +5171,7 @@ fn select_join_candidate<'a>(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == "cx.events.submit")
+                .any(|op| op == "ck.events.submit")
         })
         .filter(|candidate| {
             candidate
@@ -5227,8 +5237,8 @@ mod tests {
     fn endpoint_join_keeps_api_paths_under_base_url() {
         let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
         assert_eq!(
-            api.endpoint("/api/v1/server/describe").unwrap().as_str(),
-            "http://127.0.0.1:8787/api/v1/server/describe"
+            api.endpoint("/_cokret/describe").unwrap().as_str(),
+            "http://127.0.0.1:8787/_cokret/describe"
         );
     }
 
@@ -5238,7 +5248,7 @@ mod tests {
             blob_download_url_for("http://127.0.0.1:8787/", "ck:blob:sha256:abcdef#image/png");
         assert_eq!(
             url,
-            "http://127.0.0.1:8787/api/v1/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
+            "http://127.0.0.1:8787/_cokret/self/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
         );
     }
 
@@ -5463,7 +5473,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(envelope.kind, "cx.receipt.read");
+        assert_eq!(envelope.kind, "ck.receipt.read");
         assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
         assert_eq!(
             envelope.realm_id.to_string(),
@@ -5474,7 +5484,7 @@ mod tests {
             envelope.payload["event_id"],
             "ck:event:01904100-0000-7000-8000-4a4116cba4e8"
         );
-        assert_eq!(envelope.payload["schema"], "cx.schema.read_receipt.v1");
+        assert_eq!(envelope.payload["schema"], "ck.schema.read_receipt.v1");
         assert!(
             !serde_json::to_value(&envelope)
                 .unwrap()
@@ -5493,7 +5503,7 @@ mod tests {
             "protocol_version": "1.0",
             "supported_profiles": [],
             "supported_features": ["account.subscribe"],
-            "supported_operations": ["cx.account.subscribe"],
+            "supported_operations": ["ck.account.subscribe"],
             "supported_bindings": [{"kind": "http_json"}],
             "auth_metadata": {},
             "limits": {"storage": "memory"},
@@ -5533,7 +5543,7 @@ mod tests {
                 }
             },
             "left_spaces": ["ck:space:left"],
-            "to_device": [{"type": "cx.mls.welcome"}],
+            "to_device": [{"type": "ck.mls.welcome"}],
             "account_data": [{"data_type": "client.ui", "content": {"theme": "system"}}],
             "device_lists": {"changed": [], "left": []},
             "notifications": {"events": []},
@@ -5593,13 +5603,13 @@ mod tests {
     #[test]
     fn event_paths_use_v1_query_parameters() {
         let backfill = events_query_path("ck:space:demo");
-        assert_eq!(backfill, "api/v1/events?realms=cx%3Aspace%3Ademo");
+        assert_eq!(backfill, "_cokret/self/events?realms=cx%3Aspace%3Ademo");
         assert!(!backfill.contains("direction="));
 
         let subscribe = events_subscribe_path("ck:space:demo", Some("ck:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
-            "api/v1/events/subscribe?realms=cx%3Aspace%3Ademo&after=cx%3Acursor%3Ademo&include_history=true"
+            "_cokret/self/events/subscribe?realms=cx%3Aspace%3Ademo&after=cx%3Acursor%3Ademo&include_history=true"
         );
         assert!(!subscribe.contains("&from="));
     }
@@ -5638,22 +5648,22 @@ mod tests {
             .collect::<Vec<_>>();
         // Spec realm-and-space.md §2.6: the creator-join cell is
         // populated atomically by the reducer when it accepts
-        // `cx.realm.create`. The bootstrap chain MUST NOT include an
-        // explicit `cx.member.state{join}` for the creator.
+        // `ck.realm.create`. The bootstrap chain MUST NOT include an
+        // explicit `ck.member.state{join}` for the creator.
         assert_eq!(
             kinds,
             vec![
-                "cx.realm.create",
-                "cx.realm.join_rule",
-                "cx.realm.history_visibility",
-                "cx.realm.discovery",
-                "cx.realm.plaintext_visible_services",
-                "cx.member.state",
+                "ck.realm.create",
+                "ck.realm.join_rule",
+                "ck.realm.history_visibility",
+                "ck.realm.discovery",
+                "ck.realm.plaintext_visible_services",
+                "ck.member.state",
             ]
         );
 
         let create = &events[0];
-        assert_eq!(create.payload["object"]["schema"], "cx.schema.realm.v1");
+        assert_eq!(create.payload["object"]["schema"], "ck.schema.realm.v1");
         // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
         // `created_by_principal` → `created_by`.
         assert_eq!(create.payload["object"]["created_by"], create.actor_id);
@@ -5680,7 +5690,7 @@ mod tests {
         );
         assert_eq!(
             create.effects[0].cell,
-            "ck:cell:cx.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(create.effects[0].op.kind, "set");
         // anchor_ref starts unset on the typed envelope. Realm genesis
@@ -5734,7 +5744,7 @@ mod tests {
         .unwrap();
         let member = events
             .iter()
-            .find(|event| event.kind == "cx.member.state")
+            .find(|event| event.kind == "ck.member.state")
             .expect("member state invite");
 
         assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
@@ -5764,7 +5774,7 @@ mod tests {
         )
         .expect("invite accept event");
 
-        assert_eq!(event.kind, "cx.member.state");
+        assert_eq!(event.kind, "ck.member.state");
         assert_eq!(
             event.realm_id,
             "ck:realm:0196419b-0000-7000-8000-000000000010"
@@ -5830,7 +5840,7 @@ mod tests {
         let event = OperationBuilder::new(
             "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx.flow.update",
+            "ck.flow.update",
         )
         .target_ref(flow_id)
         .body(payload)
@@ -5839,7 +5849,7 @@ mod tests {
         validate_outgoing_registered_payload(&event).unwrap();
     }
 
-    /// Contract test: cx.space.create payload must satisfy spec
+    /// Contract test: ck.space.create payload must satisfy spec
     /// space.schema.json — same validator soland runs on the wire.
     #[test]
     fn space_create_payload_matches_spec_schema() {
@@ -5865,7 +5875,7 @@ mod tests {
             && let Err(error) = catalog.validate_payload(&event.kind, &event.payload)
         {
             panic!(
-                "cx.space.create payload violates spec: {error}\npayload: {}",
+                "ck.space.create payload violates spec: {error}\npayload: {}",
                 serde_json::to_string_pretty(&event.payload).unwrap_or_default()
             );
         }
@@ -6204,7 +6214,7 @@ mod tests {
             .prepare_request(
                 api.with_write_request_headers(
                     api.http
-                        .post(api.endpoint("api/v1/events").unwrap())
+                        .post(api.endpoint("_cokret/self/events").unwrap())
                         .json(&json!({"body": "hello"})),
                     "req-123",
                 ),
@@ -6245,7 +6255,7 @@ mod tests {
                 malformed.with_write_request_headers(
                     malformed
                         .http
-                        .post(malformed.endpoint("api/v1/events").unwrap())
+                        .post(malformed.endpoint("_cokret/self/events").unwrap())
                         .json(&json!({"body": "hello"})),
                     "req-456",
                 ),
@@ -6266,7 +6276,7 @@ mod tests {
     }
 
     /// R3 — `build_device_message_envelope` MUST emit the canonical
-    /// `cx.schema.device_message.v1` shape:
+    /// `ck.schema.device_message.v1` shape:
     /// `{messages: {<actor>: {<device_id>: {type, content}}}}`. soland's
     /// reducer keys verification events by this exact path; if the wire
     /// shape drifts (extra wrapping, missing layer, etc.) device verification
@@ -6277,7 +6287,7 @@ mod tests {
         let envelope = build_device_message_envelope(
             "did:web:alice.example",
             "device-aaaa-1111",
-            "cx.key.verification.request",
+            "ck.key.verification.request",
             json!({
                 "method": "sas",
                 "transaction_id": "verify-001"
@@ -6289,7 +6299,7 @@ mod tests {
                 "messages": {
                     "did:web:alice.example": {
                         "device-aaaa-1111": {
-                            "type": "cx.key.verification.request",
+                            "type": "ck.key.verification.request",
                             "content": {
                                 "method": "sas",
                                 "transaction_id": "verify-001"
@@ -6302,7 +6312,7 @@ mod tests {
         );
     }
 
-    /// R3 — empty content is still a valid envelope. `cx.key.verification.done`
+    /// R3 — empty content is still a valid envelope. `ck.key.verification.done`
     /// for example carries only a transaction id; the test ensures we don't
     /// require a populated content map.
     #[test]
@@ -6310,11 +6320,11 @@ mod tests {
         let envelope = build_device_message_envelope(
             "did:web:bob.example",
             "device-bbbb-2222",
-            "cx.key.verification.done",
+            "ck.key.verification.done",
             json!({"transaction_id": "verify-done-001"}),
         );
         let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
-        assert_eq!(inner["type"], "cx.key.verification.done");
+        assert_eq!(inner["type"], "ck.key.verification.done");
         assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
     }
 

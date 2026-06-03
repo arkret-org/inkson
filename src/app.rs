@@ -6755,7 +6755,7 @@ pub fn RouterView() -> Element {
     // gate when no grants for the subject are loaded yet, so the existing
     // "trust the server" behavior is preserved until something hydrates
     // grants. The capability-grant hydrate path is a follow-up — once
-    // `cx.capability.grant` projection events ship, the post-login flow
+    // `ck.capability.grant` projection events ship, the post-login flow
     // will `engine.write().add_grant(...)` and the kanban Archive /
     // Restore buttons will start gating themselves.
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
@@ -7828,7 +7828,7 @@ pub fn RouterView() -> Element {
                         theme.set(next.clone());
                         state_store.write().save_private_data(&account_did(), "theme", next.clone());
                         // A4a — best-effort cross-device sync via
-                        // `cx.account_data.set(client.ui)`.
+                        // `ck.account_data.set(client.ui)`.
                         crate::views::settings::push_client_ui_account_data(
                             base_url(),
                             token(),
@@ -8402,7 +8402,7 @@ pub fn RouterView() -> Element {
                                 theme.set(next.clone());
                                 state_store.write().save_private_data(&account_did(), "theme", next.clone());
                                 // A4a — best-effort cross-device sync
-                                // via `cx.account_data.set(client.ui)`.
+                                // via `ck.account_data.set(client.ui)`.
                                 crate::views::settings::push_client_ui_account_data(
                                     base_url(),
                                     token(),
@@ -10783,7 +10783,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     }
                                     continue;
                                 }
-                                if data_type == "cx.account.blocklist" {
+                                if data_type == "ck.account.blocklist" {
                                     let Some(content) = entry.get("content") else {
                                         continue;
                                     };
@@ -10795,7 +10795,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                         }
                                         Err(error) => {
                                             tracing::warn!(
-                                                "ignoring malformed cx.account.blocklist account_data: {error}"
+                                                "ignoring malformed ck.account.blocklist account_data: {error}"
                                             );
                                         }
                                     }
@@ -11104,7 +11104,7 @@ fn is_realm_or_space_projection_id(id: &str) -> bool {
 fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
     // Classify Realm vs Space. Wire signals:
     // - `__kind` (yougen-local tag from optimistic save)
-    // - `schema` (server projection — cx.schema.realm.v1 vs cx.schema.space.v1)
+    // - `schema` (server projection — ck.schema.realm.v1 vs ck.schema.space.v1)
     // - parent links on legacy nested Space projections
     // Anything else (legacy) defaults to Realm because
     // pre-M-SPACE-CREATE-1 yougen could only create Realms.
@@ -11113,8 +11113,8 @@ fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
-        Some("realm") | Some("cx.schema.realm.v1") => SpacePreviewKind::Realm,
+        Some("space") | Some("ck.schema.space.v1") => SpacePreviewKind::Space,
+        Some("realm") | Some("ck.schema.realm.v1") => SpacePreviewKind::Realm,
         _ if id.starts_with("ck:space:") && extract_parent_space_id(id, body).is_some() => {
             SpacePreviewKind::Space
         }
@@ -11190,7 +11190,7 @@ fn projection_looks_like_flow(body: &Value) -> bool {
         || body.get("tracks").is_some()
         || matches!(
             body.get("kind").and_then(Value::as_str),
-            Some("cx.flow.create" | "discussion" | "flow")
+            Some("ck.flow.create" | "discussion" | "flow")
         )
         || matches!(
             body.get("summary")
@@ -11226,7 +11226,7 @@ pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec
         };
 
         for event in timeline_events {
-            if event.get("kind").and_then(Value::as_str) != Some("cx.message.create") {
+            if event.get("kind").and_then(Value::as_str) != Some("ck.message.create") {
                 continue;
             }
             let event_id = event
@@ -11363,7 +11363,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
             principal_server_url: "https://local.host".to_owned(),
-            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
             session_expires_at: Some(now + chrono::Duration::seconds(session_expires_in)),
             stored_at: now,
@@ -11871,14 +11871,14 @@ mod tests {
         spaces.insert(
             "ck:realm:root".to_owned(),
             json!({
-                "schema": "cx.schema.realm.v1",
+                "schema": "ck.schema.realm.v1",
                 "summary": {"title": "Root"}
             }),
         );
         spaces.insert(
             "ck:space:child".to_owned(),
             json!({
-                "schema": "cx.schema.space.v1",
+                "schema": "ck.schema.space.v1",
                 "realm_id": "ck:realm:root",
                 "summary": {"title": "Child"}
             }),

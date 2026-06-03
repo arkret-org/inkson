@@ -55,7 +55,7 @@ pub mod late_recovery;
 pub mod local_state;
 pub mod media;
 /// R3.1 (cokret-spec @ 7157ee8) — Realm-scoped
-/// `cx.member.identity.update` event store. Sync ingests inlined
+/// `ck.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`cokret_sdk::MemberIdentity`] via the SDK's
 /// replacement-edge filter helper. MLS decryption (MID-4) + proof

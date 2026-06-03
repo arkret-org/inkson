@@ -34,8 +34,8 @@ const DEMO_BOARD_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-00000000b0a0
 const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 
 /// F-KANBAN-LIVE-1: how often the board polls
-/// `/views/:id/projection` so another device's `cx.flow.move` /
-/// `cx.flow.reorder` / `cx.flow.update` shows up without a manual
+/// `/views/:id/projection` so another device's `ck.flow.move` /
+/// `ck.flow.reorder` / `ck.flow.update` shows up without a manual
 /// refresh. 5s matches soland's ephemeral fanout cadence — short
 /// enough to feel "live", long enough that a single user's tab
 /// doesn't hammer the server.
@@ -145,8 +145,8 @@ struct KanbanColumn {
     rank: String,
     cards: Vec<KanbanCard>,
     /// Space-container lifecycle state. `Active` is the wire default; `Archived` is set
-    /// optimistically after a successful `cx.space.archive` submit and reset
-    /// after `cx.space.restore`. Spec: `models/realm-and-space.md §4.4`
+    /// optimistically after a successful `ck.space.archive` submit and reset
+    /// after `ck.space.restore`. Spec: `models/realm-and-space.md §4.4`
     /// (post-R1.7 rename).
     /// `Tombstoned` is irreversible and modeled here for completeness but the
     /// UI currently has no tombstone affordance — server-only path.
@@ -167,9 +167,9 @@ enum SpaceContainerLifecycleState {
 struct KanbanCard {
     id: String,
     /// The card's current rank inside its column. This is the local
-    /// mirror of the `cx.component.flow.position.v1` cell's `rank`
+    /// mirror of the `ck.component.flow.position.v1` cell's `rank`
     /// field and seeds the `expected_position` of any subsequent
-    /// `cx.flow.move` / `cx.flow.reorder` Move. When the projection
+    /// `ck.flow.move` / `ck.flow.reorder` Move. When the projection
     /// refreshes (server-side cell update), this must be re-synced.
     rank: String,
     title: String,
@@ -269,7 +269,7 @@ struct LockedFlow {
 /// Snapshot of the card-being-dragged's pre-move state. The cas-register
 /// model in [`operations-sync.md` §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md)
 /// requires the source `(list_space_id, rank)` to seed `head_eq` on the
-/// resulting `cx.flow.move` / `cx.flow.reorder` Move. We capture it on
+/// resulting `ck.flow.move` / `ck.flow.reorder` Move. We capture it on
 /// `ondragstart` so the drop handler doesn't have to re-derive it from
 /// the column state (which may have been mutated optimistically in the
 /// meantime).
@@ -555,7 +555,7 @@ fn toast_editor_bootstrap_script(
             if (safeName) {{
                 headers["x-cokret-filename"] = safeName;
             }}
-            const response = await fetch(`${{base}}/api/v1/blob/upload`, {{
+            const response = await fetch(`${{base}}/_cokret/self/blob/upload`, {{
                 method: "POST",
                 headers,
                 body: blob
@@ -717,8 +717,8 @@ fn card_state_from_write_state(write_state: &str) -> CardState {
 /// Board write records track a Move pipeline submission. The Move's
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
-/// mirrors the MoveSubmissionState classifier (`cx.space.create` /
-/// `cx.flow.create` /
+/// mirrors the MoveSubmissionState classifier (`ck.space.create` /
+/// `ck.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`cokret_sdk::Move`] serialised to
@@ -1178,7 +1178,7 @@ fn card_from_projection_item(
         locked_flow,
         external_visibility,
         history_visibility,
-        activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
+        activity_hint: "Activity derived from ck.flow.move / ck.flow.update events.".to_owned(),
         audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
         security_encrypted: crate::security_state::flow_projection_security_state(&item.object),
         state: CardState::Synced,
@@ -1673,7 +1673,7 @@ fn card_from_flow_projection(
         locked_flow,
         external_visibility,
         history_visibility,
-        activity_hint: "Activity derived from cx.flow.move / cx.flow.update events.".to_owned(),
+        activity_hint: "Activity derived from ck.flow.move / ck.flow.update events.".to_owned(),
         audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
         security_encrypted: flow_projection_security_state(flow),
         state: CardState::Synced,
@@ -1715,7 +1715,7 @@ fn local_created_card(
         external_visibility: "Not shared externally".to_owned(),
         history_visibility: "board default".to_owned(),
         activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
-        audit_hint: "Write queued locally until cx.events.submit succeeds.".to_owned(),
+        audit_hint: "Write queued locally until ck.events.submit succeeds.".to_owned(),
         security_encrypted: None,
         state,
         lifecycle: FlowLifecycleState::Active,
@@ -1805,11 +1805,11 @@ fn space_create_operations_from_events(events: &[Value]) -> Vec<RawOperationReco
 }
 
 fn flow_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    raw_operation_from_event(event, "cx.flow.update")
+    raw_operation_from_event(event, "ck.flow.update")
 }
 
 fn space_create_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    raw_operation_from_event(event, "cx.space.create")
+    raw_operation_from_event(event, "ck.space.create")
 }
 
 fn raw_operation_from_event(event: &Value, expected_kind: &str) -> Option<RawOperationRecord> {
@@ -1913,7 +1913,7 @@ fn local_space_create_state_for_target(
     projected_space_container_ids: &BTreeSet<String>,
     target_id: &str,
 ) -> Option<CardState> {
-    let state = local_operation_state_for_target(raw_operations, "cx.space.create", target_id)?;
+    let state = local_operation_state_for_target(raw_operations, "ck.space.create", target_id)?;
     if projected_space_container_ids.contains(target_id) {
         Some(CardState::Synced)
     } else {
@@ -1929,7 +1929,7 @@ fn displayed_card_state(card: &KanbanCard, projected_flow_ids: &BTreeSet<String>
     }
 }
 
-/// Re-apply locally-queued `cx.flow.update` patches on top of the
+/// Re-apply locally-queued `ck.flow.update` patches on top of the
 /// server projection. Without this overlay, optimistic edits to a
 /// card's title / summary / body / fields would vanish on page reload
 /// because the server projection is refetched but the local mutation
@@ -1985,7 +1985,7 @@ fn local_card_update_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "cx.flow.update" {
+    if kind != "ck.flow.update" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -2184,7 +2184,7 @@ fn local_card_create_from_raw_operation(record: &RawOperationRecord) -> Option<L
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "cx.flow.create" {
+    if kind != "ck.flow.create" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -2237,7 +2237,7 @@ fn local_space_create_from_raw_operation(record: &RawOperationRecord) -> Option<
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "cx.space.create" {
+    if kind != "ck.space.create" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -2284,7 +2284,7 @@ fn flow_position_component(body: Option<&Value>) -> Option<&Value> {
         .as_array()?
         .iter()
         .find(|component| {
-            component.get("family").and_then(Value::as_str) == Some("cx.component.flow.position.v1")
+            component.get("family").and_then(Value::as_str) == Some("ck.component.flow.position.v1")
         })
 }
 
@@ -2697,7 +2697,7 @@ pub fn KanbanPanel(
 
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
-    // `/api/v1/views/:id/projection` when a View id is provided. Success
+    // `/_cokret/self/views/:id/projection` when a View id is provided. Success
     // promotes the board to ApiDerived; failure leaves the current server
     // projection / empty state in place with a status note.
     // The `bootstrapped` guard ensures we run this only once per mount —
@@ -2800,8 +2800,8 @@ pub fn KanbanPanel(
     });
 
     // F-KANBAN-LIVE-1: poll the projection endpoints every
-    // KANBAN_LIVE_POLL_SECONDS so another device's `cx.flow.create` /
-    // `cx.flow.move` / `cx.flow.reorder` / `cx.flow.update` lands in this
+    // KANBAN_LIVE_POLL_SECONDS so another device's `ck.flow.create` /
+    // `ck.flow.move` / `ck.flow.reorder` / `ck.flow.update` lands in this
     // client without a manual browser refresh. Account subscribe wakes on
     // durable events, but it does not yet carry the full lifecycle Flow
     // projection that the Kanban board renders, so the board refreshes the
@@ -2972,7 +2972,7 @@ pub fn KanbanPanel(
     });
 
     // Hydrate Space-container / Flow lifecycle state from the soland
-    // `/api/v1/projection/{spaces|flows}` endpoints so
+    // `/_cokret/self/projection/{spaces|flows}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -3485,7 +3485,7 @@ pub fn KanbanPanel(
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
                                         // visible immediately but remains in sending/failed state
-                                        // until `cx.events.submit` returns.
+                                        // until `ck.events.submit` returns.
                                         let base = base_url.clone();
                                         let space = selected_space.clone();
                                         let actor = account_did.clone();
@@ -3668,7 +3668,7 @@ pub fn KanbanPanel(
                                         "data-testid": "board-projection-refresh",
                                         onclick: {
                                             // T20 — real API call to soland's
-                                            // POST /api/v1/views/:id/projection. Demo seed is
+                                            // POST /_cokret/self/views/:id/projection. Demo seed is
                                             // opt-in so normal boards never show fake cards.
                                             let base = base_url.clone();
                                             let onclick_lifecycle_realm_id = local_realm_id.clone();
@@ -4200,10 +4200,10 @@ pub fn KanbanPanel(
                                             &account_did,
                                             &selected_space,
                                             &card.id,
-                                            "cx.flow.archive",
+                                            "ck.flow.archive",
                                         );
                                         let title_text = if gate.enabled {
-                                            "Archive this card (cx.flow.archive)".to_owned()
+                                            "Archive this card (ck.flow.archive)".to_owned()
                                         } else {
                                             format!("Archive gated: {}", gate.reason)
                                         };
@@ -4265,7 +4265,7 @@ pub fn KanbanPanel(
                                         "aria-label": "Save card",
                                         onclick: {
                                             // Card create submits a real
-                                            // cx.flow.create envelope. The
+                                            // ck.flow.create envelope. The
                                             // initial Board/List placement
                                             // rides in the flow.position
                                             // component so the projection can
@@ -4324,7 +4324,7 @@ pub fn KanbanPanel(
                                                     space.clone(),
                                                     actor.clone(),
                                                     flow_id.clone(),
-                                                    "cx.flow.create",
+                                                    "ck.flow.create",
                                                     value,
                                                     selected_scope_security_encrypted,
                                                     columns,
@@ -4369,10 +4369,10 @@ pub fn KanbanPanel(
                                 &account_did,
                                 &selected_space,
                                 &column.id,
-                                "cx.space.archive",
+                                "ck.space.archive",
                             );
                             let title_text = if gate.enabled {
-                                "Archive this list (cx.space.archive)".to_owned()
+                                "Archive this list (ck.space.archive)".to_owned()
                             } else {
                                 format!("Archive gated: {}", gate.reason)
                             };
@@ -4416,9 +4416,9 @@ pub fn KanbanPanel(
             }
 
             // Archived lists panel — container Space lifecycle `archived` state.
-            // Lists appear here after `cx.space.archive` is accepted and
+            // Lists appear here after `ck.space.archive` is accepted and
             // are removed from the main board-grid above. Each row carries
-            // a Restore button that submits `cx.space.restore` (SDK reducer
+            // a Restore button that submits `ck.space.restore` (SDK reducer
             // enforces `state == archived` server-side / next sync).
             {
                 let archived: Vec<KanbanColumn> = columns()
@@ -4449,10 +4449,10 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_space,
                                                 &column.id,
-                                                "cx.space.restore",
+                                                "ck.space.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this list (cx.space.restore)".to_owned()
+                                                "Restore this list (ck.space.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -4498,10 +4498,10 @@ pub fn KanbanPanel(
             }
 
             // Archived cards drawer — Flow lifecycle `archived` state.
-            // Cards appear here after `cx.flow.archive` is accepted and
+            // Cards appear here after `ck.flow.archive` is accepted and
             // are removed from the column above. Each row carries the
             // column title (where it came from) + a Restore button that
-            // submits `cx.flow.restore` (SDK reducer enforces
+            // submits `ck.flow.restore` (SDK reducer enforces
             // `state == archived` per common-fields.md §5.1).
             {
                 #[derive(Clone)]
@@ -4555,10 +4555,10 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_space,
                                                 &row.card.id,
-                                                "cx.flow.restore",
+                                                "ck.flow.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this card (cx.flow.restore)".to_owned()
+                                                "Restore this card (ck.flow.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -4908,9 +4908,9 @@ pub fn KanbanPanel(
                                                                 FlowLifecycleState::Archived
                                                             };
                                                             let action = if target == FlowLifecycleState::Archived {
-                                                                "cx.flow.archive"
+                                                                "ck.flow.archive"
                                                             } else {
-                                                                "cx.flow.restore"
+                                                                "ck.flow.restore"
                                                             };
                                                             let gate = capability_gate_for_flow(
                                                                 &capability_engine,
@@ -5851,7 +5851,7 @@ pub fn KanbanPanel(
                                                                         let did = row.actor_id.clone();
                                                                         // R3.1 MID-6 — pull the resolved
                                                                         // MemberIdentity from the
-                                                                        // `cx.member.identity.update` event
+                                                                        // `ck.member.identity.update` event
                                                                         // store. `None` means either no
                                                                         // identity event has been observed
                                                                         // yet, or every effective event is
@@ -6013,11 +6013,11 @@ fn find_card_by_flow_id(columns: &[KanbanColumn], flow_id: &str) -> Option<Kanba
 /// handle / display fields. Identity resolution happens by following
 /// `identity_event_ids[]` (or inline `identity_events[]`) and applying
 /// the SDK's `effective_identity_events` helper. Handle strings only ever
-/// appear inside signed `cx.schema.handle_claim.v1` evidence.
+/// appear inside signed `ck.schema.handle_claim.v1` evidence.
 ///
 /// `actor_id` is the actor DID. `membership` is `join` / `invite` /
 /// `knock`. `identity_event_ids` are the effective
-/// `cx.member.identity.update` event ids (after replacement edges).
+/// `ck.member.identity.update` event ids (after replacement edges).
 /// `member_display_state_digest` is the roster display cache key (R3.2
 /// rename of the prior `identity_state_digest`; now folds the visible
 /// handle-claim digest set). `subject_id` is the disclosed principal DID
@@ -6924,7 +6924,7 @@ fn patch_touches_private_paths(payload: &Value, private_paths: &[&str]) -> bool 
 
 fn kanban_event_carries_plaintext_private_content(event: &crate::operation::EventEnvelope) -> bool {
     match event.kind.as_str() {
-        "cx.flow.create" => [
+        "ck.flow.create" => [
             &["body"][..],
             &["object", "body"][..],
             &["synthesis"][..],
@@ -6942,7 +6942,7 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
         .any(|path| {
             value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
         }),
-        "cx.flow.update" => {
+        "ck.flow.update" => {
             patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_FLOW_PATCH_PATHS)
         }
         _ => false,
@@ -6951,7 +6951,7 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
 
 /// Event kinds that carry ONLY non-secret structural metadata (container
 /// title / kind / parent / rank) and therefore MUST submit to the server as
-/// plaintext even inside an encrypted Realm. Container creation (`cx.space.create`
+/// plaintext even inside an encrypted Realm. Container creation (`ck.space.create`
 /// for Board and List) is the canonical example: a second device needs the
 /// plaintext title to render the Board/List name instead of falling back to
 /// `generated_board_fallback_title` (`ck:space:...`). Only Flow card private
@@ -6960,7 +6960,7 @@ fn kanban_event_carries_plaintext_private_content(event: &crate::operation::Even
 /// guarantees the plaintext-block decision can never silently drop a container
 /// create, regardless of what `kanban_event_carries_plaintext_private_content`
 /// matches in the future. See _next.md X13.
-const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["cx.space.create"];
+const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ck.space.create"];
 
 fn kanban_plaintext_block_reason(
     scope_security_encrypted: bool,
@@ -7079,7 +7079,7 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.due = display_optional_card_field(&draft.due);
     card.state = CardState::Queued;
     card.activity_hint = "Local card update pending server sync.".to_owned();
-    card.audit_hint = "Card detail edit submitted as cx.flow.update payload.patch.".to_owned();
+    card.audit_hint = "Card detail edit submitted as ck.flow.update payload.patch.".to_owned();
 }
 
 fn kanban_private_patch_path(path: &str) -> bool {
@@ -7297,7 +7297,7 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
     .map_err(|err| err.user_message())
 }
 
-/// Build the `cx.mls.genesis` [`EventEnvelope`] for a creator group that has a
+/// Build the `ck.mls.genesis` [`EventEnvelope`] for a creator group that has a
 /// local snapshot but whose genesis has not yet been submitted to soland.
 ///
 /// Returns `None` when genesis was already emitted for this space (idempotent —
@@ -7412,8 +7412,8 @@ fn kanban_mls_commit_event_from_store(
 }
 
 /// The MLS events an encrypted write must submit, in submit order: the
-/// one-time `cx.mls.genesis` (if not yet emitted) MUST precede the
-/// `cx.mls.commit` so the server has the group at epoch 0 before the commit
+/// one-time `ck.mls.genesis` (if not yet emitted) MUST precede the
+/// `ck.mls.commit` so the server has the group at epoch 0 before the commit
 /// bumps it to 1.
 #[derive(Default, Debug)]
 struct EncryptedWriteMlsEvents {
@@ -8026,12 +8026,12 @@ fn replace_kanban_board_url(space_id: &str, board_id: &str) {
     let _ = document::eval(&script);
 }
 
-/// Build + sign + submit a `cx.component.flow.position.v1` Move via
+/// Build + sign + submit a `ck.component.flow.position.v1` Move via
 /// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
 /// queue regardless of submit outcome. Used by both list and card create
 /// paths - `subject` is the cell subject (Space-container id or Flow id), `kind` is
 /// the classifier the MoveSubmissionState tracker uses to decorate state
-/// pills (`cx.space.create` / `cx.flow.create`).
+/// pills (`ck.space.create` / `ck.flow.create`).
 fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
@@ -8071,7 +8071,7 @@ fn submit_kanban_operation_event(
     // `navigator.replace(...)` to route to the new board IMMEDIATELY after
     // calling this — a `spawn`-ed task is tied to the current component scope
     // and gets dropped/cancelled when that route change unmounts the panel,
-    // so the `cx.space.create` POST never left the client (board stuck
+    // so the `ck.space.create` POST never left the client (board stuck
     // `write_state:"queued"`, never reaching the server → other devices saw a
     // nameless `ck:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
     // the task so the submit completes regardless of navigation/unmount.
@@ -8179,9 +8179,9 @@ fn submit_column_order_updates(
 }
 
 /// Build + submit a Kanban event and record it in the board write queue.
-/// Card creates emit real `cx.flow.create` envelopes with an initial
-/// `cx.component.flow.position.v1` component; legacy metadata writes still
-/// go through the compatibility `cx.flow.update` patch helper.
+/// Card creates emit real `ck.flow.create` envelopes with an initial
+/// `ck.component.flow.position.v1` component; legacy metadata writes still
+/// go through the compatibility `ck.flow.update` patch helper.
 fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -8202,7 +8202,7 @@ fn submit_kanban_move(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
-    let envelope = if kind == "cx.flow.create" {
+    let envelope = if kind == "ck.flow.create" {
         let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
             board_status.set("cannot create card: missing board_space_id".to_owned());
             return;
@@ -8248,8 +8248,8 @@ fn submit_kanban_move(
         .get("board_space_id")
         .and_then(Value::as_str)
         .map(|board_space_id| flow_position_cell_id(board_space_id, &subject))
-        .unwrap_or_else(|| format!("ck:cell:cx.component.flow.position.v1:{subject}"));
-    let effect_summary = if kind == "cx.flow.create" {
+        .unwrap_or_else(|| format!("ck:cell:ck.component.flow.position.v1:{subject}"));
+    let effect_summary = if kind == "ck.flow.create" {
         serde_json::to_string(&envelope.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
@@ -8262,7 +8262,7 @@ fn submit_kanban_move(
         effect_summary: effect_summary.clone(),
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
-        note: format!("submitting {wire_kind} event via cx.events.submit"),
+        note: format!("submitting {wire_kind} event via ck.events.submit"),
         signed_move_json: None,
         rebase_attempts: 0,
     };
@@ -8368,9 +8368,9 @@ struct ColumnNeighbours {
 ///
 /// Spec mapping ([views.md §2.6](../../cokret-spec/spec/v1/zh/models/views.md)):
 ///
-/// - Cross-column drop ⇒ `cx.flow.move` Event kind.
-/// - Same-column drop ⇒ `cx.flow.reorder`.
-/// - Both compile to the same `ck:cell:cx.component.flow.position.v1:<board>:<flow>` cas-register
+/// - Cross-column drop ⇒ `ck.flow.move` Event kind.
+/// - Same-column drop ⇒ `ck.flow.reorder`.
+/// - Both compile to the same `ck:cell:ck.component.flow.position.v1:<board>:<flow>` cas-register
 ///   cell; the difference is whether `effect.list_space_id` equals `expected.list_space_id`.
 fn dispatch_flow_position_move(
     base_url: String,
@@ -8406,7 +8406,7 @@ fn dispatch_flow_position_move(
         Ok(r) => r,
         Err(RankError::Exhausted) => {
             board_status.set(
-                "rank exhausted between neighbours — request cx.container.rebalance before retrying"
+                "rank exhausted between neighbours — request ck.container.rebalance before retrying"
                     .to_owned(),
             );
             return;
@@ -8417,7 +8417,7 @@ fn dispatch_flow_position_move(
         }
     };
     // Show the move immediately as `sending...`; it is not marked
-    // accepted until the server returns from cx.events.submit.
+    // accepted until the server returns from ck.events.submit.
     let card_opt = {
         let mut cols = columns.write();
         relocate_card(
@@ -8441,9 +8441,9 @@ fn dispatch_flow_position_move(
         rank: new_rank.clone(),
     };
     let kind = if dragged.from_column_id == target_column_id {
-        "cx.flow.reorder"
+        "ck.flow.reorder"
     } else {
-        "cx.flow.move"
+        "ck.flow.move"
     };
     submit_flow_position_cas_move(
         base_url,
@@ -8557,7 +8557,7 @@ fn capability_gate_for_flow(
     engine.read().ui_gate(actor, action, &resource, &ctx)
 }
 
-/// Dispatch a `cx.space.archive` or `cx.space.restore` operation against
+/// Dispatch a `ck.space.archive` or `ck.space.restore` operation against
 /// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
 /// `models/realm-and-space.md §4.4` (post-R1.7 rename). Soland's lifecycle
@@ -8668,7 +8668,7 @@ fn validate_flow_lifecycle_transition(
     Ok(())
 }
 
-/// Dispatch `cx.flow.archive` or `cx.flow.restore` for a card and
+/// Dispatch `ck.flow.archive` or `ck.flow.restore` for a card and
 /// mark its `FlowLifecycleState` pending locally. Mirrors
 /// `dispatch_space_container_lifecycle` but at the Flow object layer. Spec:
 /// `flow-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
@@ -8809,7 +8809,7 @@ fn set_card_state_in_columns(
     }
 }
 
-/// Build, sign, and submit a `cx.flow.move` / `cx.flow.reorder` CAS
+/// Build, sign, and submit a `ck.flow.move` / `ck.flow.reorder` CAS
 /// Move via the new spec-compliant builder. Tracks the submission in
 /// `write_records` and, on failed precondition, kicks off automatic
 /// rebase via [`rebase_flow_position_after_conflict`] up to
@@ -8925,7 +8925,7 @@ fn submit_flow_position_cas_move_with_attempt(
         anchor_ref: anchor_ref.clone(),
         hlc: hlc.clone(),
         note: if attempt == 0 {
-            format!("submitting {kind} via cx.events.submit")
+            format!("submitting {kind} via ck.events.submit")
         } else {
             format!("rebase attempt {attempt} of {kind}")
         },
@@ -9152,12 +9152,12 @@ fn rebase_flow_position_after_conflict(
         };
         // The static lifetime requirement on `kind` is satisfied by
         // mapping the dynamic String back to one of the known
-        // classifiers. Anything else falls through to cx.flow.move
+        // classifiers. Anything else falls through to ck.flow.move
         // because that's the spec wire shape for drag operations.
         let kind_static: &'static str = match kind.as_str() {
-            "cx.flow.reorder" => "cx.flow.reorder",
-            "cx.flow.move" => "cx.flow.move",
-            _ => "cx.flow.move",
+            "ck.flow.reorder" => "ck.flow.reorder",
+            "ck.flow.move" => "ck.flow.move",
+            _ => "ck.flow.move",
         };
         submit_flow_position_cas_move_with_attempt(
             base_url,
@@ -9229,10 +9229,10 @@ fn replay_first_move(
     if let Some(record) = write_records.write().get_mut(idx) {
         record.state = CardState::Quarantined;
         record.note =
-            "replay via cx.events.submit not yet wired; quarantining for manual review".to_owned();
+            "replay via ck.events.submit not yet wired; quarantining for manual review".to_owned();
     }
     board_status.set(
-        "replay not available — write quarantined (TODO: rebuild cx.flow.update envelope)"
+        "replay not available — write quarantined (TODO: rebuild ck.flow.update envelope)"
             .to_owned(),
     );
 }
@@ -9283,7 +9283,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
                 activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
-                audit_hint: "Audit records cx.flow.track.member and cx.message.create without granting discussion access.".to_owned(),
+                audit_hint: "Audit records cx.flow.track.member and ck.message.create without granting discussion access.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,
@@ -9348,7 +9348,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 external_visibility: "Internal discussions only".to_owned(),
                 history_visibility: "restricted history".to_owned(),
                 activity_hint: "Conflict banner links to the reducer result and competing event.".to_owned(),
-                audit_hint: "Audit trail preserves rejected cx.flow.move with cas_conflict.".to_owned(),
+                audit_hint: "Audit trail preserves rejected ck.flow.move with cas_conflict.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Conflict,
                 lifecycle: FlowLifecycleState::Active,
@@ -9673,7 +9673,7 @@ mod tests {
     }
 
     /// Wire state strings emitted by soland's
-    /// `/api/v1/projection/{spaces|flows}` round-trip into the
+    /// `/_cokret/self/projection/{spaces|flows}` round-trip into the
     /// renderer enums. Unknown values stay at the safe `Active` default.
     #[test]
     fn lifecycle_wire_strings_decode_to_enums() {
@@ -9965,7 +9965,7 @@ mod tests {
     #[test]
     fn flow_body_display_text_reads_content_block_body() {
         let body = json!({
-            "kind": "cx.content.text",
+            "kind": "ck.content.text",
             "body": "Long-form flow body"
         });
 
@@ -9976,8 +9976,8 @@ mod tests {
     fn flow_body_display_text_reads_nested_blocks() {
         let body = json!({
             "blocks": [
-                { "kind": "cx.content.text", "body": "First block" },
-                { "kind": "cx.content.text", "text": "Second block" }
+                { "kind": "ck.content.text", "body": "First block" },
+                { "kind": "ck.content.text", "text": "Second block" }
             ]
         });
 
@@ -10020,7 +10020,7 @@ mod tests {
         // Plain content blocks are NOT envelopes — unencrypted realms must
         // pay nothing and render as-is.
         assert!(!value_is_mls_envelope(&json!({
-            "kind": "cx.content.text",
+            "kind": "ck.content.text",
             "body": "plain body",
         })));
         assert!(!value_is_mls_envelope(&json!("just a string")));
@@ -10028,7 +10028,7 @@ mod tests {
 
     #[test]
     fn private_flow_display_text_passes_plaintext_through_without_ctx() {
-        let plain = json!({ "kind": "cx.content.text", "body": "plain body" });
+        let plain = json!({ "kind": "ck.content.text", "body": "plain body" });
         // No decrypt ctx, non-envelope value → renders the plaintext as-is.
         assert_eq!(private_flow_display_text(None, Some(&plain)), "plain body");
         // Missing value → blank.
@@ -10198,7 +10198,7 @@ mod tests {
                             "title": "Legal review",
                             "summary": "ensure GDPR sign-off",
                             "body": {
-                                "kind": "cx.content.text",
+                                "kind": "ck.content.text",
                                 "body": "Review processor wording before beta."
                             },
                         }),
@@ -10283,7 +10283,7 @@ mod tests {
         let events = vec![json!({
             "event_id": "ck:event:0196419b-0000-7000-8000-00000000f003",
             "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f003",
-            "event_kind": "cx.flow.update",
+            "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
             "space_id": TEST_REALM_ID,
@@ -10380,12 +10380,12 @@ mod tests {
                 space_id: Some(realm_id.to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "cx.space.create",
+                    "kind": "ck.space.create",
                     "operation_id": "sha256:local-board-create",
                     "body": {
                         "object": {
                             "id": board_id,
-                            "schema": "cx.schema.space.v1",
+                            "schema": "ck.schema.space.v1",
                             "realm_id": realm_id,
                             "kind": "board",
                             "title": "Design board"
@@ -10399,12 +10399,12 @@ mod tests {
                 space_id: Some(realm_id.to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "cx.space.create",
+                    "kind": "ck.space.create",
                     "operation_id": "sha256:local-list-create",
                     "body": {
                         "object": {
                             "id": list_id,
-                            "schema": "cx.schema.space.v1",
+                            "schema": "ck.schema.space.v1",
                             "realm_id": realm_id,
                             "kind": "list",
                             "title": "Todo",
@@ -10442,14 +10442,14 @@ mod tests {
         let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
         let events = vec![json!({
             "event_id": "ck:event:0196419b-0000-7000-8000-000000000101",
-            "event_kind": "cx.space.create",
+            "event_kind": "ck.space.create",
             "realm_id": realm_id,
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-31T00:00:00Z",
             "payload": {
                 "object": {
                     "id": board_id,
-                    "schema": "cx.schema.space.v1",
+                    "schema": "ck.schema.space.v1",
                     "realm_id": realm_id,
                     "kind": "board",
                     "title": "Board"
@@ -10492,12 +10492,12 @@ mod tests {
             space_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "cx.space.create",
+                "kind": "ck.space.create",
                 "operation_id": "sha256:local-board-create",
                 "body": {
                     "object": {
                         "id": board_id,
-                        "schema": "cx.schema.space.v1",
+                        "schema": "ck.schema.space.v1",
                         "kind": "board",
                         "title": "Design board"
                     }
@@ -10555,7 +10555,7 @@ mod tests {
             title: "Persisted card".to_owned(),
             summary: Some("Loaded from projection".to_owned()),
             body: Some(json!({
-                "kind": "cx.content.text",
+                "kind": "ck.content.text",
                 "body": "Projection body content"
             })),
             board_space_id: Some(board_id.to_owned()),
@@ -10624,7 +10624,7 @@ mod tests {
             space_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "cx.flow.create",
+                "kind": "ck.flow.create",
                 "operation_id": "sha256:local-create",
                 "effect": {
                     "flow_id": flow_id,
@@ -10695,7 +10695,7 @@ mod tests {
         let events = vec![json!({
             "event_id": "ck:event:0196419b-0000-7000-8000-00000000f001",
             "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f001",
-            "event_kind": "cx.flow.update",
+            "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
             "space_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
@@ -10759,7 +10759,7 @@ mod tests {
         let events = vec![json!({
             "event_id": "ck:event:0196419b-0000-7000-8000-00000000f002",
             "operation_id": "ck:operation:0196419b-0000-7000-8000-00000000f002",
-            "event_kind": "cx.flow.update",
+            "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
             "space_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
@@ -10865,7 +10865,7 @@ mod tests {
 
         assert!(kanban_event_carries_plaintext_private_content(&event));
         let reason = kanban_plaintext_block_reason(true, &event).unwrap();
-        assert!(reason.contains("Encrypted Realm blocks plaintext cx.flow.update"));
+        assert!(reason.contains("Encrypted Realm blocks plaintext ck.flow.update"));
         assert!(kanban_plaintext_block_reason(false, &event).is_none());
     }
 
@@ -10986,11 +10986,11 @@ mod tests {
         );
         assert!(mls_events.commit.is_some());
         // A freshly-created creator group must also produce a one-time
-        // cx.mls.genesis event (submitted before the commit).
+        // ck.mls.genesis event (submitted before the commit).
         let genesis = mls_events
             .genesis
             .expect("freshly-created creator group should emit genesis");
-        assert_eq!(genesis.kind, "cx.mls.genesis");
+        assert_eq!(genesis.kind, "ck.mls.genesis");
         assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
         assert_eq!(
             genesis.payload["creator_principal_id"].as_str(),
@@ -11064,7 +11064,7 @@ mod tests {
         let commit = mls_events
             .commit
             .expect("ready MLS snapshot should emit commit event");
-        assert_eq!(commit.kind, "cx.mls.commit");
+        assert_eq!(commit.kind, "ck.mls.commit");
         assert_registered_payload_valid(&commit);
         assert!(commit.payload.get("group_id").is_none());
         assert!(commit.payload.get("expected_prev_epoch").is_none());
@@ -11128,7 +11128,7 @@ mod tests {
         )
         .build("yougen");
 
-        assert_eq!(event.kind, "cx.flow.update");
+        assert_eq!(event.kind, "ck.flow.update");
         assert!(!kanban_event_carries_plaintext_private_content(&event));
         assert!(kanban_plaintext_block_reason(true, &event).is_none());
     }
@@ -11161,10 +11161,10 @@ mod tests {
     }
 
     /// X13 regression: in an encrypted scope, container creation
-    /// (`cx.space.create` for BOTH board and list) MUST NOT be blocked — the
+    /// (`ck.space.create` for BOTH board and list) MUST NOT be blocked — the
     /// title/kind/parent/rank are non-secret metadata that has to reach the
     /// server so a second device can render the real Board/List name. By
-    /// contrast a `cx.flow.update` carrying plaintext private body MUST stay
+    /// contrast a `ck.flow.update` carrying plaintext private body MUST stay
     /// blocked (only E2EE may leave the client for that field).
     #[test]
     fn encrypted_scope_never_blocks_container_create_but_blocks_plaintext_private_content() {
@@ -11178,7 +11178,7 @@ mod tests {
             None,
         )
         .build("yougen");
-        assert_eq!(board.kind, "cx.space.create");
+        assert_eq!(board.kind, "ck.space.create");
         assert!(
             kanban_plaintext_block_reason(true, &board).is_none(),
             "encrypted scope must not block board container create"
@@ -11194,7 +11194,7 @@ mod tests {
             Some("r001"),
         )
         .build("yougen");
-        assert_eq!(list.kind, "cx.space.create");
+        assert_eq!(list.kind, "ck.space.create");
         assert!(
             kanban_plaintext_block_reason(true, &list).is_none(),
             "encrypted scope must not block list container create"
@@ -11235,7 +11235,7 @@ mod tests {
     #[test]
     fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projection() {
         // Simulate: server projection returns the pre-edit card; the user
-        // had queued a cx.flow.update locally that bumped summary + body.
+        // had queued a ck.flow.update locally that bumped summary + body.
         // After page refresh, the overlay must re-apply that patch so the
         // user doesn't see their edits silently disappear.
         let mut card = test_card("ck:flow:edit-me", "U");
@@ -11255,7 +11255,7 @@ mod tests {
             space_id: Some("ck:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "cx.flow.update",
+                "kind": "ck.flow.update",
                 "operation_id": "op-1",
                 "write_state": "queued",
                 "body": {
@@ -11296,7 +11296,7 @@ mod tests {
                 space_id: Some("ck:realm:r1".to_owned()),
                 received_at: received_at("2026-05-22T10:00:00Z"),
                 payload: json!({
-                    "kind": "cx.flow.update",
+                    "kind": "ck.flow.update",
                     "operation_id": "op-1",
                     "actor_id": "did:web:acme.example:users:alice",
                     "created_at": "2026-05-22T10:00:00Z",
@@ -11314,7 +11314,7 @@ mod tests {
                 space_id: Some("ck:realm:r1".to_owned()),
                 received_at: received_at("2026-05-22T11:00:00Z"),
                 payload: json!({
-                    "kind": "cx.flow.update",
+                    "kind": "ck.flow.update",
                     "operation_id": "op-2",
                     "actor_id": "did:web:acme.example:users:bob",
                     "created_at": "2026-05-22T11:00:00Z",
@@ -11375,7 +11375,7 @@ mod tests {
                 space_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "cx.flow.update",
+                    "kind": "ck.flow.update",
                     "body": {
                         "flow_id": "ck:flow:target",
                         "actor_id": "did:web:alice.example",
@@ -11388,7 +11388,7 @@ mod tests {
                 space_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "cx.message.create",
+                    "kind": "ck.message.create",
                     "body": {
                         "target_ref": "ck:flow:target",
                         "sender": "did:web:bob.example",
@@ -11402,7 +11402,7 @@ mod tests {
                 space_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "cx.flow.update",
+                    "kind": "ck.flow.update",
                     "body": {
                         "flow_id": "ck:flow:other",
                         "actor_id": "did:web:carol.example",
@@ -11691,7 +11691,7 @@ mod tests {
                 json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
             )
             .build("yougen");
-            assert_eq!(event.kind, "cx.flow.update");
+            assert_eq!(event.kind, "ck.flow.update");
             assert_eq!(event.local_target_ref(), Some(flow_id));
         }
     }

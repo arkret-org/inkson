@@ -4,11 +4,11 @@
 //! - `recovery-restore-panel` — wrapper
 //! - `recovery-restore-passphrase-input` — paste/type the passphrase
 //! - `recovery-restore-backup-id-input` — optional manual backup_id override; defaults to whichever
-//!   id soland's `GET /api/v1/keys/backups` returns at the top of the list
+//!   id soland's `GET /_cokret/self/keys/backups` returns at the top of the list
 //! - `recovery-restore-button` — derives the recovery key, fetches + decrypts the backup envelope
 //! - `recovery-restore-status` — feedback
 //!
-//! This panel does NOT push `cx.device.authorize` on its own —
+//! This panel does NOT push `ck.device.authorize` on its own —
 //! that's the domain of the device-pairing flow (`settings_devices.rs`)
 //! and the SDK's cross-signing executor. We only re-hydrate the
 //! private payload so the caller can re-establish identity locally.
@@ -16,10 +16,10 @@
 //! Coauth endpoints that the e2e harness exercises but that don't
 //! yet exist:
 //!
-//! - `POST /api/v1/auth/passkey/begin` — TODO(G3.Y1-followup): coauth needs an unauthenticated
+//! - `POST /_cokret/gate/auth/passkey/begin` — TODO(G3.Y1-followup): coauth needs an unauthenticated
 //!   entry point that lets a brand-new device claim the recovered identity without first holding a
 //!   bearer token. Until then this view only exercises the on-device passphrase → KEK → decrypt
-//!   path; the server round-trip happens via the existing `/api/v1/keys/backups/{backup_id}`
+//!   path; the server round-trip happens via the existing `/_cokret/self/keys/backups/{backup_id}`
 //!   endpoint with a temporary placeholder token in tests.
 
 use dioxus::prelude::*;

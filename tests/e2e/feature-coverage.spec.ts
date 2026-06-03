@@ -44,16 +44,16 @@ test.describe("feature coverage placeholders", () => {
     }
   });
 
-  // ---- Board / Flow / cx.flow.move drag conflict ----
+  // ---- Board / Flow / ck.flow.move drag conflict ----
   // claude-design: desktop/board.html
   // spec: overview/current-model.md §4, models/views.md §6
-  test("board: drag flow across lists writes cx.flow.move", async ({ page }) => {
+  test("board: drag flow across lists writes ck.flow.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
     // yougen.flows.spec.ts::"kanban card drag queues a flow move".
     // This placeholder pins the structural contract the drop relies
     // on: the move-queue + write-records data-testids MUST
-    // exist on /kanban so soland can dispatch cx.flow.move /
-    // cx.flow.reorder write records through them. The HLC tiebreak
+    // exist on /kanban so soland can dispatch ck.flow.move /
+    // ck.flow.reorder write records through them. The HLC tiebreak
     // assertion called out in the spec is exercised in the SDK's
     // reducer unit tests (`flow_position_cas_*`), not at the UI layer.
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -95,9 +95,9 @@ test.describe("feature coverage placeholders", () => {
   // ---- Identity / Device — three independent concerns ----
   // claude-design: desktop/devices.html, desktop/verify-device.html
   // spec: crypto-media/devices-and-auth.md §1.2
-  test("device verification: SAS match writes cx.device.authorize + cx.device.cross_sign", async ({ page }) => {
+  test("device verification: SAS match writes ck.device.authorize + cx.device.cross_sign", async ({ page }) => {
     // pin the SAS verification UI surface. The
-    // full SAS exchange + cross_sign + cx.device.authorize event emit
+    // full SAS exchange + cross_sign + ck.device.authorize event emit
     // happen inside the SDK + soland's identity store; this test
     // makes sure the data-testid handles the next layer down expects
     // (sas-verify-flow, sas-emoji-row, sas-digits, sas-match-button)
@@ -114,13 +114,13 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
   });
 
-  test("cross-signing: Run setup submits cx.cross_signing.publish into the principal control space", async ({
+  test("cross-signing: Run setup submits ck.cross_signing.publish into the principal control space", async ({
     page,
   }) => {
     // D2 — formerly unwritten. The verify-device panel now runs the
     // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
     // binding signatures + persist to a SecureKeyStore), then submits
-    // the publish content as `cx.cross_signing.publish` into the
+    // the publish content as `ck.cross_signing.publish` into the
     // principal control space (`ck:space:control:<did>`). This test
     // catches regressions in: (a) the executor's wire-shape contract,
     // (b) the control-space pinning, (c) the SDK binding alg field, and
@@ -148,21 +148,21 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("setup-cross-signing").click();
     await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
 
-    // Step 2: capture the cx.cross_signing.publish submission before
+    // Step 2: capture the ck.cross_signing.publish submission before
     // it fires so we don't race the spawn task.
     const publishPromise = page.waitForRequest((request) => {
-      if (request.method() !== "POST" || !request.url().endsWith("/api/v1/events")) {
+      if (request.method() !== "POST" || !request.url().endsWith("/_cokret/self/events")) {
         return false;
       }
       const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
-      return body?.kind === "cx.cross_signing.publish";
+      return body?.kind === "ck.cross_signing.publish";
     });
 
     await page.getByTestId("run-cross-signing-setup").click();
 
     const publishRequest = await publishPromise;
     const body = publishRequest.postDataJSON() as Record<string, unknown>;
-    expect(body.kind).toBe("cx.cross_signing.publish");
+    expect(body.kind).toBe("ck.cross_signing.publish");
 
     // The envelope MUST target the principal control space (spec
     // key-management.md §4.1). Yougen derives it via
@@ -224,7 +224,7 @@ test.describe("feature coverage placeholders", () => {
   test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
     // D1 — formerly skipped. The recovery view stretches the passphrase
     // with Argon2id on the device and uploads ONLY the ciphertext blob
-    // (+ random salt + nonce) to PUT /api/v1/keys/backups/{id}. The
+    // (+ random salt + nonce) to PUT /_cokret/self/keys/backups/{id}. The
     // server never witnesses the plaintext passphrase. We assert this
     // by intercepting the upload and checking the wire body.
     const PASSPHRASE = "correct-horse-battery-staple-7";
@@ -237,7 +237,7 @@ test.describe("feature coverage placeholders", () => {
     // reaches the success branch.
     const uploadPromise = page.waitForRequest((request) => {
       return (
-        request.method() === "PUT" && /\/api\/v1\/keys\/backups\//.test(request.url())
+        request.method() === "PUT" && /\/_cokret\/self\/keys\/backups\//.test(request.url())
       );
     });
 
@@ -298,7 +298,7 @@ test.describe("feature coverage placeholders", () => {
     // The keyword-search path must respect
     // `discoverability=invite_only` - the spec (discovery/discovery-
     // directory.md §2) requires that searches MUST NOT enumerate
-    // invite-only Realms. Soland's `/api/v1/directory/search-realms`
+    // invite-only Realms. Soland's `/_cokret/find/directory/search-realms`
     // filters them out; the mock surface returns the same shape so the
     // contract holds without a live server.
     await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -382,7 +382,7 @@ test.describe("feature coverage placeholders", () => {
   // ---- Applet / Agent / Portal Space ----
   // claude-design: desktop/applets.html
   // spec: extensions/applet-integration.md
-  test("applets: register new applet writes signed cx.applet.registration", async ({ page }) => {
+  test("applets: register new applet writes signed ck.applet.registration", async ({ page }) => {
     // The applet surface is compiled for unit coverage but hidden in
     // the default local 1.0 UI until the `experimental-applets`
     // feature is explicitly enabled.
@@ -407,7 +407,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: crypto-media/webrtc-signaling.md
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
     // yougen ships the call SIGNALING surface
-    // (`cx.call.signal` / `cx.call.state` / `cx.call.recording.start`)
+    // (`ck.call.signal` / `ck.call.state` / `ck.call.recording.start`)
     // but the WebRTC media stack is renderer-provided and hidden from
     // the default local 1.0 UI until `experimental-webrtc` is enabled.
     await page.goto("/call", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -424,7 +424,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
   test("push gateway only ships background_sync_needed payload", async ({ page }) => {
     // the push-register payload yougen sends to
-    // soland (`POST /api/v1/push/register-device`) MUST NOT carry any
+    // soland (`POST /_cokret/edge/push/register-device`) MUST NOT carry any
     // body / title / sender / collapse_key fields — only the minimal
     // device registration metadata. The downstream gateway then ships
     // a `background_sync_needed` opaque payload to FCM/APNS, so any
@@ -432,7 +432,7 @@ test.describe("feature coverage placeholders", () => {
     // Spec: `discovery/push-notifications.md`.
     const pushRequestPromise = page.waitForRequest(
       (request) =>
-        request.url().endsWith("/api/v1/push/register-device")
+        request.url().endsWith("/_cokret/edge/push/register-device")
         && request.method() === "POST",
       { timeout: 60_000 },
     );

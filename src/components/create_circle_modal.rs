@@ -3,7 +3,7 @@
 //! Surfaced from the Realm-detail page header. Collects the minimum
 //! Circle fields (title, short_name, color, symbol, directory
 //! visibility, initial members) and on submit emits the canonical
-//! `cx.circle.create` envelope shape via the parent's `on_submit`
+//! `ck.circle.create` envelope shape via the parent's `on_submit`
 //! handler.
 //!
 //! Member-set validation enforces the CXP-0007 strict-subset invariant

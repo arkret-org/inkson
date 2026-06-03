@@ -322,7 +322,7 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
 }
 
 /// G3.Y0 + G3.C1 — exchange the persisted session grant for a fresh
-/// one against coauth's `POST /api/v1/session-grants/refresh` endpoint.
+/// one against coauth's `POST /_cokret/gate/session-grants/refresh` endpoint.
 ///
 /// The endpoint requires:
 ///
@@ -431,7 +431,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(grant_secs)),
             session_expires_at: Some(now + chrono::Duration::seconds(session_secs)),
             stored_at: now,

@@ -535,7 +535,7 @@ pub mod cx_ops {
         cokret_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id), patch)
             .and_then(|payload| payload.to_value())
             .unwrap_or_else(|err| {
-                panic!("invalid cx.flow.tracks.update payload for {flow_id}: {err}");
+                panic!("invalid ck.flow.tracks.update payload for {flow_id}: {err}");
             })
     }
 
@@ -544,28 +544,28 @@ pub mod cx_ops {
         patch
             .insert_op(path, cokret_sdk::PatchOp::set(value))
             .unwrap_or_else(|err| {
-                panic!("invalid cx.patch.v1 path {path:?}: {err}");
+                panic!("invalid ck.patch.v1 path {path:?}: {err}");
             });
         patch
     }
 
     fn patch_from_value(patch: Value) -> cokret_sdk::Patch {
         let patch: cokret_sdk::Patch = serde_json::from_value(patch).unwrap_or_else(|err| {
-            panic!("cx.flow.update patch must match cx.patch.v1: {err}");
+            panic!("ck.flow.update patch must match ck.patch.v1: {err}");
         });
         patch.validate().unwrap_or_else(|err| {
-            panic!("cx.flow.update patch must match cx.patch.v1: {err}");
+            panic!("ck.flow.update patch must match ck.patch.v1: {err}");
         });
         patch
     }
 
-    /// Build a canonical `cx.flow.create` discussion operation with the full
+    /// Build a canonical `ck.flow.create` discussion operation with the full
     /// typed Flow payload expected by the current reducers.
     ///
     /// The full Flow lives under the spec-canonical `object` key —
     /// see soland `routing/events/operations.rs::FLOW_CREATE_REQUIREMENTS`
     /// and SDK `crates/core/src/schema/payloads.rs` which both gate
-    /// `cx.flow.create` on `payload.object`.
+    /// `ck.flow.create` on `payload.object`.
     pub fn discussion_flow_create(
         space_id: &str,
         actor: &str,
@@ -586,15 +586,15 @@ pub mod cx_ops {
             );
         let payload = cokret_sdk::ObjectCreatePayload::new(flow)
             .to_value()
-            .map_err(|e| anyhow::anyhow!("cx.flow.create payload serialize: {e}"))?;
-        Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
+            .map_err(|e| anyhow::anyhow!("ck.flow.create payload serialize: {e}"))?;
+        Ok(OperationBuilder::new(space_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(payload))
     }
 
-    /// Build a `cx.flow.watch.set` operation. Spec:
+    /// Build a `ck.flow.watch.set` operation. Spec:
     /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §8.3` —
-    /// writes the cas-register cell `cx.component.flow.watch.v1` keyed by
+    /// writes the cas-register cell `ck.component.flow.watch.v1` keyed by
     /// `(flow_id, watcher_actor_id)`.
     ///
     /// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
@@ -604,7 +604,7 @@ pub mod cx_ops {
     /// stays invisible). Caller MUST omit `level_public` when `level` is None.
     ///
     /// Default reducer invariant: `target_actor` MUST equal `sender_actor`
-    /// unless the sender holds `cx.flow.watch.set.others`. Callers
+    /// unless the sender holds `ck.flow.watch.set.others`. Callers
     /// helping someone else subscribe (e.g. Flow creator seeding
     /// watchers on create) need that capability.
     pub fn flow_watch_set(
@@ -627,17 +627,17 @@ pub mod cx_ops {
         {
             payload["level_public"] = json!(public);
         }
-        OperationBuilder::new(space_id, sender_actor, "cx.flow.watch.set")
+        OperationBuilder::new(space_id, sender_actor, "ck.flow.watch.set")
             .target_ref(flow_id)
             .body(payload)
     }
 
-    /// Build a `cx.flow.tracks.update` operation. Spec:
+    /// Build a `ck.flow.tracks.update` operation. Spec:
     /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
     ///
     /// This is the single unified track-mutation event that replaces
-    /// `cx.flow.track.{enable,disable,update,set_primary}`.
-    /// `patch` is a `cx.patch.v1` JSON Patch object against the `Flow.tracks`
+    /// `ck.flow.track.{enable,disable,update,set_primary}`.
+    /// `patch` is a `ck.patch.v1` JSON Patch object against the `Flow.tracks`
     /// map (keys are track names like `synthesis` / `discussion`). For
     /// example, enabling the `discussion` track is:
     ///
@@ -656,13 +656,13 @@ pub mod cx_ops {
         patch: serde_json::Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(patch);
-        OperationBuilder::new(space_id, actor, "cx.flow.tracks.update")
+        OperationBuilder::new(space_id, actor, "ck.flow.tracks.update")
             .target_ref(flow_id)
             .body(flow_tracks_update_payload_value(flow_id, patch))
     }
 
     /// Convenience wrapper: enable `track` on `flow_id`. Emits the unified
-    /// `cx.flow.tracks.update` event with a `cx.patch.v1` set-op against
+    /// `ck.flow.tracks.update` event with a `ck.patch.v1` set-op against
     /// `tracks.<name>.enabled`.
     pub fn flow_tracks_update_enable(
         space_id: &str,
@@ -701,7 +701,7 @@ pub mod cx_ops {
         flow_tracks_update(space_id, actor, flow_id, patch)
     }
 
-    /// Build a `cx.space.create` operation for Board/List container Spaces.
+    /// Build a `ck.space.create` operation for Board/List container Spaces.
     ///
     /// After R1.7 realm/space inversion, Board/List containers are Space
     /// objects and the security boundary is Realm. The optional
@@ -729,8 +729,8 @@ pub mod cx_ops {
         if let Some(rank) = rank {
             object.rank = Some(rank.to_owned());
         }
-        let body = object_create_payload_value(object, "cx.space.create payload serialize");
-        OperationBuilder::new(realm_id, actor, "cx.space.create")
+        let body = object_create_payload_value(object, "ck.space.create payload serialize");
+        OperationBuilder::new(realm_id, actor, "ck.space.create")
             .target_ref(container_space_id)
             .body(body)
     }
@@ -757,7 +757,7 @@ pub mod cx_ops {
         )
     }
 
-    /// Build a `cx.morph.create` for a document Morph.
+    /// Build a `ck.morph.create` for a document Morph.
     pub fn document_morph_create(
         space_id: &str,
         actor: &str,
@@ -775,15 +775,15 @@ pub mod cx_ops {
         .with_title(title)
         .with_facet("documentable", json!({}))
         .with_field("document", document_body);
-        OperationBuilder::new(space_id, actor, "cx.morph.create")
+        OperationBuilder::new(space_id, actor, "ck.morph.create")
             .target_ref(morph_id)
             .body(sdk_payload_value(
                 object.to_create_payload_value(),
-                "cx.morph.create document payload serialize",
+                "ck.morph.create document payload serialize",
             ))
     }
 
-    /// Build a `cx.flow.create` for an incident response Flow. The
+    /// Build a `ck.flow.create` for an incident response Flow. The
     /// common incident workflow status is carried in `fields.status` so
     /// soland can enforce the profile FSM and emit
     /// `incident.status.transition` audit rows on subsequent updates.
@@ -815,15 +815,15 @@ pub mod cx_ops {
             "discussion",
             cokret_sdk::FlowTrackConfig::new().with_profile("war_room"),
         );
-        OperationBuilder::new(space_id, actor, "cx.flow.create")
+        OperationBuilder::new(space_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(object_create_payload_value(
                 object,
-                "cx.flow.create incident payload serialize",
+                "ck.flow.create incident payload serialize",
             ))
     }
 
-    /// Build a `cx.flow.update` for the incident `fields.status` FSM.
+    /// Build a `ck.flow.update` for the incident `fields.status` FSM.
     pub fn incident_status_update(
         space_id: &str,
         actor: &str,
@@ -838,7 +838,7 @@ pub mod cx_ops {
         )
     }
 
-    /// Build a `cx.flow.create` for a Kanban card Flow and include the
+    /// Build a `ck.flow.create` for a Kanban card Flow and include the
     /// initial Board/List position component used by board projections.
     pub fn kanban_card_flow_create(
         space_id: &str,
@@ -866,15 +866,15 @@ pub mod cx_ops {
                 .primary()
                 .with_profile("kanban_card"),
         );
-        OperationBuilder::new(space_id, actor, "cx.flow.create")
+        OperationBuilder::new(space_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(object_create_payload_value(
                 object,
-                "cx.flow.create kanban card payload serialize",
+                "ck.flow.create kanban card payload serialize",
             ))
     }
 
-    /// Build a `cx.morph.update` carrying a new document body.
+    /// Build a `ck.morph.update` carrying a new document body.
     pub fn document_morph_update(
         space_id: &str,
         actor: &str,
@@ -896,7 +896,7 @@ pub mod cx_ops {
         )
     }
 
-    /// Build a range-anchored document comment as `cx.message.create`.
+    /// Build a range-anchored document comment as `ck.message.create`.
     pub fn document_comment_create(
         space_id: &str,
         actor: &str,
@@ -929,11 +929,11 @@ pub mod cx_ops {
         if let Some(parent) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
             payload = payload.with_reply_to(parent);
         }
-        OperationBuilder::new(space_id, actor, "cx.message.create")
+        OperationBuilder::new(space_id, actor, "ck.message.create")
             .target_ref(morph_id)
             .body(sdk_payload_value(
                 payload.to_value(),
-                "cx.message.create document comment payload serialize",
+                "ck.message.create document comment payload serialize",
             ))
     }
 
@@ -945,7 +945,7 @@ pub mod cx_ops {
         target_ref: &str,
     ) -> OperationBuilder {
         let relation_id = format!("ck:relation:{}", uuid_v7());
-        OperationBuilder::new(space_id, actor, "cx.relation.create")
+        OperationBuilder::new(space_id, actor, "ck.relation.create")
             .target_ref(morph_id)
             .body(json!({
                 "relation_id": relation_id,
@@ -958,8 +958,8 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.flow.update` delta operation using the canonical
-    /// `cx.patch.v1` payload shape. Non-create Flow updates should carry
+    /// Build a `ck.flow.update` delta operation using the canonical
+    /// `ck.patch.v1` payload shape. Non-create Flow updates should carry
     /// only changed fields; callers are responsible for composing patch paths
     /// that are valid for the Flow schema/profile.
     pub fn flow_update_patch(
@@ -969,15 +969,15 @@ pub mod cx_ops {
         patch: serde_json::Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(patch);
-        OperationBuilder::new(space_id, actor, "cx.flow.update")
+        OperationBuilder::new(space_id, actor, "ck.flow.update")
             .target_ref(flow_id)
             .body(flow_object_patch_payload_value(flow_id, patch))
     }
 
-    /// Build a `cx.morph.update` patch operation. Mirrors
+    /// Build a `ck.morph.update` patch operation. Mirrors
     /// [`flow_update_patch`] for Morph objects; soland's
     /// `apply_morph_update` reducer accepts `payload.patch` with the
-    /// standard `cx.schema.patch.v1` shape.
+    /// standard `ck.schema.patch.v1` shape.
     pub fn morph_update_patch(
         space_id: &str,
         actor: &str,
@@ -985,7 +985,7 @@ pub mod cx_ops {
         patch: serde_json::Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(patch);
-        OperationBuilder::new(space_id, actor, "cx.morph.update")
+        OperationBuilder::new(space_id, actor, "ck.morph.update")
             .target_ref(morph_id)
             .body(object_patch_payload_value(morph_id, patch))
     }
@@ -993,7 +993,7 @@ pub mod cx_ops {
     /// Build a `cx.policy.update` patch operation. The reducer-side
     /// integration for cx.policy.* events is not yet wired in soland;
     /// in the meantime clients can apply policy patches via the
-    /// `PATCH /api/v1/policies/{policy_id}` admin endpoint (`patch`
+    /// `PATCH /_cokret/self/policies/{policy_id}` admin endpoint (`patch`
     /// body field). This builder is the future-proof event-stream
     /// form so clients don't have to wait for that wiring.
     pub fn policy_update_patch(
@@ -1027,7 +1027,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.message.revise` patch operation. Spec: revise is
+    /// Build a `ck.message.revise` patch operation. Spec: revise is
     /// supposed to carry `payload.patch` like the other `*.update`
     /// events. Soland today accepts both the legacy full-content
     /// shape and the new patch shape (additive). New clients SHOULD
@@ -1039,7 +1039,7 @@ pub mod cx_ops {
         message_id: &str,
         patch: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.message.revise")
+        OperationBuilder::new(space_id, actor, "ck.message.revise")
             .target_ref(message_id)
             .body(json!({
                 "message_id": message_id,
@@ -1047,7 +1047,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.realm.update` patch operation. The reducer accepts
+    /// Build a `ck.realm.update` patch operation. The reducer accepts
     /// both flat fields (action/owner/title/security_class) and
     /// `payload.patch`; the patch shape is preferred for non-lifecycle
     /// edits (title / description).
@@ -1058,12 +1058,12 @@ pub mod cx_ops {
         patch: serde_json::Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(patch);
-        OperationBuilder::new(space_id, actor, "cx.realm.update")
+        OperationBuilder::new(space_id, actor, "ck.realm.update")
             .target_ref(realm_id)
             .body(object_patch_payload_value(realm_id, patch))
     }
 
-    /// Build a `cx.space.update` patch operation for structural Space
+    /// Build a `ck.space.update` patch operation for structural Space
     /// metadata (`title`, `summary`, `rank`, `fields`, ...). The event lives
     /// in the Space's home Realm; `space_id` stays as the object target.
     pub fn space_update_patch(
@@ -1073,7 +1073,7 @@ pub mod cx_ops {
         patch: serde_json::Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(patch);
-        OperationBuilder::new(realm_id, actor, "cx.space.update")
+        OperationBuilder::new(realm_id, actor, "ck.space.update")
             .target_ref(space_id)
             .body(object_patch_payload_value(space_id, patch))
     }
@@ -1081,7 +1081,7 @@ pub mod cx_ops {
     /// Build a `cx.moderation.report.submit` operation. Note: this is
     /// the event-stream form; today yougen also has a direct HTTP
     /// path via `api::Client::report_moderation`. Keep both — the
-    /// HTTP path goes through `/api/v1/moderation/report` and is
+    /// HTTP path goes through `/_cokret/self/moderation/report` and is
     /// validated/authorised inline; the event-stream form rides on
     /// the standard operation submit pipeline.
     pub fn moderation_report_submit(
@@ -1104,7 +1104,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// Build a `cx.moderation.appeal.submit` operation. Mirrors the
+    /// Build a `ck.moderation.appeal.submit` operation. Mirrors the
     /// 4-state moderation appeal FSM (see the SDK `AppealSubmitPayload`).
     pub fn moderation_appeal_submit(
         space_id: &str,
@@ -1117,7 +1117,7 @@ pub mod cx_ops {
         evidence_refs: Vec<String>,
         evidence_visibility: Option<&str>,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.moderation.appeal.submit")
+        OperationBuilder::new(space_id, actor, "ck.moderation.appeal.submit")
             .target_ref(appeal_id)
             .body(json!({
                 "appeal_id": appeal_id,
@@ -1151,11 +1151,11 @@ pub mod cx_ops {
         if let Some(role) = role {
             body.insert("x_role".to_owned(), json!(role));
         }
-        OperationBuilder::new(space_id, actor, "cx.invite.create").body(Value::Object(body))
+        OperationBuilder::new(space_id, actor, "ck.invite.create").body(Value::Object(body))
     }
 
     pub fn invite_accept(space_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.invite.accept")
+        OperationBuilder::new(space_id, actor, "ck.invite.accept")
             .target_ref(invite_id)
             .body(json!({"invite_id": invite_id}))
     }
@@ -1166,12 +1166,12 @@ pub mod cx_ops {
         invite_id: &str,
         reason: Option<&str>,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.invite.cancel")
+        OperationBuilder::new(space_id, actor, "ck.invite.cancel")
             .target_ref(invite_id)
             .body(json!({"invite_id": invite_id, "reason": reason}))
     }
 
-    /// Build a `cx.space.archive` operation against a container Space. The
+    /// Build a `ck.space.archive` operation against a container Space. The
     /// Space transitions from `Active` to `Archived`; reversible via
     /// [`space_restore`]. Spec: `models/realm-and-space.md` §4.4. The wire
     /// payload uses canonical `space_id` (no legacy alias).
@@ -1180,12 +1180,12 @@ pub mod cx_ops {
         actor: &str,
         container_space_id: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.space.archive")
+        OperationBuilder::new(realm_id, actor, "ck.space.archive")
             .target_ref(container_space_id)
             .body(json!({ "space_id": container_space_id }))
     }
 
-    /// Build a `cx.space.restore` operation. Reverses [`space_archive`]
+    /// Build a `ck.space.restore` operation. Reverses [`space_archive`]
     /// (`archived -> active`). The SDK reducer enforces `state == archived`
     /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
     /// `models/realm-and-space.md` §4.4 (post-R1.7 rename), `common-fields.md §5`.
@@ -1194,44 +1194,44 @@ pub mod cx_ops {
         actor: &str,
         container_space_id: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.space.restore")
+        OperationBuilder::new(realm_id, actor, "ck.space.restore")
             .target_ref(container_space_id)
             .body(json!({ "space_id": container_space_id }))
     }
 
-    /// Build a `cx.flow.archive` operation. Spec: `flow-and-message.md §3`
+    /// Build a `ck.flow.archive` operation. Spec: `flow-and-message.md §3`
     /// and `common-fields.md §5.1`; payload shape is the
     /// `object_lifecycle_payload` from
     /// `artifacts/schemas/event-payload.schema.json`, which requires
     /// `target_ref`. SDK reducer rejects with
     /// `flow_not_active` when source state is not `active`.
     pub fn flow_archive(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.flow.archive")
+        OperationBuilder::new(space_id, actor, "ck.flow.archive")
             .target_ref(flow_id)
             .body(json!({ "target_ref": flow_id }))
     }
 
-    /// Build a `cx.flow.restore` operation. Reverses [`flow_archive`]
+    /// Build a `ck.flow.restore` operation. Reverses [`flow_archive`]
     /// (`archived -> active`). SDK reducer rejects with `flow_not_archived`
     /// when source state is not `archived`. Payload shape mirrors the
     /// archive op (spec `object_lifecycle_payload`).
     pub fn flow_restore(space_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.flow.restore")
+        OperationBuilder::new(space_id, actor, "ck.flow.restore")
             .target_ref(flow_id)
             .body(json!({ "target_ref": flow_id }))
     }
 
-    // ── Consent (OrSet cell `cx.component.consent.grant.v1`) ─────────
+    // ── Consent (OrSet cell `ck.component.consent.grant.v1`) ─────────
 
-    /// `cx.consent.grant` event. Spec: events.submit applies this to the
-    /// `cx.component.consent.grant.v1` OrSet cell as an add op with `tag`.
+    /// `ck.consent.grant` event. Spec: events.submit applies this to the
+    /// `ck.component.consent.grant.v1` OrSet cell as an add op with `tag`.
     pub fn consent_grant(
         realm_id: &str,
         actor: &str,
         consent_id: &str,
         tag: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.consent.grant")
+        OperationBuilder::new(realm_id, actor, "ck.consent.grant")
             .target_ref(consent_id)
             .body(json!({
                 "consent_id": consent_id,
@@ -1239,7 +1239,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.consent.revoke` event with required `observed_dots` (round 4
+    /// `ck.consent.revoke` event with required `observed_dots` (round 4
     /// wire). Pass an empty slice only for non-causal revoke.
     pub fn consent_revoke(
         realm_id: &str,
@@ -1258,14 +1258,14 @@ pub mod cx_ops {
         if let Some(reason) = reason {
             body["reason"] = json!(reason);
         }
-        OperationBuilder::new(realm_id, actor, "cx.consent.revoke")
+        OperationBuilder::new(realm_id, actor, "ck.consent.revoke")
             .target_ref(consent_id)
             .body(body)
     }
 
-    // ── Capability (OrSet cell `cx.component.capability.grant.v1`) ───
+    // ── Capability (OrSet cell `ck.component.capability.grant.v1`) ───
 
-    /// `cx.capability.grant` event with optional structured constraints
+    /// `ck.capability.grant` event with optional structured constraints
     /// (e.g. `temporal.window`). `tag` is the capability action the grant
     /// authorises (e.g. `discussion.message.create`).
     pub fn capability_grant(
@@ -1282,12 +1282,12 @@ pub mod cx_ops {
         if !constraints.is_null() {
             body["constraints"] = constraints;
         }
-        OperationBuilder::new(realm_id, actor, "cx.capability.grant")
+        OperationBuilder::new(realm_id, actor, "ck.capability.grant")
             .target_ref(grant_id)
             .body(body)
     }
 
-    /// `cx.capability.revoke` event. `reason` shows up in the audit
+    /// `ck.capability.revoke` event. `reason` shows up in the audit
     /// trail and lets the UI explain why the capability was dropped.
     pub fn capability_revoke(
         realm_id: &str,
@@ -1303,14 +1303,14 @@ pub mod cx_ops {
         if let Some(reason) = reason {
             body["reason"] = json!(reason);
         }
-        OperationBuilder::new(realm_id, actor, "cx.capability.revoke")
+        OperationBuilder::new(realm_id, actor, "ck.capability.revoke")
             .target_ref(grant_id)
             .body(body)
     }
 
-    // ── Member state FSM (Realm `cx.component.member.state.v1`) ─────
+    // ── Member state FSM (Realm `ck.component.member.state.v1`) ─────
 
-    /// `cx.member.state` FSM transition (kick / ban / unban / leave).
+    /// `ck.member.state` FSM transition (kick / ban / unban / leave).
     /// Pass `from_state` to express an explicit FSM precondition (the
     /// server reducer rejects with `state_mismatch` if the current
     /// state doesn't match).
@@ -1333,14 +1333,14 @@ pub mod cx_ops {
         if let Some(from_state) = from_state {
             body["from"] = json!(from_state);
         }
-        OperationBuilder::new(realm_id, actor, "cx.member.state")
+        OperationBuilder::new(realm_id, actor, "ck.member.state")
             .target_ref(member)
             .body(body)
     }
 
     // ── MLS epoch (per-Realm group ratchet) ─────────────────────────
 
-    /// `cx.mls.commit` event carrying the current wire-schema MLS
+    /// `ck.mls.commit` event carrying the current wire-schema MLS
     /// governance binding. The commit bytes themselves are stored out of
     /// band; the event carries `commit_digest` plus the schema-closed
     /// epoch and governance binding fields soland validates before
@@ -1351,16 +1351,16 @@ pub mod cx_ops {
         payload: &cokret_sdk::MlsCommitPayload,
     ) -> OperationBuilder {
         let group_id = payload.mls_group_id().to_owned();
-        OperationBuilder::new(realm_id, actor, "cx.mls.commit")
+        OperationBuilder::new(realm_id, actor, "ck.mls.commit")
             .target_ref(group_id)
             .body(serde_json::to_value(payload).expect("MLS commit payload serializes"))
     }
 
-    /// `cx.mls.genesis` event installing an MLS group at epoch 0. Emitted
+    /// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
     /// once when a creator's local group is first observed by the server so
     /// the canonical audit record + creator/covered_frontier seed exist and
     /// the server epoch starts in lockstep with the local snapshot before
-    /// the first `cx.mls.commit` bumps it to 1.
+    /// the first `ck.mls.commit` bumps it to 1.
     ///
     /// `payload` is the full canonical `mls_genesis_payload` Value (see
     /// [`crate::mls::runtime::build_mls_genesis_payload`]); `group_id` is the
@@ -1371,7 +1371,7 @@ pub mod cx_ops {
         group_id: &str,
         payload: &Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "cx.mls.genesis")
+        OperationBuilder::new(realm_id, actor, "ck.mls.genesis")
             .target_ref(group_id.to_owned())
             .body(payload.clone())
     }
@@ -1449,7 +1449,7 @@ pub mod cx_ops {
             .refs(refs)
     }
 
-    /// `cx.realm.update` patch event on the organization cell. Mirrors the
+    /// `ck.realm.update` patch event on the organization cell. Mirrors the
     /// legacy `build_signed_space_organization_update` Move shape (name /
     /// topic / description / etc.). Pass the merge patch as `value`.
     pub fn realm_organization_update(
@@ -1458,7 +1458,7 @@ pub mod cx_ops {
         value: Value,
     ) -> OperationBuilder {
         let patch = patch_from_value(value);
-        OperationBuilder::new(realm_id, actor, "cx.realm.update")
+        OperationBuilder::new(realm_id, actor, "ck.realm.update")
             .target_ref(realm_id)
             .body(object_patch_payload_value(realm_id, patch))
     }
@@ -1466,7 +1466,7 @@ pub mod cx_ops {
     /// Legacy flow position update (kanban card position).
     ///
     /// Current protocol writes new position changes through
-    /// `cx.flow.move` / `cx.flow.reorder`; this helper remains for old
+    /// `ck.flow.move` / `ck.flow.reorder`; this helper remains for old
     /// local drafts that still carry a generic `position` object, but it
     /// still emits the canonical `object_patch_payload` shape.
     pub fn flow_position_update(
@@ -1517,14 +1517,14 @@ pub mod cx_ops {
         let Some(effect_space) = effect_space else {
             let payload =
                 flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            return OperationBuilder::new(realm_id, actor, "cx.flow.update")
+            return OperationBuilder::new(realm_id, actor, "ck.flow.update")
                 .target_ref(flow_id)
                 .body(payload);
         };
         let Some(effect_rank) = effect_rank else {
             let payload =
                 flow_object_patch_payload_value(flow_id, patch_set("position", effect_position));
-            return OperationBuilder::new(realm_id, actor, "cx.flow.update")
+            return OperationBuilder::new(realm_id, actor, "ck.flow.update")
                 .target_ref(flow_id)
                 .body(payload);
         };
@@ -1535,12 +1535,12 @@ pub mod cx_ops {
         body.insert("rank".to_owned(), json!(effect_rank));
 
         match kind {
-            "cx.flow.reorder" => {
+            "ck.flow.reorder" => {
                 body.insert("space_id".to_owned(), json!(effect_space));
                 if let Some(rank) = expected_rank {
                     body.insert("expected_position".to_owned(), json!({ "rank": rank }));
                 }
-                OperationBuilder::new(realm_id, actor, "cx.flow.reorder")
+                OperationBuilder::new(realm_id, actor, "ck.flow.reorder")
                     .target_ref(flow_id)
                     .body(Value::Object(body))
             }
@@ -1558,7 +1558,7 @@ pub mod cx_ops {
                         json!({ "space_id": space_id, "rank": rank }),
                     );
                 }
-                OperationBuilder::new(realm_id, actor, "cx.flow.move")
+                OperationBuilder::new(realm_id, actor, "ck.flow.move")
                     .target_ref(flow_id)
                     .body(Value::Object(body))
             }
@@ -1568,15 +1568,15 @@ pub mod cx_ops {
     // ── Applet protocol family ────────────────────────────────────────
     //
     // Spec: `extensions/applet-integration.md` + canonical event-kind
-    // registry rows `cx.applet.registration` / `cx.applet.discovery` /
-    // `cx.applet.protocol_session.{start,status}` / `cx.applet.bridge_error`.
+    // registry rows `ck.applet.registration` / `ck.applet.discovery` /
+    // `cx.applet.protocol_session.{start,status}` / `ck.applet.bridge_error`.
     //
     // The builders below produce the wire shape soland validators and the
     // SDK reducer consume. Each carries the canonical `applet_id` (or
     // `service_did` for registration / discovery) as `target_ref` so
     // soland's `target-ref-required` envelope-shape check passes.
 
-    /// `cx.applet.registration` — declare an applet service_did + the
+    /// `ck.applet.registration` — declare an applet service_did + the
     /// event-kind subset / namespaces / capabilities it can write.
     pub fn applet_registration(
         space_id: &str,
@@ -1585,7 +1585,7 @@ pub mod cx_ops {
         namespace: &str,
         capabilities: &[&str],
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.applet.registration")
+        OperationBuilder::new(space_id, actor, "ck.applet.registration")
             .target_ref(service_did)
             .body(json!({
                 "service_did": service_did,
@@ -1594,7 +1594,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.applet.discovery` — the network discovery surface that lists
+    /// `ck.applet.discovery` — the network discovery surface that lists
     /// what an applet exposes; emitted by directory crawlers and by the
     /// applet itself on registration round-trip.
     pub fn applet_discovery(
@@ -1603,7 +1603,7 @@ pub mod cx_ops {
         service_did: &str,
         manifest: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.applet.discovery")
+        OperationBuilder::new(space_id, actor, "ck.applet.discovery")
             .target_ref(service_did)
             .body(json!({
                 "service_did": service_did,
@@ -1642,7 +1642,7 @@ pub mod cx_ops {
         cokret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
     }
 
-    /// `cx.applet.protocol_session.start` — open a per-session channel
+    /// `ck.applet.protocol_session.start` — open a per-session channel
     /// between a Space member and an applet (used for portal-style RPC
     /// + agent invocation).
     pub fn applet_protocol_session_start(
@@ -1652,7 +1652,7 @@ pub mod cx_ops {
         session_id: &str,
         params: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.applet.protocol_session.start")
+        OperationBuilder::new(space_id, actor, "ck.applet.protocol_session.start")
             .target_ref(session_id)
             .body(json!({
                 "applet_id": applet_id,
@@ -1661,7 +1661,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.applet.protocol_session.status` — applet → caller status push
+    /// `ck.applet.protocol_session.status` — applet → caller status push
     /// (progress, intermediate result, completion).
     pub fn applet_protocol_session_status(
         space_id: &str,
@@ -1670,7 +1670,7 @@ pub mod cx_ops {
         status: &str,
         detail: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.applet.protocol_session.status")
+        OperationBuilder::new(space_id, actor, "ck.applet.protocol_session.status")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1679,7 +1679,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.applet.bridge_error` — emitted by the applet bridge when a
+    /// `ck.applet.bridge_error` — emitted by the applet bridge when a
     /// protocol_session call fails outside the spec's typed result.
     pub fn applet_bridge_error(
         space_id: &str,
@@ -1688,7 +1688,7 @@ pub mod cx_ops {
         error_code: &str,
         message: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.applet.bridge_error")
+        OperationBuilder::new(space_id, actor, "ck.applet.bridge_error")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1700,13 +1700,13 @@ pub mod cx_ops {
     // ── Agent protocol family ─────────────────────────────────────────
     //
     // Spec: `extensions/agent-integration.md` + canonical event-kind
-    // registry rows `cx.agent.endpoint` / `cx.agent.protocol_session.
+    // registry rows `ck.agent.endpoint` / `ck.agent.protocol_session.
     // {start,status,result}`. Agents are server-side delegates a member
     // grants narrow capabilities to (e.g. a read-flow Researcher Agent);
     // the wire shape lets soland and the SDK reducer track which agent
     // owns which session, what status, and what result.
 
-    /// `cx.agent.endpoint` — register an agent id + invocation endpoints.
+    /// `ck.agent.endpoint` — register an agent id + invocation endpoints.
     pub fn agent_endpoint(
         space_id: &str,
         actor: &str,
@@ -1718,7 +1718,7 @@ pub mod cx_ops {
             "protocol": protocol,
             "capabilities": capabilities,
         }]);
-        OperationBuilder::new(space_id, actor, "cx.agent.endpoint")
+        OperationBuilder::new(space_id, actor, "ck.agent.endpoint")
             .target_ref(agent_id)
             .body(json!({
                 "agent_id": agent_id,
@@ -1726,7 +1726,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.agent.protocol_session.start` — kick off an agent
+    /// `ck.agent.protocol_session.start` — kick off an agent
     /// invocation;  body carries the parameter payload + the
     /// capability proof bundle.
     pub fn agent_protocol_session_start(
@@ -1738,7 +1738,7 @@ pub mod cx_ops {
         params: serde_json::Value,
         capability_grant: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.start")
+        OperationBuilder::new(space_id, actor, "ck.agent.protocol_session.start")
             .target_ref(session_id)
             .body(json!({
                 "counterparty_agent": counterparty_agent,
@@ -1749,7 +1749,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.agent.protocol_session.status` — agent progress signal.
+    /// `ck.agent.protocol_session.status` — agent progress signal.
     pub fn agent_protocol_session_status(
         space_id: &str,
         actor: &str,
@@ -1757,7 +1757,7 @@ pub mod cx_ops {
         status: &str,
         detail: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.status")
+        OperationBuilder::new(space_id, actor, "ck.agent.protocol_session.status")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1766,7 +1766,7 @@ pub mod cx_ops {
             }))
     }
 
-    /// `cx.agent.protocol_session.result` — terminal event carrying the
+    /// `ck.agent.protocol_session.result` — terminal event carrying the
     /// agent's signed result + the audit-binding proof.
     pub fn agent_protocol_session_result(
         space_id: &str,
@@ -1775,7 +1775,7 @@ pub mod cx_ops {
         result: serde_json::Value,
         audit_binding: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(space_id, actor, "cx.agent.protocol_session.result")
+        OperationBuilder::new(space_id, actor, "ck.agent.protocol_session.result")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1897,14 +1897,14 @@ mod tests {
 
     #[test]
     fn operation_builder_generates_valid_envelope() {
-        let op = OperationBuilder::new("ck:realm:test", "did:web:alice", "cx.message.create")
-            .body(json!({"content": {"kind": "cx.content.text", "body": "hello"}}))
+        let op = OperationBuilder::new("ck:realm:test", "did:web:alice", "ck.message.create")
+            .body(json!({"content": {"kind": "ck.content.text", "body": "hello"}}))
             .build("test_node");
 
         assert!(!op.local_operation_id().is_empty());
         assert_eq!(op.realm_id, "ck:realm:test");
         assert_eq!(op.actor_id, "did:web:alice");
-        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(op.kind, "ck.message.create");
         assert!(!op.hlc.is_empty());
         assert!(op.actor_seq > 0);
         // Spec compliance: build() never attaches a placeholder proof —
@@ -1914,8 +1914,8 @@ mod tests {
 
     #[test]
     fn operation_round_trip_serde() {
-        let op = OperationBuilder::new("ck:space:s1", "did:web:bob", "cx.message.create")
-            .body(json!({"content": {"kind": "cx.content.text", "body": "hello world"}}))
+        let op = OperationBuilder::new("ck:space:s1", "did:web:bob", "ck.message.create")
+            .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
             .build("node");
         let json = serde_json::to_string(&op).unwrap();
         let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
@@ -1933,7 +1933,7 @@ mod tests {
         )
         .build("test_node");
 
-        assert_eq!(op.kind, "cx.morph.create");
+        assert_eq!(op.kind, "ck.morph.create");
         assert_eq!(
             op.payload["object"]["id"],
             "ck:morph:0196419b-0000-7000-8000-000000000002"
@@ -1963,7 +1963,7 @@ mod tests {
         .build("node");
         let flow_schema = spec_schema("flow.schema.json");
 
-        assert_eq!(op.kind, "cx.flow.create");
+        assert_eq!(op.kind, "ck.flow.create");
         assert_eq!(op.realm_id, "ck:realm:0196419b-0000-7000-8000-000000000001");
         assert_eq!(
             op.payload["object"]["realm_id"],
@@ -2034,7 +2034,7 @@ mod tests {
         let op = cx_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
             .build("node");
 
-        assert_eq!(op.kind, "cx.mls.commit");
+        assert_eq!(op.kind, "ck.mls.commit");
         assert!(op.payload.get("group_id").is_none());
         assert!(op.payload.get("preconditions").is_none());
         assert!(op.payload.get("effects").is_none());
@@ -2052,7 +2052,7 @@ mod tests {
         )
         .build("test_node");
 
-        assert_eq!(op.kind, "cx.morph.update");
+        assert_eq!(op.kind, "ck.morph.update");
         assert_eq!(
             op.payload["target_ref"],
             "ck:morph:0196419b-0000-7000-8000-000000000002"
@@ -2076,7 +2076,7 @@ mod tests {
         )
         .build("test_node");
 
-        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(op.kind, "ck.message.create");
         assert_eq!(
             op.payload["content"]["morph_id"],
             "ck:morph:0196419b-0000-7000-8000-000000000002"
@@ -2098,7 +2098,7 @@ mod tests {
         )
         .build("node");
 
-        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.kind, "ck.flow.update");
         assert_eq!(op.payload["target_ref"], flow_id);
         assert!(op.payload.get("flow_id").is_none());
         assert!(op.payload["patch"].get("fields.status").is_none());
@@ -2120,7 +2120,7 @@ mod tests {
         )
         .unwrap()
         .build("node");
-        assert_eq!(op.kind, "cx.flow.create");
+        assert_eq!(op.kind, "ck.flow.create");
         assert_eq!(
             op.payload["object"]["id"],
             "ck:flow:0196419b-0000-7000-8000-000000000001"
@@ -2150,7 +2150,7 @@ mod tests {
             "discussion",
         )
         .build("node");
-        assert_eq!(op.kind, "cx.flow.tracks.update");
+        assert_eq!(op.kind, "ck.flow.tracks.update");
         assert_eq!(
             op.payload["patch"]["tracks.discussion.is_primary"]["value"],
             true
@@ -2175,7 +2175,7 @@ mod tests {
             }),
         )
         .build("node");
-        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.kind, "ck.flow.update");
         assert_eq!(op.local_target_ref(), Some(flow_id));
         assert_eq!(op.payload["target_ref"], flow_id);
         assert!(op.payload.get("flow_id").is_none());
@@ -2214,13 +2214,13 @@ mod tests {
                 }),
             )
             .build("node"),
-            // Null effect_position triggers the legacy cx.flow.update fallback
+            // Null effect_position triggers the legacy ck.flow.update fallback
             // inside flow_position_cas_update. It still must satisfy
             // object_patch_payload instead of leaking top-level `position`.
             cx_ops::flow_position_cas_update(
                 space_id,
                 actor,
-                "cx.flow.move",
+                "ck.flow.move",
                 board_space_id,
                 flow_id,
                 json!({"list_space_id": list_space_id, "rank": "U"}),
@@ -2230,7 +2230,7 @@ mod tests {
         ];
 
         for event in &events {
-            assert_eq!(event.kind, "cx.flow.update");
+            assert_eq!(event.kind, "ck.flow.update");
             assert!(event.payload.get("patch").is_some());
             assert_eq!(event.payload["target_ref"], flow_id);
             assert!(event.payload.get("flow_id").is_none());
@@ -2277,7 +2277,7 @@ mod tests {
 
         for event in &events {
             assert!(event.payload.get("patch").is_some(), "{}", event.kind);
-            if event.kind == "cx.flow.tracks.update" {
+            if event.kind == "ck.flow.tracks.update" {
                 assert_eq!(event.payload["flow_id"], flow_id);
                 assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
             } else {
@@ -2292,7 +2292,7 @@ mod tests {
         let op = cx_ops::flow_position_cas_update(
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
-            "cx.flow.move",
+            "ck.flow.move",
             "ck:space:0196419b-0000-7000-8000-000000000010",
             "ck:flow:0196419b-0000-7000-8000-000000000020",
             json!({
@@ -2306,7 +2306,7 @@ mod tests {
         )
         .build("node");
 
-        assert_eq!(op.kind, "cx.flow.move");
+        assert_eq!(op.kind, "ck.flow.move");
         assert_eq!(
             op.payload["board_space_id"],
             "ck:space:0196419b-0000-7000-8000-000000000010"
@@ -2331,7 +2331,7 @@ mod tests {
         let op = cx_ops::flow_position_cas_update(
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
-            "cx.flow.reorder",
+            "ck.flow.reorder",
             "ck:space:0196419b-0000-7000-8000-000000000010",
             "ck:flow:0196419b-0000-7000-8000-000000000020",
             json!({
@@ -2345,7 +2345,7 @@ mod tests {
         )
         .build("node");
 
-        assert_eq!(op.kind, "cx.flow.reorder");
+        assert_eq!(op.kind, "ck.flow.reorder");
         assert_eq!(
             op.payload["board_space_id"],
             "ck:space:0196419b-0000-7000-8000-000000000010"
@@ -2370,7 +2370,7 @@ mod tests {
         let event = cx_ops::conflict_repair(
             "ck:space:test",
             "did:web:alice.example",
-            "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card",
+            "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card",
             &heads,
             "ck:capability:recovery",
             "ck:snapshot:sha256:witness",
@@ -2408,14 +2408,14 @@ mod tests {
             Some("U"),
         )
         .build("node");
-        assert_eq!(op.kind, "cx.space.create");
+        assert_eq!(op.kind, "ck.space.create");
         assert_eq!(
             op.local_target_ref(),
             Some("ck:space:0196419b-0000-7000-8000-000000000002")
         );
         assert!(op.payload.get("place_id").is_none());
         assert!(op.payload.get("board_place_id").is_none());
-        assert_eq!(op.payload["object"]["schema"], "cx.schema.space.v1");
+        assert_eq!(op.payload["object"]["schema"], "ck.schema.space.v1");
         assert_eq!(
             op.payload["object"]["id"],
             "ck:space:0196419b-0000-7000-8000-000000000002"
@@ -2465,7 +2465,7 @@ mod tests {
             object["realm_id"],
             "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.kind, "cx.space.create");
+        assert_eq!(op.kind, "ck.space.create");
         assert!(op.payload.get("place_id").is_none());
         assert!(serde_json::to_string(&op).unwrap().contains("\"realm_id\""));
         assert!(!serde_json::to_string(&op).unwrap().contains("ck:list:"));
@@ -2516,7 +2516,7 @@ mod tests {
         let patch = op.payload["patch"].as_object().unwrap();
 
         assert!(!patch.is_empty());
-        assert_eq!(op.kind, "cx.flow.update");
+        assert_eq!(op.kind, "ck.flow.update");
         assert!(patch.contains_key("title"));
         assert!(patch.contains_key("summary"));
         assert!(patch.contains_key("fields.labels"));
@@ -2539,12 +2539,12 @@ mod tests {
         )
         .unwrap();
         for kind in [
-            "cx.account_data.set",
-            "cx.flow.update",
-            "cx.flow.tracks.update",
+            "ck.account_data.set",
+            "ck.flow.update",
+            "ck.flow.tracks.update",
             // R1.7 rename: former `cx.place.create` is the container
-            // `cx.space.create`.
-            "cx.space.create",
+            // `ck.space.create`.
+            "ck.space.create",
         ] {
             assert!(
                 schema_text.contains(&format!("\"{kind}\"")),
@@ -2555,7 +2555,7 @@ mod tests {
 
     #[test]
     fn canonical_digest_is_stable_across_key_order() {
-        let mut op_a = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
+        let mut op_a = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
             .body(json!({"b": 2, "a": 1}))
             .build("node");
         op_a.event_id = "fixed".into();
@@ -2574,7 +2574,7 @@ mod tests {
     #[test]
     fn sign_ed25519_attaches_typed_proof() {
         use ed25519_dalek::SigningKey;
-        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
+        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -2591,7 +2591,7 @@ mod tests {
 
     #[test]
     fn require_proof_fails_when_unsigned() {
-        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
+        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         op.proofs.clear();
@@ -2609,7 +2609,7 @@ mod tests {
             Some("member"),
         )
         .build("node");
-        assert_eq!(create.kind, "cx.invite.create");
+        assert_eq!(create.kind, "ck.invite.create");
         assert_eq!(create.payload["invite_id"], invite_id);
         assert_eq!(create.payload["invitee"], "did:web:bob.example");
         assert_eq!(create.payload["x_role"], "member");
@@ -2631,7 +2631,7 @@ mod tests {
             invite_id,
         )
         .build("node");
-        assert_eq!(accept.kind, "cx.invite.accept");
+        assert_eq!(accept.kind, "ck.invite.accept");
         assert_eq!(accept.payload["invite_id"], invite_id);
         assert!(accept.payload.get("state").is_none());
         assert_registered_payload_valid(&accept);
@@ -2643,7 +2643,7 @@ mod tests {
             Some("expired"),
         )
         .build("node");
-        assert_eq!(cancel.kind, "cx.invite.cancel");
+        assert_eq!(cancel.kind, "ck.invite.cancel");
         assert_eq!(cancel.payload["invite_id"], invite_id);
         assert_eq!(cancel.payload["reason"], "expired");
         assert!(cancel.payload.get("state").is_none());
@@ -2659,7 +2659,7 @@ mod tests {
             container_space_id,
         )
         .build("node");
-        assert_eq!(archive.kind, "cx.space.archive");
+        assert_eq!(archive.kind, "ck.space.archive");
         assert_eq!(archive.payload["space_id"], container_space_id);
         assert!(archive.payload.get("place_id").is_none());
         assert_eq!(archive.local_target_ref(), Some(container_space_id));
@@ -2670,7 +2670,7 @@ mod tests {
             container_space_id,
         )
         .build("node");
-        assert_eq!(restore.kind, "cx.space.restore");
+        assert_eq!(restore.kind, "ck.space.restore");
         assert_eq!(restore.payload["space_id"], container_space_id);
         assert!(restore.payload.get("place_id").is_none());
         assert_eq!(restore.local_target_ref(), Some(container_space_id));
@@ -2681,7 +2681,7 @@ mod tests {
         let flow_id = "ck:flow:01904100-0000-7000-8000-1fb50799ad50";
         let archive =
             cx_ops::flow_archive("ck:space:test", "did:web:alice.example", flow_id).build("node");
-        assert_eq!(archive.kind, "cx.flow.archive");
+        assert_eq!(archive.kind, "ck.flow.archive");
         assert_eq!(archive.payload["target_ref"], flow_id);
         assert!(archive.payload.get("flow_id").is_none());
         assert_eq!(archive.local_target_ref(), Some(flow_id));
@@ -2689,7 +2689,7 @@ mod tests {
 
         let restore =
             cx_ops::flow_restore("ck:space:test", "did:web:alice.example", flow_id).build("node");
-        assert_eq!(restore.kind, "cx.flow.restore");
+        assert_eq!(restore.kind, "ck.flow.restore");
         assert_eq!(restore.payload["target_ref"], flow_id);
         assert!(restore.payload.get("flow_id").is_none());
         assert_eq!(restore.local_target_ref(), Some(flow_id));
@@ -2708,7 +2708,7 @@ mod tests {
 
         let reg = cx_ops::applet_registration(space, actor, service_did, "extensions", &["read"])
             .build("node");
-        assert_eq!(reg.kind, "cx.applet.registration");
+        assert_eq!(reg.kind, "ck.applet.registration");
         assert_eq!(reg.payload["service_did"], service_did);
         assert_eq!(reg.payload["namespace"], "extensions");
         assert_eq!(reg.payload["capabilities"][0], "read");
@@ -2716,7 +2716,7 @@ mod tests {
 
         let disc = cx_ops::applet_discovery(space, actor, service_did, json!({"version": 1}))
             .build("node");
-        assert_eq!(disc.kind, "cx.applet.discovery");
+        assert_eq!(disc.kind, "ck.applet.discovery");
         assert_eq!(disc.payload["manifest"]["version"], 1);
         assert_eq!(disc.local_target_ref(), Some(service_did));
 
@@ -2728,7 +2728,7 @@ mod tests {
             json!({"op": "ping"}),
         )
         .build("node");
-        assert_eq!(start.kind, "cx.applet.protocol_session.start");
+        assert_eq!(start.kind, "ck.applet.protocol_session.start");
         assert_eq!(start.payload["session_id"], session_id);
         assert_eq!(start.local_target_ref(), Some(session_id));
 
@@ -2740,7 +2740,7 @@ mod tests {
             json!({"progress": 0.5}),
         )
         .build("node");
-        assert_eq!(status.kind, "cx.applet.protocol_session.status");
+        assert_eq!(status.kind, "ck.applet.protocol_session.status");
         assert_eq!(status.payload["status"], "running");
 
         let err = cx_ops::applet_bridge_error(
@@ -2751,7 +2751,7 @@ mod tests {
             "service did not respond",
         )
         .build("node");
-        assert_eq!(err.kind, "cx.applet.bridge_error");
+        assert_eq!(err.kind, "ck.applet.bridge_error");
         assert_eq!(err.payload["error_code"], "applet_unavailable");
     }
 
@@ -2765,7 +2765,7 @@ mod tests {
 
         let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
             .build("node");
-        assert_eq!(endpoint.kind, "cx.agent.endpoint");
+        assert_eq!(endpoint.kind, "ck.agent.endpoint");
         assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "cx.agent.v1");
         assert_eq!(endpoint.local_target_ref(), Some(agent));
 
@@ -2779,7 +2779,7 @@ mod tests {
             "ck:grant:01904100-0000-7000-8000-000000000099",
         )
         .build("node");
-        assert_eq!(start.kind, "cx.agent.protocol_session.start");
+        assert_eq!(start.kind, "ck.agent.protocol_session.start");
         assert_eq!(start.payload["counterparty_agent"], agent);
         assert_eq!(
             start.payload["capability_grant"],
@@ -2789,7 +2789,7 @@ mod tests {
         let status =
             cx_ops::agent_protocol_session_status(space, actor, session_id, "thinking", json!({}))
                 .build("node");
-        assert_eq!(status.kind, "cx.agent.protocol_session.status");
+        assert_eq!(status.kind, "ck.agent.protocol_session.status");
 
         let result = cx_ops::agent_protocol_session_result(
             space,
@@ -2799,7 +2799,7 @@ mod tests {
             json!({"merkle_root": "sha256:abc"}),
         )
         .build("node");
-        assert_eq!(result.kind, "cx.agent.protocol_session.result");
+        assert_eq!(result.kind, "ck.agent.protocol_session.result");
         assert_eq!(result.payload["audit_binding"]["merkle_root"], "sha256:abc");
     }
 }

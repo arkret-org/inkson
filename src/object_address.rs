@@ -173,7 +173,7 @@ impl ShareTarget {
     }
 
     /// Build a `preview` link pair. Preview tokens are policy-limited by
-    /// `cx.realm.preview_policy`; they do not grant membership, write access or
+    /// `ck.realm.preview_policy`; they do not grant membership, write access or
     /// join routing.
     pub fn build_preview_links(
         &self,

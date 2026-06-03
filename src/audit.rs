@@ -1,9 +1,9 @@
 //! Audited E2EE event builders (`crypto-media/audited-e2ee.md`).
 //!
-//! Two hardening profiles sit on top of `cx.profile.e2ee_client.v1`:
-//! - `cx.profile.attested_audit.e2ee.v1` — attested audit policy with forced `cx.audit.accessed`
+//! Two hardening profiles sit on top of `ck.profile.e2ee_client.v1`:
+//! - `ck.profile.attested_audit.e2ee.v1` — attested audit policy with forced `ck.audit.accessed`
 //!   write on read.
-//! - `cx.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `cx.audit.ryw_receipt`
+//! - `ck.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `ck.audit.ryw_receipt`
 //!   (read-your-write) per-actor receipts.
 //!
 //! Both kinds are already in `conformance::known_event_kinds`; this module
@@ -17,10 +17,10 @@ use crate::operation::OperationBuilder;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditPolicy {
     /// `attested_audit.e2ee.v1` — every successful decrypt writes
-    /// `cx.audit.accessed`. Read clients fail closed if they cannot emit.
+    /// `ck.audit.accessed`. Read clients fail closed if they cannot emit.
     Attested,
     /// `disclosed_audit.e2ee.v1` — every Space write produces a per-actor
-    /// `cx.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
+    /// `ck.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
     /// the read side.
     Disclosed,
 }
@@ -28,13 +28,13 @@ pub enum AuditPolicy {
 impl AuditPolicy {
     pub fn profile_id(self) -> &'static str {
         match self {
-            Self::Attested => "cx.profile.attested_audit.e2ee.v1",
-            Self::Disclosed => "cx.profile.disclosed_audit.e2ee.v1",
+            Self::Attested => "ck.profile.attested_audit.e2ee.v1",
+            Self::Disclosed => "ck.profile.disclosed_audit.e2ee.v1",
         }
     }
 }
 
-/// Build a `cx.audit.accessed` event. Emitted by the reader after a
+/// Build a `ck.audit.accessed` event. Emitted by the reader after a
 /// successful MLS decrypt under an attested audit policy.
 ///
 /// `target_event_id` identifies the durable Event whose payload was read;
@@ -45,13 +45,13 @@ pub fn build_audit_accessed(
     target_event_id: &str,
     device_id: &str,
 ) -> OperationBuilder {
-    // The registered `audit_payload` schema (cx.schema.event_payload.v1
+    // The registered `audit_payload` schema (ck.schema.event_payload.v1
     // #/$defs/audit_payload) is strict `additionalProperties:false` and only
     // permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The reader
     // device is carried inside `purpose` (a free-form string) rather than as an
     // illegal top-level `reader_device` field, which the server rejects with
     // schema_violation.
-    OperationBuilder::new(space_id, actor, "cx.audit.accessed")
+    OperationBuilder::new(space_id, actor, "ck.audit.accessed")
         .target_ref(target_event_id)
         .body(json!({
             "target_ref": target_event_id,
@@ -61,7 +61,7 @@ pub fn build_audit_accessed(
         }))
 }
 
-/// Build a `cx.audit.ryw_receipt` event. Emitted by the writer after a
+/// Build a `ck.audit.ryw_receipt` event. Emitted by the writer after a
 /// disclosed audit policy commit; the receipt is actor-private.
 pub fn build_audit_ryw_receipt(
     space_id: &str,
@@ -83,7 +83,7 @@ pub fn build_audit_ryw_receipt(
             delivered_to_devices.join(",")
         )
     };
-    OperationBuilder::new(space_id, actor, "cx.audit.ryw_receipt")
+    OperationBuilder::new(space_id, actor, "ck.audit.ryw_receipt")
         .target_ref(source_event_id)
         .body(json!({
             "target_ref": source_event_id,
@@ -93,17 +93,17 @@ pub fn build_audit_ryw_receipt(
         }))
 }
 
-/// Build a `cx.identity.disclosure_policy` event — declares what a connection
+/// Build a `ck.identity.disclosure_policy` event — declares what a connection
 /// holder may disclose about the principal. Spec: `identity-handles.md` §16.
 ///
 /// `policy` is the structured policy document; the reducer enforces shape.
 pub fn build_disclosure_policy(space_id: &str, actor: &str, policy: Value) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.identity.disclosure_policy").body(json!({
+    OperationBuilder::new(space_id, actor, "ck.identity.disclosure_policy").body(json!({
         "policy": policy,
     }))
 }
 
-/// Build a `cx.identity.presentation_request` event — request a verifiable
+/// Build a `ck.identity.presentation_request` event — request a verifiable
 /// presentation from a connection holder.
 pub fn build_presentation_request(
     space_id: &str,
@@ -111,7 +111,7 @@ pub fn build_presentation_request(
     target: &str,
     requested_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.identity.presentation_request")
+    OperationBuilder::new(space_id, actor, "ck.identity.presentation_request")
         .target_ref(target)
         .body(json!({
             "target": target,
@@ -119,7 +119,7 @@ pub fn build_presentation_request(
         }))
 }
 
-/// Build a `cx.identity.presentation_response` event — reply with a signed
+/// Build a `ck.identity.presentation_response` event — reply with a signed
 /// verifiable presentation.
 pub fn build_presentation_response(
     space_id: &str,
@@ -127,7 +127,7 @@ pub fn build_presentation_response(
     request_id: &str,
     presentation: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.identity.presentation_response")
+    OperationBuilder::new(space_id, actor, "ck.identity.presentation_response")
         .target_ref(request_id)
         .body(json!({
             "request_id": request_id,
@@ -135,7 +135,7 @@ pub fn build_presentation_response(
         }))
 }
 
-/// Build a `cx.identity.disclosure_receipt` event — actor-private record of
+/// Build a `ck.identity.disclosure_receipt` event — actor-private record of
 /// what was disclosed and to whom (audit trail for the principal).
 pub fn build_disclosure_receipt(
     space_id: &str,
@@ -144,7 +144,7 @@ pub fn build_disclosure_receipt(
     counterparty: &str,
     disclosed_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "cx.identity.disclosure_receipt")
+    OperationBuilder::new(space_id, actor, "ck.identity.disclosure_receipt")
         .target_ref(request_id)
         .body(json!({
             "request_id": request_id,
@@ -166,7 +166,7 @@ mod tests {
             "did:key:zDevice",
         )
         .build("node");
-        assert_eq!(op.kind, "cx.audit.accessed");
+        assert_eq!(op.kind, "ck.audit.accessed");
         assert_eq!(op.payload["target_ref"], "ck:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
@@ -189,7 +189,7 @@ mod tests {
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "cx.audit.ryw_receipt");
+        assert_eq!(op.kind, "ck.audit.ryw_receipt");
         assert_eq!(op.payload["target_ref"], "ck:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
@@ -212,7 +212,7 @@ mod tests {
             vec!["display_name".into(), "avatar".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "cx.identity.presentation_request");
+        assert_eq!(op.kind, "ck.identity.presentation_request");
         assert_eq!(op.payload["requested_claims"][0], "display_name");
     }
 
@@ -226,7 +226,7 @@ mod tests {
             vec!["email".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "cx.identity.disclosure_receipt");
+        assert_eq!(op.kind, "ck.identity.disclosure_receipt");
         assert_eq!(op.payload["counterparty"], "did:web:bob");
     }
 
@@ -234,11 +234,11 @@ mod tests {
     fn audit_policy_profile_ids_match_spec() {
         assert_eq!(
             AuditPolicy::Attested.profile_id(),
-            "cx.profile.attested_audit.e2ee.v1"
+            "ck.profile.attested_audit.e2ee.v1"
         );
         assert_eq!(
             AuditPolicy::Disclosed.profile_id(),
-            "cx.profile.disclosed_audit.e2ee.v1"
+            "ck.profile.disclosed_audit.e2ee.v1"
         );
     }
 }

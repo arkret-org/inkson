@@ -1,4 +1,4 @@
-//! R3.2 — Realm-scoped `cx.member.identity.update` event store.
+//! R3.2 — Realm-scoped `ck.member.identity.update` event store.
 //!
 //! Spec source: cokret-spec @ b56cab1 (2026-05-28)
 //! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
@@ -15,7 +15,7 @@
 //! digest binding (MID-3) are all in place so the UI can resolve the
 //! effective `MemberIdentity` (subject_id + display_profile) as soon as
 //! the crypto pipeline lands. Handle now comes from the
-//! `cx.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
+//! `ck.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
 //! `MemberIdentity` no longer carries `primary_handle` / `handles[]`.
 
 use std::collections::BTreeMap;
@@ -34,7 +34,7 @@ pub struct ActorKey {
     pub actor_id: String,
 }
 
-/// Stored `cx.member.identity.update` event record. Carries the parsed
+/// Stored `ck.member.identity.update` event record. Carries the parsed
 /// SDK payload + the raw envelope (so we can re-hash it for replacement
 /// edge verification). `decryption_pending` is set when the carrier was
 /// an `encrypted_content` envelope we couldn't decrypt yet (missing MLS epoch).
@@ -45,7 +45,7 @@ pub struct StoredIdentityEvent {
     pub decryption_pending: bool,
 }
 
-/// Per-(realm, actor) collection of `cx.member.identity.update` event
+/// Per-(realm, actor) collection of `ck.member.identity.update` event
 /// records. Keyed by event id; insertion is idempotent.
 #[derive(Clone, Debug, Default)]
 pub struct MemberIdentityStore {
@@ -57,7 +57,7 @@ impl MemberIdentityStore {
         Self::default()
     }
 
-    /// MID-2 — record a `cx.member.identity.update` event for a given
+    /// MID-2 — record a `ck.member.identity.update` event for a given
     /// actor. Idempotent on `event_id`.
     pub fn insert(&mut self, key: ActorKey, event: StoredIdentityEvent) {
         self.inner
@@ -69,7 +69,7 @@ impl MemberIdentityStore {
     /// Bulk-ingest a roster-inlined `identity_events[]` array. Each
     /// entry MUST be a full Event envelope shaped per
     /// `artifacts/schemas/event.schema.json` — i.e. with `event_id`,
-    /// `kind == "cx.member.identity.update"`, and a `payload` body that
+    /// `kind == "ck.member.identity.update"`, and a `payload` body that
     /// deserialises into [`MemberIdentityUpdatePayload`].
     ///
     /// Events that fail to parse are silently skipped (we don't crash
@@ -85,7 +85,7 @@ impl MemberIdentityStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "cx.member.identity.update" {
+            if kind != "ck.member.identity.update" {
                 continue;
             }
             let Some(payload_value) = event.get("payload") else {
@@ -207,7 +207,7 @@ impl MemberIdentityStore {
     }
 
     /// Returns `true` when the actor has at least one
-    /// `cx.member.identity.update` event but every effective event is
+    /// `ck.member.identity.update` event but every effective event is
     /// still `decryption_pending`. Drives the "muted placeholder" UI
     /// state per MID-6.
     pub fn is_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
@@ -238,7 +238,7 @@ mod tests {
             "segment": "member_identity",
             "identity_payload": {
                 "member_identity": {
-                    "schema": "cx.schema.member_identity.v1",
+                    "schema": "ck.schema.member_identity.v1",
                     "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                     "actor_id": actor_id,
                     "subject_id": actor_id,
@@ -262,7 +262,7 @@ mod tests {
         let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
             "event_id": "ck:event:01904100-0000-7000-8000-00000000000a",
-            "kind": "cx.member.identity.update",
+            "kind": "ck.member.identity.update",
             "payload": sample_payload(actor, "Alice v1"),
         });
         store.ingest_inline(realm, actor, &[event]);
@@ -282,7 +282,7 @@ mod tests {
         let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
             "event_id": "ck:event:01904100-0000-7000-8000-00000000000b",
-            "kind": "cx.member.identity.update",
+            "kind": "ck.member.identity.update",
             "payload": {
                 "realm_id": realm,
                 "actor_id": actor,
@@ -311,7 +311,7 @@ mod tests {
         let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
             "event_id": "ck:event:01904100-0000-7000-8000-00000000000c",
-            "kind": "cx.flow.move",
+            "kind": "ck.flow.move",
             "payload": sample_payload(actor, "Alice"),
         });
         store.ingest_inline(realm, actor, &[event]);

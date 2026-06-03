@@ -911,7 +911,7 @@ pub fn DirectoryPanel(
                             // TODO(G3.Y3-followup): replace the route-only
                             // hop with an in-place block confirmation
                             // overlay once the soland account_data
-                            // `POST /api/v1/account-data/blocklist`
+                            // `POST /_cokret/self/account-data/blocklist`
                             // endpoint exists; today the click is just a
                             // shortcut into `/settings/blocklist`.
                             {

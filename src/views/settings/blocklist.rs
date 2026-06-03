@@ -3,7 +3,7 @@
 //! Actor-private list of blocked DIDs. Spec
 //! `governance/content-moderation.md` §4 — personal blocklist is a
 //! client-side filter; spec `discovery/client-preferences.md` §2
-//! defines the `cx.account.blocklist` account_data shape.
+//! defines the `ck.account.blocklist` account_data shape.
 //!
 //! Surfaces:
 //! - `blocked-users-panel` wrapper
@@ -43,7 +43,7 @@ pub fn BlocklistSettingsCard(
                 HelpTip { text: "Actor-private list of DIDs whose new content you don't want to see. Spec governance/content-moderation.md §4 — block is client-side filter; quarantine is server-side." }
             }
             div { class: "muted",
-                "Block hides new content from the listed actors in your timeline + notifications. The list syncs across your devices via cx.account.blocklist account_data."
+                "Block hides new content from the listed actors in your timeline + notifications. The list syncs across your devices via ck.account.blocklist account_data."
             }
 
             div { class: "settings-list", "data-testid": "blocked-users-list",

@@ -266,7 +266,7 @@ impl std::error::Error for WellKnownFetchError {}
 ///
 /// Per `discovery/server-discovery.md`, the well-known record lives at
 /// `https://<host>/.well-known/cokret/server` relative to the origin
-/// — not under the service's `/api/v1` namespace. This helper trims a
+/// — not under the service's `/_cokret` namespace. This helper trims a
 /// trailing slash and concatenates the well-known path, returning an
 /// error when `base_url` is empty or doesn't carry a scheme.
 pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownFetchError> {
@@ -282,7 +282,7 @@ pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownF
         )));
     }
     // Strip everything after the host so we don't accidentally nest the
-    // well-known path under an API prefix (`/api/v1`, etc.).
+    // well-known path under an API prefix (`/_cokret`, etc.).
     let after_scheme = if let Some(rest) = trimmed.strip_prefix("https://") {
         ("https://", rest)
     } else {
@@ -498,9 +498,9 @@ mod tests {
             "https://bob.example/.well-known/cokret/server"
         );
         // Origin + API prefix gets stripped — well-known lives at the
-        // top of the host, not nested under /api/v1.
+        // top of the host, not nested under /_cokret.
         assert_eq!(
-            well_known_cokret_server_url("https://bob.example/api/v1").unwrap(),
+            well_known_cokret_server_url("https://bob.example/_cokret").unwrap(),
             "https://bob.example/.well-known/cokret/server"
         );
         // Loopback dev URLs are allowed.

@@ -8,11 +8,11 @@ use crate::recovery_crypto::{
     VAULT_AEAD_NAME, VAULT_AEAD_PROFILE, VaultKek, VaultSealContext, open_vault, seal_vault,
 };
 
-const KEY_BACKUP_SCHEMA: &str = "cx.schema.key_backup.v1";
+const KEY_BACKUP_SCHEMA: &str = "ck.schema.key_backup.v1";
 pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-cokret-key-backup-delete-proof";
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
-/// §7.4.1 / §7.6 + the `cx.schema.key_backup.v1` `signed_fields.allOf`). Optional
+/// §7.4.1 / §7.6 + the `ck.schema.key_backup.v1` `signed_fields.allOf`). Optional
 /// fields (`supersedes`, `supersedes_digest`, `frontier_ref`) are only listed
 /// when present on the envelope.
 pub const KEY_BACKUP_SIGNED_FIELDS: &[&str] = &[
@@ -590,7 +590,7 @@ pub fn build_did_recovery_backup_body(
 /// AEAD identifiers for HPKE backups (HPKE uses ChaCha20Poly1305 internally,
 /// 12-byte nonce derived by the HPKE key schedule — no wire nonce).
 pub const HPKE_AEAD_NAME: &str = "chacha20_poly1305";
-pub const HPKE_AEAD_PROFILE: &str = "cx.aead.chacha20_poly1305.v1";
+pub const HPKE_AEAD_PROFILE: &str = "ck.aead.chacha20_poly1305.v1";
 
 /// `info` transcript bound into the HPKE context (key-management.md §7.5.2):
 /// canonical_json of the envelope identity tuple. Both sealer and opener
@@ -1129,7 +1129,7 @@ mod tests {
         assert_eq!(body["encryption"]["aead"]["name"], "xchacha20_poly1305");
         assert_eq!(
             body["encryption"]["aead"]["aead_profile"],
-            "cx.aead.xchacha20_poly1305.v1"
+            "ck.aead.xchacha20_poly1305.v1"
         );
         assert!(is_base64url_token(
             body["encryption"]["aead"]["nonce"].as_str().unwrap()

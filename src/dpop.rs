@@ -135,7 +135,7 @@ pub fn build_dpop_proof_ed25519(
 ///
 /// The canonical form is the JWK with only the required members
 /// (`crv`, `kty`, `x`), serialized in lex-min key order without
-/// whitespace. Soland's `cx.session.grant` verifier rebuilds the
+/// whitespace. Soland's `ck.session.grant` verifier rebuilds the
 /// same string and compares — the value is what gets bound to the
 /// access token (`jkt` claim) so a proof from a different
 /// keypair is rejected.
@@ -211,7 +211,7 @@ mod tests {
     fn fixed_claims() -> DpopClaims {
         DpopClaims {
             htm: "POST".to_owned(),
-            htu: "https://soland.example/api/v1/session_grants/exchange".to_owned(),
+            htu: "https://soland.example/_cokret/gate/session_grants/exchange".to_owned(),
             iat: 1_716_000_000,
             jti: "fixed-nonce-1234".to_owned(),
             nonce: None,

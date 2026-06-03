@@ -33,11 +33,11 @@ Use this when:
    decrypts via XChaCha20-Poly1305, then re-bootstraps the device key and
    imports the account MLS history secret when one is present.
 4. After the active `recovery_policy` accepts a bound `recovery_session`
-   proof, the device-authorization flow can publish `cx.device.authorize`.
+   proof, the device-authorization flow can publish `ck.device.authorize`.
 
 Current yougen status: the restore panel re-hydrates local backup payload and
 MLS account-secret material. It does not yet submit the policy proof or
-`cx.device.authorize` by itself.
+`ck.device.authorize` by itself.
 
 <!-- TODO(screenshot): settings-recovery-vault-restore.png -->
 
@@ -113,7 +113,7 @@ Within 24 hours of recovery:
 
 1. Open **Settings → Devices** on the new device.
 2. **Revoke** every device you can no longer reach. Each revocation
-   publishes a `cx.device.revoke` envelope, rotates future history backups,
+   publishes a `ck.device.revoke` envelope, rotates future history backups,
    and removes the device from new MLS epochs.
 3. Run **Cross-signing → Re-sign trusted contacts** so your peers
    register the new device as a successor.

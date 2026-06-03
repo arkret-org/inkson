@@ -19,7 +19,7 @@ pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
-// cx.events.submit via the cx_ops::* event builders. The original
+// ck.events.submit via the cx_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,8 +135,8 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
-        Some("realm") | Some("cx.schema.realm.v1") => SpacePreviewKind::Realm,
+        Some("space") | Some("ck.schema.space.v1") => SpacePreviewKind::Space,
+        Some("realm") | Some("ck.schema.realm.v1") => SpacePreviewKind::Realm,
         _ => {
             let has_parent = projection_string(
                 body,
@@ -291,7 +291,7 @@ pub fn SpaceAdminPanel(
     // Device-revoke MLS Remove builder. The full round-trip is: load
     // encrypted snapshot from `state_store`, decrypt with this device's
     // snapshot secret, run SDK `remove_member_by_principal`, sign the
-    // canonical `mls_commit` Operation, submit via /api/v1/events, then
+    // canonical `mls_commit` Operation, submit via /_cokret/self/events, then
     // re-encrypt + persist the post-commit group state so a crash between
     // submit and persist doesn't leave the local cache an epoch behind.
     let mut device_revoke_target = use_signal(String::new);
@@ -388,8 +388,8 @@ pub fn SpaceAdminPanel(
         SpacePreviewKind::Space => "Space",
     };
     let metadata_event_kind = match metadata_subject.kind {
-        SpacePreviewKind::Realm => "cx.realm.update",
-        SpacePreviewKind::Space => "cx.space.update",
+        SpacePreviewKind::Realm => "ck.realm.update",
+        SpacePreviewKind::Space => "ck.space.update",
     };
     let alert_count = usize::from(space_paused)
         + usize::from(space_pending_mls_binding)
@@ -719,7 +719,7 @@ pub fn SpaceAdminPanel(
                     input {
                         "data-testid": "repair-target-cell-input",
                         value: "{repair_target_cell}",
-                        placeholder: "ck:cell:cx.component.realm.organization.v1:...",
+                        placeholder: "ck:cell:ck.component.realm.organization.v1:...",
                         oninput: move |evt| repair_target_cell.set(evt.value()),
                     }
                     label { "conflict_head_A" }
@@ -938,7 +938,7 @@ pub fn SpaceAdminPanel(
                 div { class: "event", "data-testid": "anchorer-cell-card",
                     div { class: "event-head",
                         span { "Anchorer cell" }
-                        span { "cx.component.anchorer.v1" }
+                        span { "ck.component.anchorer.v1" }
                     }
                     div { class: "muted",
                         "Recovery anchorer mode for this Space — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
@@ -1258,7 +1258,7 @@ pub fn SpaceAdminPanel(
                                     }
                                     let wait_for = active_sync_token(sync_cursor());
                                     // Client-generated invite_id — spec-canonical (no
-                                    // two-phase server lookup needed; cx.invite.create
+                                    // two-phase server lookup needed; ck.invite.create
                                     // event is the source of truth).
                                     let invite_id = format!(
                                         "ck:invite:{}",
@@ -1316,7 +1316,7 @@ pub fn SpaceAdminPanel(
                                                                 op_id.clone(),
                                                                 Some(space.clone()),
                                                                 json!({
-                                                                    "kind": "cx.invite.create",
+                                                                    "kind": "ck.invite.create",
                                                                     "invite_id": invite_id,
                                                                     "invitee": invitee_did,
                                                                     "state": "pending",
@@ -1352,10 +1352,10 @@ pub fn SpaceAdminPanel(
             div { class: "event", "data-testid": "member-state-banner",
                 div { class: "event-head",
                     span { "Member state machine" }
-                    span { "cx.member.state · 5 variants" }
+                    span { "ck.member.state · 5 variants" }
                 }
                 div { class: "muted",
-                    "Membership state is driven by cx.member.state events. In a `knock` Space, an uninvited actor can request access; an admin transitions them to invited, then to joined."
+                    "Membership state is driven by ck.member.state events. In a `knock` Space, an uninvited actor can request access; an admin transitions them to invited, then to joined."
                 }
                 div { class: "actions",
                     span { class: "badge blue", "Invited" }
@@ -1380,9 +1380,9 @@ pub fn SpaceAdminPanel(
                             let space = selected_space.clone();
                             move |_| {
                                 // Spec-canonical read path is the local sync
-                                // projection (driven by cx.events.subscribe).
+                                // projection (driven by ck.events.subscribe).
                                 // Members appear as the local store applies
-                                // cx.member.state events.
+                                // ck.member.state events.
                                 let store = state_store.read();
                                 let next = projected_members_for_space(&store, &space);
                                 let count = next.len();
@@ -1428,7 +1428,7 @@ pub fn SpaceAdminPanel(
                             span { title: "{member}", "{member_label}" }
                             {
                                 // Mark agent-endpoint DIDs (registered via
-                                // `cx.agent.endpoint`) so admins can tell bots
+                                // `ck.agent.endpoint`) so admins can tell bots
                                 // apart from real members at a glance. Sourced
                                 // from the same local raw_operations cache the
                                 // Agents panel uses.
@@ -1441,7 +1441,7 @@ pub fn SpaceAdminPanel(
                                         r.payload
                                             .get("kind")
                                             .and_then(|k| k.as_str())
-                                            == Some("cx.agent.endpoint")
+                                            == Some("ck.agent.endpoint")
                                             && r.space_id
                                                 .as_deref()
                                                 .map(|s| s == selected_space)
@@ -1601,10 +1601,10 @@ pub fn SpaceAdminPanel(
                             }
                             // (Legacy Move-flow kick/ban buttons removed — the
                             // direct-event kick/ban above now submits the same
-                            // cx.member.state event via cx.events.submit.)
+                            // ck.member.state event via ck.events.submit.)
                             // A5 — personal blocklist entry-point. Block is
                             // a purely actor-private action (writes
-                            // `cx.account_data.set("cx.account.blocklist", …)`)
+                            // `ck.account_data.set("ck.account.blocklist", …)`)
                             // and does NOT touch the Space's member-state
                             // FSM. Confirm modal renders below the row.
                             button {
@@ -1679,12 +1679,12 @@ pub fn SpaceAdminPanel(
 
             // Space invites — sync/third-party-invites.md + invite event family
             // 6 canonical events drive the invite lifecycle:
-            //   cx.invite.create        — create an invite (proactively invite a known DID)
-            //   cx.invite.third_party   — invite a 3PID (email / phone) when the DID is unknown
-            //   cx.invite.claim         — invitee receives the invite proof (bound to their DID)
-            //   cx.invite.accept        — invitee formally accepts (writes membership)
-            //   cx.invite.cancel        — inviter cancels (before the receiver has claimed)
-            //   cx.invite.revoke        — inviter revokes (receiver claimed but has not accepted)
+            //   ck.invite.create        — create an invite (proactively invite a known DID)
+            //   ck.invite.third_party   — invite a 3PID (email / phone) when the DID is unknown
+            //   ck.invite.claim         — invitee receives the invite proof (bound to their DID)
+            //   ck.invite.accept        — invitee formally accepts (writes membership)
+            //   ck.invite.cancel        — inviter cancels (before the receiver has claimed)
+            //   ck.invite.revoke        — inviter revokes (receiver claimed but has not accepted)
             div { class: "event", "data-testid": "invite-lifecycle-banner",
                 div { class: "event-head",
                     span { "Invite lifecycle" }
@@ -1694,12 +1694,12 @@ pub fn SpaceAdminPanel(
                     "Invites do not grant capabilities directly — the recipient must accept first. MUST carry expires_at; default 7 days, 24 hours for high-security Spaces."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", title: "cx.invite.create", "Create" }
-                    span { class: "badge blue", title: "cx.invite.third_party", "Third-party" }
-                    span { class: "badge", title: "cx.invite.claim", "Claim" }
-                    span { class: "badge green", title: "cx.invite.accept", "Accept" }
-                    span { class: "badge amber", title: "cx.invite.cancel", "Cancel" }
-                    span { class: "badge red", title: "cx.invite.revoke", "Revoke" }
+                    span { class: "badge blue", title: "ck.invite.create", "Create" }
+                    span { class: "badge blue", title: "ck.invite.third_party", "Third-party" }
+                    span { class: "badge", title: "ck.invite.claim", "Claim" }
+                    span { class: "badge green", title: "ck.invite.accept", "Accept" }
+                    span { class: "badge amber", title: "ck.invite.cancel", "Cancel" }
+                    span { class: "badge red", title: "ck.invite.revoke", "Revoke" }
                 }
             }
 
@@ -1775,7 +1775,7 @@ pub fn SpaceAdminPanel(
                                                                     op_id.clone(),
                                                                     Some(space.clone()),
                                                                     json!({
-                                                                        "kind": "cx.invite.accept",
+                                                                        "kind": "ck.invite.accept",
                                                                         "invite_id": invite_id,
                                                                         "state": "accepted",
                                                                         "event_id": submitted.event_id,
@@ -1840,7 +1840,7 @@ pub fn SpaceAdminPanel(
                                                                     op_id.clone(),
                                                                     Some(space.clone()),
                                                                     json!({
-                                                                        "kind": "cx.invite.cancel",
+                                                                        "kind": "ck.invite.cancel",
                                                                         "invite_id": invite_id,
                                                                         "state": "canceled",
                                                                         "event_id": submitted.event_id,
@@ -1888,8 +1888,8 @@ pub fn SpaceAdminPanel(
 
             if active_section == SpaceAdminSection::Security {
             // Audited E2EE assurance — crypto-media/audited-e2ee.md
-            // Two profiles: cx.profile.attested_audit.e2ee.v1 (HW attestation forced)
-            // and cx.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
+            // Two profiles: ck.profile.attested_audit.e2ee.v1 (HW attestation forced)
+            // and ck.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
             // UI MUST surface the policy choice + canonical join warning copy +
             // forbidden marketing terms (see audited-e2ee §3.1.1 / §3.5).
             div { class: "event", "data-testid": "audited-e2ee-assurance",
@@ -1909,12 +1909,12 @@ pub fn SpaceAdminPanel(
                     div { class: "metric",
                         strong { "disclosed_audit" }
                         span { class: "badge amber", "disclosed_audit.e2ee.v1" }
-                        div { class: "muted", "Audit agent receives procedural disclosure; cx.audit.accessed is mandatory; no cryptographic attestation" }
+                        div { class: "muted", "Audit agent receives procedural disclosure; ck.audit.accessed is mandatory; no cryptographic attestation" }
                     }
                     div { class: "metric",
                         strong { "attested_audit" }
                         span { class: "badge red", "attested_audit.e2ee.v1" }
-                        div { class: "muted", "Hardware attestation required; the RYW receipt schema enforces cx.audit.ryw_receipt" }
+                        div { class: "muted", "Hardware attestation required; the RYW receipt schema enforces ck.audit.ryw_receipt" }
                     }
                 }
                 div { class: "muted",
@@ -2084,23 +2084,23 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 div { class: "muted",
-                    "Reducer decision inputs: cx.capability.grant / cx.capability.revoke / resolved approval_constraint. Full trail in /audit."
+                    "Reducer decision inputs: ck.capability.grant / ck.capability.revoke / resolved approval_constraint. Full trail in /audit."
                 }
             }
 
             // Capability grant / revoke anchored-cell card (P0 M-capability).
             // Mirrors the consent grant/revoke PoC but targets
-            // cx.component.capability.grant.v1 (OrSet add/remove). Signed
+            // ck.component.capability.grant.v1 (OrSet add/remove). Signed
             // with the demo session key (TODO real-key-management) and
-            // submitted through cx.events.submit. Anchor frontier is threaded
+            // submitted through ck.events.submit. Anchor frontier is threaded
             // from the local sync view.
             div { class: "event", "data-testid": "capability-grant-card",
                 div { class: "event-head",
                     span { "Capability grant / revoke (Move PoC)" }
-                    span { "cx.component.capability.grant.v1 · OrSet" }
+                    span { "ck.component.capability.grant.v1 · OrSet" }
                 }
                 div { class: "muted",
-                    "Submits a cx.capability.grant or cx.capability.revoke event via cx.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
+                    "Submits a ck.capability.grant or ck.capability.revoke event via ck.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
                 }
                 label { "Grant ID (cell subject)" }
                 input {
@@ -2257,7 +2257,7 @@ pub fn SpaceAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "cx.capability.grant event {}: event_id={}",
+                                            "ck.capability.grant event {}: event_id={}",
                                             short_protocol_id(&op_id),
                                             short_protocol_id(&resp.event_id)
                                         )),
@@ -2324,7 +2324,7 @@ pub fn SpaceAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "cx.capability.revoke event {}: event_id={}",
+                                            "ck.capability.revoke event {}: event_id={}",
                                             short_protocol_id(&op_id),
                                             short_protocol_id(&resp.event_id)
                                         )),
@@ -2344,34 +2344,34 @@ pub fn SpaceAdminPanel(
             // Organization governance — identity/identity-did.md §6 + content-moderation
             // An Organization is a Principal (not a Realm). A single Realm can be
             // jointly governed by multiple organizations; the Realm's organization
-            // relationships are maintained via the cx.realm.organization event.
+            // relationships are maintained via the ck.realm.organization event.
             div { class: "event", "data-testid": "organization-governance",
                 div { class: "event-head",
                     span { "Organization governance" }
                     span { "Realm ≠ Organization" }
                 }
                 div { class: "muted",
-                    "An Organization is a Principal (a DID), not a Realm. Multi-org governance is expressed via cx.realm.organization relations; organization directory and moderation policy live independently of any single Realm."
+                    "An Organization is a Principal (a DID), not a Realm. Multi-org governance is expressed via ck.realm.organization relations; organization directory and moderation policy live independently of any single Realm."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
                         strong { "Owning organizations" }
-                        span { title: "cx.realm.organization", "Organization link" }
+                        span { title: "ck.realm.organization", "Organization link" }
                         div { class: "muted", "Declares the organization(s) this Realm belongs to" }
                     }
                     div { class: "metric",
                         strong { "Org directory listing" }
-                        span { title: "cx.organization.discovery", "Directory listing" }
+                        span { title: "ck.organization.discovery", "Directory listing" }
                         div { class: "muted", "Organization-level discoverability, independent of any Space" }
                     }
                     div { class: "metric",
                         strong { "Org moderation policy" }
-                        span { title: "cx.organization.moderation_policy", "Moderation policy" }
+                        span { title: "ck.organization.moderation_policy", "Moderation policy" }
                         div { class: "muted", "Organization-level moderation; Spaces can inherit or override" }
                     }
                     div { class: "metric",
                         strong { "Sovereign DID policy" }
-                        span { title: "cx.sovereign.did_policy", "Identity policy" }
+                        span { title: "ck.sovereign.did_policy", "Identity policy" }
                         div { class: "muted", "High-security deployments: restrict acceptable identity methods / resolver trust" }
                     }
                 }
@@ -2379,9 +2379,9 @@ pub fn SpaceAdminPanel(
 
             // Policy events — authz/policy-server.md
             // The three cx.policy.{rule,action,set} events feed the reducer's decision:
-            //   cx.policy.rule    — a single rule (match condition + effect + scope)
-            //   cx.policy.action  — a single action template (referenced by rules)
-            //   cx.policy.set     — bundles rules + actions into one published policy version
+            //   ck.policy.rule    — a single rule (match condition + effect + scope)
+            //   ck.policy.action  — a single action template (referenced by rules)
+            //   ck.policy.set     — bundles rules + actions into one published policy version
             div { class: "event", "data-testid": "policy-event-family",
                 div { class: "event-head",
                     span { "Policy authoring" }
@@ -2391,17 +2391,17 @@ pub fn SpaceAdminPanel(
                     "Policy is the input the reducer and service node use to decide whether a request is acceptable. A policy is published as a set composed of rules + actions; one policy_version is written atomically."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", title: "cx.policy.rule", "Rule" }
-                    span { class: "badge", title: "cx.policy.action", "Action" }
-                    span { class: "badge green", title: "cx.policy.set", "Published set" }
+                    span { class: "badge blue", title: "ck.policy.rule", "Rule" }
+                    span { class: "badge", title: "ck.policy.action", "Action" }
+                    span { class: "badge green", title: "ck.policy.set", "Published set" }
                     span { class: "muted", "— three events combine to publish one policy version" }
                 }
             }
 
             // Moderation events — governance/content-moderation.md
             // Two canonical events drive content-level moderation:
-            //   cx.moderation.report — an actor files a report (against a message / flow / morph / actor)
-            //   cx.moderation.franking_proof  — E2EE franking proof (so encrypted content remains reviewable)
+            //   ck.moderation.report — an actor files a report (against a message / flow / morph / actor)
+            //   ck.moderation.franking_proof  — E2EE franking proof (so encrypted content remains reviewable)
             // Outcomes like quarantine / require_review are reducer decisions, not separate events.
             div { class: "event", "data-testid": "moderation-events",
                 div { class: "event-head",
@@ -2409,11 +2409,11 @@ pub fn SpaceAdminPanel(
                     span { "governance/content-moderation.md" }
                 }
                 div { class: "muted",
-                    "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as cx.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
+                    "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as ck.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", title: "cx.moderation.report", "Report" }
-                    span { class: "badge accent", title: "cx.moderation.franking_proof", "Franking proof" }
+                    span { class: "badge blue", title: "ck.moderation.report", "Report" }
+                    span { class: "badge accent", title: "ck.moderation.franking_proof", "Franking proof" }
                     span { class: "muted", "→ reducer decides deny / quarantine / require_review" }
                 }
             }
@@ -2557,7 +2557,7 @@ pub fn SpaceAdminPanel(
             div { class: "event", "data-testid": "mls-remove-builder",
                 div { class: "event-head",
                     span { {crate::i18n::tr("space_admin.mls_remove_header")} }
-                    span { "B5c · cx.mls.commit" }
+                    span { "B5c · ck.mls.commit" }
                 }
                 div { class: "muted",
                     {crate::i18n::tr("space_admin.mls_remove_hint")}
@@ -2880,7 +2880,7 @@ async fn run_device_revoke_from_snapshot(
     // The SDK's `commit_operation` returns an SDK-typed Operation. We
     // wrap its payload into yougen's EventEnvelope shape so the
     // existing `submit_event_envelope` path (Event envelope wrapper +
-    // /api/v1/events POST) accepts it without a separate wire route.
+    // /_cokret/self/events POST) accepts it without a separate wire route.
     let actor = full
         .output
         .commit_operation

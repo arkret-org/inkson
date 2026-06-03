@@ -51,7 +51,7 @@ pub struct NotificationClientState {
     pub archived: bool,
 }
 
-/// Realm-scoped cache for `cx.directory.list_handles_for_subject`.
+/// Realm-scoped cache for `ck.directory.list_handles_for_subject`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the visible subject DID, the Realm context, and the
@@ -131,12 +131,12 @@ impl ReadMarkerRecord {
     }
 }
 
-/// Server-declared `cx.realm.read_receipt_policy` snapshot for a Realm, as
+/// Server-declared `ck.realm.read_receipt_policy` snapshot for a Realm, as
 /// surfaced to clients via the Anchor view (P0 M3) once sync.rs lands.
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
-/// Until the sync wires the policy from soland's `cx.component.realm.read_receipt_policy.v1`
+/// Until the sync wires the policy from soland's `ck.component.realm.read_receipt_policy.v1`
 /// cas-register cell, this is populated by tests / dev tooling only.
 /// See `_todos.md` C10.D "Policy lock UI".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,12 +425,12 @@ impl MoveSubmissionState {
 /// Per-Move tracking record persisted in the local state store. `move_id`
 /// is content-addressed (`sha256:...`); the reducer round-trips
 /// `space_id` so client UIs can scope filtering. `kind` is a free-form
-/// classifier the UI uses for icons (e.g. `cx.consent.grant`,
-/// `cx.message.create`, `mls_commit`).
+/// classifier the UI uses for icons (e.g. `ck.consent.grant`,
+/// `ck.message.create`, `mls_commit`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
-    /// Server-assigned Event id returned by `cx.events.submit`. Older
+    /// Server-assigned Event id returned by `ck.events.submit`. Older
     /// records may only have `move_id` (the local idempotency alias);
     /// sync `event_states[]` uses this id, so new records persist it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -536,7 +536,7 @@ pub struct LocalAnchorView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier_lag: Option<u64>,
     /// MLS key-schedule content hash (`sha256:<hex>`) from the
-    /// `cx.component.key_schedule.v1` cas-register cell. The MLS commit
+    /// `ck.component.key_schedule.v1` cas-register cell. The MLS commit
     /// path uses this as `prev_schedule`; the new commit computes a
     /// fresh schedule on top of it. `None` means the Space has not
     /// published a key schedule yet (no prior MLS commit observed).
@@ -597,7 +597,7 @@ impl LocalAnchorView {
         }
         let head_a = &info.heads[0];
         let head_b = &info.heads[1];
-        let safer = if cell_ref.starts_with("ck:cell:cx.component.realm.organization.v1") {
+        let safer = if cell_ref.starts_with("ck:cell:ck.component.realm.organization.v1") {
             head_a.value.clone()
         } else {
             safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?
@@ -612,9 +612,9 @@ impl LocalAnchorView {
 /// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
 /// not a safety call, so we surface no preference and the operator picks.
 fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
-    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ck:cell:cx.component.member.state.v1") {
+    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ck:cell:ck.component.member.state.v1") {
         member_state_safety_rank
-    } else if cell_ref.starts_with("ck:cell:cx.component.capability.grant.v1") {
+    } else if cell_ref.starts_with("ck:cell:ck.component.capability.grant.v1") {
         capability_grant_safety_rank
     } else {
         return None;
@@ -668,7 +668,7 @@ impl LocalAnchorView {
     ///     "leaves":   ["sha256:..."],
     ///     "state_root": "ck:state:sha256:...",
     ///     "cells": {
-    ///       "ck:cell:cx.component.member.state.v1:did:web:alice": {
+    ///       "ck:cell:ck.component.member.state.v1:did:web:alice": {
     ///         "bottom": "expose"
     ///       }
     ///     }
@@ -768,7 +768,7 @@ impl LocalAnchorView {
                 // B3c: surface the MLS key schedule hash so the next
                 // commit's SDK MLS governance binding can carry the
                 // SDK-canonical "advance schedule" effect on it.
-                if cell_ref.starts_with("ck:cell:cx.component.key_schedule.v1")
+                if cell_ref.starts_with("ck:cell:ck.component.key_schedule.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.key_schedule_hash = value.as_str().map(str::to_owned).or_else(|| {
@@ -924,13 +924,13 @@ pub struct ClientLocalState {
     pub muted_notification_kinds: BTreeMap<String, bool>,
     /// Read receipt send preferences (spec
     /// `discovery/client-preferences.md` §3.6, account-data key
-    /// `cx.read_receipt.preferences`).
+    /// `ck.read_receipt.preferences`).
     ///
     /// `read_receipt_default_send` is the global fallback (default: send).
     /// `read_receipt_space_overrides` and `read_receipt_flow_overrides`
     /// are per-scope overrides; resolution order is (flow → space →
     /// default), matching the SDK's `ReadReceiptPreferences::effective_send`.
-    /// Until the server wires `cx.account_data.set` for this key,
+    /// Until the server wires `ck.account_data.set` for this key,
     /// preferences live only on this device.
     #[serde(default = "default_true")]
     pub read_receipt_default_send: bool,
@@ -938,10 +938,10 @@ pub struct ClientLocalState {
     pub read_receipt_space_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub read_receipt_flow_overrides: BTreeMap<String, bool>,
-    /// Server-declared `cx.realm.read_receipt_policy` snapshots, keyed by
+    /// Server-declared `ck.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
-    /// `cx.component.realm.read_receipt_policy.v1` cas-register cell so
+    /// `ck.component.realm.read_receipt_policy.v1` cas-register cell so
     /// the settings UI can lock per-Realm toggles when the server's
     /// policy is `required` or `disabled`.
     #[serde(default)]
@@ -970,7 +970,7 @@ pub struct ClientLocalState {
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
     pub private_data: BTreeMap<String, String>,
-    /// Private cx.read_cursor.advance cursors keyed by Realm + read_scope.
+    /// Private ck.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
     /// Persisted OIDC token bundle - access_token, refresh_token, expiry,
@@ -1005,7 +1005,7 @@ pub struct ClientLocalState {
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
-    /// Spaces whose `cx.mls.genesis` event has already been submitted to
+    /// Spaces whose `ck.mls.genesis` event has already been submitted to
     /// soland. Tracked per-space so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
@@ -1032,7 +1032,7 @@ pub struct ClientLocalState {
     ///
     /// CRITICAL: this MUST NEVER leave the device. It is written only by
     /// [`LocalStateStore::save_private_plaintext`] and never enters any
-    /// upstream op / `cx.flow.update` payload. (Cross-device backup of the
+    /// upstream op / `ck.flow.update` payload. (Cross-device backup of the
     /// sidecar is a separate later task — not implemented here.)
     #[serde(default)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
@@ -1047,28 +1047,28 @@ pub struct ClientLocalState {
     pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,
     /// Actor-private contact remarks per
     /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
-    /// hydrated from `cx.contacts.actor.<did>` account_data entries.
+    /// hydrated from `ck.contacts.actor.<did>` account_data entries.
     #[serde(default)]
     pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
     /// Actor-private personal blocklist per
-    /// `discovery/client-preferences.md` (`cx.account.blocklist`). Each
+    /// `discovery/client-preferences.md` (`ck.account.blocklist`). Each
     /// entry hides messages from the targeted DID in the timeline/chat
     /// renderers and surfaces in the Settings → Privacy panel. The
     /// shape mirrors the wire body so the future
-    /// `cx.account_data.set("cx.account.blocklist", …)` push can serialise
+    /// `ck.account_data.set("ck.account.blocklist", …)` push can serialise
     /// straight from this `Vec`.
     #[serde(default)]
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
     /// connected principal server's `ServiceDescribe` v2 response.
     /// Threaded through to flows that need to canonicalise into
-    /// transport / signing transcripts (e.g. `cx.cross_signing.publish`).
+    /// transport / signing transcripts (e.g. `ck.cross_signing.publish`).
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
     /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
     /// Used to mint `DPoP:` proofs for session-grant issuance and the
-    /// G3.C1 `POST /api/v1/session-grants/refresh` endpoint, which both
+    /// G3.C1 `POST /_cokret/gate/session-grants/refresh` endpoint, which both
     /// require a key the server can bind to `cnf.jkt`.
     ///
     /// Production callers store the private seed in `SecureKeyStore`
@@ -1079,7 +1079,7 @@ pub struct ClientLocalState {
     /// SubtleCrypto during app initialization.
     #[serde(default)]
     pub dpop_device_key: Option<DpopDeviceKeyRecord>,
-    /// R3.1 (MID-2) — raw inlined `cx.member.identity.update` event
+    /// R3.1 (MID-2) — raw inlined `ck.member.identity.update` event
     /// envelopes harvested from `account.subscribe` `members[]` entries.
     /// Keyed by `realm_id -> actor_id -> Vec<envelope>`. The runtime
     /// store ([`crate::member_identity_store::MemberIdentityStore`]) is
@@ -1090,7 +1090,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `cx.directory.list_handles_for_subject` responses
+    /// come from validated `ck.directory.list_handles_for_subject` responses
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
@@ -1201,7 +1201,7 @@ pub struct PersistedSessionGrant {
     /// Principal-server base URL where the grant is exchanged.
     pub principal_server_url: String,
     /// `session_grant_exchange_path` discovered from the principal
-    /// auth-bridge `/api/v1/auth/bridge/describe`.
+    /// auth-bridge `/_cokret/gate/auth/bridge/describe`.
     pub session_grant_exchange_path: String,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.
@@ -1444,7 +1444,7 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let operation_id = operation_id.into();
-        if raw_operation_kind(&payload) == Some("cx.realm.destroy")
+        if raw_operation_kind(&payload) == Some("ck.realm.destroy")
             && let Some(realm_id) = space_id.as_deref().filter(|id| !id.trim().is_empty())
         {
             self.cached.realm_lifecycle_state.insert(
@@ -1505,7 +1505,7 @@ impl LocalStateStore {
     }
 
     /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
-    /// emitted a `cx.realm.destroy` event we've already received? The
+    /// emitted a `ck.realm.destroy` event we've already received? The
     /// timeline / chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.
     ///
@@ -1533,7 +1533,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// R3.1 MID-2 — record inlined `cx.member.identity.update` event
+    /// R3.1 MID-2 — record inlined `ck.member.identity.update` event
     /// envelopes harvested off a `members[]` roster entry. Idempotent
     /// on event id; events that already exist for this `(realm, actor)`
     /// pair are skipped. The runtime
@@ -1563,7 +1563,7 @@ impl LocalStateStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "cx.member.identity.update" {
+            if kind != "ck.member.identity.update" {
                 continue;
             }
             let already = bucket.iter().any(|existing| {
@@ -2068,9 +2068,9 @@ impl LocalStateStore {
             hlc: Hlc::now(&device_id).to_string(),
         };
         let marker = ReadMarkerRecord {
-            marker_type: "cx.read_cursor.advance".to_owned(),
+            marker_type: "ck.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
-                schema: "cx.schema.read_cursor.v1".to_owned(),
+                schema: "ck.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.clone(),
                 read_scope: read_scope.clone(),
                 position,
@@ -2235,7 +2235,7 @@ impl LocalStateStore {
     /// [`SpaceRemark::is_empty`] returns true tombstones the entry
     /// (equivalent to `remove_space_remark`). Persists synchronously to
     /// disk; the caller is responsible for pushing the same payload to
-    /// soland via `PUT /api/v1/account_data/{key}`.
+    /// soland via `PUT /_cokret/self/account_data/{key}`.
     pub fn set_space_remark(
         &mut self,
         space_id: impl Into<String>,
@@ -2301,7 +2301,7 @@ impl LocalStateStore {
         }
     }
 
-    // ── Personal blocklist (spec client-preferences.md "cx.account.blocklist") ─
+    // ── Personal blocklist (spec client-preferences.md "ck.account.blocklist") ─
 
     /// Current personal blocklist. Cheap clone — the underlying `Vec`
     /// is short by design (curated by the user).
@@ -2322,7 +2322,7 @@ impl LocalStateStore {
     ///
     /// Persists synchronously to disk; the caller is responsible for
     /// pushing the new list to soland via
-    /// `cx.account_data.set("cx.account.blocklist", …)`.
+    /// `ck.account_data.set("ck.account.blocklist", …)`.
     pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
         let now = chrono::Utc::now().to_rfc3339();
@@ -2459,7 +2459,7 @@ impl LocalStateStore {
     /// space → default). Mirror of
     /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
-    /// `cx.realm.read_receipt_policy` with `disclosure="required"` the
+    /// `ck.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).
@@ -2512,8 +2512,8 @@ impl LocalStateStore {
     /// Record a freshly-submitted Move and its initial state. The
     /// caller has just received soland's `SubmitMoveResponse`; the
     /// state is mapped in via [`MoveSubmissionState::from_submit_state`].
-    /// `kind` is a free-form classifier (e.g. `cx.consent.grant`,
-    /// `cx.message.create`, `mls_commit`) the UI uses to decorate
+    /// `kind` is a free-form classifier (e.g. `ck.consent.grant`,
+    /// `ck.message.create`, `mls_commit`) the UI uses to decorate
     /// pills + icons.
     pub fn record_move_submission(
         &mut self,
@@ -3069,12 +3069,12 @@ impl LocalStateStore {
         }
     }
 
-    /// True once a `cx.mls.genesis` event has been submitted for this space.
+    /// True once a `ck.mls.genesis` event has been submitted for this space.
     pub fn mls_genesis_emitted_for(&self, space_id: &str) -> bool {
         self.load().mls_genesis_emitted.contains(space_id)
     }
 
-    /// Record that a `cx.mls.genesis` event has been submitted for this
+    /// Record that a `ck.mls.genesis` event has been submitted for this
     /// space so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, space_id: impl Into<String>) {
         self.ensure_cached_loaded();
@@ -3724,7 +3724,7 @@ mod tests {
         store.record_move_submission(
             mid,
             space,
-            "cx.consent.grant",
+            "ck.consent.grant",
             MoveSubmissionState::PendingAnchor,
             None,
             Some("ck:anchor:sha256:abc".to_owned()),
@@ -3822,7 +3822,7 @@ mod tests {
             local_id,
             Some(event_id.to_owned()),
             space,
-            "cx.flow.move",
+            "ck.flow.move",
             MoveSubmissionState::PendingAnchor,
             None,
             Some("ck:anchor:sha256:abc".to_owned()),
@@ -3889,7 +3889,7 @@ mod tests {
         store.record_move_submission(
             move_id,
             space,
-            "cx.flow.move",
+            "ck.flow.move",
             MoveSubmissionState::PendingAnchor,
             None,
             None,
@@ -3921,7 +3921,7 @@ mod tests {
         store.record_move_submission(
             "sha256:222",
             space,
-            "cx.message.create",
+            "ck.message.create",
             MoveSubmissionState::PendingMlsBinding,
             Some("covered_frontier missing".to_owned()),
             None,
@@ -3938,7 +3938,7 @@ mod tests {
         store.save_space_projection(
             space.to_owned(),
             json!({
-                "schema": "cx.schema.realm.v1",
+                "schema": "ck.schema.realm.v1",
                 "summary": {
                     "title": "Encrypted",
                     "encryption_profile": "mls_rfc9420"
@@ -3951,7 +3951,7 @@ mod tests {
         store.save_space_projection(
             plain.to_owned(),
             json!({
-                "schema": "cx.schema.realm.v1",
+                "schema": "ck.schema.realm.v1",
                 "summary": {
                     "title": "Plain",
                     "encryption_profile": "none"
@@ -4061,7 +4061,7 @@ mod tests {
         store.append_raw_operation(
             "ck:operation:local-01",
             Some("ck:space:demo".to_owned()),
-            serde_json::json!({"type": "cx.message.create"}),
+            serde_json::json!({"type": "ck.message.create"}),
         );
         store.save_space_projection("ck:space:demo", serde_json::json!({"name": "Demo"}));
         store.save_draft("ck:space:demo", "hello");
@@ -4089,7 +4089,7 @@ mod tests {
         store.append_raw_operation(
             "ck:operation:destroy",
             Some(realm_id.to_owned()),
-            serde_json::json!({"kind": "cx.realm.destroy"}),
+            serde_json::json!({"kind": "ck.realm.destroy"}),
         );
 
         assert!(store.realm_is_destroyed(realm_id));
@@ -4155,7 +4155,7 @@ mod tests {
             "ck:event:read-1",
         );
 
-        assert_eq!(marker.marker_type, "cx.read_cursor.advance");
+        assert_eq!(marker.marker_type, "ck.read_cursor.advance");
         assert_eq!(marker.body.realm_id, "ck:space:demo");
         assert_eq!(marker.body.position.event_id, "ck:event:read-1");
         assert_eq!(marker.body.read_scope.kind, "flow");
@@ -4163,9 +4163,9 @@ mod tests {
         assert_eq!(
             marker.cx_read_cursor_operation(),
             serde_json::json!({
-                "kind": "cx.read_cursor.advance",
+                "kind": "ck.read_cursor.advance",
                 "payload": {
-                    "schema": "cx.schema.read_cursor.v1",
+                    "schema": "ck.schema.read_cursor.v1",
                     "actor_id": "did:web:alice.example",
                     "device_id": "device-1",
                     "realm_id": "ck:space:demo",
@@ -4242,7 +4242,7 @@ mod tests {
             device_id: "dev_yougen".to_owned(),
             platform: Some("desktop".to_owned()),
             app_id: Some("yougen".to_owned()),
-            push_gateway: "https://push.example/api/v1/push/notify".to_owned(),
+            push_gateway: "https://push.example/_cokret/edge/push/notify".to_owned(),
             push_key_hash: "sha256:abc".to_owned(),
             push_key_preview: "desktop:<redacted,len=5>".to_owned(),
             registered_at: Some("2026-04-29T00:00:00Z".to_owned()),
@@ -4552,7 +4552,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
             grant_expires_at: None,
             session_expires_at: None,
             stored_at: chrono::Utc::now(),
@@ -4805,7 +4805,7 @@ mod tests {
         let mut view = LocalAnchorView::default();
         assert!(!view.has_bottom_cells());
         view.bottom_cells.insert(
-            "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned(),
+            "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![],
@@ -4817,7 +4817,7 @@ mod tests {
     #[test]
     fn safer_winner_for_member_state_prefers_ban_over_join() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4846,7 +4846,7 @@ mod tests {
     #[test]
     fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:cx.component.capability.grant.v1:cx.grant.01".to_owned();
+        let cell = "ck:cell:ck.component.capability.grant.v1:cx.grant.01".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4898,7 +4898,7 @@ mod tests {
     #[test]
     fn safer_winner_for_tied_heads_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4922,7 +4922,7 @@ mod tests {
     #[test]
     fn safer_winner_for_missing_heads_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:ck.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4941,7 +4941,7 @@ mod tests {
                 "leaves":   ["sha256:lf1"],
                 "state_root": "ck:state:sha256:abc",
                 "cells": {
-                    "ck:cell:cx.component.member.state.v1:did:web:alice": {
+                    "ck:cell:ck.component.member.state.v1:did:web:alice": {
                         "bottom": "expose",
                         "heads": [
                             {
@@ -4954,7 +4954,7 @@ mod tests {
                             }
                         ]
                     },
-                    "ck:cell:cx.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
+                    "ck:cell:ck.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
                 }
             }
         });
@@ -4967,7 +4967,7 @@ mod tests {
         assert_eq!(view.bottom_cells.len(), 1);
         let info = view
             .bottom_cells
-            .get("ck:cell:cx.component.member.state.v1:did:web:alice")
+            .get("ck:cell:ck.component.member.state.v1:did:web:alice")
             .expect("expose cell present");
         assert_eq!(info.status, "expose");
         assert_eq!(info.heads.len(), 2);
@@ -4985,12 +4985,12 @@ mod tests {
     fn anchor_view_from_sync_body_parses_structured_bottoms() {
         let body = serde_json::json!({
             "bottoms": [{
-                "cell": "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card",
+                "cell": "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card",
                 "status": "conflict",
                 "bottom": {
                     "kind": "conflict",
                     "cells": [
-                        "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card"
+                        "ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card"
                     ],
                     "event_ids": [
                         "ck:event:0196419b-0000-7000-8000-000000000001",
@@ -5007,7 +5007,7 @@ mod tests {
         let view = LocalAnchorView::from_sync_body(&body);
         let info = view
             .bottom_cells
-            .get("ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card")
+            .get("ck:cell:ck.component.flow.position.v1:ck:space:board:ck:flow:card")
             .expect("structured bottom conflict surfaced");
         assert_eq!(info.status, "conflict");
         assert_eq!(info.heads.len(), 2);

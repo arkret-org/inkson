@@ -3,7 +3,7 @@
 //! Spec: `cokret-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
 //! What the panel does today:
-//!   * Reads `cx.applet.registration` / `cx.applet.discovery` events out of the local raw-operation
+//!   * Reads `ck.applet.registration` / `ck.applet.discovery` events out of the local raw-operation
 //!     projection and renders them as registry rows so users see which applets the Space already
 //!     accepts.
 //!   * Surfaces a registration form bound to [`crate::operation::cx_ops::applet_registration`] —
@@ -113,7 +113,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "cx.applet.registration")
+                .map(|k| k == "ck.applet.registration")
                 .unwrap_or(false)
         })
         .cloned()
@@ -135,7 +135,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "cx.applet.bridge_error")
+                .map(|k| k == "ck.applet.bridge_error")
                 .unwrap_or(false)
         })
         .cloned()
@@ -214,11 +214,11 @@ pub fn AppletsPanel(
                     span { class: "badge", "{registrations.len()} registered" }
                 }
                 div { class: "muted",
-                    "Spec extensions/applet-integration.md §2 — applet registration carries service_did + namespace + capabilities. The registry lists every cx.applet.registration the local raw-operation log has observed."
+                    "Spec extensions/applet-integration.md §2 — applet registration carries service_did + namespace + capabilities. The registry lists every ck.applet.registration the local raw-operation log has observed."
                 }
                 if registrations.is_empty() {
                     div { class: "muted", "data-testid": "applet-registry-empty",
-                        "No applets registered yet. Use the registration form below to write a cx.applet.registration event."
+                        "No applets registered yet. Use the registration form below to write a ck.applet.registration event."
                     }
                 } else {
                     for r in registrations {
@@ -252,7 +252,7 @@ pub fn AppletsPanel(
             div { class: "event", "data-testid": "applet-register-form",
                 div { class: "event-head",
                     span { "Register applet" }
-                    span { class: "badge", title: "cx.applet.registration", "Applet" }
+                    span { class: "badge", title: "ck.applet.registration", "Applet" }
                 }
                 div { class: "workflow-form",
                     input {
@@ -337,7 +337,7 @@ pub fn AppletsPanel(
                 }
                 if sessions.is_empty() {
                     div { class: "muted", "data-testid": "applet-session-empty",
-                        "No protocol sessions observed. Once an applet calls cx.applet.protocol_session.start the row appears here with its status updates."
+                        "No protocol sessions observed. Once an applet calls ck.applet.protocol_session.start the row appears here with its status updates."
                     }
                 } else {
                     for s in sessions {
@@ -477,7 +477,7 @@ pub fn AppletsPanel(
                                 "data-testid": "applet-install-confirm-button",
                                 onclick: move |_| {
                                     install_status.set(
-                                        "install confirmed — submit cx.applet.registration in the form above to publish".to_owned(),
+                                        "install confirmed — submit ck.applet.registration in the form above to publish".to_owned(),
                                     );
                                     install_open.set(false);
                                     install_manifest.set(String::new());
@@ -650,12 +650,12 @@ mod tests {
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
         // The view filters with `kind.starts_with("cx.applet.protocol_session.")`.
         for kind in [
-            "cx.applet.protocol_session.start",
-            "cx.applet.protocol_session.status",
+            "ck.applet.protocol_session.start",
+            "ck.applet.protocol_session.status",
         ] {
             assert!(kind.starts_with("cx.applet.protocol_session."));
         }
-        assert!(!"cx.applet.registration".starts_with("cx.applet.protocol_session."));
+        assert!(!"ck.applet.registration".starts_with("cx.applet.protocol_session."));
     }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
@@ -683,10 +683,10 @@ mod tests {
     fn classify_manifest_input_detects_url_and_json_and_invalid() {
         assert_eq!(
             classify_manifest_input(
-                "https://mock-applet-registry.local/api/v1/applets/bridge.demo/manifest"
+                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest"
             ),
             ManifestInputKind::Url(
-                "https://mock-applet-registry.local/api/v1/applets/bridge.demo/manifest".to_owned(),
+                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest".to_owned(),
             )
         );
         let json = "{\"manifest_id\":\"applet:demo\",\"namespace\":\"bridge.demo\"}";

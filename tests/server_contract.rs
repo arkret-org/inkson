@@ -37,24 +37,24 @@ fn yougen_accepts_server_contract_payloads() {
             "moderation.report"
         ],
         "supported_operations": [
-            "cx.account.subscribe",
-            "cx.events.query",
-            "cx.events.subscribe",
-            "cx.snapshot.head",
-            "cx.directory.describe",
-            "cx.directory.search_realms",
-            "cx.directory.resolve_realm",
+            "ck.account.subscribe",
+            "ck.events.query",
+            "ck.events.subscribe",
+            "ck.snapshot.head",
+            "ck.directory.describe",
+            "ck.directory.search_realms",
+            "ck.directory.resolve_realm",
             "cx.index.describe",
             "cx.index.query",
-            "cx.authz.check",
-            "cx.authz.get_effective_grants",
-            "cx.authz.get_invites",
-            "cx.push.register_device",
-            "cx.push.unregister_device",
-            "cx.moderation.report"
+            "ck.authz.check",
+            "ck.authz.get_effective_grants",
+            "ck.authz.get_invites",
+            "ck.push.register_device",
+            "ck.push.unregister_device",
+            "ck.moderation.report"
         ],
-        "supported_bindings": [{"kind": "http_json", "base_path": "/api/v1"}],
-        "supported_reducer_profiles": ["cx.reducer.v1"],
+        "supported_bindings": [{"kind": "http_json", "base_path": "/_cokret"}],
+        "supported_reducer_profiles": ["ck.reducer.v1"],
         "supported_schema_profiles": ["cx.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
@@ -73,7 +73,7 @@ fn yougen_accepts_server_contract_payloads() {
             .supported_operations
             .contains(&"cx.index.query".to_owned())
     );
-    assert_eq!(describe.supported_bindings[0]["base_path"], "/api/v1");
+    assert_eq!(describe.supported_bindings[0]["base_path"], "/_cokret");
 
     let identity: yougen::models::IdentityDescribeResBody = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
@@ -164,7 +164,7 @@ fn yougen_accepts_server_contract_payloads() {
             "service_type": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
-            "operations": ["cx.events.submit"],
+            "operations": ["ck.events.submit"],
             "join_methods": ["invite_accept", "member_join"],
             "priority": 0,
             "source": "directory_ingest",
@@ -313,13 +313,13 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
-            "cx.profile.core_event_store.v1",
-            "cx.profile.principal_server_events_api.v1"
+            "ck.profile.core_event_store.v1",
+            "ck.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "cx.events.describe",
-            "cx.events.submit",
-            "cx.account.subscribe"
+            "ck.events.describe",
+            "ck.events.submit",
+            "ck.account.subscribe"
         ],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "account.subscribe"],
@@ -352,7 +352,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_operations": ["cx.account.subscribe"],
+            "supported_operations": ["ck.account.subscribe"],
             "supported_features": ["account.subscribe"]
         }))
         .is_err()
@@ -366,7 +366,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "supported_operations": ["cx.account.subscribe"],
+        "supported_operations": ["ck.account.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["account.subscribe"],
         "auth_metadata": {},
@@ -384,9 +384,9 @@ fn server_description_gates_event_envelope_write_plane() {
     assert_eq!(
         events_missing.missing_event_envelope_write_requirements(),
         vec![
-            "cx.profile.core_event_store.v1",
-            "cx.events.describe",
-            "cx.events.submit"
+            "ck.profile.core_event_store.v1",
+            "ck.events.describe",
+            "ck.events.submit"
         ]
     );
     // `plaintext_visibility` is now present + non-null, so it falls out of
@@ -394,9 +394,9 @@ fn server_description_gates_event_envelope_write_plane() {
     assert_eq!(
         events_missing.missing_v1_principal_server_requirements(),
         vec![
-            "cx.profile.core_event_store.v1",
-            "cx.events.describe",
-            "cx.events.submit",
+            "ck.profile.core_event_store.v1",
+            "ck.events.describe",
+            "ck.events.submit",
         ]
     );
 }
@@ -420,7 +420,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
             }
         },
         "left_spaces": ["ck:space:left"],
-        "to_device": [{"type": "cx.mls.welcome"}],
+        "to_device": [{"type": "ck.mls.welcome"}],
         "account_data": [{
             "data_type": "cx.push_rules",
             "content": {"global": {"enabled": true}}
@@ -471,7 +471,7 @@ fn account_data_canonical_contact_and_space_remark_keys_contract() {
     );
     assert_eq!(
         AccountDataKey::ClientReadReceipts.as_wire(),
-        "cx.read_receipt.preferences"
+        "ck.read_receipt.preferences"
     );
     assert_eq!(
         AccountDataKey::ClientNotifications.as_wire(),
@@ -500,7 +500,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let event = OperationBuilder::new(
         "ck:space:contract",
         "did:web:local.example",
-        "cx.message.create",
+        "ck.message.create",
     )
     .body(json!({
         "body": "hello",
@@ -621,7 +621,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 }
 
 // (Move/Anchor pipeline tests removed — all writes now go through
-// cx.events.submit; the SubmitEventResponse wire shape is exercised by
+// ck.events.submit; the SubmitEventResponse wire shape is exercised by
 // soland's own integration tests and the cokret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
@@ -687,13 +687,13 @@ fn decoder_handles_all_envelope_shapes() {
     //    surface them.
     let wrapped = decode_cokret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:cx.component.flow.position.v1:demo"}}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:ck.component.flow.position.v1:demo"}}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
     assert_eq!(
         wrapped.details()["cell"],
-        "ck:cell:cx.component.flow.position.v1:demo"
+        "ck:cell:ck.component.flow.position.v1:demo"
     );
 
     // 2. Plain envelope without `request_id`.

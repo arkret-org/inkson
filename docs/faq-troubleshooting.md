@@ -27,11 +27,11 @@ soland, run `cargo run -- --bind local.host:443` and add a hosts-file entry.
 **Symptom**: coauth completes OIDC but the dashboard never loads; the
 status banner says "missing session grant".
 
-**Cause**: the coauth token bundle did not include `cx.session.grant`.
+**Cause**: the coauth token bundle did not include `ck.session.grant`.
 
 **Fix**: clear the OIDC bundle under **Settings → Sign out** and retry. If
 the issue persists, your coauth instance is on an old release — check that
-it ships `cx.session.grant` claims.
+it ships `ck.session.grant` claims.
 
 ---
 
@@ -150,7 +150,7 @@ a fresh identity.
 
 **Cause**: at least one peer has not yet acknowledged your new key.
 
-**Fix**: wait for each peer's `cx.key.verification.done` event, or
+**Fix**: wait for each peer's `ck.key.verification.done` event, or
 manually escalate by sending them a direct message asking them to open
 their **Settings → Verify**.
 

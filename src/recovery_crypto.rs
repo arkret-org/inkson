@@ -4,7 +4,7 @@
 //! stretched on-device with Argon2id and the resulting key encrypts the
 //! recovery payload (device signing key, recovery key, MLS state) with
 //! XChaCha20-Poly1305 before it is uploaded to
-//! `PUT /api/v1/keys/backups/{backup_id}`. The server never sees the
+//! `PUT /_cokret/self/keys/backups/{backup_id}`. The server never sees the
 //! plaintext or the passphrase.
 //!
 //! The helpers in this module are pure — they take and return owned
@@ -65,7 +65,7 @@ pub const VAULT_NONCE_SALT_LEN: usize = 16;
 
 /// AEAD identifiers carried on the wire (spec §7.5 / §12 example).
 pub const VAULT_AEAD_NAME: &str = "xchacha20_poly1305";
-pub const VAULT_AEAD_PROFILE: &str = "cx.aead.xchacha20_poly1305.v1";
+pub const VAULT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 
 const HKDF_COMMITMENT_INFO: &[u8] = b"cokret-key-backup-commitment-v1";
 const HKDF_NONCE_INFO: &[u8] = b"cokret-key-backup-aead-nonce-v1";
@@ -102,7 +102,7 @@ pub struct VaultSealContext<'a> {
 
 /// Outcome of [`seal_vault`]: base64url ciphertext + the deterministic
 /// nonce/salt/nonce_salt and the `key_commitment`, ready to drop into a
-/// `cx.schema.key_backup.v1` envelope.
+/// `ck.schema.key_backup.v1` envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultSealed {
     pub ciphertext_b64: String,

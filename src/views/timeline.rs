@@ -78,7 +78,7 @@ pub struct TimelineEvent {
     /// When present, this message carries encrypted message content
     /// that the local MLS group may be able to decrypt.
     /// Timeline's audit-accessed emitter watches this field
-    /// — on successful decrypt, fires a single `cx.audit.accessed` for
+    /// — on successful decrypt, fires a single `ck.audit.accessed` for
     /// `id` per session (de-duplicated by `audit_accessed_emitted`).
     pub encrypted_payload: Option<serde_json::Value>,
 }
@@ -231,7 +231,7 @@ fn text_content(body: &str) -> Value {
     // Spec `event-payload.schema.json` `content_block` requires `kind` (a
     // `content_kind` string matching `^cx\.content\.[a-z0-9_]+...` or a
     // reverse-domain id) and `body` (string). Plain timeline text uses
-    // `cx.content.text`. `blocks[]` is optional and, when present, MUST
+    // `ck.content.text`. `blocks[]` is optional and, when present, MUST
     // be an array of `content_block` items — the older yougen shape
     // (`[{kind: "text", text: ...}]`) failed both the `content_kind`
     // pattern (`text` has no dot) and the `body` requirement, so it is
@@ -297,10 +297,10 @@ pub(crate) fn message_create_operation(
     if let Some(thread_id) = thread_id {
         payload = payload.with_reply_to(thread_id);
     }
-    OperationBuilder::new(space_id, actor, "cx.message.create")
+    OperationBuilder::new(space_id, actor, "ck.message.create")
         .body(sdk_payload_value(
             payload.to_value(),
-            "timeline cx.message.create payload serialize",
+            "timeline ck.message.create payload serialize",
         ))
         .build("yougen")
 }
@@ -319,7 +319,7 @@ fn message_revise_operation(
     event_id: &str,
     body: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.message.revise")
+    OperationBuilder::new(space_id, actor, "ck.message.revise")
         .target_ref(event_id)
         .body(json!({
             "content": text_content(body),
@@ -376,7 +376,7 @@ fn message_redact_operation(
     event_id: &str,
     reason: Option<&str>,
 ) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.message.redact")
+    OperationBuilder::new(space_id, actor, "ck.message.redact")
         .target_ref(event_id)
         .body(json!({
             "reason": reason,
@@ -386,7 +386,7 @@ fn message_redact_operation(
 }
 
 fn reaction_add_operation(space_id: &str, actor: &str, event_id: &str, key: &str) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.reaction.add")
+    OperationBuilder::new(space_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -527,14 +527,14 @@ pub fn TimelinePanel(
 
     // Attested-audit emitter. Spec
     // `crypto-media/encryption-and-audit.md §11` says
-    // `cx.audit.accessed` MUST be fired by readers on every successful
+    // `ck.audit.accessed` MUST be fired by readers on every successful
     // MLS decrypt. User-initiated Mark Read is approximately correct
     // but doesn't distinguish decrypt-success from "user clicked the
     // button". This
     // future scans the current `timeline()` snapshot for events
     // carrying encrypted content, attempts a local MLS decrypt via
     // the persisted snapshot for the Space, and on each new success
-    // emits a single `cx.audit.accessed` (dedup keyed by event_id).
+    // emits a single `ck.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
     let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
     {
@@ -600,7 +600,7 @@ pub fn TimelinePanel(
     let composer_class = "composer";
 
     // Round R2/R3 (T07) — Realm terminal-state projection. When the
-    // selected Realm has emitted `cx.realm.destroy`, the timeline MUST
+    // selected Realm has emitted `ck.realm.destroy`, the timeline MUST
     // (a) surface a "permanently retired" banner and (b) gray out the
     // composer / send box. `realm_is_destroyed` reads the local
     // `realm_lifecycle_state` cache maintained as raw operations are
@@ -627,7 +627,7 @@ pub fn TimelinePanel(
                     "aria-live": "assertive",
                     div { class: "event-head",
                         span { "Realm permanently retired" }
-                        span { class: "badge red", title: "cx.realm.destroy", "Destroyed" }
+                        span { class: "badge red", title: "ck.realm.destroy", "Destroyed" }
                     }
                     div { class: "muted",
                         "This realm has been permanently retired. No further messages, reactions, or state changes will be accepted (server-side: realm_terminal_state)."
@@ -870,7 +870,7 @@ pub fn TimelinePanel(
 
                                             // Resolve effective send preference per spec
                                             // discovery/client-preferences.md §3.6 (flow → space →
-                                            // default). Server-side Realm `cx.realm.read_receipt_policy`
+                                            // default). Server-side Realm `ck.realm.read_receipt_policy`
                                             // is not yet exposed to the client; until it is, treat
                                             // policy as `Optional` (no override) and defer to user pref.
                                             let topic_for_pref = if marker.body.read_scope.kind == "thread" {
@@ -915,7 +915,7 @@ pub fn TimelinePanel(
                                                                 &receipt_space,
                                                                 &actor_for_status,
                                                                 &receipt_event_id,
-                                                                "cx.receipt.read",
+                                                                "ck.receipt.read",
                                                             )
                                                             .await
                                                         {
@@ -924,7 +924,7 @@ pub fn TimelinePanel(
                                                                     "{actor_for_status_label} -> {receipt_event_id_label}"
                                                                 ));
                                                                 receipt_status.set(format!(
-                                                                    "Read receipt: sent cx.receipt.read for {receipt_event_id_label}"
+                                                                    "Read receipt: sent ck.receipt.read for {receipt_event_id_label}"
                                                                 ));
                                                             }
                                                             Ok(_) => receipt_status.set(format!(
@@ -935,7 +935,7 @@ pub fn TimelinePanel(
                                                             )),
                                                         }
 
-                                                        // `cx.audit.accessed`
+                                                        // `ck.audit.accessed`
                                                         // is owned by the
                                                         // dedicated emitter
                                                         // wired to the MLS
@@ -947,7 +947,7 @@ pub fn TimelinePanel(
                                                         // fires it. Mark
                                                         // Read still emits
                                                         // the public
-                                                        // `cx.receipt.read`
+                                                        // `ck.receipt.read`
                                                         // above and the
                                                         // local private
                                                         // read marker
@@ -1079,7 +1079,7 @@ pub fn TimelinePanel(
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "event_id": updated.event_id,
-                                                                            "kind": "cx.message.revise",
+                                                                            "kind": "ck.message.revise",
                                                                             "status": updated.status,
                                                                         }),
                                                                     );
@@ -1182,7 +1182,7 @@ pub fn TimelinePanel(
                                                                         Some(space.clone()),
                                                                         json!({
                                                                             "event_id": redacted.event_id,
-                                                                            "kind": "cx.message.redact",
+                                                                            "kind": "ck.message.redact",
                                                                             "reason": reason,
                                                                             "status": redacted.status,
                                                                         }),
@@ -1588,7 +1588,7 @@ pub fn TimelinePanel(
                                     // Round R2/R3 (T02): send_typing constructs a
                                     // cx.typing EphemeralEnvelope and POSTs it to
                                     // the broadcast ephemeral channel instead of
-                                    // cx.events.submit.
+                                    // ck.events.submit.
                                     let _ = api
                                         .send_typing(
                                             &space,
@@ -1998,7 +1998,7 @@ pub fn TimelinePanel(
                                                                 Some(space.clone()),
                                                                 json!({
                                                                     "event_id": sent.event_id,
-                                                                    "kind": "cx.message.create",
+                                                                    "kind": "ck.message.create",
                                                                     "status": sent.status,
                                                                 }),
                                                             );
@@ -2135,7 +2135,7 @@ fn timeline_events_from_sync_spaces(
         };
 
         for event in timeline_events {
-            if event.get("kind").and_then(Value::as_str) != Some("cx.message.create") {
+            if event.get("kind").and_then(Value::as_str) != Some("ck.message.create") {
                 continue;
             }
             let event_id = event
@@ -2160,7 +2160,7 @@ fn timeline_events_from_sync_spaces(
                 .to_owned();
             // B7: carry the raw `encrypted_content` block forward so the
             // audit-accessed emitter (later in this component) can try a
-            // local MLS decrypt against it and fire `cx.audit.accessed`
+            // local MLS decrypt against it and fire `ck.audit.accessed`
             // on every successful decrypt.
             let encrypted_payload = content.get("encrypted_content").cloned();
             events.push(TimelineEvent {
@@ -2260,7 +2260,7 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// hydrated with this device's snapshot secret, payload doesn't
 /// deserialize as a typed `EncryptedPayload`, group rejects the payload).
 ///
-/// The caller — the `cx.audit.accessed` emitter inside
+/// The caller — the `ck.audit.accessed` emitter inside
 /// [`TimelinePanel`] — uses `Some(...)` as the firing trigger, so any
 /// soft failure quietly suppresses the audit emit instead of looping.
 /// Runs on every target now that OpenMLS builds on wasm32 (the browser
@@ -2334,7 +2334,7 @@ mod tests {
             "ck:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
         assert_eq!(op.payload["track_name"], "discussion");
-        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert_eq!(op.payload["content"]["kind"], "ck.content.text");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("encrypted").is_none());
         cokret_sdk::schema::event_payload_validator_catalog()
@@ -2392,7 +2392,7 @@ mod tests {
             op.payload["target_ref"],
             "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
-        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert_eq!(op.payload["content"]["kind"], "ck.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("target_event_id").is_none());

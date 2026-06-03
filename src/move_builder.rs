@@ -6,11 +6,11 @@
 //! Per spec event-kind-registry, only events that declare a `cell_family`
 //! belong on the Move/Anchor pipeline. Examples:
 //!
-//! - **Yes**: `cx.consent.grant` / `revoke`, `cx.capability.*`, `cx.member.state`,
+//! - **Yes**: `ck.consent.grant` / `revoke`, `cx.capability.*`, `ck.member.state`,
 //!   `cx.realm.{create,update,destroy,...}`, `cx.space.{create,update,archive,restore,...}`
-//!   (container Spaces), `cx.flow.position`, `cx.anchorer.*`, `cx.mls.epoch`
-//! - **No**: `cx.message.*`, `cx.reaction.*`, `cx.read_cursor.advance`, `cx.relation.*`,
-//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/api/v1/events`) per
+//!   (container Spaces), `cx.flow.position`, `cx.anchorer.*`, `ck.mls.epoch`
+//! - **No**: `cx.message.*`, `cx.reaction.*`, `ck.read_cursor.advance`, `cx.relation.*`,
+//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/_cokret/self/events`) per
 //!   spec.
 //!
 //! # Signing model
@@ -25,12 +25,12 @@
 //!
 //! # Builders provided
 //!
-//! - [`build_consent_grant_move`] — `cx.consent.grant` over the `cx.component.consent.grant.v1`
+//! - [`build_consent_grant_move`] — `ck.consent.grant` over the `ck.component.consent.grant.v1`
 //!   OrSet cell
-//! - [`build_member_state_transition_move`] — `cx.member.state` FSM transition (`invited` → `join`,
-//!   etc.) over `cx.component.member.state.v1`
-//! - [`build_space_organization_update_move`] — `cx.realm.update` over
-//!   `cx.component.realm.organization.v1` (cas-register; post-R1.7)
+//! - [`build_member_state_transition_move`] — `ck.member.state` FSM transition (`invited` → `join`,
+//!   etc.) over `ck.component.member.state.v1`
+//! - [`build_space_organization_update_move`] — `ck.realm.update` over
+//!   `ck.component.realm.organization.v1` (cas-register; post-R1.7)
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -52,7 +52,7 @@ pub struct UnsignedMove {
     pub canonical_bytes: Vec<u8>,
 }
 
-/// Construct a `cx.consent.grant` Move that adds a tag to the consent
+/// Construct a `ck.consent.grant` Move that adds a tag to the consent
 /// OrSet cell. The cell subject is the `consent_id` (one cell per
 /// distinct consent grant). `tag` is what gets added to the OrSet —
 /// typically a stable identifier the issuer wants to record (e.g.
@@ -65,7 +65,7 @@ pub fn build_consent_grant_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.consent.grant.v1:{consent_id}");
+    let cell_id = format!("ck:cell:ck.component.consent.grant.v1:{consent_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "add", "tag": tag }
@@ -73,7 +73,7 @@ pub fn build_consent_grant_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Construct a `cx.consent.revoke` Move that removes a tag from the
+/// Construct a `ck.consent.revoke` Move that removes a tag from the
 /// consent OrSet cell. The cell subject is the same `consent_id` used by
 /// [`build_consent_grant_move`]; soland's OrSet semantics enforce causal
 /// remove (only tags previously added by an observed grant can be
@@ -100,7 +100,7 @@ pub fn build_consent_revoke_move(
     )
 }
 
-/// Round 4 (spec a77b995) — `cx.consent.revoke` v2 with REQUIRED
+/// Round 4 (spec a77b995) — `ck.consent.revoke` v2 with REQUIRED
 /// `observed_dots` carried in the op payload. The receiver MUST NOT
 /// silently cascade revoke to dots not explicitly observed; an empty
 /// list is accepted only for non-causal revoke (which yougen's UI no
@@ -121,7 +121,7 @@ pub fn build_consent_revoke_move_v1(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.consent.grant.v1:{consent_id}");
+    let cell_id = format!("ck:cell:ck.component.consent.grant.v1:{consent_id}");
     let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
@@ -234,9 +234,9 @@ impl CapabilityConstraintInput {
     }
 }
 
-/// Construct a `cx.capability.grant` Move that adds a capability tag to
+/// Construct a `ck.capability.grant` Move that adds a capability tag to
 /// the capability OrSet cell. Mirrors [`build_consent_grant_move`] —
-/// the cell family (`cx.component.capability.grant.v1`) is OrSet too,
+/// the cell family (`ck.component.capability.grant.v1`) is OrSet too,
 /// so the wire shape is identical save for the cell prefix. `grant_id`
 /// is the cell subject (per-grant cell), `tag` is what the OrSet records
 /// (typically the granted action / scope / capability identifier).
@@ -272,7 +272,7 @@ pub fn build_capability_grant_move_with_constraints(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.capability.grant.v1:{grant_id}");
+    let cell_id = format!("ck:cell:ck.component.capability.grant.v1:{grant_id}");
     let mut op = serde_json::json!({ "kind": "add", "tag": tag });
     let constraint_values: Vec<serde_json::Value> = constraints
         .iter()
@@ -295,7 +295,7 @@ pub fn build_capability_grant_move_with_constraints(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Construct a `cx.capability.revoke` Move that removes a capability tag
+/// Construct a `ck.capability.revoke` Move that removes a capability tag
 /// from the capability OrSet cell. Mirrors [`build_consent_revoke_move`].
 /// `reason` is optional but encouraged — it surfaces in the audit trail
 /// and lets the UI explain why the capability was dropped.
@@ -308,7 +308,7 @@ pub fn build_capability_revoke_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.capability.grant.v1:{grant_id}");
+    let cell_id = format!("ck:cell:ck.component.capability.grant.v1:{grant_id}");
     let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
@@ -317,7 +317,7 @@ pub fn build_capability_revoke_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Construct a `cx.member.state` Move that transitions an actor's
+/// Construct a `ck.member.state` Move that transitions an actor's
 /// membership FSM. The cell subject is the `actor_id` (per-actor cell
 /// across the whole protocol; soland's CellStore is space-scoped so
 /// different Spaces have independent records of the same actor's state).
@@ -330,7 +330,7 @@ pub fn build_member_state_transition_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.member.state.v1:{actor_id}");
+    let cell_id = format!("ck:cell:ck.component.member.state.v1:{actor_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "transition", "from": from_state, "to": to_state }
@@ -338,8 +338,8 @@ pub fn build_member_state_transition_move(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Construct a `cx.realm.update` Move that writes the
-/// `cx.component.realm.organization.v1` cas-register cell with the
+/// Construct a `ck.realm.update` Move that writes the
+/// `ck.component.realm.organization.v1` cas-register cell with the
 /// provided organization metadata. `value` should be a JSON object
 /// (typically `{title, owner, ...}`); soland's reducer mirrors the
 /// fields it knows about and ignores the rest.
@@ -351,8 +351,8 @@ pub fn build_space_organization_update_move(
     hlc: &str,
 ) -> Result<UnsignedMove> {
     // TODO(realm-rework): cell family renamed from cx.component.space.organization.v1
-    // to cx.component.realm.organization.v1 in spec post-R1.7.
-    let cell_id = format!("ck:cell:cx.component.realm.organization.v1:{space_id}");
+    // to ck.component.realm.organization.v1 in spec post-R1.7.
+    let cell_id = format!("ck:cell:ck.component.realm.organization.v1:{space_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "set", "value": value }
@@ -452,7 +452,7 @@ pub fn build_mls_commit_move_with_governance_binding(
     )
 }
 
-/// Construct a `cx.component.flow.position.v1` Move that records a Flow's
+/// Construct a `ck.component.flow.position.v1` Move that records a Flow's
 /// position inside its containing Board Space. Used for the
 /// canonical Move path of board-level entity create + move / position
 /// update operations (kanban.rs add card / move card / add list).
@@ -473,7 +473,7 @@ pub fn build_flow_position_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("ck:cell:cx.component.flow.position.v1:{flow_id}");
+    let cell_id = format!("ck:cell:ck.component.flow.position.v1:{flow_id}");
     // NOTE: the SDK's `LatticeOp` serializes the discriminator under
     // the wire-key `kind` (see `move_event.rs:LatticeOp.op_type`'s
     // `#[serde(rename = "kind")]`). Older revisions of this builder
@@ -492,10 +492,10 @@ pub fn build_flow_position_move(
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
 /// §3.6](../../cokret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
-/// `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>` — a Flow can appear on
+/// `ck:cell:ck.component.flow.position.v1:<board_space_id>:<flow_id>` — a Flow can appear on
 /// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn flow_position_cell_id(board_space_id: &str, flow_id: &str) -> String {
-    format!("ck:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}")
+    format!("ck:cell:ck.component.flow.position.v1:{board_space_id}:{flow_id}")
 }
 
 /// CAS pre-state that the caller expects to find on the position cell
@@ -538,7 +538,7 @@ impl FlowPositionExpectation {
     }
 }
 
-/// Effect value for a `cx.flow.move` / `cx.flow.reorder` Move. Compiles
+/// Effect value for a `ck.flow.move` / `ck.flow.reorder` Move. Compiles
 /// to a cas-register `set` with `{"list_space_id", "rank"}` per
 /// [`operations-sync.md` §9.1-9.2](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
@@ -568,8 +568,8 @@ impl FlowPositionEffect {
     }
 }
 
-/// Construct a `cx.flow.move` / `cx.flow.reorder` Move that targets the
-/// spec-canonical cell `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`
+/// Construct a `ck.flow.move` / `ck.flow.reorder` Move that targets the
+/// spec-canonical cell `ck:cell:ck.component.flow.position.v1:<board_space_id>:<flow_id>`
 /// with a `head_eq` precondition expressing the caller's view of
 /// pre-state. This is the spec-compliant replacement for the earlier
 /// [`build_flow_position_move`] (which used a non-composite cell
@@ -587,8 +587,8 @@ impl FlowPositionEffect {
 /// Reorder vs move is encoded by the spec as a static schema rule: if
 /// `effect.list_space_id == expected.list_space_id`, the Move is a
 /// reorder; otherwise it's a cross-list move. Callers SHOULD set the
-/// `kind` classifier on the wire envelope accordingly (`cx.flow.move`
-/// vs `cx.flow.reorder`) so soland's audit + projection trail can
+/// `kind` classifier on the wire envelope accordingly (`ck.flow.move`
+/// vs `ck.flow.reorder`) so soland's audit + projection trail can
 /// distinguish the two.
 pub fn build_flow_position_cas_move(
     issuer: &str,
@@ -631,7 +631,7 @@ pub fn build_flow_position_cas_move(
 /// space.organization cell when two admins concurrently renamed a
 /// Space). `conflict_heads` lists the competing Anchor ids — `head_in`
 /// is set to that vector verbatim. `recovery_capability_ref` is the
-/// id of the `cx.capability.grant` cell that authorises the repair.
+/// id of the `ck.capability.grant` cell that authorises the repair.
 /// `winner_value` is the merge result the operator chooses.
 pub fn build_conflict_repair_move(
     issuer: &str,
@@ -756,7 +756,7 @@ fn build_move_inner(
 
 /// Variant of [`build_move_inner`] that accepts an explicit
 /// `preconditions[]` array. Used by builders that emit CAS-style Moves
-/// (`cx.flow.move` / `cx.flow.reorder` with `head_eq`); `build_move_inner`
+/// (`ck.flow.move` / `ck.flow.reorder` with `head_eq`); `build_move_inner`
 /// keeps unconditional-write call sites compact.
 fn build_move_inner_with_preconditions(
     issuer: &str,
@@ -974,7 +974,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.consent.grant.v1:")
+                .starts_with("ck:cell:ck.component.consent.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
@@ -997,7 +997,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.consent.grant.v1:")
+                .starts_with("ck:cell:ck.component.consent.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
@@ -1040,7 +1040,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.capability.grant.v1:")
+                .starts_with("ck:cell:ck.component.capability.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
@@ -1063,7 +1063,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.capability.grant.v1:")
+                .starts_with("ck:cell:ck.component.capability.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
@@ -1220,7 +1220,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.member.state.v1:")
+                .starts_with("ck:cell:ck.component.member.state.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Transition);
         assert_eq!(
@@ -1245,7 +1245,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("ck:cell:cx.component.realm.organization.v1:")
+                .starts_with("ck:cell:ck.component.realm.organization.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set op carries a value");
@@ -1392,7 +1392,7 @@ mod tests {
         let result = build_conflict_repair_move(
             "did:web:admin.example",
             "ck:space:0196419b-0000-7000-8000-000000000003",
-            "ck:cell:cx.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
+            "ck:cell:ck.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
             &["ck:anchor:sha256:only-one".to_owned()],
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),
@@ -1414,7 +1414,7 @@ mod tests {
         let unsigned = build_conflict_repair_move(
             "did:web:admin.example",
             "ck:space:0196419b-0000-7000-8000-000000000003",
-            "ck:cell:cx.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
+            "ck:cell:ck.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
             &heads,
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),
@@ -1477,7 +1477,7 @@ mod tests {
         let unsigned = build_conflict_repair_move(
             "did:web:admin.example",
             "ck:space:0196419b-0000-7000-8000-000000000003",
-            "ck:cell:cx.component.flow.position.v1:ck:flow:01abcd",
+            "ck:cell:ck.component.flow.position.v1:ck:flow:01abcd",
             &heads,
             "cap.recovery-01",
             // Scalar winner — must be wrapped so repair_of is reachable.
@@ -1519,7 +1519,7 @@ mod tests {
         let effect = &unsigned.move_obj.effects[0];
         assert_eq!(
             effect.cell.as_str(),
-            "ck:cell:cx.component.flow.position.v1:ck:flow:01abcd"
+            "ck:cell:ck.component.flow.position.v1:ck:flow:01abcd"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set carries value");
@@ -1531,7 +1531,7 @@ mod tests {
     }
 
     /// spec/v1/zh/models/realm-and-space.md §3.6: the position cell key is
-    /// `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`.
+    /// `ck:cell:ck.component.flow.position.v1:<board_space_id>:<flow_id>`.
     /// This pins the composite subject so a future refactor that drops one
     /// segment fails loudly.
     #[test]
@@ -1542,7 +1542,7 @@ mod tests {
         );
         assert_eq!(
             cell,
-            "ck:cell:cx.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
+            "ck:cell:ck.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
         );
     }
 
@@ -1575,7 +1575,7 @@ mod tests {
         assert_eq!(
             pre["cell"].as_str(),
             Some(
-                "ck:cell:cx.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
+                "ck:cell:ck.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
             )
         );
         assert_eq!(pre["predicate"]["op"].as_str(), Some("head_eq"));

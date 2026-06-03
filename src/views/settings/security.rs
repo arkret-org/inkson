@@ -6,8 +6,8 @@
 //! - `key-backup-restore-button` — manually triggers a restore
 //! - `key-backup-last-backup-at` — timestamp text
 //!
-//! Wires to soland's existing `cx.schema.key_backup.v1` endpoints
-//! (`PUT/GET /api/v1/keys/backups/{backup_id}` via
+//! Wires to soland's existing `ck.schema.key_backup.v1` endpoints
+//! (`PUT/GET /_cokret/self/keys/backups/{backup_id}` via
 //! [`crate::api::CokretApi::put_key_backup`] /
 //! [`crate::api::CokretApi::list_key_backups`]). The MLS-key backup
 //! endpoints that the spec defines under
@@ -153,7 +153,7 @@ pub fn SettingsSecurityPanel(
                             }
                             div { class: "metric",
                                 strong { "Storage" }
-                                span { "PUT /api/v1/keys/backups" }
+                                span { "PUT /_cokret/self/keys/backups" }
                                 div { class: "muted", "ciphertext only" }
                             }
                         }
@@ -306,7 +306,7 @@ pub fn SettingsSecurityPanel(
                                     ));
                                     spawn(async move {
                                         // TODO(G3.Y1-followup): soland
-                                        // exposes `GET /api/v1/keys/backups/{id}`
+                                        // exposes `GET /_cokret/self/keys/backups/{id}`
                                         // but the MLS-history backup
                                         // endpoints (spec
                                         // crypto-media/encryption-and-audit.md

@@ -166,7 +166,7 @@ pub fn CapabilitiesSettingsCard(
                 }
                 Err(err) => {
                     // TODO(G3.Y3-followup): when soland adds the per-actor
-                    // `GET /api/v1/authz/capabilities/{actor}` endpoint with
+                    // `GET /_cokret/self/authz/capabilities/{actor}` endpoint with
                     // the full delegation chain (spec §3.2), prefer that
                     // over effective-grants — the latter projects only the
                     // resolved leaf, not the hop history needed for the
@@ -249,7 +249,7 @@ pub fn CapabilitiesSettingsCard(
                                                 let id = row.capability_id.clone();
                                                 move |_| {
                                                     // TODO(G3.Y3-followup): wire to
-                                                    // `POST /api/v1/authz/capabilities/{id}/revoke`
+                                                    // `POST /_cokret/self/authz/capabilities/{id}/revoke`
                                                     // once soland ships the revoke endpoint
                                                     // (spec §3.3). Until then the click is a
                                                     // no-op so the testid is hookable.

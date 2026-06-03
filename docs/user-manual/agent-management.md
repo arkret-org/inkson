@@ -35,7 +35,7 @@ The agent surface lives in `/agents` and is gated by the
    - **protocol** — e.g. `cx.agent.v1`.
    - **capabilities** — comma-separated. Use the autocomplete to pick
      from the 14 canonical capabilities.
-4. Click **Register**. yougen submits a `cx.agent.endpoint` envelope.
+4. Click **Register**. yougen submits a `ck.agent.endpoint` envelope.
 
 <!-- TODO(screenshot): agent-register-form.png -->
 
@@ -88,7 +88,7 @@ When an agent requests a capability action you'll see an
 
 <!-- TODO(screenshot): action-approve-dialog.png -->
 
-Approving emits a `cx.agent.protocol_session.start` envelope. The
+Approving emits a `ck.agent.protocol_session.start` envelope. The
 lifecycle goes `start → status* → result`. The result event carries the
 `audit_binding` proof so the audit timeline can verify the agent's output
 matches the signed input.
@@ -97,7 +97,7 @@ matches the signed input.
 
 ## 6. Audit trail
 
-Visit `/audit` and filter by `kind=cx.agent.protocol_session.*`. Each
+Visit `/audit` and filter by `kind=ck.agent.protocol_session.*`. Each
 result row shows a verification badge:
 
 - **Green tick** — `verify_audit_binding_by_kind` succeeded.

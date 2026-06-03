@@ -1,4 +1,4 @@
-//! `cx.rank.lexofractional.v1` rank profile per
+//! `ck.rank.lexofractional.v1` rank profile per
 //! [`spec/v1/zh/conformance/encoding.md`
 //! §9](../../cokret-spec/spec/v1/zh/conformance/encoding.md).
 //!
@@ -14,7 +14,7 @@
 //! exists (e.g. `rank_between("", "0")`).
 //!
 //! Callers MUST treat `Exhausted` as a signal to either request a
-//! `cx.container.rebalance` Move or fall back to a UI affordance that
+//! `ck.container.rebalance` Move or fall back to a UI affordance that
 //! lets the user trigger one. Inserting an out-of-profile sentinel like
 //! `format!("r{millis}")` is a wire-shape violation — reducers reject any
 //! rank that contains characters outside the alphabet or exceeds the
@@ -27,7 +27,7 @@ const BASE: i32 = 62;
 pub const MAX_RANK_LEN: usize = 128;
 
 /// Errors from rank generation. `Exhausted` is the recoverable signal —
-/// callers should fall back to `cx.container.rebalance`. `Invalid`
+/// callers should fall back to `ck.container.rebalance`. `Invalid`
 /// indicates the input string is not a well-formed rank (alphabet or
 /// length violation) and is a programmer error.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +47,7 @@ impl fmt::Display for RankError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Exhausted => f.write_str(
-                "rank_exhausted: no valid rank between the given sentinels; trigger cx.container.rebalance",
+                "rank_exhausted: no valid rank between the given sentinels; trigger ck.container.rebalance",
             ),
             Self::Invalid { reason, position } => {
                 write!(f, "invalid rank ({reason}) at position {position}")
@@ -154,7 +154,7 @@ pub fn rank_for_drop(prev: Option<&str>, next: Option<&str>) -> Result<String, R
 
 /// Deterministic rebalance assignment per encoding.md §9. Given an
 /// ordered list of `n` items, return the rank each item SHOULD claim
-/// after a `cx.container.rebalance` Move. The result is a fixed-width
+/// after a `ck.container.rebalance` Move. The result is a fixed-width
 /// base62 encoding chosen so that `alphabet_length^w >= 2 * (n + 1)`.
 /// Returns `Exhausted` if `n` is large enough that even `w == 128`
 /// can't accommodate the spacing.

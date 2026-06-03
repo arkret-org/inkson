@@ -1,5 +1,5 @@
 //! F-PRESENCE-RX-1: receive-side helpers for `cx.typing`, `cx.presence`,
-//! and `cx.read_cursor.advance` events.
+//! and `ck.read_cursor.advance` events.
 //!
 //! Yougen currently emits these three event kinds (see
 //! `api.rs::send_typing` etc.) but never parses them on the receive
@@ -9,8 +9,8 @@
 //! aggregate the chat / dashboard views can render off of.
 //!
 //! Spec sources:
-//! - `discovery/read-receipts.md §6` — `cx.read_cursor.advance` carries a
-//!   `cx.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
+//! - `discovery/read-receipts.md §6` — `ck.read_cursor.advance` carries a
+//!   `ck.schema.read_cursor.v1` payload with `{realm_id, read_scope, position}`.
 //! - `discovery/profiles-presence.md` — `cx.presence` carries `{actor_id, status, last_seen?}` with
 //!   status ∈ {`online`, `away`, `dnd`, `offline`}.
 //! - `flow-and-message.md §10` — `cx.typing` is short-TTL signaling carrying `{actor_id, flow_id,
@@ -82,7 +82,7 @@ pub struct PresenceEvent {
     pub last_seen: Option<i64>,
 }
 
-/// `cx.read_cursor.advance` event parsed from the wire. HLC is kept as a
+/// `ck.read_cursor.advance` event parsed from the wire. HLC is kept as a
 /// string so this receive helper does not need to share the writer's clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerEvent {
@@ -173,17 +173,17 @@ pub fn parse_presence(
     })
 }
 
-/// Parse a `cx.read_cursor.advance` envelope's payload into a [`ReadMarkerEvent`].
+/// Parse a `ck.read_cursor.advance` envelope's payload into a [`ReadMarkerEvent`].
 pub fn parse_read_cursor(
     envelope: &crate::operation::EventEnvelope,
 ) -> Result<ReadMarkerEvent, PresenceRxError> {
-    require_kind(&envelope.kind, "cx.read_cursor.advance")?;
+    require_kind(&envelope.kind, "ck.read_cursor.advance")?;
     let payload = &envelope.payload;
-    let read_scope = required_value(payload, "cx.read_cursor.advance", "read_scope")?;
+    let read_scope = required_value(payload, "ck.read_cursor.advance", "read_scope")?;
     let read_scope =
         serde_json::from_value::<ReadScopeEvent>(read_scope.clone()).map_err(|_| {
             PresenceRxError::MissingField {
-                event_kind: "cx.read_cursor.advance",
+                event_kind: "ck.read_cursor.advance",
                 field: "read_scope.kind",
             }
         })?;
@@ -192,22 +192,22 @@ pub fn parse_read_cursor(
         "realm" | "flow" | "thread" | "view" | "message" | "morph"
     ) {
         return Err(PresenceRxError::MissingField {
-            event_kind: "cx.read_cursor.advance",
+            event_kind: "ck.read_cursor.advance",
             field: "read_scope.kind",
         });
     }
-    let position = required_value(payload, "cx.read_cursor.advance", "position")?;
+    let position = required_value(payload, "ck.read_cursor.advance", "position")?;
     let position =
         serde_json::from_value::<ReadCursorPositionEvent>(position.clone()).map_err(|_| {
             PresenceRxError::MissingField {
-                event_kind: "cx.read_cursor.advance",
+                event_kind: "ck.read_cursor.advance",
                 field: "position.event_id",
             }
         })?;
     Ok(ReadMarkerEvent {
-        realm_id: required_str(payload, "cx.read_cursor.advance", "realm_id")?.to_owned(),
-        actor_id: required_str(payload, "cx.read_cursor.advance", "actor_id")?.to_owned(),
-        device_id: required_str(payload, "cx.read_cursor.advance", "device_id")?.to_owned(),
+        realm_id: required_str(payload, "ck.read_cursor.advance", "realm_id")?.to_owned(),
+        actor_id: required_str(payload, "ck.read_cursor.advance", "actor_id")?.to_owned(),
+        device_id: required_str(payload, "ck.read_cursor.advance", "device_id")?.to_owned(),
         read_scope,
         position,
     })
@@ -408,11 +408,11 @@ mod tests {
 
     #[test]
     fn parse_typing_rejects_wrong_kind() {
-        let env = envelope("cx.message.create", json!({}));
+        let env = envelope("ck.message.create", json!({}));
         match parse_typing(&env) {
             Err(PresenceRxError::WrongKind { expected, actual }) => {
                 assert_eq!(expected, "cx.typing");
-                assert_eq!(actual, "cx.message.create");
+                assert_eq!(actual, "ck.message.create");
             }
             other => panic!("expected WrongKind, got {other:?}"),
         }
@@ -442,9 +442,9 @@ mod tests {
     #[test]
     fn parse_read_cursor_round_trip_carries_hlc_verbatim() {
         let env = envelope(
-            "cx.read_cursor.advance",
+            "ck.read_cursor.advance",
             json!({
-                "schema": "cx.schema.read_cursor.v1",
+                "schema": "ck.schema.read_cursor.v1",
                 "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                 "actor_id": "did:web:alice",
                 "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn parse_read_cursor_rejects_removed_flow_discussion_kind() {
         let env = envelope(
-            "cx.read_cursor.advance",
+            "ck.read_cursor.advance",
             json!({
                 "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                 "actor_id": "did:web:alice",

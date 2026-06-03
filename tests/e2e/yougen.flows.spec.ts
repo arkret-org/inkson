@@ -354,8 +354,8 @@ test("settings avatar upload crops local image before publishing profile URL", a
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
-  const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
-  const profileRequest = page.waitForRequest("**/api/v1/account/profile");
+  const uploadRequest = page.waitForRequest("**/_cokret/self/blob/upload");
+  const profileRequest = page.waitForRequest("**/_cokret/self/account/profile");
   await page.getByTestId("settings-avatar-upload-cropped").click();
 
   const upload = await uploadRequest;
@@ -445,14 +445,14 @@ test("kanban card detail embeds discussion without legacy boundary copy", async 
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
-  await page.route("**/api/v1/projection/spaces**", async (route) => {
+  await page.route("**/_cokret/self/projection/spaces**", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ items: [], total: 0, spaces: [] }),
     });
   });
-  await page.route("**/api/v1/projection/flows**", async (route) => {
+  await page.route("**/_cokret/self/projection/flows**", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -491,19 +491,19 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   await page.getByTestId("add-card-button").first().click();
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
   const eventSubmit = page.waitForRequest(
-    (request) => request.url().includes("/api/v1/events") && request.method() === "POST",
+    (request) => request.url().includes("/_cokret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("save-card-button").click();
   const eventBody = await eventSubmit.then((request) => request.postDataJSON());
-  expect(eventBody.kind).toBe("cx.flow.create");
+  expect(eventBody.kind).toBe("ck.flow.create");
   const positionComponent = eventBody.payload?.components?.find(
-    (component: { family?: string }) => component.family === "cx.component.flow.position.v1",
+    (component: { family?: string }) => component.family === "ck.component.flow.position.v1",
   );
-  expect(positionComponent?.family).toBe("cx.component.flow.position.v1");
+  expect(positionComponent?.family).toBe("ck.component.flow.position.v1");
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.create");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.flow.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.component.flow.position.v1");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.component.flow.position.v1");
   await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
 
   await page.getByTestId("replay-board-queue").click();
@@ -551,7 +551,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await page.getByTestId("mimi-proxy-download").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download ck:blob:sha256:e2e");
 
-  const submit = page.waitForRequest("**/api/v1/mimi/flows/01JSMIMI/messages");
+  const submit = page.waitForRequest("**/_cokret/open/mimi/flows/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
   expect((await submit).postDataJSON().source_format).toBe("text/markdown;variant=GFM-MIMI");
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("submit-message mimi-msg-e2e");
@@ -610,7 +610,7 @@ test("accessibility smoke exposes landmarks and live timeline feed", async ({ pa
   await expect(page.getByTestId("timeline")).toHaveAttribute("role", "feed");
   await expect(page.getByTestId("timeline")).toHaveAttribute("aria-live", "polite");
 
-  const sendRequest = page.waitForRequest("**/api/v1/events");
+  const sendRequest = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("composer-input").fill("a11y smoke message");
   await page.getByTestId("send-button").click();
   await sendRequest;
@@ -777,7 +777,7 @@ test("notifications are derived from index projections and respect per-space mut
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
   const acceptInvite = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST",
   );
   await page
@@ -786,7 +786,7 @@ test("notifications are derived from index projections and respect per-space mut
     .getByTestId("notification-action")
     .click();
   const acceptBody = await acceptInvite.then((request) => request.postDataJSON());
-  expect(acceptBody.kind).toBe("cx.member.state");
+  expect(acceptBody.kind).toBe("ck.member.state");
   expect(acceptBody.payload.invite_ref).toBe("ck:invite:01904100-0000-7000-8000-000000000099");
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
   await expect(page.getByTestId("notifications-status")).toContainText("Joined Realm");
@@ -822,22 +822,22 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Create Space" })).toHaveCount(0);
   const realmCreateRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("cx.realm.create"),
+      (request.postData() ?? "").includes("ck.realm.create"),
   );
   const plaintextPolicyRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("cx.realm.plaintext_visible_services"),
+      (request.postData() ?? "").includes("ck.realm.plaintext_visible_services"),
   );
   await page.getByTestId("create-space-button").click();
   const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
     realmCreateRequest.then((request) => request.postDataJSON()),
     plaintextPolicyRequest.then((request) => request.postDataJSON()),
   ]);
-  expect(JSON.stringify(realmCreateBody)).toContain("cx.realm.create");
+  expect(JSON.stringify(realmCreateBody)).toContain("ck.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created ck:realm:/);
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
@@ -852,7 +852,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
   await expect(page.getByTestId("timeline")).toBeVisible();
-  const sendRequest = page.waitForRequest("**/api/v1/events");
+  const sendRequest = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("composer-input").fill("setup flow message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
@@ -879,15 +879,15 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Launch board discussion");
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
-  const chatSend = page.waitForRequest("**/api/v1/events");
+  const chatSend = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ck:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
-  expect(chatBody.kind).toBe("cx.message.create");
+  expect(chatBody.kind).toBe("ck.message.create");
   expect(chatBody.payload.message_id).toMatch(/^ck:message:/);
   expect(chatBody.payload.flow_id).toContain("ck:flow:");
   expect(chatBody.payload.track_name).toBe("discussion");
-  expect(chatBody.payload.content.kind).toBe("cx.content.text");
+  expect(chatBody.payload.content.kind).toBe("ck.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ck:task:123");
   expect(chatBody.payload.mentions).toBeUndefined();
   expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();
@@ -907,7 +907,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await createDiscussion(page, "Reload Discussion");
 
   const firstSend = page.waitForRequest(
-    (request) => request.url().endsWith("/api/v1/events") && request.method() === "POST",
+    (request) => request.url().endsWith("/_cokret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("chat-input").fill("message before reload");
   await page.getByTestId("send-chat-button").click();
@@ -927,7 +927,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await expect(reloadedMessage).not.toContainText("did:web:alice.example");
 
   const secondSend = page.waitForRequest(
-    (request) => request.url().endsWith("/api/v1/events") && request.method() === "POST",
+    (request) => request.url().endsWith("/_cokret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("chat-input").fill("message after reload");
   await page.getByTestId("send-chat-button").click();
@@ -943,12 +943,12 @@ test("chat send failures mark the message and keep actions quiet until hover", a
   await refreshServer(page);
   await openDiscussion(page);
   await createDiscussion(page, "Failure Discussion");
-  await page.route("**/api/v1/events", async (route) => {
+  await page.route("**/_cokret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "cx.message.create") {
+    if (body.kind !== "ck.message.create") {
       return route.fallback();
     }
     return route.fulfill({
@@ -985,12 +985,12 @@ test("chat send failures mark the message and keep actions quiet until hover", a
 test("chat membership denial restores draft without panicking", async ({ page }) => {
   await openDiscussion(page);
   await createDiscussion(page, "Membership Denied Discussion");
-  await page.route("**/api/v1/events", async (route) => {
+  await page.route("**/_cokret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "cx.message.create") {
+    if (body.kind !== "ck.message.create") {
       return route.fallback();
     }
     return route.fulfill({
@@ -1022,12 +1022,12 @@ test("chat retries plaintext sends after granting current service visibility", a
   await createDiscussion(page, "Policy Discussion");
 
   let attempts = 0;
-  await page.route("**/api/v1/events", async (route) => {
+  await page.route("**/_cokret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "cx.message.create") {
+    if (body.kind !== "ck.message.create") {
       return route.fallback();
     }
     attempts += 1;
@@ -1054,9 +1054,9 @@ test("chat retries plaintext sends after granting current service visibility", a
 
   const policyUpdate = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST" &&
-      request.postDataJSON().kind === "cx.realm.update",
+      request.postDataJSON().kind === "ck.realm.update",
   );
   await page.getByTestId("chat-input").fill("policy retry message");
   await page.getByTestId("send-chat-button").click();
@@ -1076,7 +1076,7 @@ test("kanban card drag queues a flow move", async ({ page }) => {
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
 
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("cx.flow.move");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.flow.move");
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
 });
 
@@ -1085,7 +1085,7 @@ test("kanban projections use home Realm for nested Spaces", async ({ page }) => 
   const projectionRealmIds: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/api/v1/projection/spaces" || url.pathname === "/api/v1/projection/flows") {
+    if (url.pathname === "/_cokret/self/projection/spaces" || url.pathname === "/_cokret/self/projection/flows") {
       projectionRealmIds.push(url.searchParams.get("realm_id") ?? "");
     }
   });
@@ -1105,7 +1105,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await openTimeline(page);
   await expect(page.getByTestId("composer-input")).toHaveValue("draft survives reload");
 
-  const sendRequest = page.waitForRequest("**/api/v1/events");
+  const sendRequest = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("composer-input").fill("plain e2e message");
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
@@ -1114,9 +1114,9 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
 
   const editRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST" &&
-      request.postDataJSON().kind === "cx.message.revise",
+      request.postDataJSON().kind === "ck.message.revise",
   );
   await page.getByTestId("edit-button").last().click();
   await page.getByTestId("edit-composer").locator("textarea").fill("plain e2e message edited");
@@ -1128,9 +1128,9 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
 
   const redactRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/events") &&
+      request.url().endsWith("/_cokret/self/events") &&
       request.method() === "POST" &&
-      request.postDataJSON().kind === "cx.message.redact",
+      request.postDataJSON().kind === "ck.message.redact",
   );
   await page.getByTestId("redact-button").last().click();
   await page.getByTestId("confirm-redact-button").click();
@@ -1151,16 +1151,16 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   await openTimeline(page);
   await expect(page.getByTestId("timeline-event").first()).toBeVisible();
 
-  const receiptRequest = page.waitForRequest("**/api/v1/ephemeral");
+  const receiptRequest = page.waitForRequest("**/_cokret/self/ephemeral");
   await page.getByTestId("mark-read-button").first().click();
   const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
 
-  expect(receiptBody.kind).toBe("cx.receipt.read");
+  expect(receiptBody.kind).toBe("ck.receipt.read");
   expect(receiptBody.realm_id).toBe("ck:realm:0196419b-0000-7000-8000-000000000000");
   expect(receiptBody.payload.receipt_type).toBe("read");
-  expect(receiptBody.payload.schema).toBe("cx.schema.read_receipt.v1");
+  expect(receiptBody.payload.schema).toBe("ck.schema.read_receipt.v1");
   expect(receiptBody.payload.event_id).toContain("summary-ck:space");
-  await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
+  await expect(page.getByTestId("read-receipt-status")).toContainText("ck.receipt.read");
   await expect(page.getByTestId("read-cursor-status")).toContainText("Read marker:");
   await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
 });
@@ -1169,7 +1169,7 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
   await refreshServer(page);
   await openTimeline(page);
 
-  const uploadRequest = page.waitForRequest("**/api/v1/blob/upload");
+  const uploadRequest = page.waitForRequest("**/_cokret/self/blob/upload");
   await page.getByTestId("attach-blob-button").click();
   expect((await uploadRequest).headers()["authorization"]).toContain("Bearer");
   await expect(page.getByTestId("blob-status")).toContainText("upload hash ok");
@@ -1177,7 +1177,7 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
   await expect(page.getByTestId("blob-policy-panel")).toContainText("unsafe or opaque type opens as attachment");
   await expect(page.getByTestId("blob-policy-panel")).toContainText("Thumbnail: ck:blob:sha256:e2e-thumb");
 
-  const downloadRequest = page.waitForRequest("**/api/v1/blob/get?blob_ref=*");
+  const downloadRequest = page.waitForRequest("**/_cokret/self/blob/get?blob_ref=*");
   await page.getByTestId("verify-blob-download").click();
   const download = await downloadRequest;
   expect(download.headers()["authorization"]).toContain("Bearer");
@@ -1198,7 +1198,7 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
   await expect(page.getByTestId("write-status")).toContainText("plaintext blocked");
   await expect(page.getByTestId("plaintext-boundary-warning")).toContainText("not E2EE");
 
-  const sendRequest = page.waitForRequest("**/api/v1/events");
+  const sendRequest = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("plaintext-boundary-ack").click();
   await page.getByTestId("send-button").click();
   expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
@@ -1207,10 +1207,10 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
   await openTimeline(page);
-  const report = page.waitForRequest("**/api/v1/moderation/report");
+  const report = page.waitForRequest("**/_cokret/self/moderation/report");
   const deviceMessage = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/api/v1/device_messages") &&
+      request.url().endsWith("/_cokret/self/device_messages") &&
       request.method() === "POST",
   );
 
@@ -1234,24 +1234,24 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("space-admin-status")).toContainText("updated");
 
   await page.getByTestId("invite-target-input").fill("did:web:carol.example");
-  const inviteCommit = page.waitForRequest("**/api/v1/events");
+  const inviteCommit = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
-  expect(inviteBody.kind).toBe("cx.invite.create");
+  expect(inviteBody.kind).toBe("ck.invite.create");
   expect(inviteBody.payload.invite_id).toBe("ck:invite:e2e");
   await expect(page.getByTestId("space-admin-status")).toContainText("invited did:web:carol.example");
   await expect(page.getByTestId("invite-row")).toContainText("pending");
 
-  const acceptCommit = page.waitForRequest("**/api/v1/events");
+  const acceptCommit = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("accept-invite-button").click();
   const acceptBody = await acceptCommit.then((request) => request.postDataJSON());
-  expect(acceptBody.kind).toBe("cx.invite.accept");
+  expect(acceptBody.kind).toBe("ck.invite.accept");
   await expect(page.getByTestId("invite-row")).toContainText("accepted");
 
-  const cancelCommit = page.waitForRequest("**/api/v1/events");
+  const cancelCommit = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("cancel-invite-button").click();
   const cancelBody = await cancelCommit.then((request) => request.postDataJSON());
-  expect(cancelBody.kind).toBe("cx.invite.cancel");
+  expect(cancelBody.kind).toBe("ck.invite.cancel");
   await expect(page.getByTestId("invite-row")).toContainText("canceled");
 
   await page.getByTestId("rotate-space-epoch").click();

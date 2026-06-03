@@ -10,32 +10,32 @@ export function mockCokretContract(req) {
   const path = canonicalPath(req.path ?? "/");
   const body = req.body ?? {};
 
-  if (method === "GET" && path === "/api/v1/server/describe") {
+  if (method === "GET" && path === "/_cokret/describe") {
     return json({
       service_did: "did:web:server.local",
       trust_domain: "ck:trust_domain:server.local",
       service_type: "principal_server",
       protocol_version: "1.0",
       supported_profiles: [
-        "cx.profile.minimal_client.v1",
-        "cx.profile.chat_mvp.v1",
-        "cx.profile.kanban_mvp.v1",
-        "cx.profile.full_client.v1",
-        "cx.profile.principal_server_events_api.v1",
+        "ck.profile.minimal_client.v1",
+        "ck.profile.chat_mvp.v1",
+        "ck.profile.kanban_mvp.v1",
+        "ck.profile.full_client.v1",
+        "ck.profile.principal_server_events_api.v1",
       ],
       supported_features: ["sync.client_sync", "directory.search_realms", "events.submit"],
       supported_operations: [
-        "cx.events.submit",
-        "cx.events.query",
-        "cx.directory.search_realms",
-        "cx.keys.backups.list",
+        "ck.events.submit",
+        "ck.events.query",
+        "ck.directory.search_realms",
+        "ck.keys.backups.list",
         "cx.ephemeral.broadcast",
       ],
       limits: {},
     });
   }
 
-  if (method === "POST" && path === "/api/v1/events") {
+  if (method === "POST" && path === "/_cokret/self/events") {
     return json({
       event_id: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
       status: "accepted",
@@ -44,17 +44,17 @@ export function mockCokretContract(req) {
       received_at: "2026-04-28T12:00:00Z",
       receipt: {
         idempotent: false,
-        reducer_profile: "cx.reducer.v1",
+        reducer_profile: "ck.reducer.v1",
         projection_source: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
       },
     });
   }
 
-  if (method === "GET" && path === "/api/v1/events") {
+  if (method === "GET" && path === "/_cokret/self/events/query") {
     return json({ events: [], next_cursor: null });
   }
 
-  if (method === "GET" && path === "/api/v1/account/me") {
+  if (method === "GET" && path === "/_cokret/self/account/me") {
     return json({
       did: "did:web:alice.example",
       handle: "alice.example",
@@ -63,27 +63,27 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "GET" && path === "/api/v1/directory/describe") {
+  if (method === "GET" && path === "/_cokret/find/directory/describe") {
     return json({
       service_did: "did:web:server.local",
       resource_types: ["space", "organization", "actor"],
-      discovery_profiles: ["cx.profile.directory_service.v1"],
+      discovery_profiles: ["ck.profile.directory_service.v1"],
       restricted_query_proof: false,
     });
   }
 
-  if (method === "POST" && path === "/api/v1/directory/search-realms") {
+  if (method === "POST" && path === "/_cokret/find/directory/search-realms") {
     return json({
       results: [spacePreview()],
       next_cursor: null,
     });
   }
 
-  if (method === "GET" && path === "/api/v1/keys/backups") {
+  if (method === "GET" && path === "/_cokret/self/keys/backups") {
     return json({ backups: [] });
   }
 
-  if (method === "POST" && path === "/api/v1/devices/pairing-challenge") {
+  if (method === "POST" && path === "/_cokret/self/devices/pairing-challenge") {
     const deviceId = body.device_id ?? "dev_yougen";
     return json({
       challenge_id: `ck:device_challenge:${deviceId}`,
@@ -93,8 +93,8 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/api/v1/ephemeral") {
-    if (!["cx.receipt.read", "cx.typing", "cx.presence", "cx.call.signal"].includes(body.kind)) {
+  if (method === "POST" && path === "/_cokret/self/ephemeral") {
+    if (!["ck.receipt.read", "cx.typing", "cx.presence", "ck.call.signal"].includes(body.kind)) {
       return json(
         {
           ok: false,
@@ -114,23 +114,23 @@ export function mockCokretContract(req) {
   return undefined;
 }
 
-// Short-form aliases for callers that pass a path without the `/api/v1/`
+// Short-form aliases for callers that pass a path without the `/_cokret/`
 // prefix. Each alias MUST resolve to a path with a matching branch above;
 // `/realm/create` and `/space/create` were dropped together with the legacy
 // realm/space creation surface forbidden by yougen/tests/server_contract.rs.
 // `/account/me` (read) and `/account/profile` (update) are distinct
 // endpoints — no alias collapses one onto the other.
 export function canonicalPath(path) {
-  const clean = path.startsWith("/api/v1/") ? path : path.replace(/\/+$/, "");
+  const clean = path.startsWith("/_cokret/") ? path : path.replace(/\/+$/, "");
   const aliases = {
-    "/server/describe": "/api/v1/server/describe",
-    "/events/submit": "/api/v1/events",
-    "/events/list": "/api/v1/events",
-    "/account/me": "/api/v1/account/me",
-    "/directory/search-realms": "/api/v1/directory/search-realms",
-    "/keys/backups": "/api/v1/keys/backups",
-    "/devices/pairing-challenge": "/api/v1/devices/pairing-challenge",
-    "/ephemeral": "/api/v1/ephemeral",
+    "/server/describe": "/_cokret/describe",
+    "/events/submit": "/_cokret/self/events",
+    "/events/list": "/_cokret/self/events/query",
+    "/account/me": "/_cokret/self/account/me",
+    "/directory/search-realms": "/_cokret/find/directory/search-realms",
+    "/keys/backups": "/_cokret/self/keys/backups",
+    "/devices/pairing-challenge": "/_cokret/self/devices/pairing-challenge",
+    "/ephemeral": "/_cokret/self/ephemeral",
   };
   return aliases[clean] ?? clean;
 }
@@ -143,7 +143,7 @@ function json(body, status = 200) {
   return { status, body };
 }
 
-// Mirrors the shape soland's `/api/v1/directory/search-realms` actually emits
+// Mirrors the shape soland's `/_cokret/find/directory/search-realms` actually emits
 // (see `soland/src/routing/spaces/directory.rs::search_realms`). The fields
 // here MUST stay aligned with that endpoint — the cotest parity test runs
 // this response against a live soland process.

@@ -25,7 +25,7 @@ pub struct CirclePanelProps {
     /// CXP-0007 directory_visibility rule.
     #[props(default)]
     pub visible_members: Vec<CircleMemberRow>,
-    /// `true` when the viewer has the `cx.circle.archive` capability.
+    /// `true` when the viewer has the `ck.circle.archive` capability.
     /// Hides the Archive button when `false`.
     #[props(default)]
     pub viewer_can_archive: bool,
@@ -46,7 +46,7 @@ pub struct CirclePanelProps {
 
 /// One row in the member list. Stays a small struct so the parent route
 /// can build it from either a synchronous projection or an async
-/// `/api/v1/circles/:id/members` fetch.
+/// `/_cokret/self/circles/:id/members` fetch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircleMemberRow {
     pub actor_did: String,
@@ -142,15 +142,15 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
 /// view lists the grants attached to a Circle and (in R3.1) will let
 /// admins attach / detach capability grants scoped by `ck:circle:<uuid>`.
 ///
-/// TODO(R3.1): wire to soland's `/api/v1/circles/{id}/grants` once that
+/// TODO(R3.1): wire to soland's `/_cokret/self/circles/{id}/grants` once that
 /// endpoint lands. For now this is a documented stub that surfaces the
 /// selector kind + circle_id for the QA harness.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircleGrantRow {
     /// Stable grant identifier.
     pub grant_id: String,
-    /// Capability action wire form (e.g. `cx.message.send`,
-    /// `cx.call.join`, `cx.call.record`).
+    /// Capability action wire form (e.g. `ck.message.send`,
+    /// `ck.call.join`, `ck.call.record`).
     pub action: String,
     /// Capability scope expressed as a resource selector. For Circle
     /// grants this is `{"kind":"circle","circle_id":"ck:circle:<uuid>"}`.

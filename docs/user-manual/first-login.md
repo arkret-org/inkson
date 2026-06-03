@@ -10,7 +10,7 @@ The first-login flow has three legs:
 2. **Sign in via coauth OIDC** — the only place where account credentials
    are entered.
 3. **Bootstrap the local device** — generate a signing key, publish
-   `cx.device.authorize`, run optional verification.
+   `ck.device.authorize`, run optional verification.
 
 The /onboarding view in yougen owns leg 3 and adds an optional recovery
 policy step. Legs 1 + 2 belong to coauth.
@@ -48,7 +48,7 @@ a bug — see [`faq-troubleshooting.md`](../faq-troubleshooting.md#discovery-fai
 <!-- TODO(screenshot): coauth-oidc-page.png -->
 <!-- TODO(screenshot): coauth-callback-success.png -->
 
-If the bundle is missing the `cx.session.grant` claim, the device-bootstrap
+If the bundle is missing the `ck.session.grant` claim, the device-bootstrap
 step (next) will fail closed. Re-attempt the login.
 
 ---
@@ -75,7 +75,7 @@ resolve to your DID; they are **not** a permission key.
 
 yougen generates a local ed25519 signing key, hands it to the keychain
 (desktop) or IndexedDB (web), and publishes
-`cx.device.authorize`. You may then run a `KeyVerification` round against
+`ck.device.authorize`. You may then run a `KeyVerification` round against
 a previously enrolled device to elevate trust.
 
 <!-- TODO(screenshot): onboarding-step-device.png -->
@@ -92,7 +92,7 @@ Pick an initial recovery preference:
 - **Recovery Key** — display-once high-entropy recovery phrase.
 
 The choice is persisted to `localState` under `onboarding.recovery_choice`.
-Publishing the active `cx.schema.recovery_policy.v1` remains a separate
+Publishing the active `ck.schema.recovery_policy.v1` remains a separate
 server-backed follow-up.
 
 <!-- TODO(screenshot): onboarding-step-recovery.png -->

@@ -14,7 +14,7 @@
 //! the renderer thread, so the lock is uncontended in practice.
 //!
 //! Spec cross-references:
-//! - `authz/policy-server.md` §3 — `POST /api/v1/policy/check` deny response carries
+//! - `authz/policy-server.md` §3 — `POST /_cokret/self/policy/check` deny response carries
 //!   `decision/reason/obligations[]`.
 //! - `authz/policy-server.md` §4 — obligation kinds (`log_event`, `require_step_up`, `mask_field`,
 //!   ...). Soland is responsible for executing them; the UI surfaces them so the user sees what the

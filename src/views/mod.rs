@@ -7,17 +7,17 @@
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
-// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | cx.session.grant, cx.device.authorize                            |
+// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ck.session.grant, ck.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
-// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | cx.flow.update, cx.message.create, derived projection              |
-// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | cx.flow.move, cx.flow.reorder, cx.space.update (board/list container)|
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | cx.flow.tracks.update (unified), cx.message.*                      |
-// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | cx.flow.update on synthesis track                                  |
-// | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via cx.realm.discovery state event              |
-// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from cx.read_cursor.advance / cx.receipt.read / @-mention) |
-// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | cx.key.verification.*, cx.mls.welcome                              |
+// | timeline           | desktop/space.html (timeline view)| sync/client-sync, models/views §7                      | ck.flow.update, ck.message.create, derived projection              |
+// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.flow.move, ck.flow.reorder, ck.space.update (board/list container)|
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.flow.tracks.update (unified), cx.message.*                      |
+// | document           | (no dedicated page yet; View.kind=document) | models/views §4                              | ck.flow.update on synthesis track                                  |
+// | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
+// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
+// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
 // | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | cx.policy.{rule,action,set}, cx.capability.{grant,revoke,delegate}  |
-// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | cx.profile.update, cx.account.status, cx.identity.disclosure_*      |
+// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ck.profile.update, ck.account.status, cx.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // Pending views (see `_todos.md`):
@@ -32,8 +32,8 @@
 //    consumer side.
 // 4. Push paths default to masked payloads (`background_sync_needed`); the body is decrypted
 //    locally.
-// 5. The Auth Service can only issue short-lived `cx.session.grant`; any change to the long-lived
-//    device set must go through `cx.device.authorize`.
+// 5. The Auth Service can only issue short-lived `ck.session.grant`; any change to the long-lived
+//    device set must go through `ck.device.authorize`.
 
 pub mod agents;
 pub mod applets;
@@ -46,7 +46,7 @@ pub mod chat;
 pub mod circle;
 /// First end-to-end UI Move-flow PoC.
 /// "Grant consent" button under settings → Privacy that builds + signs +
-/// POSTs a `cx.consent.grant` Move via the move_builder + api::submit_move
+/// POSTs a `ck.consent.grant` Move via the move_builder + api::submit_move
 /// pipeline.
 pub mod consent_demo;
 pub mod contacts;
@@ -59,7 +59,7 @@ pub mod developer;
 pub mod directory;
 pub mod document;
 /// A6.1 — global cross-Space message search panel. Backed by soland's
-/// `POST /api/v1/index/search` (substring scan over the in-memory
+/// `POST /_cokret/self/index/search` (substring scan over the in-memory
 /// projection); cross-space coverage will improve once the durable
 /// projection lands.
 pub mod global_search;
@@ -67,7 +67,7 @@ pub mod helpers;
 pub mod kanban;
 pub mod login;
 /// Round R2/R3 (T06) — moderation appeal user flow. Entrypoint button +
-/// `cx.moderation.appeal.submit` builder. Renders near user-facing
+/// `ck.moderation.appeal.submit` builder. Renders near user-facing
 /// moderation decisions; reviewer surface is admin-scope.
 pub mod moderation_appeal;
 pub mod notifications;
@@ -106,8 +106,8 @@ pub enum View {
     Kanban,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
-    /// The only canonical events feeding this view are `cx.read_cursor.advance`,
-    /// `cx.receipt.read`, `@-mention` extractions, plus capability/grant
+    /// The only canonical events feeding this view are `ck.read_cursor.advance`,
+    /// `ck.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not
     /// on a synthetic `cx.notification.*` event.
     Notifications,
@@ -122,13 +122,13 @@ pub enum View {
     /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
     /// Invite-quarantine list. Admins see all entries from coauth's
-    /// `GET /admin/v1/invite-quarantine`; non-admins see their own
+    /// `GET /_cokret/local/admin/invite-quarantine`; non-admins see their own
     /// quarantined invites. Approve / reject buttons POST
-    /// `/admin/v1/invite-quarantine/{id}/resolve`.
+    /// `/_cokret/local/admin/invite-quarantine/{id}/resolve`.
     Quarantine,
     /// Agent endpoint + protocol_session monitor.
-    /// Spec `extensions/agent-integration.md`. Writes `cx.agent.endpoint` /
-    /// `cx.agent.protocol_session.{start,status,result}` via
+    /// Spec `extensions/agent-integration.md`. Writes `ck.agent.endpoint` /
+    /// `ck.agent.protocol_session.{start,status,result}` via
     /// `crate::operation::cx_ops::agent_*` builders.
     Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by

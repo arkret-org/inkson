@@ -172,11 +172,11 @@ export async function mockCokretApi(page: Page) {
         body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p><a href=\"/register\">Create account</a><a href=\"/recovery\">Lost password or account</a></main>",
       });
     }
-    if (!url.pathname.startsWith("/api/v1/")) {
+    if (!url.pathname.startsWith("/_cokret/")) {
       return route.continue();
     }
 
-    if (url.pathname === "/api/v1/server/describe") {
+    if (url.pathname === "/_cokret/describe") {
       if (url.hostname === "auth.local.host") {
         return json(route, {
           service_did: "did:web:auth.local.host",
@@ -189,7 +189,7 @@ export async function mockCokretApi(page: Page) {
             supported_auth_methods: ["password", "oidc"],
             supported_grant_types: ["authorization_code", "refresh_token"],
             did_binding_methods: ["did_controller_key", "device_key"],
-            required_audience: "https://auth.local.host/api/v1",
+            required_audience: "https://auth.local.host/_cokret/gate",
             session_grant_scope: "urn:cokret:principal-server:session.bind",
             oidc_clients: [
               {
@@ -211,15 +211,15 @@ export async function mockCokretApi(page: Page) {
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
-          "cx.profile.minimal_client.v1",
-          "cx.profile.chat_mvp.v1",
-          "cx.profile.kanban_mvp.v1",
-          "cx.profile.full_client.v1",
-          "cx.profile.e2ee_client.v1",
-          "cx.profile.push_gateway.v1",
-          "cx.profile.mimi_interop.v1",
-          "cx.profile.core_event_store.v1",
-          "cx.profile.principal_server_events_api.v1",
+          "ck.profile.minimal_client.v1",
+          "ck.profile.chat_mvp.v1",
+          "ck.profile.kanban_mvp.v1",
+          "ck.profile.full_client.v1",
+          "ck.profile.e2ee_client.v1",
+          "ck.profile.push_gateway.v1",
+          "ck.profile.mimi_interop.v1",
+          "ck.profile.core_event_store.v1",
+          "ck.profile.principal_server_events_api.v1",
         ],
         supported_features: [
           "sync.client_sync",
@@ -244,35 +244,35 @@ export async function mockCokretApi(page: Page) {
           "events.submit",
         ],
         supported_operations: [
-          "cx.account.subscribe",
-          "cx.events.query",
-          "cx.events.subscribe",
-          "cx.directory.search_realms",
-          "cx.directory.resolve_realm",
-          "cx.authz.check",
-          "cx.realm.create",
-          "cx.space.create",
-          "cx.member.state",
-          "cx.invite.create",
-          "cx.invite.accept",
-          "cx.invite.cancel",
-          "cx.events.submit",
-          "cx.message.create",
-          "cx.message.revise",
-          "cx.message.redact",
-          "cx.reaction.add",
-          "cx.keys.upload",
-          "cx.keys.query",
-          "cx.keys.claim",
-          "cx.device_messages.get",
-          "cx.device_messages.put",
-          "cx.push.register_device",
-          "cx.mimi.provider_directory",
-          "cx.events.describe",
-          "cx.events.submit",
+          "ck.account.subscribe",
+          "ck.events.query",
+          "ck.events.subscribe",
+          "ck.directory.search_realms",
+          "ck.directory.resolve_realm",
+          "ck.authz.check",
+          "ck.realm.create",
+          "ck.space.create",
+          "ck.member.state",
+          "ck.invite.create",
+          "ck.invite.accept",
+          "ck.invite.cancel",
+          "ck.events.submit",
+          "ck.message.create",
+          "ck.message.revise",
+          "ck.message.redact",
+          "ck.reaction.add",
+          "ck.keys.upload",
+          "ck.keys.query",
+          "ck.keys.claim",
+          "ck.device_messages.get",
+          "ck.device_messages.put",
+          "ck.push.register_device",
+          "ck.mimi.provider_directory",
+          "ck.events.describe",
+          "ck.events.submit",
         ],
         supported_schema_profiles: ["cx.schema.core.v1"],
-        supported_reducer_profiles: ["cx.reducer.v1"],
+        supported_reducer_profiles: ["ck.reducer.v1"],
         supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
           mode: "development",
@@ -294,31 +294,31 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/auth/bridge/describe") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/auth/bridge/describe") {
       return json(route, {
         contract: "cokret.rest.auth_bridge.v1",
         version: "2026-05-04-scaffold",
-        api_base_path: "/api/v1",
+        api_base_path: "/_cokret/gate",
         oauth: {
           discovery_path: "/.well-known/openid-configuration",
-          browser_bridge_session_path: "/api/v1/auth/oidc/browser-bridge/session",
-          exchange_describe_path: "/api/v1/auth/oidc/exchange/describe",
-          exchange_path: "/api/v1/auth/oidc/exchange",
+          browser_bridge_session_path: "/_cokret/gate/auth/oidc/browser-bridge/session",
+          exchange_describe_path: "/_cokret/gate/auth/oidc/exchange/describe",
+          exchange_path: "/_cokret/gate/auth/oidc/exchange",
           supported_flows: ["authorization_code_pkce_browser"],
         },
         cokret: {
-          login_path: "/api/v1/auth/login",
-          logout_path: "/api/v1/auth/logout",
-          providers_path: "/api/v1/auth/providers",
-          session_grants_path: "/api/v1/session-grants",
-          session_grants_introspect_path: "/api/v1/session-grants/introspect",
+          login_path: "/_cokret/gate/auth/login",
+          logout_path: "/_cokret/gate/auth/logout",
+          providers_path: "/_cokret/gate/auth/providers",
+          session_grants_path: "/_cokret/gate/session-grants",
+          session_grants_introspect_path: "/_cokret/gate/session-grants/introspect",
           session_grant_scope: "urn:cokret:principal-server:session.bind",
         },
         todos: [],
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/auth/oidc/browser-bridge/session") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/auth/oidc/browser-bridge/session") {
       const body = await route.request().postDataJSON();
       const redirectUri = body.redirect_uri ?? "http://127.0.0.1:4527/auth/callback";
       const principalAudience = body.principal_audience ?? "did:web:server.local";
@@ -352,14 +352,14 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/integration/describe") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/integration/describe") {
       return json(route, {
         contract: "cokret.rest.integration_manifest.v1",
         version: "2026-05-04-scaffold",
         service: "coauth",
         service_kind: "account_authority",
-        api_base_path: "/api/v1",
-        describe_path: "/api/v1/integration/describe",
+        api_base_path: "/_cokret/gate",
+        describe_path: "/_cokret/gate/integration/describe",
         dependencies: [],
         surfaces: [],
         examples: {},
@@ -367,7 +367,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/projection/spaces") {
+    if (url.pathname === "/_cokret/self/projection/spaces") {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
       return json(route, {
         realm_id: realmId,
@@ -376,7 +376,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/projection/flows") {
+    if (url.pathname === "/_cokret/self/projection/flows") {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
       return json(route, {
         realm_id: realmId,
@@ -385,22 +385,22 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/events/describe") {
+    if (url.pathname === "/_cokret/self/events/describe") {
       return json(route, {
         service_did: "did:web:server.local",
         schema_profiles: ["cx.schema.core.v1"],
-        reducer_profiles: ["cx.reducer.v1"],
+        reducer_profiles: ["ck.reducer.v1"],
         supported_event_types: [
-          "cx.flow.create",
-          "cx.flow.move",
-          "cx.flow.tracks.update",
-          "cx.message.create",
+          "ck.flow.create",
+          "ck.flow.move",
+          "ck.flow.tracks.update",
+          "ck.message.create",
         ],
         frontier: ["ck:event:e2e"],
       });
     }
 
-    if (url.pathname === "/api/v1/events" && route.request().method() === "POST") {
+    if (url.pathname === "/_cokret/self/events" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
       if (!route.request().headers()["x-cokret-request-id"]) {
         return json(route, {
@@ -411,7 +411,7 @@ export async function mockCokretApi(page: Page) {
       let syncToken = "sx:e2e:event";
       const submittedEvents = Array.isArray(body.events) ? body.events : [body];
       for (const event of submittedEvents) {
-        if (event.kind !== "cx.realm.create") {
+        if (event.kind !== "ck.realm.create") {
           continue;
         }
         const raw = JSON.stringify(event);
@@ -440,7 +440,7 @@ export async function mockCokretApi(page: Page) {
           createdRealms.push({ id, title, summary, encryption_profile: encryptionProfile });
         }
       }
-      if (body.kind === "cx.space.create") {
+      if (body.kind === "ck.space.create") {
         const object = body.payload?.object ?? {};
         const containerId =
           object.id ?? body.payload?.space_id ?? body.payload?.container_space_id ?? body.target_ref;
@@ -456,7 +456,7 @@ export async function mockCokretApi(page: Page) {
           });
         }
       }
-      if (body.kind === "cx.message.create") {
+      if (body.kind === "ck.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
         const legacyRealmId = body.space_id;
@@ -472,13 +472,13 @@ export async function mockCokretApi(page: Page) {
           payload: body.payload,
         });
       }
-      if (body.kind === "cx.flow.create") {
+      if (body.kind === "ck.flow.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:flow-${messageCounter}`;
         const object = body.payload?.object ?? {};
         const component = Array.isArray(body.payload?.components)
           ? body.payload.components.find(
-              (candidate: { family?: string }) => candidate.family === "cx.component.flow.position.v1",
+              (candidate: { family?: string }) => candidate.family === "ck.component.flow.position.v1",
             )
           : undefined;
         const flowId = body.payload?.flow_id ?? object.id;
@@ -521,53 +521,53 @@ export async function mockCokretApi(page: Page) {
         received_at: "2026-04-28T12:00:00Z",
         receipt: {
           idempotent: false,
-          reducer_profile: "cx.reducer.v1",
+          reducer_profile: "ck.reducer.v1",
           projection_source: body.event_id,
         },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/provider-directory") {
+    if (url.pathname === "/_cokret/open/mimi/provider-directory") {
       return json(route, mimiProviderDirectory());
     }
 
-    if (url.pathname === "/api/v1/mimi/key-material") {
+    if (url.pathname === "/_cokret/open/mimi/key-material") {
       return json(route, {
         ok: true,
         key_packages: [{ key_package_ref: "mimi:key-package:e2e", target: "mimi://remote.example/alice" }],
-        receipt: { kind: "cx.mimi.key_material", profile: "cx.profile.mimi_interop.v1" },
+        receipt: { kind: "ck.mimi.key_material", profile: "ck.profile.mimi_interop.v1" },
       });
     }
 
-    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/update$/) && route.request().method() === "PUT") {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/update$/) && route.request().method() === "PUT") {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         ok: true,
         room_id: roomId,
-        receipt: { kind: "cx.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
+        receipt: { kind: "ck.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
       });
     }
 
-    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/notify$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/notify$/)) {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
-        receipt: { kind: "cx.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
+        receipt: { kind: "ck.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
       });
     }
 
-    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/messages$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/messages$/)) {
       return json(route, {
         ok: true,
         mimi_message_id: "mimi-msg-e2e",
         mapped_operation_id: "ck:operation:mimi-submit-e2e",
         cokret_event_id: "ck:event:mimi-submit-e2e",
         receipt: {
-          kind: "cx.mimi.mapping_receipt",
-          profile: "cx.profile.mimi_interop.v1",
+          kind: "ck.mimi.mapping_receipt",
+          profile: "ck.profile.mimi_interop.v1",
           mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
           source_format: "text/markdown;variant=GFM-MIMI",
-          target_format: "cx.message.create",
+          target_format: "ck.message.create",
           original_envelope_hash: "sha256:e2e-mimi-envelope",
           mapped_operation_id: "ck:operation:mimi-submit-e2e",
           mimi_message_id: "mimi-msg-e2e",
@@ -575,7 +575,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname.match(/^\/api\/v1\/mimi\/rooms\/[^/]+\/group-info$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/group-info$/)) {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         room_id: roomId,
@@ -585,29 +585,29 @@ export async function mockCokretApi(page: Page) {
           { identifier: "mimi://mimi.example.com/alice", did: "did:web:alice.example", role: "admin" },
           { identifier: "mimi://remote.example/bob", did: "did:web:bob.example", role: "member" },
         ],
-        receipt: { kind: "cx.mimi.group_info", profile: "cx.profile.mimi_interop.v1" },
+        receipt: { kind: "ck.mimi.group_info", profile: "ck.profile.mimi_interop.v1" },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/consent/request") {
+    if (url.pathname === "/_cokret/open/mimi/consent/request") {
       return json(route, {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "requested",
-        receipt: { kind: "cx.mimi.request_consent" },
+        receipt: { kind: "ck.mimi.request_consent" },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/consent/update") {
+    if (url.pathname === "/_cokret/open/mimi/consent/update") {
       return json(route, {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "accepted",
-        receipt: { kind: "cx.mimi.update_consent" },
+        receipt: { kind: "ck.mimi.update_consent" },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/identifiers/query") {
+    if (url.pathname === "/_cokret/open/mimi/identifiers/query") {
       const body = await route.request().postDataJSON();
       return json(route, {
         query: body.query,
@@ -615,31 +615,31 @@ export async function mockCokretApi(page: Page) {
         mapped_did: "did:web:alice.example",
         provider_id: "mimi://mimi.example.com",
         proofs: [{ type: "private_identifier_query", expires_at: "2026-04-30T12:00:00Z" }],
-        receipt: { kind: "cx.mimi.identifier_query", privacy_mode: body.privacy_mode },
+        receipt: { kind: "ck.mimi.identifier_query", privacy_mode: body.privacy_mode },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/report-abuse") {
+    if (url.pathname === "/_cokret/open/mimi/report-abuse") {
       return json(route, {
         ok: true,
         report_id: "ck:report:mimi-e2e",
         status: "queued",
-        receipt: { kind: "cx.mimi.report_abuse" },
+        receipt: { kind: "ck.mimi.report_abuse" },
       });
     }
 
-    if (url.pathname === "/api/v1/mimi/proxy-download") {
+    if (url.pathname === "/_cokret/open/mimi/proxy-download") {
       return json(route, {
         ok: true,
         blob_ref: "ck:blob:sha256:e2e",
         media_type: "application/octet-stream",
         size: 23,
-        proxy_url: "/api/v1/mimi/proxy-download/ck:blob:sha256:e2e",
-        receipt: { kind: "cx.mimi.proxy_download", direct_object_store_url: null },
+        proxy_url: "/_cokret/open/mimi/proxy-download/ck:blob:sha256:e2e",
+        receipt: { kind: "ck.mimi.proxy_download", direct_object_store_url: null },
       });
     }
 
-    if (url.pathname === "/api/v1/auth/dev-login") {
+    if (url.pathname === "/_cokret/gate/auth/dev-login") {
       const body = await route.request().postDataJSON();
       return json(route, {
         access_token: "sx_playwright_token",
@@ -650,7 +650,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/auth/passkey/challenge") {
+    if (url.pathname === "/_cokret/gate/auth/passkey/challenge") {
       const body = await route.request().postDataJSON();
       return json(route, {
         challenge: "playwright-passkey-challenge",
@@ -660,14 +660,14 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/auth/oidc/authorize") {
+    if (url.pathname === "/_cokret/gate/auth/oidc/authorize") {
       return json(route, {
         redirect_url: "https://idp.example/authorize?state=oidc-state-e2e",
         state: "oidc-state-e2e",
       });
     }
 
-    if (url.pathname === "/api/v1/auth/token/refresh") {
+    if (url.pathname === "/_cokret/gate/auth/token/refresh") {
       return json(route, {
         access_token: "sx_playwright_refreshed",
         token_type: "Bearer",
@@ -675,7 +675,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/account/register") {
+    if (url.pathname === "/_cokret/self/account/register") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did: body.did,
@@ -685,7 +685,7 @@ export async function mockCokretApi(page: Page) {
       }, 201);
     }
 
-    if (url.pathname === "/api/v1/account/me") {
+    if (url.pathname === "/_cokret/self/account/me") {
       return json(route, {
         did: "did:web:alice.example",
         handle: "alice.example",
@@ -694,7 +694,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/account/profile") {
+    if (url.pathname === "/_cokret/self/account/profile") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did: "did:web:alice.example",
@@ -705,16 +705,16 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/auth/logout") {
+    if (url.pathname === "/_cokret/gate/auth/logout") {
       return json(route, { ok: true });
     }
 
-    if (url.pathname === "/api/v1/mls/rotate") {
+    if (url.pathname === "/_cokret/self/mls/rotate") {
       const body = await route.request().postDataJSON();
       return json(route, { ok: true, epoch: 2, group_id: body.group_id });
     }
 
-    if (url.pathname === "/api/v1/account/subscribe") {
+    if (url.pathname === "/_cokret/self/account/subscribe") {
       const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_SPACE);
       const frame = {
         kind: "delta",
@@ -781,7 +781,7 @@ export async function mockCokretApi(page: Page) {
           knock: {},
           leave: {},
         },
-        to_device: { messages: [{ type: "cx.mls.welcome", content: { ciphertext: "opaque" } }] },
+        to_device: { messages: [{ type: "ck.mls.welcome", content: { ciphertext: "opaque" } }] },
         account_data: { events: [
           {
             kind: "cx.notification",
@@ -818,14 +818,14 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/search-realms") {
+    if (url.pathname === "/_cokret/find/directory/search-realms") {
       return json(route, {
         results: [spacePreview()],
         next_cursor: null,
       });
     }
 
-    if (url.pathname === "/api/v1/directory/search-organizations") {
+    if (url.pathname === "/_cokret/find/directory/search-organizations") {
       return json(route, {
         results: [
           {
@@ -844,7 +844,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/search-actors") {
+    if (url.pathname === "/_cokret/find/directory/search-actors") {
       return json(route, {
         results: [
           {
@@ -857,7 +857,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/resolve-handle") {
+    if (url.pathname === "/_cokret/find/directory/resolve-handle") {
       const body = await route.request().postDataJSON();
       const audience =
         body.audience ?? body.realm_id ?? body.requester ?? "did:web:server.local";
@@ -887,7 +887,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/resolve-realm") {
+    if (url.pathname === "/_cokret/find/directory/resolve-realm") {
       return json(route, {
         realm_preview: spacePreview(),
         stripped_state: [],
@@ -896,16 +896,16 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/directory/describe") {
+    if (url.pathname === "/_cokret/find/directory/describe") {
       return json(route, {
         service_did: "did:web:server.local",
         resource_types: ["space", "organization", "actor"],
-        discovery_profiles: ["cx.profile.directory_service.v1"],
+        discovery_profiles: ["ck.profile.directory_service.v1"],
         restricted_query_proof: false,
       });
     }
 
-    if (url.pathname === "/api/v1/events") {
+    if (url.pathname === "/_cokret/self/events/query") {
       const requestedSpaces = (url.searchParams.get("spaces") ?? "")
         .split(",")
         .map((space) => space.trim())
@@ -916,7 +916,7 @@ export async function mockCokretApi(page: Page) {
       return json(route, { events, next_cursor: null, frontier: {} });
     }
 
-    if (url.pathname === "/api/v1/snapshot/head") {
+    if (url.pathname === "/_cokret/self/snapshot/head") {
       return json(route, {
         snapshot_ref: `ck:snapshot:${DEMO_SPACE}:head`,
         state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -925,7 +925,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/identity/describe") {
+    if (url.pathname === "/_cokret/root/identity/describe") {
       return json(route, {
         service_did: "did:web:server.local",
         registry_mode: "development_local",
@@ -935,7 +935,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/identity/resolve") {
+    if (url.pathname === "/_cokret/root/identity/resolve") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did_document: { id: body.did },
@@ -946,7 +946,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/identity/submit-did-operation") {
+    if (url.pathname === "/_cokret/root/identity/submit-did-operation") {
       return json(route, {
         ok: true,
         operation_id: "ck:didop:e2e",
@@ -954,7 +954,7 @@ export async function mockCokretApi(page: Page) {
       }, 202);
     }
 
-    if (url.pathname === "/api/v1/account/describe") {
+    if (url.pathname === "/_cokret/self/account/describe") {
       return json(route, {
         service_did: "did:web:server.local",
         supported_sync_profiles: ["initial", "incremental"],
@@ -963,7 +963,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/authz/check") {
+    if (url.pathname === "/_cokret/self/authz/check") {
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
@@ -972,7 +972,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/authz/effective-grants") {
+    if (url.pathname === "/_cokret/self/authz/effective-grants") {
       return json(route, {
         grants: [
           {
@@ -996,37 +996,37 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/authz/invites") {
+    if (url.pathname === "/_cokret/self/authz/invites") {
       return json(route, { invites: [], next_cursor: null });
     }
 
-    if (url.pathname === "/api/v1/profile/presence") {
+    if (url.pathname === "/_cokret/self/profile/presence") {
       return json(route, { actor: url.searchParams.get("did"), presence: "online" });
     }
 
-    if (url.pathname === "/api/v1/keys/upload") {
+    if (url.pathname === "/_cokret/self/keys/upload") {
       return json(route, { one_time_key_counts: { signed_curve25519: 1 }, fallback_keys: {} });
     }
 
-    if (url.pathname === "/api/v1/keys/query") {
+    if (url.pathname === "/_cokret/self/keys/query") {
       return json(route, { device_keys: {}, failures: {} });
     }
 
-    if (url.pathname === "/api/v1/keys/claim") {
+    if (url.pathname === "/_cokret/self/keys/claim") {
       return json(route, { one_time_keys: {}, failures: {} });
     }
 
-    if (url.pathname === "/api/v1/device_messages" && route.request().method() === "GET") {
+    if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "GET") {
       return json(route, { events: [], next_cursor: "ck:cursor:devmsg-1", limited: false });
     }
 
-    if (url.pathname === "/api/v1/device_messages" && route.request().method() === "POST") {
+    if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "POST") {
       return json(route, { ok: true, delivered: { "did:web:alice.example": ["dev_yougen"] }, unknown_devices: {} });
     }
 
-    if (url.pathname === "/api/v1/ephemeral") {
+    if (url.pathname === "/_cokret/self/ephemeral") {
       const body = await route.request().postDataJSON();
-      if (!["cx.receipt.read", "cx.typing", "cx.presence", "cx.call.signal"].includes(body.kind)) {
+      if (!["ck.receipt.read", "cx.typing", "cx.presence", "ck.call.signal"].includes(body.kind)) {
         return json(route, {
           ok: false,
           error: { code: "invalid_param", message: "expected broadcast ephemeral kind" },
@@ -1040,15 +1040,15 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/push/register-device") {
+    if (url.pathname === "/_cokret/edge/push/register-device") {
       return json(route, { ok: true, registration_id: "ck:push:e2e", expires_at: null });
     }
 
-    if (url.pathname === "/api/v1/push/unregister-device") {
+    if (url.pathname === "/_cokret/edge/push/unregister-device") {
       return json(route, { ok: true });
     }
 
-    if (url.pathname === "/api/v1/blob/upload") {
+    if (url.pathname === "/_cokret/self/blob/upload") {
       return json(route, {
         blob_ref: "ck:blob:sha256:e2e",
         size_bytes: 22,
@@ -1059,7 +1059,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/cokret/v1/ice-config") {
+    if (url.pathname === "/_cokret/self/rtc/ice-config") {
       const body = await route.request().postDataJSON();
       return json(route, {
         space_id: body.space_id ?? "ck:space:0196419b-0000-7000-8000-000000000000",
@@ -1085,11 +1085,11 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/api/v1/blob/get") {
+    if (url.pathname === "/_cokret/self/blob/get") {
       return route.fulfill({ status: 200, contentType: "application/octet-stream", body: "yougen encrypted bytes" });
     }
 
-    if (url.pathname === "/api/v1/moderation/report") {
+    if (url.pathname === "/_cokret/self/moderation/report") {
       return json(route, { report_id: "ck:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
@@ -1098,7 +1098,7 @@ export async function mockCokretApi(page: Page) {
     // The server only ever sees the opaque ciphertext blob + metadata; this
     // mock echoes that contract so the recovery rekey e2e (D1) can assert
     // the server never witnessed a plaintext recovery key.
-    const keyBackupMatch = url.pathname.match(/^\/api\/v1\/keys\/backups\/([^/]+)$/);
+    const keyBackupMatch = url.pathname.match(/^\/_cokret\/self\/keys\/backups\/([^/]+)$/);
     if (keyBackupMatch) {
       if (route.request().method() === "PUT") {
         return json(route, {
@@ -1114,7 +1114,7 @@ export async function mockCokretApi(page: Page) {
         });
       }
     }
-    if (url.pathname === "/api/v1/keys/backups") {
+    if (url.pathname === "/_cokret/self/keys/backups") {
       return json(route, { backups: [] });
     }
 
@@ -1167,7 +1167,7 @@ function joinCandidate() {
     service_type: "principal_server",
     role: "primary",
     endpoint: null,
-    operations: ["cx.events.submit"],
+    operations: ["ck.events.submit"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",
@@ -1178,16 +1178,16 @@ function joinCandidate() {
 
 function mimiProviderDirectory() {
   return {
-    schema: "cx.schema.mimi_interop.v1",
+    schema: "ck.schema.mimi_interop.v1",
     service_did: "did:web:mimi.example.com",
     service_type: "mimi_provider_facade",
-    supported_profiles: ["cx.profile.mimi_interop.v1"],
+    supported_profiles: ["ck.profile.mimi_interop.v1"],
     mimi: {
       protocol_draft: "draft-ietf-mimi-protocol-06",
       content_draft: "draft-ietf-mimi-content-08",
       room_policy_draft: "draft-ietf-mimi-room-policy-03",
       identifier_draft: "draft-kohbrok-mimi-identifiers-01",
-      base_url: "https://mimi.example.com/api/v1/mimi",
+      base_url: "https://mimi.example.com/_cokret/open/mimi",
       provider_id: "mimi://mimi.example.com",
       features: [
         "key_material",

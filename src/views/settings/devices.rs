@@ -2,19 +2,19 @@
 //! pairing (`/settings/devices/pair`).
 //!
 //! Surfaces:
-//! - `device-list` — wrapper element listing the principal's active devices (`GET /api/v1/devices`
+//! - `device-list` — wrapper element listing the principal's active devices (`GET /_cokret/self/devices`
 //!   via [`crate::api::CokretApi::list_devices`])
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`], then
+//!   `POST /_cokret/self/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`], then
 //!   rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
-//!   /api/v1/devices/pairing-challenge`. The coauth-side unauthenticated `POST
-//!   /api/v1/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow without
+//!   /_cokret/self/devices/pairing-challenge`. The coauth-side unauthenticated `POST
+//!   /_cokret/gate/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow without
 //!   first authenticating do not yet exist — see the `TODO(G3.Y1-followup)` comments below.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
@@ -26,15 +26,15 @@
 //! Spec references:
 //! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2
 //!   (cross-signing binding), §6 (device list)
-//! - `identity/key-management.md` §5.0–§5.2 (`cx.device.authorize` / `cx.device.revoke`)
+//! - `identity/key-management.md` §5.0–§5.2 (`ck.device.authorize` / `ck.device.revoke`)
 //!
 //! ## Soland / coauth endpoints
 //!
-//! - `GET /api/v1/devices` — implemented (soland)
-//! - `POST /api/v1/devices/{device_id}/revoke` — implemented (soland)
-//! - `POST /api/v1/devices/pairing-challenge` — scaffold (soland)
-//! - `POST /api/v1/devices/authorize-pairing` — scaffold (soland)
-//! - `POST /api/v1/auth/passkey/begin` — TODO(G3.Y1-followup): coauth does not yet expose an
+//! - `GET /_cokret/self/devices` — implemented (soland)
+//! - `POST /_cokret/self/devices/{device_id}/revoke` — implemented (soland)
+//! - `POST /_cokret/self/devices/pairing-challenge` — scaffold (soland)
+//! - `POST /_cokret/self/devices/authorize-pairing` — scaffold (soland)
+//! - `POST /_cokret/gate/auth/passkey/begin` — TODO(G3.Y1-followup): coauth does not yet expose an
 //!   unauthenticated entry point that lets a brand-new device claim a pairing intent without first
 //!   holding a bearer token.
 
@@ -112,7 +112,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 /// the receiver can reject replays.
 ///
 /// TODO(G3.Y1-followup): when soland's
-/// `POST /api/v1/devices/pairing-challenge` returns a server-signed
+/// `POST /_cokret/self/devices/pairing-challenge` returns a server-signed
 /// challenge token, embed that instead of the locally-generated
 /// `uuid_v7()` nonce. The current scaffold accepts any nonce.
 fn build_pair_payload(account_did: &str, current_device_id: &str, nonce: &str) -> String {
@@ -536,7 +536,7 @@ fn render_revoke_modal(
                 }
                 p {
                     "This will write "
-                    code { "cx.device.revoke" }
+                    code { "ck.device.revoke" }
                     " to your principal control space, remove the device from any E2EE space it participates in, and rotate the account MLS history secret. The action cannot be undone."
                 }
                 p { class: "muted", "data-testid": "device-revoke-threat-note",
@@ -878,7 +878,7 @@ fn render_pair_flow(
                             // TODO(G3.Y1-followup): the soland scaffold
                             // currently returns the challenge with a
                             // `proof_envelope` placeholder. When
-                            // `cx.device.authorize` includes the
+                            // `ck.device.authorize` includes the
                             // cross_signing_binding (spec
                             // crypto-media/device-lifecycle.md §5.2),
                             // fold that binding into the QR payload so
@@ -952,7 +952,7 @@ fn render_pair_flow(
             }
             p { class: "muted",
                 "If this device is the new sibling, paste the payload from the existing device below. We will mint a fresh device DPoP key for this browser context before POSTing to "
-                code { "/api/v1/devices/authorize-pairing" }
+                code { "/_cokret/self/devices/authorize-pairing" }
                 "."
             }
             textarea {
@@ -1004,8 +1004,8 @@ fn render_pair_flow(
                             // TODO(G3.Y1-followup): the body shape
                             // here is a placeholder. Once coauth's
                             // unauthenticated passkey endpoints land
-                            // (`POST /api/v1/auth/passkey/begin`,
-                            // `POST /api/v1/auth/passkey/finish`), the
+                            // (`POST /_cokret/gate/auth/passkey/begin`,
+                            // `POST /_cokret/gate/auth/passkey/finish`), the
                             // device should mint a DPoP proof against
                             // that endpoint, not call soland directly.
                             let body = json!({

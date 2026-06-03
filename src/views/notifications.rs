@@ -792,7 +792,7 @@ fn notification_is_invite(value: &Value) -> bool {
     ["notification_kind", "notification_type", "type", "kind"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
-        .any(|kind| matches!(kind, "invite" | "cx.invite" | "cx.invite.create"))
+        .any(|kind| matches!(kind, "invite" | "cx.invite" | "ck.invite.create"))
 }
 
 fn drop_joined_invite_notifications(
@@ -1190,7 +1190,7 @@ mod tests {
     fn notification_eval_context_extracts_watch_and_e2ee_flags() {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
-            "event_kind": "cx.message.create",
+            "event_kind": "ck.message.create",
             "notification_type": "mention",
             "space_id": "ck:space:e2ee",
             "flow_id": "ck:flow:1",
@@ -1201,7 +1201,7 @@ mod tests {
             "mentions_actor": true
         }));
 
-        assert_eq!(ctx.event_kind, "cx.message.create");
+        assert_eq!(ctx.event_kind, "ck.message.create");
         assert_eq!(ctx.notification_type, "mention");
         assert_eq!(ctx.flow_track.as_deref(), Some("discussion"));
         assert_eq!(ctx.watch_level, Some(WatchLevel::Participating));

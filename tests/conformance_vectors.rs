@@ -125,7 +125,7 @@ fn encoding_fixture_canonical_bytes_match() {
 
 #[test]
 fn encoding_fixture_rejects_non_canonical_numbers() {
-    // Mirrors the cx.vector.encoding.reject_noncanonical_numbers.v1 vector.
+    // Mirrors the ck.vector.encoding.reject_noncanonical_numbers.v1 vector.
     // The fixture lists JSON literals; we only test the ones that arrive at
     // yougen's encoder as a serde_json::Value::Number (NaN / Infinity / -0 /
     // 1.0). String entries like "NaN" are JSON strings and stay valid.
@@ -149,7 +149,7 @@ fn crypto_signature_fixture_canonical_binding_matches() {
     let mut covered = 0_usize;
     for vector in vectors {
         let name = vector["name"].as_str().unwrap_or("?");
-        if name != "cx.vector.encoding.crypto.ed25519_detached_jws.v1" {
+        if name != "ck.vector.encoding.crypto.ed25519_detached_jws.v1" {
             continue;
         }
 

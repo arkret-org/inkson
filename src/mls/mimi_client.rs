@@ -4,7 +4,7 @@
 //! (Endpoint Surface).
 //!
 //! The MIMI facade exposes RPC endpoints under
-//! `<base_url>/api/v1/mimi/*` plus the well-known
+//! `<base_url>/_cokret/open/mimi/*` plus the well-known
 //! `/.well-known/mimi-protocol-directory`. This client wraps the
 //! read paths (`provider_directory`, `identifier_query`,
 //! `request_consent`) and exposes them as typed Rust functions for
@@ -50,7 +50,7 @@ impl std::fmt::Display for MimiClientError {
 impl std::error::Error for MimiClientError {}
 
 /// Pinned MIMI draft versions the client speaks. Matches the
-/// `cx.profile.mimi_interop.v1` pinning declared in
+/// `ck.profile.mimi_interop.v1` pinning declared in
 /// `extensions/mimi-interop.md` §1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MimiDraftPinning {
@@ -111,7 +111,7 @@ pub struct MimiClient {
 
 impl MimiClient {
     /// Build a client against `base_url` (e.g. `https://chat.example`).
-    /// The MIMI routes are derived as `{base_url}/api/v1/mimi/*` and
+    /// The MIMI routes are derived as `{base_url}/_cokret/open/mimi/*` and
     /// `{base_url}/.well-known/mimi-protocol-directory`. Trailing
     /// slashes on `base_url` are tolerated.
     pub fn new(base_url: impl Into<String>) -> Result<Self, MimiClientError> {
@@ -170,7 +170,7 @@ impl MimiClient {
         Ok((summary, value))
     }
 
-    /// POST `/api/v1/mimi/identifiers/query`. The `query` must be a
+    /// POST `/_cokret/open/mimi/identifiers/query`. The `query` must be a
     /// `mimi://` URI or `did:` (the soland-side validator enforces
     /// this). Returns whether the identifier is reachable + the
     /// optional mapped DID.
@@ -178,7 +178,7 @@ impl MimiClient {
         &self,
         query: &str,
     ) -> Result<MimiIdentifierQueryResult, MimiClientError> {
-        let url = format!("{}/api/v1/mimi/identifiers/query", self.base_url);
+        let url = format!("{}/_cokret/open/mimi/identifiers/query", self.base_url);
         let body = json!({
             "query": query,
             "privacy_mode": "private_contact_discovery",
@@ -189,7 +189,7 @@ impl MimiClient {
         parse_identifier_query(&value)
     }
 
-    /// POST `/api/v1/mimi/consent/request`. Body fields (per spec
+    /// POST `/_cokret/open/mimi/consent/request`. Body fields (per spec
     /// §10) include the target identifier + Cokret space binding.
     /// Returns the issued `consent_id` and initial state (typically
     /// `"requested"`).
@@ -198,7 +198,7 @@ impl MimiClient {
         target_identifier: &str,
         space_id: Option<&str>,
     ) -> Result<MimiConsentRequestResult, MimiClientError> {
-        let url = format!("{}/api/v1/mimi/consent/request", self.base_url);
+        let url = format!("{}/_cokret/open/mimi/consent/request", self.base_url);
         let body = json!({
             "target_identifier": target_identifier,
             "space_id": space_id,
@@ -385,7 +385,7 @@ mod tests {
         let v = json!({
             "service_did": "did:web:chat.example",
             "service_type": "mimi_provider_facade",
-            "supported_profiles": ["cx.profile.mimi_interop.v1"],
+            "supported_profiles": ["ck.profile.mimi_interop.v1"],
             "mimi": {
                 "protocol_draft": "draft-ietf-mimi-protocol-06",
                 "content_draft": "draft-ietf-mimi-content-08",
@@ -400,7 +400,7 @@ mod tests {
             summary
                 .supported_profiles
                 .iter()
-                .any(|p| p == "cx.profile.mimi_interop.v1")
+                .any(|p| p == "ck.profile.mimi_interop.v1")
         );
         assert_eq!(summary.protocol_draft, "draft-ietf-mimi-protocol-06");
         assert!(summary.features.iter().any(|f| f == "submit_message"));

@@ -7,7 +7,7 @@
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
 //! events. The actual upload bytes go to the Principal Server's
-//! `cx.blob.upload` endpoint; this module covers the durable event side.
+//! `ck.blob.upload` endpoint; this module covers the durable event side.
 
 use anyhow::anyhow;
 use base64::Engine as _;
@@ -51,7 +51,7 @@ pub fn blob_typed_id(bytes: &[u8]) -> String {
 }
 
 /// Build a `cx.blob.register` event body describing an authenticated media
-/// upload. Pairs with a server-side `cx.blob.upload` to make the blob
+/// upload. Pairs with a server-side `ck.blob.upload` to make the blob
 /// retrievable through the durable event chain.
 pub fn build_blob_register(
     space_id: &str,
@@ -103,7 +103,7 @@ pub fn build_blob_grant(
 }
 
 /// Wrap a [`MediaMetadata`] reference in the canonical event payload shape
-/// used by `cx.message.create` attachments. Useful for building chat /
+/// used by `ck.message.create` attachments. Useful for building chat /
 /// timeline event bodies that carry a single attached blob.
 pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     Ok(json!({

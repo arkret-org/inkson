@@ -177,7 +177,7 @@ struct SpaceParticipant {
     role: SpaceParticipantRole,
     is_self: bool,
     /// `true` when this DID was registered as an agent endpoint
-    /// (`cx.agent.endpoint`). Surfaces a 🤖 badge in member lists,
+    /// (`ck.agent.endpoint`). Surfaces a 🤖 badge in member lists,
     /// @mention picker rows, and chat sender attribution so operators
     /// can immediately distinguish bot/agent principals from real
     /// human members.
@@ -202,9 +202,9 @@ struct SpaceParticipant {
 /// Send Secure flow.
 /// Encrypt a discussion message under the Space MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. The caller
-/// wraps these into a spec-conforming `cx.schema.encrypted_envelope.v1` via
+/// wraps these into a spec-conforming `ck.schema.encrypted_envelope.v1` via
 /// [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
-/// `cx.mls.commit` event id for `key_ref.group_state_ref`.
+/// `ck.mls.commit` event id for `key_ref.group_state_ref`.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
@@ -219,7 +219,7 @@ type LocalMlsEncryptResult = (
     Option<LocalEncryptedMessage>,
     Option<cokret_sdk::MlsCommitEnvelope>,
     // X14 — post-commit snapshot, persisted by the caller ONLY after the
-    // server accepts the `cx.mls.commit` (persist-on-accept).
+    // server accepts the `ck.mls.commit` (persist-on-accept).
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 );
 
@@ -233,7 +233,7 @@ fn run_local_mls_encrypt(
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
+    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };
@@ -350,11 +350,11 @@ fn chat_message_revise_operation(
     event_id: &str,
     body: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.message.revise")
+    OperationBuilder::new(space_id, actor, "ck.message.revise")
         .target_ref(event_id)
         .body(json!({
             "content": {
-                "kind": "cx.content.text",
+                "kind": "ck.content.text",
                 "body": body,
             },
             "target_ref": event_id,
@@ -368,7 +368,7 @@ fn chat_message_redact_operation(
     event_id: &str,
     reason: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.message.redact")
+    OperationBuilder::new(space_id, actor, "ck.message.redact")
         .target_ref(event_id)
         .body(json!({
             "reason": reason,
@@ -383,7 +383,7 @@ fn chat_reaction_add_operation(
     event_id: &str,
     key: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "cx.reaction.add")
+    OperationBuilder::new(space_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -405,7 +405,7 @@ fn chat_reaction_add_operation_encrypted(
 ) -> crate::operation::EventEnvelope {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    OperationBuilder::new(space_id, actor, "cx.reaction.add")
+    OperationBuilder::new(space_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -415,7 +415,7 @@ fn chat_reaction_add_operation_encrypted(
         .build("yougen")
 }
 
-/// Build the `cx.reaction.add` operation for a tapped emoji, choosing the
+/// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
 /// plaintext or E2EE (§2.9 routing-tag) shape based on whether the channel
 /// is encrypted. On any MLS failure in an encrypted channel the reaction is
 /// dropped (returns `None`) rather than leaking the emoji in plaintext.
@@ -961,7 +961,7 @@ fn upsert_participant(
     }
 }
 
-/// Scan the local store's raw_operations for `cx.agent.endpoint`
+/// Scan the local store's raw_operations for `ck.agent.endpoint`
 /// rows and return the set of agent DIDs that were registered in
 /// `space_id`. Used to mark `SpaceParticipant::is_agent` so member /
 /// mention / sender rows can render a 🤖 badge.
@@ -980,11 +980,11 @@ fn agent_ids_from_raw_operations(
             .get("kind")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if kind != "cx.agent.endpoint" {
+        if kind != "ck.agent.endpoint" {
             continue;
         }
         // Filter by space_id when the record carries one; the
-        // `cx.agent.endpoint` builder always stamps `space_id` on the
+        // `ck.agent.endpoint` builder always stamps `space_id` on the
         // payload, but tolerate older rows by also accepting records
         // with `space_id = None`.
         if let Some(record_space) = record.space_id.as_deref()
@@ -1367,11 +1367,11 @@ fn chat_message_create_operation(
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         payload = payload.with_reply_to(reply_to);
     }
-    OperationBuilder::new(space_id, actor, "cx.message.create")
+    OperationBuilder::new(space_id, actor, "ck.message.create")
         .target_ref(flow_id)
         .body(sdk_payload_value(
             payload.to_value(),
-            "chat cx.message.create payload serialize",
+            "chat ck.message.create payload serialize",
         ))
         .build("yougen")
 }
@@ -1462,7 +1462,7 @@ fn first_string_in_candidates<'a>(candidates: &[&'a Value], keys: &[&str]) -> Op
 }
 
 fn message_kind_is_create(value: &Value) -> bool {
-    value_string_at(value, &["kind", "type", "op_type", "event_type"]) == Some("cx.message.create")
+    value_string_at(value, &["kind", "type", "op_type", "event_type"]) == Some("ck.message.create")
 }
 
 fn text_from_blocks(value: &Value) -> Option<&str> {
@@ -1602,7 +1602,7 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
 /// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
 /// envelope into a plaintext chat body.
 ///
-/// Prefers the canonical `cx.schema.encrypted_envelope.v1` shape — parse the
+/// Prefers the canonical `ck.schema.encrypted_envelope.v1` shape — parse the
 /// envelope and unwrap it to the typed [`cokret_sdk::EncryptedPayload`] before
 /// handing it to the shared MLS decrypt core — and falls back to a raw
 /// `EncryptedPayload` for legacy messages written before the envelope wrap. The
@@ -1659,7 +1659,7 @@ fn chat_message_from_event_with_sidecar(
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| matches!(kind, "cx.content.poll.response" | "cx.content.poll.close"))
+        .is_some_and(|kind| matches!(kind, "ck.content.poll.response" | "cx.content.poll.close"))
     {
         return None;
     }
@@ -1840,7 +1840,7 @@ fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a Valu
                 .is_some_and(|kind| {
                     matches!(
                         kind,
-                        "cx.content.poll" | "cx.content.poll.response" | "cx.content.poll.close"
+                        "ck.content.poll" | "ck.content.poll.response" | "cx.content.poll.close"
                     )
                 })
         })
@@ -2364,7 +2364,7 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
     let candidates = message_candidates(event);
     if !candidates
         .iter()
-        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("cx.flow.create"))
+        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ck.flow.create"))
     {
         return None;
     }
@@ -2753,7 +2753,7 @@ pub fn ChatPanel(
     // `discussion-promoted-indicator` row. Populated optimistically
     // on submit and updated from the server response.
     let mut promoted_targets = use_signal(std::collections::BTreeMap::<String, String>::new);
-    // G3.Y2 — `cx.read_cursor.advance` book-keeping. `latest_read_cursor`
+    // G3.Y2 — `ck.read_cursor.advance` book-keeping. `latest_read_cursor`
     // stores the highest event_id we've posted a read marker for so
     // we don't spam soland on every render tick.
     let mut latest_read_cursor = use_signal(String::new);
@@ -2865,7 +2865,7 @@ pub fn ChatPanel(
         .collect();
     let visible_message_count = visible_messages.len();
     // G3.Y2 — derive the highest visible event id so we can post a
-    // `cx.read_cursor.advance` covering everything we've rendered. The marker
+    // `ck.read_cursor.advance` covering everything we've rendered. The marker
     // itself is actor-private (`discovery/read-receipts.md §3.1`).
     let highest_visible_event_id: Option<String> = visible_messages
         .iter()
@@ -2886,7 +2886,7 @@ pub fn ChatPanel(
         let api_token = token();
         spawn(async move {
             let _ = crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                api.send_receipt(&space, &actor, &event_id, "cx.receipt.read")
+                api.send_receipt(&space, &actor, &event_id, "ck.receipt.read")
                     .await
             })
             .await;
@@ -2912,7 +2912,7 @@ pub fn ChatPanel(
     let mut participants = space_participants(participant_projection.as_ref(), &account_did);
     // Mark agent endpoints registered in this space so the @mention
     // picker, member list, and sender row can render a 🤖 badge.
-    // Source of truth is the local store's `cx.agent.endpoint` raw
+    // Source of truth is the local store's `ck.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
     {
         let agent_ids = agent_ids_from_raw_operations(
@@ -3424,7 +3424,7 @@ pub fn ChatPanel(
                                                                     Some(space.clone()),
                                                                     json!({
                                                                         "flow_id": flow_id,
-                                                                        "kind": "cx.flow.create",
+                                                                        "kind": "ck.flow.create",
                                                                         "title": title,
                                                                         "category": category,
                                                                         "summary": channel_topic,
@@ -3469,7 +3469,7 @@ pub fn ChatPanel(
                     if !embedded {
                     div { class: "discussion-head-actions",
                         // T7.2: watch-level fast switcher. Issues a
-                        // `cx.flow.watch.set` event on selection. We
+                        // `ck.flow.watch.set` event on selection. We
                         // optimistically update the local signal first;
                         // a network failure rolls back via status_msg.
                         {
@@ -4056,7 +4056,7 @@ pub fn ChatPanel(
                                                                         Some(space_for_record),
                                                                         json!({
                                                                             "event_id": resp.event_id.clone(),
-                                                                            "kind": "cx.message.create",
+                                                                            "kind": "ck.message.create",
                                                                             "actor": actor_for_store,
                                                                             "body": body_for_store,
                                                                             "flow_id": flow_id_for_store,
@@ -4155,13 +4155,13 @@ pub fn ChatPanel(
                                 }
                                 // G3.Y2 — per-message read-receipt
                                 // indicator. Surfaces the set of actors
-                                // who have published a `cx.read_cursor.advance`
+                                // who have published a `ck.read_cursor.advance`
                                 // covering this message via
                                 // `presence_aggregate`. Empty (`hidden`)
                                 // until the receive path is wired.
                                 //
                                 // TODO(G3.Y2-followup): subscribe to
-                                // `cx.read_cursor.advance` ephemeral channel +
+                                // `ck.read_cursor.advance` ephemeral channel +
                                 // populate from
                                 // `presence_rx::PresenceAggregate`.
                                 {
@@ -4169,7 +4169,7 @@ pub fn ChatPanel(
                                     // `presence_rx::PresenceAggregate`
                                     // once the chat view subscribes to
                                     // soland's ephemeral channel for
-                                    // `cx.read_cursor.advance`. For now the
+                                    // `ck.read_cursor.advance`. For now the
                                     // list is empty — the testid still
                                     // mounts when there is data so
                                     // cotest can assert against it.
@@ -4762,7 +4762,7 @@ pub fn ChatPanel(
                         for participant in participants {
                             // F-REMARK-FANOUT-1: prefer the actor-private
                             // ContactRemark.local_name (sync'd via
-                            // cx.contacts.actor.<did> account_data) over
+                            // ck.contacts.actor.<did> account_data) over
                             // the raw DID. The DID stays in the `title`
                             // attribute so it's still copy-pasteable for
                             // verification / debugging.
@@ -4848,7 +4848,7 @@ pub fn ChatPanel(
                 // same actor-private account_data that /settings already
                 // edits, so a change here mirrors immediately into the
                 // global view. "Shared history" is a Space-scoped policy
-                // event (`cx.realm.history_visibility`) — it's not a
+                // event (`ck.realm.history_visibility`) — it's not a
                 // client-side per-discussion toggle, so the third row
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.
@@ -4946,8 +4946,8 @@ pub fn ChatPanel(
 
             // G3.Y2 — discussion promote confirmation modal. Renders
             // a single input for the child Space title + a confirm
-            // button that fires the cx.space.create + cx.space.child
-            // + cx.space.parent + cx.flow.update batch.
+            // button that fires the ck.space.create + cx.space.child
+            // + ck.space.parent + ck.flow.update batch.
             if crate::messaging::discussion_promote::discussion_promote_enabled()
                 && promote_discussion_draft.read().is_open()
             {
@@ -5043,7 +5043,7 @@ pub fn ChatPanel(
 
             // G3.Y2 — read-receipt marker bar. A horizontal divider
             // anchored at the highest event id we've sent a
-            // `cx.read_cursor.advance` for; renders only when we have one. The
+            // `ck.read_cursor.advance` for; renders only when we have one. The
             // bar appears below the message list so users can see the
             // "everyone read up to here" anchor without scrolling
             // around. The marker itself is actor-private — see
@@ -5886,7 +5886,7 @@ pub fn ChatPanel(
                                                     Some(space_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
-                                                        "kind": "cx.message.create",
+                                                        "kind": "ck.message.create",
                                                         "actor": actor_for_store,
                                                         "body": body_for_store,
                                                         "flow_id": flow_id_for_store,
@@ -6005,7 +6005,7 @@ pub fn ChatPanel(
                                 let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
                                 // P1: encrypt the canonical Content Block JSON
-                                // (`cx.content.text`), NOT the bare body bytes, so
+                                // (`ck.content.text`), NOT the bare body bytes, so
                                 // strict receivers can parse the decrypted payload
                                 // as `application/vnd.cokret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
@@ -6127,9 +6127,9 @@ pub fn ChatPanel(
                                         }
                                     };
                                 // Wrap the MLS payload in the spec-canonical
-                                // `cx.schema.encrypted_envelope.v1` wire shape,
+                                // `ck.schema.encrypted_envelope.v1` wire shape,
                                 // binding key_ref.group_state_ref to the
-                                // cx.mls.commit event that carries this epoch.
+                                // ck.mls.commit event that carries this epoch.
                                 let encrypted_envelope =
                                     match cokret_sdk::EncryptedEnvelopeV1::from_payload(
                                         &encrypted_payload,
@@ -6251,7 +6251,7 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                // Spec-canonical write path: cx.mls.commit event via cx.events.submit.
+                                // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
                                 let mut commit_envelope =
                                     crate::operation::cx_ops::mls_commit_with_governance(
                                         &space,
@@ -6277,11 +6277,11 @@ pub fn ChatPanel(
                                 let msg_op = OperationBuilder::new(
                                     &space,
                                     &actor,
-                                    "cx.message.create",
+                                    "ck.message.create",
                                 )
                                 .body(sdk_payload_value(
                                     message_payload.to_value(),
-                                    "chat encrypted cx.message.create payload serialize",
+                                    "chat encrypted ck.message.create payload serialize",
                                 ))
                                 .build("yougen");
                                 let base = base.clone();
@@ -6422,7 +6422,7 @@ pub fn ChatPanel(
                                                         Some(space_for_record.clone()),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
-                                                            "kind": "cx.message.create",
+                                                            "kind": "ck.message.create",
                                                             "actor": actor_for_record.clone(),
                                                             "flow_id": flow_id_for_record.clone(),
                                                             "message_id": message_id_for_record.clone(),
@@ -6510,7 +6510,7 @@ pub fn ChatPanel(
                                             }
 
                                             // Disclosed-audit hardening profile
-                                            // (`cx.profile.disclosed_audit.e2ee.v1`):
+                                            // (`ck.profile.disclosed_audit.e2ee.v1`):
                                             // emit a per-actor read-your-write
                                             // receipt right after a successful
                                             // E2EE commit. The receipt is
@@ -6684,16 +6684,16 @@ mod tests {
 
     /// The Welcome-receive shuttle iterates `events[]` from
     /// `DeviceMessagesReceiveResBody` and surfaces only
-    /// `cx.mls.welcome` payloads.
+    /// `ck.mls.welcome` payloads.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn collect_welcome_entries_filters_cx_mls_welcome_and_drops_other_kinds() {
         let value = json!({
             "events": [
-                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
+                {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
                 {"type": "cx.key.verify.request", "content": {"ignore_me": true}},
-                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
-                {"type": "cx.mls.welcome", "content": {"welcome_envelope_id": "w-3"}},
+                {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
+                {"type": "ck.mls.welcome", "content": {"welcome_envelope_id": "w-3"}},
                 {"type": "cx.device.message", "content": {"ignore_me": true}},
             ]
         });
@@ -6722,7 +6722,7 @@ mod tests {
     fn parses_message_event_with_operation_body_shape() {
         let event = json!({
             "id": "ck:event:body-shape",
-            "type": "cx.message.create",
+            "type": "ck.message.create",
             "actor": "did:web:alice.example",
             "space_id": "ck:space:demo",
             "created_at": "2026-05-14T01:23:45Z",
@@ -6750,12 +6750,12 @@ mod tests {
         let event = json!({
             "event": {
                 "event_id": "ck:event:nested",
-                "kind": "cx.message.create",
+                "kind": "ck.message.create",
                 "actor_id": "did:web:alice.example",
                 "actor_seq": 43,
                 "payload": {
                     "content": {
-                        "kind": "cx.content.text",
+                        "kind": "ck.content.text",
                         "body": "nested payload message"
                     },
                     "flow_id": "ck:flow:support",
@@ -6784,7 +6784,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(op.kind, "cx.message.create");
+        assert_eq!(op.kind, "ck.message.create");
         assert_eq!(
             op.payload["message_id"].as_str(),
             Some("ck:message:01904100-0000-7000-8000-000000000001")
@@ -6796,7 +6796,7 @@ mod tests {
         assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
         assert_eq!(
             op.payload["content"]["kind"].as_str(),
-            Some("cx.content.text")
+            Some("ck.content.text")
         );
         assert_eq!(
             op.payload["content"]["body"].as_str(),
@@ -6885,7 +6885,7 @@ mod tests {
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "event_id": "ck:event:local",
-                    "kind": "cx.message.create",
+                    "kind": "ck.message.create",
                     "actor": "did:web:alice.example",
                     "body": "local fallback message",
                     "flow_id": "ck:flow:announce",
@@ -6931,7 +6931,7 @@ mod tests {
                 // Encrypted stub: identity only, NO plaintext body.
                 payload: json!({
                     "event_id": "ck:event:enc",
-                    "kind": "cx.message.create",
+                    "kind": "ck.message.create",
                     "actor": "did:web:alice.example",
                     "flow_id": "ck:flow:announce",
                     "message_id": "chat-msg-enc",
@@ -7155,7 +7155,7 @@ mod tests {
     fn participant_with_agent_id_renders_with_agent_badge() {
         // Three participants in the space: Alice (the local account),
         // Bob (a real human member), and a Researcher Agent registered
-        // via `cx.agent.endpoint`. After `annotate_agent_participants`
+        // via `ck.agent.endpoint`. After `annotate_agent_participants`
         // the agent DID must carry `is_agent = true` while the human
         // members stay `false`.
         let mut participants = vec![
@@ -7200,7 +7200,7 @@ mod tests {
         assert!(!bob.is_agent, "human member must not be flagged as agent");
         assert!(
             agent.is_agent,
-            "DID registered via cx.agent.endpoint must be flagged as agent"
+            "DID registered via ck.agent.endpoint must be flagged as agent"
         );
     }
 
@@ -7220,7 +7220,7 @@ mod tests {
                 space_id: Some("ck:space:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
-                    "kind": "cx.agent.endpoint",
+                    "kind": "ck.agent.endpoint",
                     "body": { "agent_id": "did:web:researcher-agent.example" }
                 }),
             },
@@ -7229,7 +7229,7 @@ mod tests {
                 space_id: Some("ck:space:other".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
-                    "kind": "cx.agent.endpoint",
+                    "kind": "ck.agent.endpoint",
                     "body": { "agent_id": "did:web:other-agent.example" }
                 }),
             },
@@ -7238,7 +7238,7 @@ mod tests {
                 space_id: Some("ck:space:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
-                    "kind": "cx.message.create",
+                    "kind": "ck.message.create",
                     "body": { "body": "hello" }
                 }),
             },
@@ -7255,7 +7255,7 @@ mod tests {
     fn channel_from_flow_event_requires_real_discussion_track() {
         let event = json!({
             "event_id": "ck:event:flow",
-            "kind": "cx.flow.create",
+            "kind": "ck.flow.create",
             "space_id": "ck:space:demo",
             "flow_id": "ck:flow:ops",
             "title": "Ops discussion",
@@ -7284,7 +7284,7 @@ mod tests {
     fn channel_from_flow_event_ignores_non_discussion_flows() {
         let event = json!({
             "event_id": "ck:event:flow",
-            "kind": "cx.flow.create",
+            "kind": "ck.flow.create",
             "space_id": "ck:space:demo",
             "flow_id": "ck:flow:doc",
             "title": "Doc flow",
@@ -7455,7 +7455,7 @@ mod tests {
         let event = json!({
             "event_id": "evt:1",
             "content": {
-                "type": "cx.message.create",
+                "type": "ck.message.create",
                 "body": "[encrypted]",
                 "flow_id": "ck:flow:1",
                 "encrypted_content": {"ciphertext": "blob"},
@@ -7470,7 +7470,7 @@ mod tests {
         let event = json!({
             "event_id": "evt:bodyless",
             "content": {
-                "type": "cx.message.create",
+                "type": "ck.message.create",
                 "flow_id": "ck:flow:1",
                 "message_id": "ck:message:1",
                 "encrypted_content": {
@@ -7505,7 +7505,7 @@ mod tests {
             op.payload["target_ref"],
             "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
-        assert_eq!(op.payload["content"]["kind"], "cx.content.text");
+        assert_eq!(op.payload["content"]["kind"], "ck.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("target_event_id").is_none());

@@ -1,6 +1,6 @@
 //! 6.3 — `principal_signing` recovery-proof transcript (client side).
 //!
-//! Builds the canonical `cx.identity.recovery_proof.v1` transcript a recovering
+//! Builds the canonical `ck.identity.recovery_proof.v1` transcript a recovering
 //! device signs, byte-for-byte identical to soland's reconstruction
 //! (`soland/src/routing/identity/recovery.rs::recovery_proof_transcript` +
 //! cokret-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
@@ -17,7 +17,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 
 /// Build the canonical `principal_signing` proof transcript from a recovery
-/// session JSON (the `cx.schema.recovery_session.v1` create/get response).
+/// session JSON (the `ck.schema.recovery_session.v1` create/get response).
 pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Value> {
     let field = |name: &str| -> anyhow::Result<Value> {
         session
@@ -26,7 +26,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
             .ok_or_else(|| anyhow::anyhow!("recovery session missing `{name}`"))
     };
     Ok(json!({
-        "type": "cx.identity.recovery_proof.v1",
+        "type": "ck.identity.recovery_proof.v1",
         "kind": "principal_signing",
         "principal_id": field("principal_id")?,
         "requesting_device_id": field("requesting_device_id")?,
@@ -100,7 +100,7 @@ mod tests {
 
     fn sample_session() -> Value {
         json!({
-            "schema": "cx.schema.recovery_session.v1",
+            "schema": "ck.schema.recovery_session.v1",
             "recovery_session_id": "ck:recovery_session:01964137-0000-7000-8000-0000000000aa",
             "principal_id": "did:key:z6MkPrincipalFixture",
             "requesting_device_id": "ck:device:01964137-0000-7000-8000-000000000099",
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn transcript_binds_every_session_field() {
         let t = principal_signing_proof_transcript(&sample_session()).unwrap();
-        assert_eq!(t["type"], "cx.identity.recovery_proof.v1");
+        assert_eq!(t["type"], "ck.identity.recovery_proof.v1");
         assert_eq!(t["kind"], "principal_signing");
         for f in [
             "principal_id",

@@ -736,7 +736,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             session_expires_at: Some(now + chrono::Duration::seconds(60)),
             stored_at: now,
@@ -795,7 +795,7 @@ mod tests {
             &session,
             "https://local.host",
             "did:web:alice.example",
-            "api/v1/auth/session-grant/exchange",
+            "_cokret/gate/auth/session-grant/exchange",
         )
         .expect("persistable grant");
 
@@ -811,7 +811,7 @@ mod tests {
         assert_eq!(persisted.principal_server_url, "https://local.host");
         assert_eq!(
             persisted.session_grant_exchange_path,
-            "api/v1/auth/session-grant/exchange"
+            "_cokret/gate/auth/session-grant/exchange"
         );
         assert_eq!(
             persisted
