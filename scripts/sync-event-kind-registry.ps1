@@ -1,8 +1,8 @@
-# Refresh tests/fixtures/event-kind-registry.snapshot.txt from contrix-spec.
+# Refresh tests/fixtures/event-kind-registry.snapshot.txt from cokret-spec.
 #
 # Usage:
 #   pwsh ./scripts/sync-event-kind-registry.ps1
-#   pwsh ./scripts/sync-event-kind-registry.ps1 -SpecRoot D:/Works/contrix-dev/contrix-spec
+#   pwsh ./scripts/sync-event-kind-registry.ps1 -SpecRoot D:/Works/cokret-dev/cokret-spec
 #
 # After running this, reconcile `known_event_kinds()` in src/conformance.rs to
 # match. The diff test in conformance.rs is the tripwire — it fails until both
@@ -10,14 +10,14 @@
 
 [CmdletBinding()]
 param(
-    [string]$SpecRoot = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "../contrix-spec")
+    [string]$SpecRoot = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "../cokret-spec")
 )
 
 $ErrorActionPreference = "Stop"
 
 $registry = Join-Path $SpecRoot "spec/v1/artifacts/registry/event-kind-registry.json"
 if (-not (Test-Path $registry)) {
-    throw "event-kind registry not found at $registry — pass -SpecRoot pointing at the contrix-spec checkout."
+    throw "event-kind registry not found at $registry — pass -SpecRoot pointing at the cokret-spec checkout."
 }
 
 $snapshot = Resolve-Path (Join-Path $PSScriptRoot "../tests/fixtures/event-kind-registry.snapshot.txt")
@@ -31,11 +31,11 @@ $kinds = @($active | ForEach-Object { $_.event_kind } | Sort-Object -Unique)
 $header = @(
     "# yougen event-kind registry snapshot",
     "#",
-    "# Pinned mirror of ``contrix-spec/spec/v1/artifacts/registry/event-kind-registry.json``",
+    "# Pinned mirror of ``cokret-spec/spec/v1/artifacts/registry/event-kind-registry.json``",
     "# (status == ""active""). One kind per line, sorted, lowercase. Lines starting",
     "# with ``#`` are comments. Blank lines are ignored.",
     "#",
-    "# Refresh with ``scripts/sync-event-kind-registry.ps1`` after a contrix-spec",
+    "# Refresh with ``scripts/sync-event-kind-registry.ps1`` after a cokret-spec",
     "# bump and update ``known_event_kinds()`` in ``src/conformance.rs`` in the same",
     "# commit; the diff test in conformance.rs ties the two together."
 )
@@ -58,7 +58,7 @@ $scopeHeader = @(
     "# yougen event-kind wire_scope snapshot",
     "#",
     "# Pinned mirror of ``wire_scope`` from",
-    "# ``contrix-spec/spec/v1/artifacts/registry/event-kind-registry.json``",
+    "# ``cokret-spec/spec/v1/artifacts/registry/event-kind-registry.json``",
     "# (status == ""active""). One row per kind, sorted by kind. Format is",
     "# tab-separated: ``<event_kind>\t<wire_scope>``.",
     "#",

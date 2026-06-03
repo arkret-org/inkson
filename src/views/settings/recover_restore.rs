@@ -81,7 +81,7 @@ pub fn RecoverPanel(
                                 "data-testid": "recovery-restore-backup-id-input",
                                 r#type: "text",
                                 value: "{backup_id}",
-                                placeholder: "cx:backup:01964137-… (leave blank to use the latest)",
+                                placeholder: "ck:backup:01964137-… (leave blank to use the latest)",
                                 oninput: move |evt| backup_id.set(evt.value()),
                             }
                         }

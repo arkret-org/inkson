@@ -124,7 +124,7 @@ fn projection_string(body: &Value, paths: &[&[&str]]) -> Option<String> {
 }
 
 fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePreviewKind {
-    if subject_id.starts_with("cx:realm:") {
+    if subject_id.starts_with("ck:realm:") {
         return SpacePreviewKind::Realm;
     }
     let Some(body) = body else {
@@ -143,7 +143,7 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
                 &[&["parent_space_id"], &["summary", "parent_space_id"]],
             )
             .is_some();
-            if subject_id.starts_with("cx:space:") && has_parent {
+            if subject_id.starts_with("ck:space:") && has_parent {
                 SpacePreviewKind::Space
             } else {
                 SpacePreviewKind::Realm
@@ -719,21 +719,21 @@ pub fn SpaceAdminPanel(
                     input {
                         "data-testid": "repair-target-cell-input",
                         value: "{repair_target_cell}",
-                        placeholder: "cx:cell:cx.component.realm.organization.v1:...",
+                        placeholder: "ck:cell:cx.component.realm.organization.v1:...",
                         oninput: move |evt| repair_target_cell.set(evt.value()),
                     }
                     label { "conflict_head_A" }
                     input {
                         "data-testid": "repair-head-a-input",
                         value: "{repair_head_a}",
-                        placeholder: "cx:anchor:sha256:headA...",
+                        placeholder: "ck:anchor:sha256:headA...",
                         oninput: move |evt| repair_head_a.set(evt.value()),
                     }
                     label { "conflict_head_B" }
                     input {
                         "data-testid": "repair-head-b-input",
                         value: "{repair_head_b}",
-                        placeholder: "cx:anchor:sha256:headB...",
+                        placeholder: "ck:anchor:sha256:headB...",
                         oninput: move |evt| repair_head_b.set(evt.value()),
                     }
                     label { "recovery_capability ref" }
@@ -747,14 +747,14 @@ pub fn SpaceAdminPanel(
                     input {
                         "data-testid": "repair-state-witness-input",
                         value: "{repair_state_witness_ref}",
-                        placeholder: "cx:snapshot:sha256:...",
+                        placeholder: "ck:snapshot:sha256:...",
                         oninput: move |evt| repair_state_witness_ref.set(evt.value()),
                     }
                     label { "inclusion_proof ref" }
                     input {
                         "data-testid": "repair-inclusion-proof-input",
                         value: "{repair_inclusion_proof_ref}",
-                        placeholder: "cx:proof:sha256:...",
+                        placeholder: "ck:proof:sha256:...",
                         oninput: move |evt| repair_inclusion_proof_ref.set(evt.value()),
                     }
                     label { "Winner value (JSON)" }
@@ -1205,7 +1205,7 @@ pub fn SpaceAdminPanel(
                     "External access is granted to a Discussion, not to the whole Space or linked Card. History visibility and capability grants remain separate."
                 }
                 div { class: "metric-grid",
-                    div { class: "metric", strong { "Discussion" } span { "cx:flow:external-counsel" } div { class: "muted", "history: joined" } }
+                    div { class: "metric", strong { "Discussion" } span { "ck:flow:external-counsel" } div { class: "muted", "history: joined" } }
                     div { class: "metric", strong { "Capability" } span { "discussion.message.create" } div { class: "muted", "expires in 7 days" } }
                     div { class: "metric", strong { "Discussion Coupling" } span { "none" } div { class: "muted", "linked Discussion remains separately authorized" } }
                     div { class: "metric", strong { "Review" } span { "requires admin approval" } div { class: "muted", "danger actions require reason" } }
@@ -1261,7 +1261,7 @@ pub fn SpaceAdminPanel(
                                     // two-phase server lookup needed; cx.invite.create
                                     // event is the source of truth).
                                     let invite_id = format!(
-                                        "cx:invite:{}",
+                                        "ck:invite:{}",
                                         crate::operation::uuid_v7()
                                     );
                                     spawn(async move {
@@ -2447,7 +2447,7 @@ pub fn SpaceAdminPanel(
                         div { class: "muted", "applet · plaintext_visible(portal)" }
                     }
                     div { class: "metric",
-                        strong { "did:web:hsm.contrix.social" }
+                        strong { "did:web:hsm.cokret.social" }
                         span { "service · backup HSM" }
                         div { class: "muted", "1 use per year quota; recovery only" }
                     }
@@ -2854,7 +2854,7 @@ async fn run_device_revoke_from_snapshot(
             return;
         }
     };
-    let op_id_str = format!("cx:operation:{}", crate::operation::uuid_v7());
+    let op_id_str = format!("ck:operation:{}", crate::operation::uuid_v7());
     let typed_op_id = match contrix_sdk::OperationId::new(op_id_str) {
         Ok(o) => o,
         Err(err) => {
@@ -2974,4 +2974,4 @@ async fn run_device_revoke_from_snapshot(
 }
 
 // (Move-flow test module removed; the wire shapes are now covered by soland's events.submit tests
-// and contrix-spec fixtures.)
+// and cokret-spec fixtures.)

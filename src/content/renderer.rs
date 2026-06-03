@@ -6,14 +6,14 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, html as md_html};
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::config::LocalConfigStore;
 
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
 /// Produced by `views::chat::ondrop` and `views::timeline::ondrop` when
 /// the composer drag-drop pipeline uploads bytes via
-/// `ContrixApi::upload_blob_bytes` (A6.2).
+/// `CokretApi::upload_blob_bytes` (A6.2).
 const ATTACHMENT_MARKER_PREFIX: &str = "[Attachment:";
 const ATTACHMENT_MARKER_SUFFIX: char = ']';
 
@@ -165,7 +165,7 @@ fn parse_attachment_line(line: &str) -> Option<ContentBlock> {
 
 /// Recognise Markdown image lines emitted by rich editors when the image
 /// target is one of our authenticated blob refs:
-/// `![alt](cx:blob:sha256:...#image/png)`.
+/// `![alt](ck:blob:sha256:...#image/png)`.
 fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
     let line = line.trim();
     if !line.starts_with("![") || !line.ends_with(')') {
@@ -174,7 +174,7 @@ fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
     let split = line.find("](")?;
     let alt = line[2..split].trim().to_owned();
     let blob_ref = line[split + 2..line.len() - 1].trim();
-    if !blob_ref.starts_with("cx:blob:") {
+    if !blob_ref.starts_with("ck:blob:") {
         return None;
     }
     match classify_blob_ref(blob_ref) {
@@ -188,13 +188,13 @@ fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
 
 /// Map a blob ref to a [`ContentBlock`] using the extension hint that
 /// may be embedded after the last `.` or `/` in the ref. soland's
-/// canonical `cx:blob:<sha256>` form carries no extension, so the
+/// canonical `ck:blob:<sha256>` form carries no extension, so the
 /// classifier degrades gracefully into the generic `Attachment` block.
 fn classify_blob_ref(blob_ref: &str) -> ContentBlock {
     let lower = blob_ref.to_ascii_lowercase();
     // Look at the last few characters for an extension hint. We
     // accept either a literal `.ext` suffix or a media-type fragment
-    // like `cx:blob:abc#image/png` to keep the heuristic forgiving.
+    // like `ck:blob:abc#image/png` to keep the heuristic forgiving.
     if let Some(hash_idx) = lower.rfind('#') {
         let hint = &lower[hash_idx + 1..];
         if hint.starts_with("image/") {
@@ -354,7 +354,7 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
     if token.is_empty() {
         anyhow::bail!("no authenticated session for blob download");
     }
-    let bytes = ContrixApi::new(&config.server_url)?
+    let bytes = CokretApi::new(&config.server_url)?
         .with_bearer(token)
         .get_blob_bytes(blob_ref)
         .await?;
@@ -716,12 +716,12 @@ mod tests {
 
     #[test]
     fn parse_message_body_recognizes_attachment_marker_image_extension() {
-        let body = "look at this:\n[Attachment: cx:blob:abcdef.png]";
+        let body = "look at this:\n[Attachment: ck:blob:abcdef.png]";
         let blocks = parse_message_body(body);
         assert_eq!(blocks.len(), 2, "blocks: {blocks:?}");
         match &blocks[1] {
             ContentBlock::Image { blob_ref, .. } => {
-                assert_eq!(blob_ref, "cx:blob:abcdef.png");
+                assert_eq!(blob_ref, "ck:blob:abcdef.png");
             }
             other => panic!("expected Image, got {other:?}"),
         }
@@ -729,14 +729,14 @@ mod tests {
 
     #[test]
     fn parse_message_body_recognizes_attachment_marker_video_extension() {
-        let blocks = parse_message_body("[Attachment: cx:blob:cafefade.mp4]");
+        let blocks = parse_message_body("[Attachment: ck:blob:cafefade.mp4]");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Video {
                 blob_ref,
                 media_type,
             } => {
-                assert_eq!(blob_ref, "cx:blob:cafefade.mp4");
+                assert_eq!(blob_ref, "ck:blob:cafefade.mp4");
                 assert_eq!(media_type, "video/mp4");
             }
             other => panic!("expected Video, got {other:?}"),
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn parse_message_body_recognizes_attachment_marker_audio_extension() {
-        let blocks = parse_message_body("[Attachment: cx:blob:deadbeef.mp3]");
+        let blocks = parse_message_body("[Attachment: ck:blob:deadbeef.mp3]");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Audio { media_type, .. } => {
@@ -757,11 +757,11 @@ mod tests {
 
     #[test]
     fn parse_message_body_recognizes_media_type_hint_fragment() {
-        let blocks = parse_message_body("[Attachment: cx:blob:abc#image/png]");
+        let blocks = parse_message_body("[Attachment: ck:blob:abc#image/png]");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Image { blob_ref, .. } => {
-                assert_eq!(blob_ref, "cx:blob:abc#image/png");
+                assert_eq!(blob_ref, "ck:blob:abc#image/png");
             }
             other => panic!("expected Image (from media-type hint), got {other:?}"),
         }
@@ -769,11 +769,11 @@ mod tests {
 
     #[test]
     fn parse_message_body_recognizes_markdown_blob_image() {
-        let blocks = parse_message_body("![Launch image](cx:blob:abc#image/png)");
+        let blocks = parse_message_body("![Launch image](ck:blob:abc#image/png)");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Image { blob_ref, alt } => {
-                assert_eq!(blob_ref, "cx:blob:abc#image/png");
+                assert_eq!(blob_ref, "ck:blob:abc#image/png");
                 assert_eq!(alt.as_deref(), Some("Launch image"));
             }
             other => panic!("expected Image (from markdown blob image), got {other:?}"),
@@ -801,14 +801,14 @@ mod tests {
 
     #[test]
     fn parse_message_body_falls_back_to_attachment_for_unhinted_blob() {
-        let blocks = parse_message_body("[Attachment: cx:blob:opaque-no-extension]");
+        let blocks = parse_message_body("[Attachment: ck:blob:opaque-no-extension]");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Attachment {
                 blob_ref,
                 media_type,
             } => {
-                assert_eq!(blob_ref, "cx:blob:opaque-no-extension");
+                assert_eq!(blob_ref, "ck:blob:opaque-no-extension");
                 assert!(media_type.is_none());
             }
             other => panic!("expected Attachment, got {other:?}"),
@@ -820,7 +820,7 @@ mod tests {
         // Malformed marker — missing closing bracket. The parser
         // should leave it as plain text so the user can still see what
         // was sent (and not silently swallow the payload).
-        let blocks = parse_message_body("[Attachment: cx:blob:bad");
+        let blocks = parse_message_body("[Attachment: ck:blob:bad");
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Text(t) => assert!(t.contains("Attachment")),
@@ -834,8 +834,8 @@ mod tests {
             "# Heading\n",
             "\n",
             "see https://example.com/ref for context\n",
-            "[Attachment: cx:blob:photo.jpg]\n",
-            "[Attachment: cx:blob:clip.mp4]\n",
+            "[Attachment: ck:blob:photo.jpg]\n",
+            "[Attachment: ck:blob:clip.mp4]\n",
             "plain trailing line\n",
         );
         let blocks = parse_message_body(body);

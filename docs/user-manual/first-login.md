@@ -26,10 +26,10 @@ On first launch yougen shows the **Server picker** in the top bar.
 1. Click **Server / Switch**.
 2. Choose an existing entry or **Add server**.
 3. Enter the soland base URL (for local testing: `https://local.host`).
-4. yougen pulls `/.well-known/contrix-discovery` and renders the result.
+4. yougen pulls `/.well-known/cokret-discovery` and renders the result.
 
 If discovery fails you will see an error toast carrying the
-`x-contrix-request-id` from soland. Capture that header before opening
+`x-cokret-request-id` from soland. Capture that header before opening
 a bug — see [`faq-troubleshooting.md`](../faq-troubleshooting.md#discovery-fails).
 
 <!-- TODO(screenshot): discovery-result.png -->

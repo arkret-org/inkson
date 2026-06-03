@@ -160,13 +160,13 @@ pub fn build_mls_history_backup_body(
     actor_did: &str,
     device_id: &str,
 ) -> (String, Value) {
-    let backup_id = format!("cx:backup:{}", crate::operation::uuid_v7());
+    let backup_id = format!("ck:backup:{}", crate::operation::uuid_v7());
     let body = snapshot.to_key_backup_body(&backup_id, actor_did, device_id);
     (backup_id, body)
 }
 
 pub async fn upload_mls_snapshot_backup(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_did: &str,
     device_id: &str,
@@ -289,7 +289,7 @@ pub fn ensure_creator_mls_snapshot(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = contrix_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let identity = contrix_sdk::ContrixMlsIdentity::new_basic(principal_did, device_id_typed)
+    let identity = contrix_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group = identity
         .create_group(space.as_bytes())
@@ -767,7 +767,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let identity = match contrix_sdk::ContrixMlsIdentity::new_basic(
+        let identity = match contrix_sdk::CokretMlsIdentity::new_basic(
             principal_did.clone(),
             device_id_typed.clone(),
         ) {
@@ -777,7 +777,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let group = match contrix_sdk::ContrixMlsGroup::join_from_welcome(identity, &welcome) {
+        let group = match contrix_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
             Err(err) => {
                 outcome.record_failure(format!("join welcome: {err}"));
@@ -971,11 +971,11 @@ pub fn encrypt_message_with_device_snapshot(
 /// (`encryption-and-audit.md` §2.9). Bound, together with `context =
 /// realm_id` and the current group epoch's exporter secret, into the
 /// keyed-HMAC routing tag.
-pub const REACTION_ROUTING_LABEL_V1: &str = "contrix-reaction-routing-v1";
+pub const REACTION_ROUTING_LABEL_V1: &str = "cokret-reaction-routing-v1";
 /// Length (bytes) of the MLS exporter output used as the HMAC key.
 pub const REACTION_ROUTING_EXPORT_LEN: usize = 32;
 /// Content type for the encrypted real-emoji payload of a reaction.
-pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.contrix.reaction+json";
+pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.cokret.reaction+json";
 
 /// Result of sealing an E2EE reaction: the plaintext routing tag for the
 /// wire `reaction_payload.key`, plus the structured encrypted payload that
@@ -1183,13 +1183,13 @@ mod tests {
         let first = load_or_create_device_snapshot_secret(
             &store,
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         let second = load_or_create_device_snapshot_secret(
             &store,
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         assert_eq!(first, second);
@@ -1202,7 +1202,7 @@ mod tests {
         let missing = load_device_snapshot_secret(
             &store,
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap_err();
         assert!(matches!(missing, SecureKeyStoreError::NotFound));
@@ -1211,9 +1211,9 @@ mod tests {
 
     #[test]
     fn device_snapshot_secret_is_scoped_by_actor_and_device() {
-        let a = device_snapshot_secret_key("did:web:alice.example", "cx:device:a");
-        let b = device_snapshot_secret_key("did:web:bob.example", "cx:device:a");
-        let c = device_snapshot_secret_key("did:web:alice.example", "cx:device:b");
+        let a = device_snapshot_secret_key("did:web:alice.example", "ck:device:a");
+        let b = device_snapshot_secret_key("did:web:bob.example", "ck:device:a");
+        let c = device_snapshot_secret_key("did:web:alice.example", "ck:device:b");
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert!(a.starts_with("yougen.mls_snapshot.device_secret.v1."));
@@ -1223,9 +1223,9 @@ mod tests {
     fn account_secret_is_shared_across_devices() {
         let store = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
-        let from_a = load_or_create_device_snapshot_secret(&store, actor, "cx:device:a").unwrap();
+        let from_a = load_or_create_device_snapshot_secret(&store, actor, "ck:device:a").unwrap();
         // A different device of the SAME account must resolve the SAME secret.
-        let from_b = load_or_create_device_snapshot_secret(&store, actor, "cx:device:b").unwrap();
+        let from_b = load_or_create_device_snapshot_secret(&store, actor, "ck:device:b").unwrap();
         assert_eq!(from_a, from_b);
         // It is stored under the account key, not a device key.
         assert!(
@@ -1240,7 +1240,7 @@ mod tests {
     fn legacy_device_secret_is_promoted_to_account_key() {
         let store = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
-        let device = "cx:device:legacy";
+        let device = "ck:device:legacy";
         // Simulate an existing single-device user with a legacy device secret.
         store
             .store_secret(&device_snapshot_secret_key(actor, device), "legacy-secret")
@@ -1264,7 +1264,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
         store_account_mls_secret(&store, actor, "recovered-secret").unwrap();
-        let loaded = load_device_snapshot_secret(&store, actor, "cx:device:fresh").unwrap();
+        let loaded = load_device_snapshot_secret(&store, actor, "ck:device:fresh").unwrap();
         assert_eq!(loaded, "recovered-secret");
     }
 
@@ -1282,7 +1282,7 @@ mod tests {
         assert_eq!(loaded.version, 3);
         assert_eq!(loaded.secret, "new-secret");
         assert_eq!(
-            load_device_snapshot_secret(&store, actor, "cx:device:any").unwrap(),
+            load_device_snapshot_secret(&store, actor, "ck:device:any").unwrap(),
             "new-secret"
         );
     }
@@ -1331,8 +1331,8 @@ mod tests {
         let mut state = temp_state_store("creator-bootstrap");
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
 
         let summary =
             ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
@@ -1349,7 +1349,7 @@ mod tests {
             space,
             actor,
             device,
-            "application/vnd.contrix.test+json",
+            "application/vnd.cokret.test+json",
             &[br#""private""#.to_vec()],
         )
         .unwrap();
@@ -1362,7 +1362,7 @@ mod tests {
             space,
             actor,
             device,
-            "application/vnd.contrix.test+json",
+            "application/vnd.cokret.test+json",
             &[br#""private-again""#.to_vec()],
         )
         .unwrap();
@@ -1373,9 +1373,9 @@ mod tests {
 
     fn genesis_governance_binding(group_id: &str) -> contrix_sdk::MlsGovernanceBindingPayload {
         let realm_id =
-            contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap();
+            contrix_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap();
         let frontier = vec![
-            contrix_sdk::EventId::new("cx:event:01904100-0000-7000-8000-0000000000aa").unwrap(),
+            contrix_sdk::EventId::new("ck:event:01904100-0000-7000-8000-0000000000aa").unwrap(),
         ];
         let policy_root = contrix_sdk::Hash::new(
             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -1398,8 +1398,8 @@ mod tests {
         let mut state = temp_state_store("genesis-payload");
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
 
         let summary = ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
             .unwrap()
@@ -1457,7 +1457,7 @@ mod tests {
     #[test]
     fn mls_genesis_emitted_flag_is_idempotent() {
         let mut state = temp_state_store("genesis-idempotent");
-        let space = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
         assert!(!state.mls_genesis_emitted_for(space));
         state.mark_mls_genesis_emitted(space);
         assert!(state.mls_genesis_emitted_for(space));
@@ -1469,7 +1469,7 @@ mod tests {
     #[test]
     fn mls_history_backup_body_decodes_to_snapshot_envelope() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "group-a",
             8,
             b"opaque sdk state",
@@ -1477,9 +1477,9 @@ mod tests {
             b"deterministic-salt",
         );
         let body = envelope.to_key_backup_body(
-            "cx:backup:01904100-0000-7000-8000-000000000002",
+            "ck:backup:01904100-0000-7000-8000-000000000002",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         );
 
         let decoded = decode_mls_history_backup_envelope(&body).unwrap();
@@ -1497,7 +1497,7 @@ mod tests {
     #[test]
     fn mls_history_backup_decode_rejects_metadata_mismatch() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "group-a",
             8,
             b"opaque sdk state",
@@ -1505,9 +1505,9 @@ mod tests {
             b"deterministic-salt",
         );
         let mut body = envelope.to_key_backup_body(
-            "cx:backup:01904100-0000-7000-8000-000000000002",
+            "ck:backup:01904100-0000-7000-8000-000000000002",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         );
         body["envelope_meta"]["epoch"] = json!(7);
 
@@ -1520,8 +1520,8 @@ mod tests {
     #[test]
     fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:space:01904100-0000-7000-8000-000000000009";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:space:01904100-0000-7000-8000-000000000009";
         let old_secret = "old-account-secret";
         let plaintext = b"opaque sdk state before revoke";
         let store = MemorySecureKeyStore::new();
@@ -1580,21 +1580,21 @@ mod tests {
         let mut state = temp_state_store("missing-secret");
         let store = MemorySecureKeyStore::new();
         let envelope = crate::mls::persistence::encrypt_state(
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "group-for-missing-secret-test",
             1,
             b"not-a-real-group-state",
             "other-device-secret",
             b"deterministic-salt",
         );
-        state.save_mls_snapshot("cx:space:01904100-0000-7000-8000-000000000001", envelope);
+        state.save_mls_snapshot("ck:space:01904100-0000-7000-8000-000000000001", envelope);
 
         let error = encrypt_values_with_device_snapshot(
             &mut state,
             &store,
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
             "text/plain",
             &[b"secret".to_vec()],
         )
@@ -1610,14 +1610,14 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn encrypted_write_uses_device_key_snapshot_when_ready() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:space:01904100-0000-7000-8000-000000000003";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:space:01904100-0000-7000-8000-000000000003";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-        let identity = ContrixMlsIdentity::new_basic(
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(actor.to_owned()).unwrap(),
             DeviceId::new(device.to_owned()).unwrap(),
         )
@@ -1664,11 +1664,11 @@ mod tests {
     #[test]
     fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
         let secure = MemorySecureKeyStore::new();
         let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
         let mut state = temp_state_store("persist-on-accept");
-        let space = "cx:realm:01904100-0000-7000-8000-000000000099";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000099";
 
         // Genesis installs the epoch-0 snapshot.
         ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
@@ -1684,7 +1684,7 @@ mod tests {
             space,
             actor,
             device,
-            "application/vnd.contrix.test+json",
+            "application/vnd.cokret.test+json",
             &[br#""private""#.to_vec()],
         )
         .unwrap();
@@ -1711,14 +1711,14 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:space:01904100-0000-7000-8000-000000000004";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:space:01904100-0000-7000-8000-000000000004";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-        let identity = ContrixMlsIdentity::new_basic(
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(actor.to_owned()).unwrap(),
             DeviceId::new(device.to_owned()).unwrap(),
         )
@@ -1734,7 +1734,7 @@ mod tests {
             b"deterministic-salt",
         );
         let body = envelope.to_key_backup_body(
-            "cx:backup:01904100-0000-7000-8000-000000000002",
+            "ck:backup:01904100-0000-7000-8000-000000000002",
             actor,
             device,
         );
@@ -1754,14 +1754,14 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_mls_history_backup_rejects_epoch_rollback() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
-        let device = "cx:device:01904100-0000-7000-8000-000000000001";
-        let space = "cx:space:01904100-0000-7000-8000-000000000002";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:space:01904100-0000-7000-8000-000000000002";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-        let identity = ContrixMlsIdentity::new_basic(
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(actor.to_owned()).unwrap(),
             DeviceId::new(device.to_owned()).unwrap(),
         )
@@ -1777,7 +1777,7 @@ mod tests {
             b"deterministic-salt",
         );
         let body = envelope.to_key_backup_body(
-            "cx:backup:01904100-0000-7000-8000-000000000002",
+            "ck:backup:01904100-0000-7000-8000-000000000002",
             actor,
             device,
         );
@@ -1806,7 +1806,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn cross_device_recovery_restores_history_without_local_secret() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         use crate::mls::account_recovery::{
             build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,
@@ -1814,16 +1814,16 @@ mod tests {
         use crate::recovery_crypto::derive_vault_kek;
 
         let actor = "did:web:alice.example";
-        let device_a = "cx:device:01904100-0000-7000-8000-00000000000a";
-        let device_b = "cx:device:01904100-0000-7000-8000-00000000000b";
-        let space = "cx:space:01904100-0000-7000-8000-0000000000ab";
+        let device_a = "ck:device:01904100-0000-7000-8000-00000000000a";
+        let device_b = "ck:device:01904100-0000-7000-8000-00000000000b";
+        let space = "ck:space:01904100-0000-7000-8000-0000000000ab";
         let passphrase: &[u8] = b"correct horse battery staple";
 
         // --- Device A: account secret + a real MLS group + history backup body.
         let store_a = MemorySecureKeyStore::new();
         let secret_a = load_or_create_account_mls_secret(&store_a, actor, device_a).unwrap();
 
-        let identity = ContrixMlsIdentity::new_basic(
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(actor.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
@@ -1846,7 +1846,7 @@ mod tests {
         // path), so a sibling device can later unwrap it with that passphrase.
         let setup_kek = derive_vault_kek(passphrase).unwrap();
         let account_secret_body = build_mls_account_secret_backup_body_with_kek(
-            "cx:backup:01904100-0000-7000-8000-0000000000ac",
+            "ck:backup:01904100-0000-7000-8000-0000000000ac",
             actor,
             device_a,
             &setup_kek,
@@ -1944,9 +1944,9 @@ mod welcome_outcome_tests {
         let outcome = apply_welcome_messages_with_device_snapshot(
             &mut state,
             &store,
-            "cx:space:empty",
+            "ck:space:empty",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
             &json!({ "events": [] }),
         )
         .unwrap();
@@ -1971,9 +1971,9 @@ mod welcome_outcome_tests {
         let outcome = apply_welcome_messages_with_device_snapshot(
             &mut state,
             &store,
-            "cx:space:malformed",
+            "ck:space:malformed",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
             &messages,
         )
         .unwrap();

@@ -1,6 +1,6 @@
 //! Agents - endpoint registry + protocol_session monitor.
 //!
-//! Spec: `contrix-spec/spec/v1/zh/extensions/agent-integration.md`.
+//! Spec: `cokret-spec/spec/v1/zh/extensions/agent-integration.md`.
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:
@@ -824,7 +824,7 @@ pub fn AgentsPanel(
                                         ));
                                         spawn(async move {
                                             let session_id = format!(
-                                                "cx:session:{}",
+                                                "ck:session:{}",
                                                 crate::operation::uuid_v7()
                                             );
                                             let op = crate::operation::cx_ops::agent_protocol_session_start(
@@ -834,7 +834,7 @@ pub fn AgentsPanel(
                                                 &session_id,
                                                 "http_custom",
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
-                                                "cx:grant:01904100-0000-7000-8000-000000000099",
+                                                "ck:grant:01904100-0000-7000-8000-000000000099",
                                             )
                                             .build("yougen");
                                             match with_authed_api(&base, api_token, |api| async move {
@@ -1657,7 +1657,7 @@ pub fn PersonalAgentAdminPanel(
                                     // a placeholder here makes the
                                     // wire call fail in a useful way.
                                     let grant_id = format!(
-                                        "cx:grant:{}",
+                                        "ck:grant:{}",
                                         crate::operation::uuid_v7()
                                     );
                                     spawn(async move {
@@ -2033,7 +2033,7 @@ mod tests {
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
         let op = crate::operation::cx_ops::agent_endpoint(
-            "cx:space:test",
+            "ck:space:test",
             "did:web:alice.example",
             "did:web:agent.example",
             "cx.agent.v1",
@@ -2050,9 +2050,9 @@ mod tests {
     #[test]
     fn agent_result_body_carries_audit_binding() {
         let op = crate::operation::cx_ops::agent_protocol_session_result(
-            "cx:space:test",
+            "ck:space:test",
             "did:web:alice.example",
-            "cx:session:test",
+            "ck:session:test",
             serde_json::json!({"summary": "ok"}),
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
@@ -2099,7 +2099,7 @@ mod tests {
     fn verify_helper_marks_valid_ed25519_binding_as_valid() {
         let seed = [11u8; 32];
         let payload = build_ed25519_result_payload(
-            "cx:session:v1",
+            "ck:session:v1",
             "did:web:agent.example",
             json!({"op": "ping"}),
             "did:web:alice.example",
@@ -2115,7 +2115,7 @@ mod tests {
     fn verify_helper_detects_tampered_echo_via_subject_mismatch() {
         let seed = [12u8; 32];
         let mut payload = build_ed25519_result_payload(
-            "cx:session:v2",
+            "ck:session:v2",
             "did:web:agent.example",
             json!({"op": "ping"}),
             "did:web:alice.example",
@@ -2131,7 +2131,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_absent_when_no_binding_block() {
         let payload = json!({
-            "session_id": "cx:session:v3",
+            "session_id": "ck:session:v3",
             "status": "failed",
             "result": Value::Null,
             "error": {"code": "unknown_agent"},
@@ -2145,7 +2145,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_unsupported_for_unknown_binding_kind() {
         let payload = json!({
-            "session_id": "cx:session:v4",
+            "session_id": "ck:session:v4",
             "status": "completed",
             "result": {"echo": null, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
@@ -2166,7 +2166,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_unsupported_for_hmac_binding() {
         let payload = json!({
-            "session_id": "cx:session:hmac",
+            "session_id": "ck:session:hmac",
             "status": "completed",
             "result": {"echo": {"op": "ping"}, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
@@ -2187,7 +2187,7 @@ mod tests {
     fn verify_helper_returns_malformed_when_ed25519_signature_is_not_base64() {
         let seed = [13u8; 32];
         let mut payload = build_ed25519_result_payload(
-            "cx:session:v5",
+            "ck:session:v5",
             "did:web:agent.example",
             json!({}),
             "did:web:alice.example",
@@ -2311,7 +2311,7 @@ mod tests {
         // Build a real Ed25519 binding via the SDK helper that the
         // soland in-process echo bridge uses.
         let seed = [21u8; 32];
-        let session_id = "cx:session:chain";
+        let session_id = "ck:session:chain";
         let agent_id = "did:web:agent.example";
         let echo = json!({"op": "ping"});
         let actor = "did:web:alice.example";

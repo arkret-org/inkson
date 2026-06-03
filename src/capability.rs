@@ -58,7 +58,7 @@ impl ActionGroup {
             Self::SpaceFlow => &[
                 "cx.flow.move",
                 "cx.flow.reorder",
-                // Per contrix-spec dc01ad7 the four
+                // Per cokret-spec dc01ad7 the four
                 // `flow.track.{enable,disable,update,set_primary}`
                 // verbs were unified into a single `cx.flow.tracks.update`
                 // capability covering all track mutations via a
@@ -899,7 +899,7 @@ mod tests {
         GrantBuilder::new("did:web:alice", "did:web:bob")
             .with_action("cx.flow.read")
             .with_action("cx.flow.update")
-            .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
+            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
             .with_constraint(Constraint::Temporal {
                 not_before: None,
                 expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
@@ -955,7 +955,7 @@ mod tests {
         // hydrated capability state yet" path.
         let engine = CapabilityEngine::new();
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -977,7 +977,7 @@ mod tests {
                 .build(),
         );
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -996,7 +996,7 @@ mod tests {
                 .build(),
         );
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -1007,15 +1007,15 @@ mod tests {
 
     #[test]
     fn test_resource_selector() {
-        let selector = ResourceSelector::Space("cx:space:test".to_owned());
+        let selector = ResourceSelector::Space("ck:space:test".to_owned());
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&resource));
 
         let resource_no_match = ResourceRef {
-            space_id: Some("cx:space:other".to_owned()),
+            space_id: Some("ck:space:other".to_owned()),
             ..Default::default()
         };
         assert!(!selector.matches(&resource_no_match));
@@ -1031,15 +1031,15 @@ mod tests {
     #[test]
     fn test_any_selector() {
         let selector = ResourceSelector::Any(vec![
-            ResourceSelector::Space("cx:space:a".to_owned()),
-            ResourceSelector::Space("cx:space:b".to_owned()),
+            ResourceSelector::Space("ck:space:a".to_owned()),
+            ResourceSelector::Space("ck:space:b".to_owned()),
         ]);
         let resource_a = ResourceRef {
-            space_id: Some("cx:space:a".to_owned()),
+            space_id: Some("ck:space:a".to_owned()),
             ..Default::default()
         };
         let resource_c = ResourceRef {
-            space_id: Some("cx:space:c".to_owned()),
+            space_id: Some("ck:space:c".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&resource_a));
@@ -1050,14 +1050,14 @@ mod tests {
     fn test_except_selector() {
         let selector = ResourceSelector::Except(
             Box::new(ResourceSelector::Wildcard),
-            vec![ResourceSelector::Space("cx:space:secret".to_owned())],
+            vec![ResourceSelector::Space("ck:space:secret".to_owned())],
         );
         let normal = ResourceRef {
-            space_id: Some("cx:space:normal".to_owned()),
+            space_id: Some("ck:space:normal".to_owned()),
             ..Default::default()
         };
         let secret = ResourceRef {
-            space_id: Some("cx:space:secret".to_owned()),
+            space_id: Some("ck:space:secret".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&normal));
@@ -1070,8 +1070,8 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
-            object_ref: Some("cx:flow:0196419b-0000-7000-8000-000000000001".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
+            object_ref: Some("ck:flow:0196419b-0000-7000-8000-000000000001".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext {
@@ -1099,7 +1099,7 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -1114,7 +1114,7 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = ResourceRef {
-            space_id: Some("cx:space:other".to_owned()),
+            space_id: Some("ck:space:other".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -1139,7 +1139,7 @@ mod tests {
         });
 
         let resource = ResourceRef {
-            space_id: Some("cx:space:test".to_owned()),
+            space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
@@ -1157,7 +1157,7 @@ mod tests {
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
             .with_action("cx.flow.read")
-            .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
+            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
             .build();
@@ -1179,7 +1179,7 @@ mod tests {
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
             .with_action("cx.flow.read")
-            .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
+            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
             .build();
@@ -1198,7 +1198,7 @@ mod tests {
 
         let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
             .with_action("cx.flow.read")
-            .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
+            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
             .with_parent(&parent_id)
             .with_delegation_depth(1)
             .build();

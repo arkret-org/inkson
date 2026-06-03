@@ -1,6 +1,6 @@
 //! `cx.rank.lexofractional.v1` rank profile per
 //! [`spec/v1/zh/conformance/encoding.md`
-//! §9](../../contrix-spec/spec/v1/zh/conformance/encoding.md).
+//! §9](../../cokret-spec/spec/v1/zh/conformance/encoding.md).
 //!
 //! Ranks are 1..128 ASCII strings drawn from
 //! `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz` (62 chars).
@@ -89,7 +89,7 @@ pub fn validate(s: &str) -> Result<(), RankError> {
 /// "container start"; empty `right` means "container end".
 ///
 /// Mirrors the reference pseudocode in
-/// [`encoding.md` §9](../../contrix-spec/spec/v1/zh/conformance/encoding.md):
+/// [`encoding.md` §9](../../cokret-spec/spec/v1/zh/conformance/encoding.md):
 /// at each position `i`, compute the value of `left[i]` (or sentinel
 /// `min = -1` if out of bounds) and `right[i]` (or sentinel `max = 62`
 /// if out of bounds or `right` is empty). If the gap > 1, return the

@@ -2,7 +2,7 @@
 //!
 //! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
 //! own MLS group and a strict-subset of the parent Realm's membership. The
-//! spec is in `contrix-rust-sdk/crates/core/src/model/circle.rs`; this
+//! spec is in `cokret-rust-sdk/crates/core/src/model/circle.rs`; this
 //! module is the *client* surface that the rest of yougen consumes:
 //!
 //! - [`CircleScope`] is the active scope a composer / new-Flow form is writing into. `Realm` is the
@@ -39,7 +39,7 @@ pub enum CircleScope {
     Realm,
     /// Circle-scoped — visible to a strict subset of Realm members.
     Circle {
-        /// `cx:circle:…` id stamped onto the envelope as
+        /// `ck:circle:…` id stamped onto the envelope as
         /// `scope_circle_id`.
         circle_id: String,
         /// Cached title for banner rendering. Reducer-authoritative
@@ -53,7 +53,7 @@ pub enum CircleScope {
 }
 
 impl CircleScope {
-    /// Returns the `cx:circle:…` id if this scope is Circle, otherwise
+    /// Returns the `ck:circle:…` id if this scope is Circle, otherwise
     /// `None` (Realm scope).
     pub fn circle_id(&self) -> Option<&str> {
         match self {
@@ -82,9 +82,9 @@ impl CircleScope {
 /// [`contrix_sdk::contrix_core::model::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
-    /// `cx:circle:…`
+    /// `ck:circle:…`
     pub id: String,
-    /// `cx:realm:…` of the parent Realm.
+    /// `ck:realm:…` of the parent Realm.
     pub realm_id: String,
     pub title: String,
     pub short_name: String,
@@ -281,11 +281,11 @@ mod tests {
     #[test]
     fn circle_scope_carries_id_and_title() {
         let scope = CircleScope::Circle {
-            circle_id: "cx:circle:abc".to_owned(),
+            circle_id: "ck:circle:abc".to_owned(),
             title: "Ops".to_owned(),
             member_count: 4,
         };
-        assert_eq!(scope.circle_id(), Some("cx:circle:abc"));
+        assert_eq!(scope.circle_id(), Some("ck:circle:abc"));
         assert_eq!(scope.label(), "Ops");
         assert!(scope.is_circle());
     }
@@ -343,8 +343,8 @@ mod tests {
     #[test]
     fn summary_into_scope_round_trips() {
         let summary = CircleSummary {
-            id: "cx:circle:opsroom".to_owned(),
-            realm_id: "cx:realm:home".to_owned(),
+            id: "ck:circle:opsroom".to_owned(),
+            realm_id: "ck:realm:home".to_owned(),
             title: "Ops Room".to_owned(),
             short_name: "Ops".to_owned(),
             color_token: "indigo".to_owned(),
@@ -353,7 +353,7 @@ mod tests {
             viewer_is_member: true,
         };
         let scope = summary.into_scope();
-        assert_eq!(scope.circle_id(), Some("cx:circle:opsroom"));
+        assert_eq!(scope.circle_id(), Some("ck:circle:opsroom"));
         assert_eq!(scope.label(), "Ops Room");
     }
 

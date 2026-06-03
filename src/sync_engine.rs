@@ -38,7 +38,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::{
-    AccountSubscribeSnapshotOutcome, ContrixApi, is_auth_expired_error, is_invalid_cursor_error,
+    AccountSubscribeSnapshotOutcome, CokretApi, is_auth_expired_error, is_invalid_cursor_error,
     is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
@@ -244,7 +244,7 @@ async fn run_iteration(
     if base.trim().is_empty() || token.trim().is_empty() {
         return IterationOutcome::NotReady;
     }
-    let api = match ContrixApi::new(&base) {
+    let api = match CokretApi::new(&base) {
         Ok(api) => api.with_bearer(token),
         Err(error) => {
             return IterationOutcome::Transient(format!("sync_engine: invalid base URL: {error}"));
@@ -640,35 +640,35 @@ mod tests {
                 .as_nanos(),
         ));
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("cx:realm:a", json!({"summary": {"title": "A"}}));
+        store.save_space_projection("ck:realm:a", json!({"summary": {"title": "A"}}));
         store.save_space_projection(
-            "cx:space:child",
+            "ck:space:child",
             json!({
                 "__kind": "space",
-                "realm_id": "cx:realm:a",
+                "realm_id": "ck:realm:a",
                 "summary": {"title": "Child"}
             }),
         );
-        store.save_space_projection("cx:space:b", json!({"summary": {"title": "B"}}));
-        store.save_draft("cx:space:b", "draft-b");
+        store.save_space_projection("ck:space:b", json!({"summary": {"title": "B"}}));
+        store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:42");
         response
             .spaces
-            .insert("cx:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
+            .insert("ck:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
 
         // Mirror the engine's full-sync prune step.
         let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
         let keep_set =
             crate::app::full_sync_projection_keep_set(&server_set, &store.load().space_projections);
         let pruned = store.retain_space_projections(|id| keep_set.contains(id));
-        assert_eq!(pruned, vec!["cx:space:b".to_owned()]);
+        assert_eq!(pruned, vec!["ck:space:b".to_owned()]);
 
         let state = store.load();
-        assert!(state.space_projections.contains_key("cx:realm:a"));
-        assert!(state.space_projections.contains_key("cx:space:child"));
-        assert!(!state.space_projections.contains_key("cx:space:b"));
-        assert!(!state.drafts.contains_key("cx:space:b"));
+        assert!(state.space_projections.contains_key("ck:realm:a"));
+        assert!(state.space_projections.contains_key("ck:space:child"));
+        assert!(!state.space_projections.contains_key("ck:space:b"));
+        assert!(!state.drafts.contains_key("ck:space:b"));
     }
 
     #[test]
@@ -681,12 +681,12 @@ mod tests {
                 .as_nanos(),
         ));
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("cx:space:a", json!({"name": "A"}));
-        store.save_space_projection("cx:space:b", json!({"name": "B"}));
-        store.save_draft("cx:space:b", "draft-b");
+        store.save_space_projection("ck:space:a", json!({"name": "A"}));
+        store.save_space_projection("ck:space:b", json!({"name": "B"}));
+        store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
-        response.left_spaces = vec!["cx:space:b".to_owned()];
+        response.left_spaces = vec!["ck:space:b".to_owned()];
 
         // Mirror the engine's left_spaces step.
         for id in &response.left_spaces {
@@ -694,8 +694,8 @@ mod tests {
         }
 
         let state = store.load();
-        assert!(state.space_projections.contains_key("cx:space:a"));
-        assert!(!state.space_projections.contains_key("cx:space:b"));
-        assert!(!state.drafts.contains_key("cx:space:b"));
+        assert!(state.space_projections.contains_key("ck:space:a"));
+        assert!(!state.space_projections.contains_key("ck:space:b"));
+        assert!(!state.drafts.contains_key("ck:space:b"));
     }
 }

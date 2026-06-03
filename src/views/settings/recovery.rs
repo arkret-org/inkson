@@ -278,7 +278,7 @@ pub fn SettingsRecoveryPanel(
                             span { "12 words · ~96-132 bits entropy" }
                         }
                         p { class: "muted",
-                            "Words are chosen with the OS RNG (getrandom). The passphrase plaintext only lives in this tab's memory until you navigate away; Contrix cannot recover it for you."
+                            "Words are chosen with the OS RNG (getrandom). The passphrase plaintext only lives in this tab's memory until you navigate away; Cokret cannot recover it for you."
                         }
                         div { class: "actions",
                             button {

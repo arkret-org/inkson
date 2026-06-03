@@ -1,7 +1,7 @@
 /**
  * Feature coverage anchors — pin the visible protocol surface that
  * `claude-design/` and `_todos.md` list, end-to-end against the mocked
- * Contrix server.
+ * Cokret server.
  *
  * Each test makes a single concrete claim about a stable UI surface
  * (panel data-testid + key control). The deeper protocol flow (full
@@ -17,11 +17,11 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { mockContrixApi } from "./mockContrixApi";
+import { mockCokretApi } from "./mockCokretApi";
 
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
-    await mockContrixApi(page);
+    await mockCokretApi(page);
     await page.addInitScript(() => {
       if (localStorage.getItem("yougen.config.v1")) {
         return;
@@ -31,7 +31,7 @@ test.describe("feature coverage placeholders", () => {
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
           session_token: "sx:e2e-token",
         }),
       );
@@ -106,7 +106,7 @@ test.describe("feature coverage placeholders", () => {
     await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await page.getByTestId("sas-verify-button").click();
     await expect(page.getByTestId("sas-verify-flow")).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId("sas-target-device").fill("cx:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
+    await page.getByTestId("sas-target-device").fill("ck:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
     await page.getByTestId("start-sas-button").click();
     await expect(page.getByTestId("sas-display")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("sas-emoji-row")).toBeVisible();
@@ -121,7 +121,7 @@ test.describe("feature coverage placeholders", () => {
     // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
     // binding signatures + persist to a SecureKeyStore), then submits
     // the publish content as `cx.cross_signing.publish` into the
-    // principal control space (`cx:space:control:<did>`). This test
+    // principal control space (`ck:space:control:<did>`). This test
     // catches regressions in: (a) the executor's wire-shape contract,
     // (b) the control-space pinning, (c) the SDK binding alg field, and
     // (d) the local-state writeback that keeps the panel's status line
@@ -135,7 +135,7 @@ test.describe("feature coverage placeholders", () => {
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
           session_token: "sx:e2e-token",
         }),
       );
@@ -166,8 +166,8 @@ test.describe("feature coverage placeholders", () => {
 
     // The envelope MUST target the principal control space (spec
     // key-management.md §4.1). Yougen derives it via
-    // `cx:space:control:<actor_did>`.
-    expect(body.space_id).toBe("cx:space:control:did:web:alice.example");
+    // `ck:space:control:<actor_did>`.
+    expect(body.space_id).toBe("ck:space:control:did:web:alice.example");
 
     // Drill into the publish content payload: the executor MUST emit a
     // structurally complete publish (3 keys + binding + generation).
@@ -354,7 +354,7 @@ test.describe("feature coverage placeholders", () => {
     // accepted state. The 2-of-3 quorum logic is server-side (soland
     // policy engine); this e2e pins the UI surface so the explanation
     // panel exists for admins to inspect.
-    await page.goto("/space/cx:space:0196419b-0000-7000-8000-000000000000/admin", {
+    await page.goto("/space/ck:space:0196419b-0000-7000-8000-000000000000/admin", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });

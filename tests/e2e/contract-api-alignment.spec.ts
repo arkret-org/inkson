@@ -1,9 +1,9 @@
 // Yougen-internal parity guard.
 //
-// `mockContrixContract.ts` is the parity-tested baseline (compared against a
+// `mockCokretContract.ts` is the parity-tested baseline (compared against a
 // real soland process by `cotest/tests/yougen_mock_parity.rs`). The richer
-// `mockContrixApi.ts` route stub is what every yougen Playwright spec
-// actually consumes. The two can drift silently because mockContrixApi has
+// `mockCokretApi.ts` route stub is what every yougen Playwright spec
+// actually consumes. The two can drift silently because mockCokretApi has
 // explicit per-path handlers that bypass the trailing contract fallback at
 // the bottom of the route hook.
 //
@@ -14,8 +14,8 @@
 // emits.
 
 import { expect, test } from "@playwright/test";
-import { mockContrixApi } from "./mockContrixApi";
-import { mockContrixContract } from "./mockContrixContract";
+import { mockCokretApi } from "./mockCokretApi";
+import { mockCokretContract } from "./mockCokretContract";
 
 type Probe = {
   label: string;
@@ -31,9 +31,9 @@ const PROBES: Probe[] = [
     method: "POST",
     path: "/api/v1/events",
     body: {
-      event_id: "cx:event:alignment-1",
+      event_id: "ck:event:alignment-1",
       kind: "cx.message.create",
-      realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000",
+      realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000",
       actor_id: "did:web:alice.example",
       created_at: "2026-04-28T12:00:00Z",
       payload: { body: "alignment probe" },
@@ -61,7 +61,7 @@ const PROBES: Probe[] = [
     path: "/api/v1/ephemeral",
     body: {
       kind: "cx.typing",
-      realm_id: "cx:realm:0196419b-0000-7000-8000-000000000000",
+      realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000",
       actor_id: "did:web:alice.example",
       sent_at: "2026-04-28T12:00:00Z",
       expires_at: "2026-04-28T12:00:30Z",
@@ -98,9 +98,9 @@ const CONTRACT_REQUIRED: Record<string, string[]> = {
   ephemeral_typing: ["accepted", "kind", "realm_id"],
 };
 
-test.describe("mockContrixApi ↔ mockContrixContract alignment @contract-parity", () => {
+test.describe("mockCokretApi ↔ mockCokretContract alignment @contract-parity", () => {
   test.beforeEach(async ({ page }) => {
-    await mockContrixApi(page);
+    await mockCokretApi(page);
     await page.addInitScript(() => {
       if (localStorage.getItem("yougen.config.v1")) {
         return;
@@ -110,7 +110,7 @@ test.describe("mockContrixApi ↔ mockContrixContract alignment @contract-parity
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
           session_token: "sx:e2e-token",
         }),
       );
@@ -124,7 +124,7 @@ test.describe("mockContrixApi ↔ mockContrixContract alignment @contract-parity
       const apiResponse = await page.evaluate(async (req) => {
         const init: RequestInit = {
           method: req.method,
-          headers: { "x-contrix-request-id": `alignment-${req.label}` },
+          headers: { "x-cokret-request-id": `alignment-${req.label}` },
         };
         if (req.body !== undefined) {
           (init.headers as Record<string, string>)["content-type"] = "application/json";
@@ -143,7 +143,7 @@ test.describe("mockContrixApi ↔ mockContrixContract alignment @contract-parity
         return { status: response.status, body: parsed };
       }, probe);
 
-      const contractResponse = mockContrixContract({
+      const contractResponse = mockCokretContract({
         method: probe.method,
         path: probe.path,
         body: probe.body ?? {},

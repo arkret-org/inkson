@@ -8,8 +8,8 @@
 //!
 //! Wires to soland's existing `cx.schema.key_backup.v1` endpoints
 //! (`PUT/GET /api/v1/keys/backups/{backup_id}` via
-//! [`crate::api::ContrixApi::put_key_backup`] /
-//! [`crate::api::ContrixApi::list_key_backups`]). The MLS-key backup
+//! [`crate::api::CokretApi::put_key_backup`] /
+//! [`crate::api::CokretApi::list_key_backups`]). The MLS-key backup
 //! endpoints that the spec defines under
 //! `crypto-media/encryption-and-audit.md` §2.4 (epoch backfill via
 //! `mls_history_backup_key`) do NOT yet exist on the soland side and
@@ -201,7 +201,7 @@ pub fn SettingsSecurityPanel(
                                             return;
                                         }
                                         let backup_id = if last_backup_id().is_empty() {
-                                            format!("cx:backup:{}", uuid_v7())
+                                            format!("ck:backup:{}", uuid_v7())
                                         } else {
                                             last_backup_id()
                                         };
@@ -363,7 +363,7 @@ mod tests {
         let state = KeyBackupState {
             status: "enabled".to_owned(),
             last_backup_at: "2026-05-21T00:00:00Z".to_owned(),
-            last_backup_id: "cx:backup:abc".to_owned(),
+            last_backup_id: "ck:backup:abc".to_owned(),
         };
         assert_eq!(state.status_label(), "enabled");
     }

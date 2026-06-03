@@ -17,8 +17,8 @@ fn fixture_path(name: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
-        .expect("yougen lives next to contrix-spec")
-        .join("contrix-spec")
+        .expect("yougen lives next to cokret-spec")
+        .join("cokret-spec")
         .join("spec")
         .join("v1")
         .join("artifacts")

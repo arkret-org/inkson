@@ -9,7 +9,7 @@
 //!    [`crate::move_builder::build_consent_grant_move`];
 //! 3. sign with a deterministic placeholder ed25519 key (yougen does not yet have OS keychain /
 //!    WebAuthn / HSM key management — see `TODO(real-key-management)` below);
-//! 4. POST to soland via [`crate::api::ContrixApi::submit_move`];
+//! 4. POST to soland via [`crate::api::CokretApi::submit_move`];
 //! 5. render the response (`pending` / `rejected` + reason) in the UI.
 //!
 //! This view intentionally does NOT replace yougen's direct-event
@@ -59,7 +59,7 @@ pub fn ConsentGrantDemoCard(
             label { "Space ID" }
             input {
                 "data-testid": "consent-grant-space-id",
-                placeholder: "cx:space:...",
+                placeholder: "ck:space:...",
                 value: "{space_id}",
                 oninput: move |evt| space_id.set(evt.value()),
             }
@@ -307,7 +307,7 @@ pub fn RevokeAllConsentCard(
             label { "Space ID" }
             input {
                 "data-testid": "revoke-all-space-id",
-                placeholder: "cx:space:...",
+                placeholder: "ck:space:...",
                 value: "{space_id}",
                 oninput: move |evt| space_id.set(evt.value()),
             }
@@ -462,4 +462,4 @@ pub fn RevokeAllConsentCard(
 }
 
 // (Move-flow test module removed; the OrSet/CAS wire shapes are now covered by soland's
-// events.submit handler tests and the contrix-spec fixtures.)
+// events.submit handler tests and the cokret-spec fixtures.)

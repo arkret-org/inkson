@@ -1,5 +1,5 @@
 //! Conformance profiles, JSON schema validation, and security checks
-//! per contrix-spec sections 12–13.
+//! per cokret-spec sections 12–13.
 
 use contrix_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
 
-/// Conformance profile declarations per contrix-spec section 13.1.
+/// Conformance profile declarations per cokret-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConformanceProfile {
     pub profile_id: String,
@@ -286,7 +286,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "cx.flow.move",
         "cx.flow.reorder",
         "cx.flow.restore",
-        // Per contrix-spec dc01ad7 the four
+        // Per cokret-spec dc01ad7 the four
         // `cx.flow.track.{enable,disable,update,set_primary}`
         // events were unified into a single `cx.flow.tracks.update`
         // carrying a `cx.patch.v1` JSON Patch against `Flow.tracks`.
@@ -403,7 +403,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
 /// The chat / call / verification views use this to keep ephemeral signals
 /// from being rendered as durable history. The diff test in `mod tests`
 /// pins the classification to `tests/fixtures/event-kind-wire-scopes.snapshot.tsv`,
-/// which is regenerated from contrix-spec via
+/// which is regenerated from cokret-spec via
 /// `scripts/sync-event-kind-registry.ps1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKindWireScope {
@@ -554,7 +554,7 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
 
 /// Diff a profile's `required_operations` (per the SDK's canonical
 /// `profile_requirements` table — itself generated from
-/// `contrix-spec/artifacts/profiles/`) against what the server
+/// `cokret-spec/artifacts/profiles/`) against what the server
 /// advertises in `supported_operations`. Profiles unknown to the SDK
 /// table return a single sentinel so the UI surfaces "this profile id
 /// isn't in the spec" rather than silently passing.
@@ -575,7 +575,7 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         .collect()
 }
 
-/// Plaintext boundary check per contrix-spec section 12.1.
+/// Plaintext boundary check per cokret-spec section 12.1.
 /// Verifies that non-E2EE private content does not reach undelegated services.
 pub struct PlaintextBoundary {
     /// Services that may receive plaintext.
@@ -718,7 +718,7 @@ impl std::fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// Space discovery state per contrix-spec section 9.2.
+/// Space discovery state per cokret-spec section 9.2.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpaceDiscovery {
     pub discoverability: Discoverability,
@@ -767,7 +767,7 @@ mod tests {
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
-            "trust_domain": "cx:trust_domain:server.example",
+            "trust_domain": "ck:trust_domain:server.example",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
@@ -853,7 +853,7 @@ mod tests {
     fn validate_event_schema_ok() {
         let event = json!({
             "operation_id": "op1",
-            "space_id": "cx:space:s1",
+            "space_id": "ck:space:s1",
             "actor": "did:web:alice",
             "type": "cx.message.create",
             "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
@@ -868,7 +868,7 @@ mod tests {
     fn validate_event_schema_rejects_unknown_kind() {
         let event = json!({
             "operation_id": "op1",
-            "space_id": "cx:space:s1",
+            "space_id": "ck:space:s1",
             "actor": "did:web:alice",
             "type": "cx.bogus.kind",
             "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
@@ -1089,7 +1089,7 @@ mod tests {
     }
 
     /// Hermetic diff against the vendored snapshot of
-    /// `contrix-spec/spec/v1/artifacts/registry/event-kind-registry.json`.
+    /// `cokret-spec/spec/v1/artifacts/registry/event-kind-registry.json`.
     ///
     /// The snapshot lives in `tests/fixtures/event-kind-registry.snapshot.txt`
     /// and is refreshed via `scripts/sync-event-kind-registry.ps1`. When the
@@ -1097,7 +1097,7 @@ mod tests {
     /// (which makes this test fail until `known_event_kinds()` is updated to
     /// match), so spec drift never lands silently. The snapshot is the
     /// authoritative reference inside the yougen tree — there is intentionally
-    /// no runtime fetch of contrix-spec.
+    /// no runtime fetch of cokret-spec.
     const EVENT_KIND_REGISTRY_SNAPSHOT: &str =
         include_str!("../tests/fixtures/event-kind-registry.snapshot.txt");
 

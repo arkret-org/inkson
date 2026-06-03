@@ -43,8 +43,8 @@ Version: $Version
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: Contrix Local Release <local-release@example.invalid>
-Description: Contrix cross-platform client local package
+Maintainer: Cokret Local Release <local-release@example.invalid>
+Description: Cokret cross-platform client local package
 "@ | Set-Content -Encoding ASCII -Path (Join-Path $controlDir "control")
 
         $debPath = Join-Path $DistDir "yougen_${Version}_amd64.deb"

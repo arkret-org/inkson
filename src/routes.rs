@@ -325,7 +325,7 @@ impl Route {
             | Route::KanbanTask { space_id, .. }
             | Route::SpaceAdmin { space_id }
             | Route::SpaceAdminSection { space_id, .. } => Some(space_id.as_str()),
-            Route::DocumentSpace { space_id } if !space_id.starts_with("cx:morph:") => {
+            Route::DocumentSpace { space_id } if !space_id.starts_with("ck:morph:") => {
                 Some(space_id.as_str())
             }
             _ => None,
@@ -408,7 +408,7 @@ mod tests {
             Route::Dashboard,
             Route::Login,
             Route::Space {
-                space_id: "cx:space:roundtrip".to_owned(),
+                space_id: "ck:space:roundtrip".to_owned(),
             },
             Route::Timeline,
             Route::Directory,
@@ -422,7 +422,7 @@ mod tests {
             Route::Settings,
             Route::VerifyDevice,
             Route::SpaceAdminSection {
-                space_id: "cx:space:roundtrip".to_owned(),
+                space_id: "ck:space:roundtrip".to_owned(),
                 section: "members".to_owned(),
             },
             // NOTE: Route::Audit / Route::Call / Route::Applets are
@@ -459,26 +459,26 @@ mod tests {
     fn test_space_id_extraction() {
         assert_eq!(
             Route::Space {
-                space_id: "cx:space:home".to_owned()
+                space_id: "ck:space:home".to_owned()
             }
             .space_id(),
-            Some("cx:space:home")
+            Some("ck:space:home")
         );
         assert_eq!(
             Route::TimelineSpace {
-                space_id: "cx:space:abc".to_owned()
+                space_id: "ck:space:abc".to_owned()
             }
             .space_id(),
-            Some("cx:space:abc")
+            Some("ck:space:abc")
         );
         assert_eq!(Route::Timeline.space_id(), None);
         assert_eq!(
             Route::SpaceAdminSection {
-                space_id: "cx:space:admin".to_owned(),
+                space_id: "ck:space:admin".to_owned(),
                 section: "members".to_owned(),
             }
             .space_id(),
-            Some("cx:space:admin")
+            Some("ck:space:admin")
         );
     }
 
@@ -510,7 +510,7 @@ mod tests {
     fn test_space_admin_section_extraction() {
         assert_eq!(
             Route::SpaceAdminSection {
-                space_id: "cx:space:ops".to_owned(),
+                space_id: "ck:space:ops".to_owned(),
                 section: "repair".to_owned(),
             }
             .space_admin_section(),
@@ -518,7 +518,7 @@ mod tests {
         );
         assert_eq!(
             Route::SpaceAdmin {
-                space_id: "cx:space:ops".to_owned()
+                space_id: "ck:space:ops".to_owned()
             }
             .space_admin_section(),
             None

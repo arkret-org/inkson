@@ -138,11 +138,11 @@ jobs:
         with:
           path: yougen
 
-      - name: Checkout contrix-rust-sdk
+      - name: Checkout cokret-rust-sdk
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/contrix-rust-sdk
-          path: contrix-rust-sdk
+          repository: ${{ github.repository_owner }}/cokret-rust-sdk
+          path: cokret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime

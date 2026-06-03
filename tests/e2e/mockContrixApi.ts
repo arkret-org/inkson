@@ -1,20 +1,20 @@
 import type { Page, Route } from "@playwright/test";
-import { mockContrixContract } from "./mockContrixContract";
+import { mockCokretContract } from "./mockCokretContract";
 
-const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
-const SETUP_SPACE = "cx:space:01js0setupflow000000000000";
-const CHILD_SPACE = "cx:space:01launchchild0000000000000";
-const GRANDCHILD_SPACE = "cx:space:01launchdeep00000000000000";
-const DEMO_BOARD_SPACE = "cx:space:0196419b-0000-7000-8000-00000000b0a0";
-const DEMO_SECOND_BOARD_SPACE = "cx:space:0196419b-0000-7000-8000-00000000b0b0";
-const DEMO_TODO_LIST = "cx:space:01list-todo000000000000000000";
-const DEMO_PROGRESS_LIST = "cx:space:01list-progress00000000000000";
-const DEMO_DONE_LIST = "cx:space:01list-done00000000000000000";
-const DEMO_SECOND_LIST = "cx:space:01list-secondary000000000000";
-const DEMO_FLOW_LEGAL_REVIEW = "cx:flow:0196419b-0000-7000-8000-000000000101";
-const DEMO_FLOW_ONBOARDING_COPY = "cx:flow:0196419b-0000-7000-8000-000000000102";
-const DEMO_FLOW_SECURITY_SIGNOFF = "cx:flow:0196419b-0000-7000-8000-000000000103";
-const DEMO_FLOW_SECONDARY_CARD = "cx:flow:0196419b-0000-7000-8000-000000000104";
+const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
+const SETUP_SPACE = "ck:space:01js0setupflow000000000000";
+const CHILD_SPACE = "ck:space:01launchchild0000000000000";
+const GRANDCHILD_SPACE = "ck:space:01launchdeep00000000000000";
+const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
+const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
+const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
+const DEMO_PROGRESS_LIST = "ck:space:01list-progress00000000000000";
+const DEMO_DONE_LIST = "ck:space:01list-done00000000000000000";
+const DEMO_SECOND_LIST = "ck:space:01list-secondary000000000000";
+const DEMO_FLOW_LEGAL_REVIEW = "ck:flow:0196419b-0000-7000-8000-000000000101";
+const DEMO_FLOW_ONBOARDING_COPY = "ck:flow:0196419b-0000-7000-8000-000000000102";
+const DEMO_FLOW_SECURITY_SIGNOFF = "ck:flow:0196419b-0000-7000-8000-000000000103";
+const DEMO_FLOW_SECONDARY_CARD = "ck:flow:0196419b-0000-7000-8000-000000000104";
 
 type SpaceContainerProjection = {
   container_space_id: string;
@@ -38,7 +38,7 @@ type FlowProjection = {
   fields?: Record<string, unknown>;
 };
 
-export async function mockContrixApi(page: Page) {
+export async function mockCokretApi(page: Page) {
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
@@ -190,7 +190,7 @@ export async function mockContrixApi(page: Page) {
             supported_grant_types: ["authorization_code", "refresh_token"],
             did_binding_methods: ["did_controller_key", "device_key"],
             required_audience: "https://auth.local.host/api/v1",
-            session_grant_scope: "urn:contrix:principal-server:session.bind",
+            session_grant_scope: "urn:cokret:principal-server:session.bind",
             oidc_clients: [
               {
                 id: "01GFWR28C4KNE04WG3HKXB7C9R",
@@ -207,7 +207,7 @@ export async function mockContrixApi(page: Page) {
       }
       return json(route, {
         service_did: "did:web:server.local",
-        trust_domain: "cx:trust_domain:server.local",
+        trust_domain: "ck:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
@@ -296,7 +296,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/auth/bridge/describe") {
       return json(route, {
-        contract: "contrix.rest.auth_bridge.v1",
+        contract: "cokret.rest.auth_bridge.v1",
         version: "2026-05-04-scaffold",
         api_base_path: "/api/v1",
         oauth: {
@@ -306,13 +306,13 @@ export async function mockContrixApi(page: Page) {
           exchange_path: "/api/v1/auth/oidc/exchange",
           supported_flows: ["authorization_code_pkce_browser"],
         },
-        contrix: {
+        cokret: {
           login_path: "/api/v1/auth/login",
           logout_path: "/api/v1/auth/logout",
           providers_path: "/api/v1/auth/providers",
           session_grants_path: "/api/v1/session-grants",
           session_grants_introspect_path: "/api/v1/session-grants/introspect",
-          session_grant_scope: "urn:contrix:principal-server:session.bind",
+          session_grant_scope: "urn:cokret:principal-server:session.bind",
         },
         todos: [],
       });
@@ -333,7 +333,7 @@ export async function mockContrixApi(page: Page) {
       authorizeUrl.searchParams.set("code_challenge_method", "S256");
       authorizeUrl.searchParams.set("code_challenge", "oidc-code-challenge-e2e");
       return json(route, {
-        contract: "contrix.rest.auth_bridge.oidc_browser_session.v1",
+        contract: "cokret.rest.auth_bridge.oidc_browser_session.v1",
         version: "2026-05-04-scaffold",
         authorize_url: authorizeUrl.toString(),
         callback_uri: redirectUri,
@@ -354,7 +354,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.hostname === "auth.local.host" && url.pathname === "/api/v1/integration/describe") {
       return json(route, {
-        contract: "contrix.rest.integration_manifest.v1",
+        contract: "cokret.rest.integration_manifest.v1",
         version: "2026-05-04-scaffold",
         service: "coauth",
         service_kind: "account_authority",
@@ -396,16 +396,16 @@ export async function mockContrixApi(page: Page) {
           "cx.flow.tracks.update",
           "cx.message.create",
         ],
-        frontier: ["cx:event:e2e"],
+        frontier: ["ck:event:e2e"],
       });
     }
 
     if (url.pathname === "/api/v1/events" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      if (!route.request().headers()["x-contrix-request-id"]) {
+      if (!route.request().headers()["x-cokret-request-id"]) {
         return json(route, {
           ok: false,
-          error: { code: "missing_request_id", message: "missing x-contrix-request-id" },
+          error: { code: "missing_request_id", message: "missing x-cokret-request-id" },
         }, 428);
       }
       let syncToken = "sx:e2e:event";
@@ -420,7 +420,7 @@ export async function mockContrixApi(page: Page) {
           event.space_id ??
           event.payload?.realm_id ??
           event.payload?.object?.realm_id ??
-          raw.match(/cx:realm:[0-9a-f-]+/)?.[0] ??
+          raw.match(/ck:realm:[0-9a-f-]+/)?.[0] ??
           SETUP_SPACE;
         const title =
           event.payload?.object?.title ??
@@ -544,7 +544,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         ok: true,
         room_id: roomId,
-        receipt: { kind: "cx.mimi.room_update", operation_id: "cx:operation:mimi-room-update" },
+        receipt: { kind: "cx.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
       });
     }
 
@@ -552,7 +552,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
-        receipt: { kind: "cx.mimi.notify", notification_id: "cx:mimi:notify:e2e" },
+        receipt: { kind: "cx.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
       });
     }
 
@@ -560,8 +560,8 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         ok: true,
         mimi_message_id: "mimi-msg-e2e",
-        mapped_operation_id: "cx:operation:mimi-submit-e2e",
-        contrix_event_id: "cx:event:mimi-submit-e2e",
+        mapped_operation_id: "ck:operation:mimi-submit-e2e",
+        contrix_event_id: "ck:event:mimi-submit-e2e",
         receipt: {
           kind: "cx.mimi.mapping_receipt",
           profile: "cx.profile.mimi_interop.v1",
@@ -569,7 +569,7 @@ export async function mockContrixApi(page: Page) {
           source_format: "text/markdown;variant=GFM-MIMI",
           target_format: "cx.message.create",
           original_envelope_hash: "sha256:e2e-mimi-envelope",
-          mapped_operation_id: "cx:operation:mimi-submit-e2e",
+          mapped_operation_id: "ck:operation:mimi-submit-e2e",
           mimi_message_id: "mimi-msg-e2e",
         },
       });
@@ -592,7 +592,7 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/mimi/consent/request") {
       return json(route, {
         ok: true,
-        consent_id: "cx:mimi-consent:e2e",
+        consent_id: "ck:mimi-consent:e2e",
         state: "requested",
         receipt: { kind: "cx.mimi.request_consent" },
       });
@@ -601,7 +601,7 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/mimi/consent/update") {
       return json(route, {
         ok: true,
-        consent_id: "cx:mimi-consent:e2e",
+        consent_id: "ck:mimi-consent:e2e",
         state: "accepted",
         receipt: { kind: "cx.mimi.update_consent" },
       });
@@ -622,7 +622,7 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/mimi/report-abuse") {
       return json(route, {
         ok: true,
-        report_id: "cx:report:mimi-e2e",
+        report_id: "ck:report:mimi-e2e",
         status: "queued",
         receipt: { kind: "cx.mimi.report_abuse" },
       });
@@ -631,10 +631,10 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/mimi/proxy-download") {
       return json(route, {
         ok: true,
-        blob_ref: "cx:blob:sha256:e2e",
+        blob_ref: "ck:blob:sha256:e2e",
         media_type: "application/octet-stream",
         size: 23,
-        proxy_url: "/api/v1/mimi/proxy-download/cx:blob:sha256:e2e",
+        proxy_url: "/api/v1/mimi/proxy-download/ck:blob:sha256:e2e",
         receipt: { kind: "cx.mimi.proxy_download", direct_object_store_url: null },
       });
     }
@@ -718,7 +718,7 @@ export async function mockContrixApi(page: Page) {
       const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_SPACE);
       const frame = {
         kind: "delta",
-        cursor: "cx:cursor:e2e-2",
+        cursor: "ck:cursor:e2e-2",
         realms: {
           join: {
             ...Object.fromEntries(
@@ -743,7 +743,7 @@ export async function mockContrixApi(page: Page) {
             ),
             [DEMO_SPACE]: {
               summary: {
-                title: "Contrix Demo Space",
+                title: "Cokret Demo Space",
                 summary: "Shared demo Space served by mocked server",
                 encryption_profile: "mls_rfc9420",
                 child_space_ids: [CHILD_SPACE],
@@ -797,7 +797,7 @@ export async function mockContrixApi(page: Page) {
           {
             kind: "cx.notification",
             notification_id: "notif-invite-1",
-            invite_id: "cx:invite:01904100-0000-7000-8000-000000000099",
+            invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
             title: "New invite",
             body: "You were invited to review Demo Space",
             space_id: DEMO_SPACE,
@@ -814,7 +814,7 @@ export async function mockContrixApi(page: Page) {
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "cx:cursor:e2e-2" })}\n`,
+        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "ck:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -829,11 +829,11 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         results: [
           {
-            id: "did:web:org.contrix.example",
-            did: "did:web:org.contrix.example",
-            handle: "contrix.example",
-            name: "Contrix Labs",
-            description: "Protocol and client engineering for Contrix deployments.",
+            id: "did:web:org.cokret.example",
+            did: "did:web:org.cokret.example",
+            handle: "cokret.example",
+            name: "Cokret Labs",
+            description: "Protocol and client engineering for Cokret deployments.",
             discoverability: "listed",
             profile_visibility: "public",
             directory_services: ["did:web:server.local"],
@@ -918,7 +918,7 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/snapshot/head") {
       return json(route, {
-        snapshot_ref: `cx:snapshot:${DEMO_SPACE}:head`,
+        snapshot_ref: `ck:snapshot:${DEMO_SPACE}:head`,
         state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         frontier: { space_id: DEMO_SPACE },
         signature: { alg: "none" },
@@ -949,7 +949,7 @@ export async function mockContrixApi(page: Page) {
     if (url.pathname === "/api/v1/identity/submit-did-operation") {
       return json(route, {
         ok: true,
-        operation_id: "cx:didop:e2e",
+        operation_id: "ck:didop:e2e",
         status: "accepted",
       }, 202);
     }
@@ -967,7 +967,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
-        grants: ["cx:grant:e2e"],
+        grants: ["ck:grant:e2e"],
         obligations: [{ type: "audit", reason_required: false }],
       });
     }
@@ -976,11 +976,11 @@ export async function mockContrixApi(page: Page) {
       return json(route, {
         grants: [
           {
-            grant_id: "cx:grant:e2e",
+            grant_id: "ck:grant:e2e",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
-            resource_selectors: ["space:cx:space:0196419b-0000-7000-8000-000000000000/**"],
+            resource_selectors: ["space:ck:space:0196419b-0000-7000-8000-000000000000/**"],
             constraints: [
               { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
               {
@@ -988,10 +988,10 @@ export async function mockContrixApi(page: Page) {
                 params: { object_type_allow: ["space"], facet_allow: ["renderable", "stateful"] },
               },
             ],
-            delegation_chain: ["cx:grant:root", "cx:grant:e2e"],
+            delegation_chain: ["ck:grant:root", "ck:grant:e2e"],
           },
         ],
-        state_digest: "cx:statehash:e2e",
+        state_digest: "ck:statehash:e2e",
         evaluated_at: "2026-04-28T12:00:00Z",
       });
     }
@@ -1017,7 +1017,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/device_messages" && route.request().method() === "GET") {
-      return json(route, { events: [], next_cursor: "cx:cursor:devmsg-1", limited: false });
+      return json(route, { events: [], next_cursor: "ck:cursor:devmsg-1", limited: false });
     }
 
     if (url.pathname === "/api/v1/device_messages" && route.request().method() === "POST") {
@@ -1041,7 +1041,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/push/register-device") {
-      return json(route, { ok: true, registration_id: "cx:push:e2e", expires_at: null });
+      return json(route, { ok: true, registration_id: "ck:push:e2e", expires_at: null });
     }
 
     if (url.pathname === "/api/v1/push/unregister-device") {
@@ -1050,22 +1050,22 @@ export async function mockContrixApi(page: Page) {
 
     if (url.pathname === "/api/v1/blob/upload") {
       return json(route, {
-        blob_ref: "cx:blob:sha256:e2e",
+        blob_ref: "ck:blob:sha256:e2e",
         size_bytes: 22,
         media_type: "application/octet-stream",
         content_digest: "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
-        thumbnail_ref: "cx:blob:sha256:e2e-thumb",
+        thumbnail_ref: "ck:blob:sha256:e2e-thumb",
         upload_receipt: { service_did: "did:web:server.local", content_digest_verified: true },
       });
     }
 
-    if (url.pathname === "/contrix/v1/ice-config") {
+    if (url.pathname === "/cokret/v1/ice-config") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        space_id: body.space_id ?? "cx:space:0196419b-0000-7000-8000-000000000000",
-        call_id: body.call_id ?? "cx:call:01964137-0000-7000-8000-000000000001",
+        space_id: body.space_id ?? "ck:space:0196419b-0000-7000-8000-000000000000",
+        call_id: body.call_id ?? "ck:call:01964137-0000-7000-8000-000000000001",
         actor_id: body.actor_id ?? "did:web:alice.example",
-        device_id: body.device_id ?? "cx:device:01904100-0000-7000-8000-a11ce0000001",
+        device_id: body.device_id ?? "ck:device:01904100-0000-7000-8000-a11ce0000001",
         ice_servers: [
           { urls: ["stun:stun.server.local:3478"] },
           {
@@ -1090,7 +1090,7 @@ export async function mockContrixApi(page: Page) {
     }
 
     if (url.pathname === "/api/v1/moderation/report") {
-      return json(route, { report_id: "cx:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
+      return json(route, { report_id: "ck:report:e2e", status: "queued", routed_to: ["did:web:server.local#moderation"] });
     }
 
     // Encrypted Cloud Vault — the recovery view uploads a backup body whose
@@ -1118,7 +1118,7 @@ export async function mockContrixApi(page: Page) {
       return json(route, { backups: [] });
     }
 
-    const contractResponse = mockContrixContract({
+    const contractResponse = mockCokretContract({
       method: route.request().method(),
       path: url.pathname,
       query: Object.fromEntries(url.searchParams.entries()),
@@ -1152,7 +1152,7 @@ async function contractRequestBody(route: Route) {
 function spacePreview() {
   return {
     space_id: DEMO_SPACE,
-    name: "Contrix Demo Space",
+    name: "Cokret Demo Space",
     description: "Shared demo Space served by mocked server",
     tags: ["demo"],
     public: true,
@@ -1162,7 +1162,7 @@ function spacePreview() {
 
 function joinCandidate() {
   return {
-    realm_id: DEMO_SPACE.replace(/^cx:space:/, "cx:realm:"),
+    realm_id: DEMO_SPACE.replace(/^ck:space:/, "ck:realm:"),
     service_did: "did:web:server.local",
     service_type: "principal_server",
     role: "primary",
@@ -1205,7 +1205,7 @@ function mimiProviderDirectory() {
         "application/mimi-content",
         "text/plain;charset=utf-8",
         "text/markdown;variant=GFM-MIMI",
-        "application/vnd.contrix.content+json",
+        "application/vnd.cokret.content+json",
       ],
       room_policy_components: ["roles", "join_rules", "history_visibility"],
     },

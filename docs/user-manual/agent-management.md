@@ -1,7 +1,7 @@
 # yougen — Agent Management
 
 > How to register, govern, and revoke automated members (bots / personal
-> agents / services). Spec source: `contrix-spec/spec/v1/zh/extensions/agent-integration.md`.
+> agents / services). Spec source: `cokret-spec/spec/v1/zh/extensions/agent-integration.md`.
 
 Agents are first-class principals. They get their own DID + signing key
 and act under explicit capability proofs — never your personal device key.

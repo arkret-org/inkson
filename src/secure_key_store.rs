@@ -390,7 +390,7 @@ impl SecureKeyStore for KeyringSecureKeyStore {
 ///
 /// The host implementation contract:
 ///
-/// * **Android** — bridge methods call into a Java class (`com.contrix.yougen.SecureKeyStoreBridge`
+/// * **Android** — bridge methods call into a Java class (`com.cokret.yougen.SecureKeyStoreBridge`
 ///   or similar) via JNI. That class proxies to `java.security.KeyStore` with provider
 ///   `"AndroidKeyStore"`, aliasing entries as `"<service_name>:<key>"`. AES-256-GCM is the
 ///   recommended cipher; the platform Keystore can be configured to require user authentication /

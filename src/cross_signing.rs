@@ -1,7 +1,7 @@
 //! Cross-signing setup orchestration.
 //!
 //! Spec source:
-//! [`crypto-media/device-lifecycle.md`](../../contrix-spec/spec/v1/zh/crypto-media/
+//! [`crypto-media/device-lifecycle.md`](../../cokret-spec/spec/v1/zh/crypto-media/
 //! device-lifecycle.md) §5 (Signing Hierarchy), §5.1 (Cross-Signing Publish Envelope), §5.2 (Device
 //! Trust Chain), §14 (Cross-Signing Reset).
 //!
@@ -352,7 +352,7 @@ impl std::fmt::Display for ResetBlockedReason {
 impl std::error::Error for ResetBlockedReason {}
 
 /// Trust-chain status the UI should surface per device. Mirrors the SDK
-/// [`contrix::DeviceTrustChainOutcome`] but with a string discriminator that
+/// [`cokret::DeviceTrustChainOutcome`] but with a string discriminator that
 /// fits yougen's JSON response shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -747,12 +747,12 @@ mod tests {
     /// Round 4 — every executor test thread needs a TypedTrustDomainId
     /// for the v2 `cx.cross_signing.publish` shape.
     fn test_trust_domain() -> TypedTrustDomainId {
-        TypedTrustDomainId::new("cx:trust_domain:example.net").unwrap()
+        TypedTrustDomainId::new("ck:trust_domain:example.net").unwrap()
     }
 
     #[test]
     fn initial_plan_has_seven_steps_and_emits_publish_event() {
-        let plan = CrossSigningSetupPlan::build_initial("did:web:alice", "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial("did:web:alice", "ck:device:01a");
         assert_eq!(plan.mode, CrossSigningSetupMode::InitialSetup);
         assert_eq!(plan.previous_generation, None);
         assert_eq!(plan.new_generation, 1);
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn reset_plan_advances_generation_and_emits_reset_event_first() {
-        let plan = CrossSigningSetupPlan::build_reset("did:web:alice", "cx:device:01a", 2);
+        let plan = CrossSigningSetupPlan::build_reset("did:web:alice", "ck:device:01a", 2);
         assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
         assert_eq!(plan.previous_generation, Some(2));
         assert_eq!(plan.new_generation, 3);
@@ -810,7 +810,7 @@ mod tests {
             enrollment_hint: Some("Apply via /security/reset".to_owned()),
         };
         let err =
-            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 2, &policy)
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "ck:device:01a", 2, &policy)
                 .expect_err("alice is not enrolled");
         assert_eq!(err.principal_id, "did:web:alice");
         assert_eq!(err.hint.as_deref(), Some("Apply via /security/reset"));
@@ -825,7 +825,7 @@ mod tests {
             enrollment_hint: None,
         };
         let plan =
-            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 2, &policy)
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "ck:device:01a", 2, &policy)
                 .expect("alice is enrolled");
         assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
         assert_eq!(plan.new_generation, 3);
@@ -837,7 +837,7 @@ mod tests {
         // gate reset. Every caller is admitted.
         let policy = ResetAuditPolicy::default(); // enrollment_required = false
         let plan =
-            CrossSigningSetupPlan::try_build_reset("did:web:alice", "cx:device:01a", 5, &policy)
+            CrossSigningSetupPlan::try_build_reset("did:web:alice", "ck:device:01a", 5, &policy)
                 .expect("permissive policy admits everyone");
         assert_eq!(plan.previous_generation, Some(5));
     }
@@ -862,7 +862,7 @@ mod tests {
         use ed25519_dalek::{Signature, Verifier};
 
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
-        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ck:device:01a");
         let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().expect("local steps must succeed");
 
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn executor_picks_distinct_keys_on_every_run() {
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
-        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ck:device:01a");
         let executor = CrossSigningExecutor::new(plan, principal, test_trust_domain());
         let a = executor.run().unwrap();
         let b = executor.run().unwrap();
@@ -921,7 +921,7 @@ mod tests {
         use crate::secure_key_store::MemorySecureKeyStore;
 
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
-        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ck:device:01a");
         let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().unwrap();
 
@@ -978,13 +978,13 @@ mod tests {
     #[test]
     fn publish_envelope_carries_validated_publish_content() {
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
-        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ck:device:01a");
         let executor = CrossSigningExecutor::new(plan, principal.clone(), test_trust_domain());
         let out = executor.run().unwrap();
 
         let envelope = out
             .build_publish_envelope(
-                "cx:space:01964137-0000-7000-8000-000000000aaa",
+                "ck:space:01964137-0000-7000-8000-000000000aaa",
                 principal.as_str(),
             )
             .unwrap();

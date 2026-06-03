@@ -3,7 +3,7 @@
 //! Builds the canonical `cx.identity.recovery_proof.v1` transcript a recovering
 //! device signs, byte-for-byte identical to soland's reconstruction
 //! (`soland/src/routing/identity/recovery.rs::recovery_proof_transcript` +
-//! contrix-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
+//! cokret-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
 //! Mismatch ⇒ the server rejects the proof, so this MUST stay in lockstep.
 //!
 //! The transcript binds every session-defining field; the recovering client
@@ -101,11 +101,11 @@ mod tests {
     fn sample_session() -> Value {
         json!({
             "schema": "cx.schema.recovery_session.v1",
-            "recovery_session_id": "cx:recovery_session:01964137-0000-7000-8000-0000000000aa",
+            "recovery_session_id": "ck:recovery_session:01964137-0000-7000-8000-0000000000aa",
             "principal_id": "did:key:z6MkPrincipalFixture",
-            "requesting_device_id": "cx:device:01964137-0000-7000-8000-000000000099",
-            "trust_domain": "cx:trust_domain:soland.local",
-            "policy_id": "cx:policy:01964137-0000-7000-8000-0000000000bb",
+            "requesting_device_id": "ck:device:01964137-0000-7000-8000-000000000099",
+            "trust_domain": "ck:trust_domain:soland.local",
+            "policy_id": "ck:policy:01964137-0000-7000-8000-0000000000bb",
             "policy_version": 1,
             "ssk_generation": 1,
             "challenge": "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm8",

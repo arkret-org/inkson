@@ -1,19 +1,19 @@
 //! 6.1 / 6.3 — recovery client orchestration.
 //!
 //! Pure request builders (unit-tested) + thin async wrappers over
-//! [`crate::api::ContrixApi`] that drive the REC-1 recovery flow:
+//! [`crate::api::CokretApi`] that drive the REC-1 recovery flow:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
 //! - 6.3: open a recovery session, sign + submit a `principal_signing` proof,
 //!   then complete with client-supplied `cx.device.authorize` material.
 //!
-//! The wire shapes match `contrix-spec` `recovery-session.schema.json`
+//! The wire shapes match `cokret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 
 /// 6.1 — parsed active recovery policy summary (the fields a client surfaces).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -50,7 +50,7 @@ pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPo
 
 /// 6.1 — fetch + parse the active recovery policy.
 pub async fn fetch_active_recovery_policy(
-    api: &ContrixApi,
+    api: &CokretApi,
 ) -> anyhow::Result<Option<ActiveRecoveryPolicy>> {
     let response = api.get_recovery_policy().await?;
     Ok(parse_active_recovery_policy(&response))
@@ -80,7 +80,7 @@ pub fn create_session_body(
 /// 6.3 — open a recovery session. Returns the session JSON (carries the
 /// challenge + every binding field the proof transcript needs).
 pub async fn open_recovery_session(
-    api: &ContrixApi,
+    api: &CokretApi,
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
@@ -100,7 +100,7 @@ pub async fn open_recovery_session(
 /// 6.3 — sign a `principal_signing` proof for `session` (with the principal
 /// control key) and submit it. Returns the `proof_submit_response`.
 pub async fn submit_principal_signing_proof(
-    api: &ContrixApi,
+    api: &CokretApi,
     session: &Value,
     verification_method: &str,
     principal_signing_key: &SigningKey,
@@ -123,7 +123,7 @@ pub async fn submit_principal_signing_proof(
 /// and `cx.device.list_update` (recovery-session.schema.json `complete_request`).
 /// The server resolves + verifies each by id; it does not author control events.
 pub async fn complete_recovery_session(
-    api: &ContrixApi,
+    api: &CokretApi,
     recovery_session_id: &str,
     authorization_event_id: &str,
     device_list_update_event_id: &str,
@@ -146,7 +146,7 @@ pub async fn complete_recovery_session(
 /// `complete_response`.)
 #[allow(clippy::too_many_arguments)]
 pub async fn run_principal_signing_recovery(
-    api: &ContrixApi,
+    api: &CokretApi,
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
@@ -189,8 +189,8 @@ mod tests {
     fn create_session_body_matches_schema_shape() {
         let body = create_session_body(
             "did:web:alice.example",
-            "cx:device:019a6aa0-0000-7000-8000-000000000099",
-            "cx:trust_domain:soland.local",
+            "ck:device:019a6aa0-0000-7000-8000-000000000099",
+            "ck:trust_domain:soland.local",
             2,
             None,
         );
@@ -203,14 +203,14 @@ mod tests {
     fn create_session_body_includes_cas_hint() {
         let body = create_session_body(
             "did:web:alice.example",
-            "cx:device:019a6aa0-0000-7000-8000-000000000099",
-            "cx:trust_domain:soland.local",
+            "ck:device:019a6aa0-0000-7000-8000-000000000099",
+            "ck:trust_domain:soland.local",
             1,
-            Some(("cx:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
+            Some(("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
         );
         assert_eq!(
             body["expected_recovery_policy_ref"]["policy_id"],
-            "cx:policy:019a6aa0-0000-7000-8000-0000000000bb"
+            "ck:policy:019a6aa0-0000-7000-8000-0000000000bb"
         );
         assert_eq!(body["expected_recovery_policy_ref"]["policy_version"], 1);
     }
@@ -220,9 +220,9 @@ mod tests {
         assert_eq!(parse_active_recovery_policy(&json!({ "active_policy": null })), None);
         let parsed = parse_active_recovery_policy(&json!({
             "active_policy": {
-                "policy_id": "cx:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "version": 3,
-                "trust_domain": "cx:trust_domain:soland.local",
+                "trust_domain": "ck:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
             }
         }))

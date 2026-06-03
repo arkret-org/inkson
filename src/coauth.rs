@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
@@ -103,7 +103,7 @@ pub struct CoauthAuthBridgeDescribe {
     pub version: String,
     pub api_base_path: String,
     pub oauth: CoauthAuthBridgeOAuthDescriptor,
-    pub contrix: CoauthAuthBridgeContrixDescriptor,
+    pub cokret: CoauthAuthBridgeCokretDescriptor,
     #[serde(default)]
     pub todos: Vec<String>,
 }
@@ -158,7 +158,7 @@ pub struct CoauthIntegrationSurface {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct CoauthAuthBridgeContrixDescriptor {
+pub struct CoauthAuthBridgeCokretDescriptor {
     pub login_path: String,
     pub logout_path: String,
     pub providers_path: String,
@@ -212,7 +212,7 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
 /// G3.Y0 — wire shape of `POST /api/v1/session-grants/refresh` (G3.C1).
-/// Mirrors `coauth::handlers::contrix::RefreshSessionGrantResponse`. We
+/// Mirrors `coauth::handlers::cokret::RefreshSessionGrantResponse`. We
 /// keep the fields as `String` so the cotest harness can assert
 /// equality against the JSON body verbatim.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -842,7 +842,7 @@ pub(crate) struct PrincipalAuthServerResolution {
 pub(crate) async fn resolve_principal_auth_server(
     principal_server_url: &str,
 ) -> anyhow::Result<PrincipalAuthServerResolution> {
-    let principal = ContrixApi::new(principal_server_url)?;
+    let principal = CokretApi::new(principal_server_url)?;
     let description = principal.describe().await?;
     let auth_server_url = description
         .auth_metadata
@@ -1120,7 +1120,7 @@ pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow
 
 /// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
-/// `coauth/crates/backend/src/handlers/contrix.rs:575`). soland forwards
+/// `coauth/crates/backend/src/handlers/cokret.rs:575`). soland forwards
 /// the proof to coauth's `/api/v1/session-grants/introspect` endpoint
 /// when calling `validate_session_grant_binding` — the JWS MUST verify
 /// against the session_public_key registered with the grant, and the
@@ -1753,7 +1753,7 @@ mod tests {
                 "session_private_key_pem": "-----BEGIN PRIVATE KEY-----\\nmock\\n-----END PRIVATE KEY-----",
                 "expires_at": "2026-05-13T04:00:00Z",
                 "audience": "https://local.host/api",
-                "scopes": ["urn:contrix:principal-server:session.bind"],
+                "scopes": ["urn:cokret:principal-server:session.bind"],
                 "principal_server": {
                     "name": "local",
                     "endpoint": "https://local.host"

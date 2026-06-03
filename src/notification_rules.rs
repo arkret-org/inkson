@@ -596,8 +596,8 @@ mod tests {
         NotificationEvalContext {
             event_kind: "cx.message.create".to_owned(),
             notification_type: "message".to_owned(),
-            realm_id: "cx:realm:demo".to_owned(),
-            flow_id: Some("cx:flow:demo".to_owned()),
+            realm_id: "ck:realm:demo".to_owned(),
+            flow_id: Some("ck:flow:demo".to_owned()),
             flow_track: Some("discussion".to_owned()),
             body: Some("urgent launch note".to_owned()),
             watch_level: Some(WatchLevel::All),
@@ -613,7 +613,7 @@ mod tests {
                     "rule_id": "override.mute-space",
                     "kind": "override",
                     "conditions": [
-                        {"kind": "field_match", "field": "space_id", "pattern": "cx:realm:demo"}
+                        {"kind": "field_match", "field": "space_id", "pattern": "ck:realm:demo"}
                     ],
                     "actions": ["dont_notify"]
                 },

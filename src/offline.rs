@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::api::{ContrixApi, NetworkState};
+use crate::api::{CokretApi, NetworkState};
 use crate::hlc::Hlc;
 
 /// An operation queued while offline.
@@ -174,7 +174,7 @@ impl ReconnectionCoordinator {
     }
 
     /// Replay all queued operations against the API.
-    pub async fn replay_all(&self, api: &ContrixApi) -> Vec<ReplayResult> {
+    pub async fn replay_all(&self, api: &CokretApi) -> Vec<ReplayResult> {
         let mut results = Vec::new();
 
         loop {
@@ -207,7 +207,7 @@ impl ReconnectionCoordinator {
     }
 
     /// Replay a single operation.
-    async fn replay_operation(&self, api: &ContrixApi, op: &QueuedOperation) -> ReplayResult {
+    async fn replay_operation(&self, api: &CokretApi, op: &QueuedOperation) -> ReplayResult {
         // Use the API client to replay the operation
         // This is a simplified version - in production, you'd want proper
         // method dispatch and error handling
@@ -292,7 +292,7 @@ impl ReconnectionCoordinator {
 
     /// Start a background connectivity monitor (native only).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn start_monitor(self, api: ContrixApi, check_interval: std::time::Duration) {
+    pub fn start_monitor(self, api: CokretApi, check_interval: std::time::Duration) {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(check_interval);
             loop {
@@ -457,7 +457,7 @@ pub async fn enqueue_push_pref_write(body: serde_json::Value) -> Result<(), Offl
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_offline_drain(
     coordinator: ReconnectionCoordinator,
-    api: ContrixApi,
+    api: CokretApi,
     tick: std::time::Duration,
     bound_profile_id: Option<String>,
     active_profile_id: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
@@ -588,14 +588,14 @@ mod tests {
     fn test_queued_operation_builder() {
         let op = QueuedOperationBuilder::new("api/v1/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
-            .with_space("cx:space:test")
+            .with_space("ck:space:test")
             .with_op_type("message")
             .with_max_retries(5)
             .build();
 
         assert_eq!(op.endpoint, "api/v1/events");
         assert_eq!(op.method, "POST");
-        assert_eq!(op.space_id, Some("cx:space:test".to_owned()));
+        assert_eq!(op.space_id, Some("ck:space:test".to_owned()));
         assert_eq!(op.op_type, Some("message".to_owned()));
         assert_eq!(op.max_retries, 5);
     }
@@ -619,12 +619,12 @@ mod tests {
     async fn enqueue_message_send_records_op_type() {
         let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
         global_queue().clear().await;
-        enqueue_message_send("cx:space:test", serde_json::json!({"body": "hi"}))
+        enqueue_message_send("ck:space:test", serde_json::json!({"body": "hi"}))
             .await
             .unwrap();
         let head = global_queue().peek().await.unwrap();
         assert_eq!(head.op_type.as_deref(), Some("cx.message.create"));
-        assert_eq!(head.space_id.as_deref(), Some("cx:space:test"));
+        assert_eq!(head.space_id.as_deref(), Some("ck:space:test"));
         assert_eq!(head.method, "POST");
         global_queue().clear().await;
     }

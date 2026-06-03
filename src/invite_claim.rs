@@ -19,7 +19,7 @@
 //! consistently without re-discovering the labels.
 //!
 //! This module only owns the typed builders + the rendering helpers;
-//! the network submit lives in [`crate::api::ContrixApi`] and the
+//! the network submit lives in [`crate::api::CokretApi`] and the
 //! actual signing key plumbing lives in [`crate::event_signer`].
 
 use chrono::{DateTime, Utc};
@@ -189,7 +189,7 @@ impl InviteBindingTranscript {
 ///
 /// Returns the raw JSON body for the caller to wrap in an
 /// `OperationBuilder` / `EventEnvelope` and submit through
-/// [`crate::api::ContrixApi::submit_event_envelope`].
+/// [`crate::api::CokretApi::submit_event_envelope`].
 pub fn build_invite_claim_body(
     invite_id: &str,
     claimant_did: &str,
@@ -258,9 +258,9 @@ mod tests {
         let signing_key = deterministic_signing_key(7);
         let verifying = signing_key.verifying_key();
         let body = InviteSubjectProofBody {
-            invite_id: "cx:invite:0196419b-0000-7000-8000-000000000001".to_owned(),
+            invite_id: "ck:invite:0196419b-0000-7000-8000-000000000001".to_owned(),
             claimant_did: "did:web:alice.example".to_owned(),
-            claimant_device_id: "cx:device:0196419b-0000-7000-8000-000000000002".to_owned(),
+            claimant_device_id: "ck:device:0196419b-0000-7000-8000-000000000002".to_owned(),
             claimed_at: Utc::now(),
         };
         let bytes = body.canonical_bytes().unwrap();
@@ -272,7 +272,7 @@ mod tests {
     fn build_invite_claim_body_round_trips_proof() {
         let signing_key = deterministic_signing_key(7);
         let transcript = InviteBindingTranscript {
-            invite_id: "cx:invite:0196419b-0000-7000-8000-000000000001".to_owned(),
+            invite_id: "ck:invite:0196419b-0000-7000-8000-000000000001".to_owned(),
             oob_code_kind: "offline_token".to_owned(),
             token_commitment: Some("sha256:".to_owned() + &"a".repeat(64)),
             token_salt_id: Some("salt-1".to_owned()),
@@ -281,9 +281,9 @@ mod tests {
             claimed_at: Utc::now(),
         };
         let body = build_invite_claim_body(
-            "cx:invite:0196419b-0000-7000-8000-000000000001",
+            "ck:invite:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:device:0196419b-0000-7000-8000-000000000002",
+            "ck:device:0196419b-0000-7000-8000-000000000002",
             &transcript,
             &signing_key,
             "did:web:alice.example#device-0001",

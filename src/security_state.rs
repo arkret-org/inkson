@@ -145,12 +145,12 @@ pub fn projection_for_scope_id<'a>(
     }
     projections.get(scope_id).or_else(|| {
         scope_id
-            .strip_prefix("cx:space:")
-            .and_then(|suffix| projections.get(&format!("cx:realm:{suffix}")))
+            .strip_prefix("ck:space:")
+            .and_then(|suffix| projections.get(&format!("ck:realm:{suffix}")))
             .or_else(|| {
                 scope_id
-                    .strip_prefix("cx:realm:")
-                    .and_then(|suffix| projections.get(&format!("cx:space:{suffix}")))
+                    .strip_prefix("ck:realm:")
+                    .and_then(|suffix| projections.get(&format!("ck:space:{suffix}")))
             })
     })
 }
@@ -273,14 +273,14 @@ mod tests {
     fn security_projection_follows_space_home_realm() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "cx:realm:r1".to_owned(),
+            "ck:realm:r1".to_owned(),
             json!({"summary": {"encryption_profile": "mls_rfc9420"}}),
         );
         projections.insert(
-            "cx:space:s1".to_owned(),
-            json!({"schema": "cx.schema.space.v1", "realm_id": "cx:realm:r1"}),
+            "ck:space:s1".to_owned(),
+            json!({"schema": "cx.schema.space.v1", "realm_id": "ck:realm:r1"}),
         );
-        let body = security_projection_for_scope_id(&projections, "cx:space:s1")
+        let body = security_projection_for_scope_id(&projections, "ck:space:s1")
             .expect("realm projection for space");
         assert!(realm_projection_is_encrypted(body));
     }

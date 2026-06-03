@@ -768,7 +768,7 @@ pub fn SettingsPanel(
     let mut mls_group_policy = use_signal(|| "default".to_owned());
     let mut key_backup_status = use_signal(|| "Not configured".to_owned());
     let mut key_backup_id =
-        use_signal(|| "cx:backup:01964137-0000-7000-8000-000000000000".to_owned());
+        use_signal(|| "ck:backup:01964137-0000-7000-8000-000000000000".to_owned());
     let mut key_backup_passphrase = use_signal(String::new);
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
@@ -1814,7 +1814,7 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, |api| async move {
                                             api.mimi_proxy_download(json!({
-                                                "blob_ref": "cx:blob:sha256:e2e",
+                                                "blob_ref": "ck:blob:sha256:e2e",
                                                 "asset_privacy_policy": "provider_proxy"
                                             })).await
                                         })
@@ -1865,7 +1865,7 @@ pub fn SettingsPanel(
                                     input {
                                         "data-testid": "space-notification-target-input",
                                         value: "{notification_space_input}",
-                                        placeholder: "cx:realm:...",
+                                        placeholder: "ck:realm:...",
                                         oninput: move |evt| notification_space_input.set(evt.value()),
                                     }
                                 }
@@ -2273,7 +2273,7 @@ pub fn SettingsPanel(
                     div { class: "actions", "data-testid": "read-receipt-add-override",
                         input {
                             r#type: "text",
-                            placeholder: "cx:space:...",
+                            placeholder: "ck:space:...",
                             value: "{read_receipt_override_input()}",
                             oninput: move |evt| read_receipt_override_input.set(evt.value()),
                         }
@@ -2474,7 +2474,7 @@ pub fn SettingsPanel(
                         input {
                             r#type: "text",
                             "data-testid": "space-remark-add-id",
-                            placeholder: "cx:space:...",
+                            placeholder: "ck:space:...",
                             value: "{new_space_remark_id()}",
                             oninput: move |evt| new_space_remark_id.set(evt.value()),
                         }
@@ -2497,9 +2497,9 @@ pub fn SettingsPanel(
                                     );
                                     return;
                                 }
-                                if !space_id.starts_with("cx:space:") {
+                                if !space_id.starts_with("ck:space:") {
                                     status.set(
-                                        "Space ID must start with cx:space:".to_owned(),
+                                        "Space ID must start with ck:space:".to_owned(),
                                     );
                                     return;
                                 }
@@ -3311,13 +3311,13 @@ mod tests {
     #[test]
     fn build_read_receipt_preferences_body_has_canonical_field_shape() {
         let mut spaces = BTreeMap::new();
-        spaces.insert("cx:space:demo".to_owned(), false);
+        spaces.insert("ck:space:demo".to_owned(), false);
         let mut flows = BTreeMap::new();
-        flows.insert("cx:flow:demo".to_owned(), true);
+        flows.insert("ck:flow:demo".to_owned(), true);
         let body = build_read_receipt_preferences_body(true, &spaces, &flows);
         assert_eq!(body["default_send"], serde_json::Value::Bool(true));
-        assert_eq!(body["space_overrides"]["cx:space:demo"], false);
-        assert_eq!(body["flow_overrides"]["cx:flow:demo"], true);
+        assert_eq!(body["space_overrides"]["ck:space:demo"], false);
+        assert_eq!(body["flow_overrides"]["ck:flow:demo"], true);
         // Keys we don't expect in this body — explicit guards so a typo
         // (e.g. `default` instead of `default_send`) regression-bisects.
         assert!(body.get("default").is_none());

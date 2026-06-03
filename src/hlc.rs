@@ -1,4 +1,4 @@
-//! Hybrid Logical Clock (HLC) per contrix-spec section 6.4.
+//! Hybrid Logical Clock (HLC) per cokret-spec section 6.4.
 //!
 //! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)

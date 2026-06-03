@@ -11,7 +11,7 @@ pub struct ClientEncryptedMessage {
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use contrix_sdk::{
-        ContrixMlsGroup, ContrixMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
+        CokretMlsGroup, CokretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
@@ -19,15 +19,15 @@ mod native {
     use super::ClientEncryptedMessage;
 
     pub struct LocalMlsDevice {
-        identity: Option<ContrixMlsIdentity>,
-        group: Option<ContrixMlsGroup>,
+        identity: Option<CokretMlsIdentity>,
+        group: Option<CokretMlsGroup>,
         pending: Vec<ClientEncryptedMessage>,
     }
 
     impl LocalMlsDevice {
         pub fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
             Ok(Self {
-                identity: Some(ContrixMlsIdentity::new_basic(
+                identity: Some(CokretMlsIdentity::new_basic(
                     Did::new(principal_id.to_owned())?,
                     DeviceId::new(device_id.to_owned())?,
                 )?),
@@ -58,7 +58,7 @@ mod native {
                 .identity
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("MLS group already created or joined"))?;
-            self.group = Some(ContrixMlsGroup::join_from_welcome(identity, welcome)?);
+            self.group = Some(CokretMlsGroup::join_from_welcome(identity, welcome)?);
             Ok(())
         }
 
@@ -131,7 +131,7 @@ mod native {
             let encrypted = MessageCrypto::encrypt(
                 group,
                 message_id,
-                "application/vnd.contrix.message+json",
+                "application/vnd.cokret.message+json",
                 plaintext,
             )?;
             Ok(ClientEncryptedMessage {
@@ -224,7 +224,7 @@ fn compose_local_encrypted_message_inner(
             scheme: EncryptedPayloadScheme::MlsRfc9420,
             group_id: space_id.replace(':', "_"),
             epoch: 0,
-            content_type: "application/vnd.contrix.message+json".to_owned(),
+            content_type: "application/vnd.cokret.message+json".to_owned(),
             ciphertext: "b3BhcXVlLXdlYi1lbmNyeXB0ZWQtcGF5bG9hZA".to_owned(),
             aad: Some(serde_json::json!({
                 "space_id": space_id,
@@ -249,26 +249,26 @@ mod tests {
 
     #[test]
     fn local_mls_devices_encrypt_decrypt_and_preserve_pending_ciphertext() {
-        // SDK 0.7 tightened DeviceId validation — only `cx:device:<uuid7>`
+        // SDK 0.7 tightened DeviceId validation — only `ck:device:<uuid7>`
         // forms are accepted; `dev_alice_1` style ids no longer pass.
         let mut alice = LocalMlsDevice::new(
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         let mut bob = LocalMlsDevice::new(
             "did:web:bob.example",
-            "cx:device:01904100-0000-7000-8000-000000000002",
+            "ck:device:01904100-0000-7000-8000-000000000002",
         )
         .unwrap();
         let bob_keys = bob.key_package_record().unwrap();
 
-        alice.create_group(b"cx:space:local-e2ee").unwrap();
+        alice.create_group(b"ck:space:local-e2ee").unwrap();
         let welcome = alice.add_member(&bob_keys).unwrap().welcome;
         bob.join_from_welcome(&welcome).unwrap();
 
         let encrypted = alice
-            .encrypt_message("cx:message:local-1", br#"{"body":"hello secure client"}"#)
+            .encrypt_message("ck:message:local-1", br#"{"body":"hello secure client"}"#)
             .unwrap();
         let ciphertext = encrypted.payload.ciphertext.clone();
         let digest = encrypted.payload.payload_digest.clone();
@@ -281,7 +281,7 @@ mod tests {
 
         let mut offline = LocalMlsDevice::new(
             "did:web:carol.example",
-            "cx:device:01904100-0000-7000-8000-000000000003",
+            "ck:device:01904100-0000-7000-8000-000000000003",
         )
         .unwrap();
         let pending = offline.decrypt_or_preserve(encrypted).unwrap();
@@ -301,24 +301,24 @@ mod tests {
     fn removed_mls_member_cannot_decrypt_post_remove_ciphertext() {
         let mut alice = LocalMlsDevice::new(
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
+            "ck:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         let mut bob = LocalMlsDevice::new(
             "did:web:bob.example",
-            "cx:device:01904100-0000-7000-8000-000000000002",
+            "ck:device:01904100-0000-7000-8000-000000000002",
         )
         .unwrap();
         let mut carol = LocalMlsDevice::new(
             "did:web:carol.example",
-            "cx:device:01904100-0000-7000-8000-000000000003",
+            "ck:device:01904100-0000-7000-8000-000000000003",
         )
         .unwrap();
 
         let bob_keys = bob.key_package_record().unwrap();
         let carol_keys = carol.key_package_record().unwrap();
 
-        alice.create_group(b"cx:space:local-e2ee-remove").unwrap();
+        alice.create_group(b"ck:space:local-e2ee-remove").unwrap();
         let bob_add = alice.add_member(&bob_keys).unwrap();
         bob.join_from_welcome(&bob_add.welcome).unwrap();
 
@@ -327,7 +327,7 @@ mod tests {
         carol.join_from_welcome(&carol_add.welcome).unwrap();
 
         let before_remove = alice
-            .encrypt_message("cx:message:pre-remove", br#"{"body":"before remove"}"#)
+            .encrypt_message("ck:message:pre-remove", br#"{"body":"before remove"}"#)
             .unwrap();
         let before_epoch = before_remove.payload.epoch;
         let bob_before = bob.decrypt_or_preserve(before_remove.clone()).unwrap();
@@ -351,7 +351,7 @@ mod tests {
         carol.apply_commit(&remove.commit).unwrap();
 
         let after_remove = alice
-            .encrypt_message("cx:message:post-remove", br#"{"body":"after remove"}"#)
+            .encrypt_message("ck:message:post-remove", br#"{"body":"after remove"}"#)
             .unwrap();
         assert!(
             after_remove.payload.epoch > before_epoch,
@@ -376,18 +376,18 @@ mod tests {
     fn local_compose_creates_protocol_mls_envelope() {
         let encrypted = compose_local_encrypted_message(
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000001",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:message:local-2",
+            "ck:device:01904100-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:message:local-2",
             "encrypted hello",
         )
         .unwrap();
 
-        assert_eq!(encrypted.message_id, "cx:message:local-2");
+        assert_eq!(encrypted.message_id, "ck:message:local-2");
         assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
         assert_eq!(
             encrypted.payload.content_type,
-            "application/vnd.contrix.message+json"
+            "application/vnd.cokret.message+json"
         );
     }
 }

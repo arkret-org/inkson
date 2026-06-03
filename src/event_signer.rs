@@ -3,7 +3,7 @@
 //!
 //! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner`,
 //! `EventProofBuilder`, and `ProductionVerifier` in the SDK
-//! (`contrix-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
+//! (`cokret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
 //! yougen's [`crate::operation::EventEnvelope::sign_ed25519`] hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
 //! the SDK had to be ported a second time into yougen. This module
@@ -17,7 +17,7 @@
 //!   `secure_key_store::ensure_signing_seed`) and returns a `YougenEventSigner` ready to attach
 //!   detached JWS proofs to event envelopes.
 //! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
-//!   active signer; the submit guard in [`crate::api::ContrixApi::submit_event_envelope`] reaches
+//!   active signer; the submit guard in [`crate::api::CokretApi::submit_event_envelope`] reaches
 //!   into this to lazily sign envelopes that were built unsigned.
 //! * [`signer_status`] — diagnostic snapshot for the settings panel.
 //!
@@ -490,7 +490,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("cx:space:t", "did:web:bob.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:bob.example", "cx.message.create")
                 .body(json!({"body": "hi"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -522,7 +522,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("cx:space:t", "did:web:alice.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:alice.example", "cx.message.create")
                 .body(json!({"body": "actor-rooted"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -552,7 +552,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("cx:space:t", "did:web:carol.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:carol.example", "cx.message.create")
                 .body(json!({"body": "verifiable"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -622,7 +622,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("cx:space:t", "did:web:dave.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:dave.example", "cx.message.create")
                 .body(json!({"body": "auto"}))
                 .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
@@ -640,7 +640,7 @@ mod tests {
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
         let mut event =
-            OperationBuilder::new("cx:space:t", "did:web:eve.example", "cx.message.create")
+            OperationBuilder::new("ck:space:t", "did:web:eve.example", "cx.message.create")
                 .body(json!({"body": "no"}))
                 .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();

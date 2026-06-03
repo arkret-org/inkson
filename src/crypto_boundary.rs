@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn rust_boundary_signs_and_self_verifies() {
         let boundary = RustSdkBoundary::from_seed(fixed_seed());
-        let canonical = b"contrix-test-canonical-bytes";
+        let canonical = b"cokret-test-canonical-bytes";
         let sig = boundary.sign(canonical).expect("sign");
         assert_eq!(sig.len(), 64);
         let vk = boundary.verifying_key_bytes();

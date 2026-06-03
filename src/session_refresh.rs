@@ -25,7 +25,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::api::{ContrixApi, SessionGrantIntrospectionProof};
+use crate::api::{CokretApi, SessionGrantIntrospectionProof};
 use crate::coauth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
@@ -256,7 +256,7 @@ pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
     proof: &SessionGrantIntrospectionProof,
 ) -> anyhow::Result<DevLoginResponse> {
-    let api = ContrixApi::new(&grant.principal_server_url)?;
+    let api = CokretApi::new(&grant.principal_server_url)?;
     api.exchange_session_grant_at_with_proof(
         &grant.session_grant_exchange_path,
         &grant.grant_jwt,
@@ -366,7 +366,7 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     if crate::api::is_terminal_session_grant_error(error) {
         return true;
     }
-    if let Some(api_error) = error.downcast_ref::<crate::api::ContrixApiError>() {
+    if let Some(api_error) = error.downcast_ref::<crate::api::CokretApiError>() {
         let code = api_error.error.code();
         let message = api_error.error.message().to_ascii_lowercase();
         if matches!(
@@ -505,11 +505,11 @@ mod tests {
     fn commit_clears_grant_and_requires_login_when_principal_reports_revoked_session_grant() {
         let mut store = isolated_store("revoked-grant");
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
-        let error: anyhow::Error = crate::api::ContrixApiError {
+        let error: anyhow::Error = crate::api::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api::decode_contrix_error(
                 reqwest::StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"cx:request:01964137-0000-7000-8000-000000000012"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
         }
         .into();
@@ -524,11 +524,11 @@ mod tests {
     fn commit_keeps_grant_for_unrelated_capability_denial() {
         let mut store = isolated_store("unrelated-capability-denied");
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
-        let error: anyhow::Error = crate::api::ContrixApiError {
+        let error: anyhow::Error = crate::api::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api::decode_contrix_error(
                 reqwest::StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:request:01964137-0000-7000-8000-000000000012"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
         }
         .into();

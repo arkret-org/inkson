@@ -77,12 +77,12 @@ impl AppealState {
 /// [`contrix_sdk::AppealSubmitPayload`] / `cx.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
-/// - `decision_event_id` — the `cx:event:` id of the original moderation decision being appealed
+/// - `decision_event_id` — the `ck:event:` id of the original moderation decision being appealed
 ///   (used as `decision_ref`).
-/// - `target_ref` — opaque pointer to the moderated content (`cx:event:…` for a message,
-///   `cx:flow:…` for a flow, etc.).
+/// - `target_ref` — opaque pointer to the moderated content (`ck:event:…` for a message,
+///   `ck:flow:…` for a flow, etc.).
 /// - `reason_text_ref` — blob ref or inline string carrying the appeal narrative (server may
-///   require a `cx:blob:…` ref for E2EE Realms).
+///   require a `ck:blob:…` ref for E2EE Realms).
 pub fn build_appeal_submit_op(
     realm_id: &str,
     appellant: &str,
@@ -93,7 +93,7 @@ pub fn build_appeal_submit_op(
 ) -> anyhow::Result<OperationBuilder> {
     // Round R2/R3: typed appeal id binding. Validate the input rather than
     // forwarding free-form strings to the wire — the SDK's TypedAppealId
-    // enforces the `cx:appeal:<uuidv7>` shape.
+    // enforces the `ck:appeal:<uuidv7>` shape.
     let typed_appeal_id = contrix_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
     let realm_id = scope_id_as_realm_id(realm_id);
@@ -124,11 +124,11 @@ pub fn build_appeal_submit_op(
     )
 }
 
-/// Build a fresh `cx:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits
+/// Build a fresh `ck:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits
 /// process clock entropy so two devices appealing the same decision
 /// don't collide.
 pub fn new_appeal_id() -> String {
-    format!("cx:appeal:{}", crate::operation::uuid_v7())
+    format!("ck:appeal:{}", crate::operation::uuid_v7())
 }
 
 /// Component: "Appeal this moderation decision" entrypoint. Renders near
@@ -205,7 +205,7 @@ pub fn AppealEntrypoint(
                             let appeal_id = new_appeal_id();
                             // TODO(round23-T06): once the blob upload path
                             // settles for appeal narratives in E2EE Realms,
-                            // POST the reason as a `cx:blob:…` ref instead
+                            // POST the reason as a `ck:blob:…` ref instead
                             // of inlining the string. For now we inline so
                             // server-side reducer testing has a payload to
                             // chew on.
@@ -289,11 +289,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_emits_canonical_kind() {
         let op = build_appeal_submit_op(
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:appeal:01904100-0000-7000-8000-000000000002",
-            "cx:event:01904100-0000-7000-8000-000000000003",
-            "cx:event:01904100-0000-7000-8000-000000000003",
+            "ck:appeal:01904100-0000-7000-8000-000000000002",
+            "ck:event:01904100-0000-7000-8000-000000000003",
+            "ck:event:01904100-0000-7000-8000-000000000003",
             "inline:I was misidentified.",
         )
         .expect("build appeal op")
@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(op.kind, "cx.moderation.appeal.submit");
         assert_eq!(
             op.payload["realm_id"],
-            "cx:realm:01904100-0000-7000-8000-000000000001"
+            "ck:realm:01904100-0000-7000-8000-000000000001"
         );
         assert!(op.payload["appeal_id"].is_string());
         assert!(op.payload.get("schema").is_none());
@@ -319,11 +319,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_rejects_bad_appeal_id() {
         let err = build_appeal_submit_op(
-            "cx:space:01904100-0000-7000-8000-000000000001",
+            "ck:space:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "appeal-1",
-            "cx:event:01904100-0000-7000-8000-000000000003",
-            "cx:event:01904100-0000-7000-8000-000000000003",
+            "ck:event:01904100-0000-7000-8000-000000000003",
+            "ck:event:01904100-0000-7000-8000-000000000003",
             "blob:reason",
         );
         assert!(err.is_err());

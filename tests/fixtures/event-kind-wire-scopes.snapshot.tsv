@@ -1,7 +1,7 @@
 # yougen event-kind wire_scope snapshot
 #
 # Pinned mirror of `wire_scope` from
-# `contrix-spec/spec/v1/artifacts/registry/event-kind-registry.json`
+# `cokret-spec/spec/v1/artifacts/registry/event-kind-registry.json`
 # (status == "active"). One row per kind, sorted by kind. Format is
 # tab-separated: `<event_kind>\t<wire_scope>`.
 #

@@ -65,7 +65,7 @@ pub fn build_consent_grant_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
+    let cell_id = format!("ck:cell:cx.component.consent.grant.v1:{consent_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "add", "tag": tag }
@@ -121,7 +121,7 @@ pub fn build_consent_revoke_move_v1(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.consent.grant.v1:{consent_id}");
+    let cell_id = format!("ck:cell:cx.component.consent.grant.v1:{consent_id}");
     let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
@@ -272,7 +272,7 @@ pub fn build_capability_grant_move_with_constraints(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
+    let cell_id = format!("ck:cell:cx.component.capability.grant.v1:{grant_id}");
     let mut op = serde_json::json!({ "kind": "add", "tag": tag });
     let constraint_values: Vec<serde_json::Value> = constraints
         .iter()
@@ -308,7 +308,7 @@ pub fn build_capability_revoke_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.capability.grant.v1:{grant_id}");
+    let cell_id = format!("ck:cell:cx.component.capability.grant.v1:{grant_id}");
     let mut op = serde_json::json!({ "kind": "remove", "tag": tag });
     if let Some(reason) = reason {
         op["reason"] = serde_json::Value::String(reason.to_owned());
@@ -330,7 +330,7 @@ pub fn build_member_state_transition_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.member.state.v1:{actor_id}");
+    let cell_id = format!("ck:cell:cx.component.member.state.v1:{actor_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "transition", "from": from_state, "to": to_state }
@@ -352,7 +352,7 @@ pub fn build_space_organization_update_move(
 ) -> Result<UnsignedMove> {
     // TODO(realm-rework): cell family renamed from cx.component.space.organization.v1
     // to cx.component.realm.organization.v1 in spec post-R1.7.
-    let cell_id = format!("cx:cell:cx.component.realm.organization.v1:{space_id}");
+    let cell_id = format!("ck:cell:cx.component.realm.organization.v1:{space_id}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": { "kind": "set", "value": value }
@@ -381,7 +381,7 @@ pub fn build_mls_commit_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.mls.epoch.v1:{epoch_cell_subject}");
+    let cell_id = format!("ck:cell:cx.component.mls.epoch.v1:{epoch_cell_subject}");
     let effect = serde_json::json!({
         "cell": cell_id,
         "op": {
@@ -460,7 +460,7 @@ pub fn build_mls_commit_move_with_governance_binding(
 /// `flow_id` is the cell subject (per-flow position cell). `value` is the
 /// position record soland's reducer stores verbatim — typically:
 ///
-///   `{"list_space_id": "cx:space:...", "rank": "r042", "title": "..."}`
+///   `{"list_space_id": "ck:space:...", "rank": "r042", "title": "..."}`
 ///
 /// Reducer treats the cell as a cas-register: concurrent writes from
 /// two devices to the same flow_id surface as `bottom=expose` and the
@@ -473,7 +473,7 @@ pub fn build_flow_position_move(
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
-    let cell_id = format!("cx:cell:cx.component.flow.position.v1:{flow_id}");
+    let cell_id = format!("ck:cell:cx.component.flow.position.v1:{flow_id}");
     // NOTE: the SDK's `LatticeOp` serializes the discriminator under
     // the wire-key `kind` (see `move_event.rs:LatticeOp.op_type`'s
     // `#[serde(rename = "kind")]`). Older revisions of this builder
@@ -491,17 +491,17 @@ pub fn build_flow_position_move(
 /// Identifies the cas-register cell that holds a Flow's position inside
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
-/// §3.6](../../contrix-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
-/// `cx:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>` — a Flow can appear on
+/// §3.6](../../cokret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
+/// `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>` — a Flow can appear on
 /// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn flow_position_cell_id(board_space_id: &str, flow_id: &str) -> String {
-    format!("cx:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}")
+    format!("ck:cell:cx.component.flow.position.v1:{board_space_id}:{flow_id}")
 }
 
 /// CAS pre-state that the caller expects to find on the position cell
 /// before the Move applies. Compiled into a `head_eq` precondition per
 /// [`spec/v1/zh/sync/operations-sync.md`
-/// §9.1](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
+/// §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// - `Initial` ⇒ `head_eq null` — the Flow is not yet on this Board.
 /// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` — the Move expects the Flow
@@ -540,7 +540,7 @@ impl FlowPositionExpectation {
 
 /// Effect value for a `cx.flow.move` / `cx.flow.reorder` Move. Compiles
 /// to a cas-register `set` with `{"list_space_id", "rank"}` per
-/// [`operations-sync.md` §9.1-9.2](../../contrix-spec/spec/v1/zh/sync/operations-sync.md).
+/// [`operations-sync.md` §9.1-9.2](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// `Remove` is the "Flow leaves the Board" effect — compiles to
 /// `set null`. Reducer side this also retires the derived
@@ -569,13 +569,13 @@ impl FlowPositionEffect {
 }
 
 /// Construct a `cx.flow.move` / `cx.flow.reorder` Move that targets the
-/// spec-canonical cell `cx:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`
+/// spec-canonical cell `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`
 /// with a `head_eq` precondition expressing the caller's view of
 /// pre-state. This is the spec-compliant replacement for the earlier
 /// [`build_flow_position_move`] (which used a non-composite cell
 /// subject and skipped CAS preconditions).
 ///
-/// Per [`operations-sync.md` §9](../../contrix-spec/spec/v1/zh/sync/operations-sync.md):
+/// Per [`operations-sync.md` §9](../../cokret-spec/spec/v1/zh/sync/operations-sync.md):
 ///
 /// - `expected_position == FlowPositionExpectation::Initial` is only valid when the Flow has never
 ///   been positioned on this Board; reducer rejects with `failed_precondition` otherwise.
@@ -945,7 +945,7 @@ mod tests {
         // SHA-256 of empty bytes — used as a "no predecessor" placeholder
         // for tests; production callers thread in the latest known
         // anchor frontier ref.
-        "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "ck:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
 
     fn fixed_hlc() -> &'static str {
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn consent_grant_builder_produces_or_set_add_effect() {
         let did = "did:web:alice.example";
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000000";
         let unsigned = build_consent_grant_move(
             did,
             space,
@@ -974,7 +974,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.consent.grant.v1:")
+                .starts_with("ck:cell:cx.component.consent.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
@@ -984,7 +984,7 @@ mod tests {
     fn consent_revoke_builder_produces_or_set_remove_with_reason() {
         let unsigned = build_consent_revoke_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cnt.01abc",
             "scope:contacts",
             Some("user revoked from settings UI"),
@@ -997,7 +997,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.consent.grant.v1:")
+                .starts_with("ck:cell:cx.component.consent.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("scope:contacts"));
@@ -1011,7 +1011,7 @@ mod tests {
     fn consent_revoke_builder_omits_reason_when_none() {
         let unsigned = build_consent_revoke_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cnt.01abc",
             "scope:contacts",
             None,
@@ -1028,7 +1028,7 @@ mod tests {
     fn capability_grant_builder_produces_or_set_add_effect() {
         let unsigned = build_capability_grant_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
             "discussion.message.create",
             fixed_anchor_ref(),
@@ -1040,7 +1040,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.capability.grant.v1:")
+                .starts_with("ck:cell:cx.component.capability.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Add);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
@@ -1050,7 +1050,7 @@ mod tests {
     fn capability_revoke_builder_produces_or_set_remove_with_reason() {
         let unsigned = build_capability_revoke_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
             "discussion.message.create",
             Some("rotation policy quarterly"),
@@ -1063,7 +1063,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.capability.grant.v1:")
+                .starts_with("ck:cell:cx.component.capability.grant.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Remove);
         assert_eq!(effect.op.tag.as_deref(), Some("discussion.message.create"));
@@ -1113,7 +1113,7 @@ mod tests {
             CapabilityConstraintInput::temporal(Some("2026-05-09T00:00:00Z".to_owned()), None);
         let unsigned = build_capability_grant_move_with_constraints(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
             "discussion.message.create",
             std::slice::from_ref(&constraint),
@@ -1151,7 +1151,7 @@ mod tests {
         // Empty constraints are not serialized on the canonical wire.
         let with_empty = build_capability_grant_move_with_constraints(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
             "discussion.message.create",
             &[],
@@ -1161,7 +1161,7 @@ mod tests {
         .unwrap();
         let direct = build_capability_grant_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cap.01abc",
             "discussion.message.create",
             fixed_anchor_ref(),
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn capability_grant_and_revoke_target_same_cell_family() {
-        let space = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000000";
         let granted = build_capability_grant_move(
             "did:web:admin.example",
             space,
@@ -1207,7 +1207,7 @@ mod tests {
     fn member_state_builder_produces_fsm_transition() {
         let unsigned = build_member_state_transition_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "did.web.alice.example",
             "invited",
             "join",
@@ -1220,7 +1220,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.member.state.v1:")
+                .starts_with("ck:cell:cx.component.member.state.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Transition);
         assert_eq!(
@@ -1234,7 +1234,7 @@ mod tests {
     fn space_organization_builder_produces_cas_register_set() {
         let unsigned = build_space_organization_update_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             serde_json::json!({"title": "Renamed", "owner": "did:web:admin.example"}),
             fixed_anchor_ref(),
             fixed_hlc(),
@@ -1245,7 +1245,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.realm.organization.v1:")
+                .starts_with("ck:cell:cx.component.realm.organization.v1:")
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set op carries a value");
@@ -1256,7 +1256,7 @@ mod tests {
     fn move_id_is_content_addressed_sha256_of_canonical_bytes() {
         let unsigned = build_consent_grant_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cnt.01abc",
             "scope:contacts",
             fixed_anchor_ref(),
@@ -1283,7 +1283,7 @@ mod tests {
 
         let unsigned = build_consent_grant_move(
             &did,
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "cnt.01abc",
             "scope:contacts",
             fixed_anchor_ref(),
@@ -1313,10 +1313,10 @@ mod tests {
     fn mls_commit_move_targets_epoch_cell_and_carries_covered_frontier() {
         let unsigned = build_mls_commit_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
             42,
-            "cx:state:sha256:cffrontier01",
+            "ck:state:sha256:cffrontier01",
             fixed_anchor_ref(),
             fixed_hlc(),
         )
@@ -1326,7 +1326,7 @@ mod tests {
             effect
                 .cell
                 .as_str()
-                .starts_with("cx:cell:cx.component.mls.epoch.v1:"),
+                .starts_with("ck:cell:cx.component.mls.epoch.v1:"),
             "MLS commit must target mls.epoch.v1 cell"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
@@ -1334,7 +1334,7 @@ mod tests {
         assert_eq!(value.get("epoch").and_then(|v| v.as_u64()), Some(42));
         assert_eq!(
             value.get("covered_frontier").and_then(|v| v.as_str()),
-            Some("cx:state:sha256:cffrontier01")
+            Some("ck:state:sha256:cffrontier01")
         );
     }
 
@@ -1345,8 +1345,8 @@ mod tests {
         use crate::mls::governance::GovernanceBindingPayload;
 
         let space_id =
-            SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
-        let anchor = AnchorId::new(format!("cx:anchor:sha256:{}", "a".repeat(64))).unwrap();
+            SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap();
+        let anchor = AnchorId::new(format!("ck:anchor:sha256:{}", "a".repeat(64))).unwrap();
         let schedule = Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
         let binding = GovernanceBindingPayload::from_anchor(
             "mls-group-chat",
@@ -1391,9 +1391,9 @@ mod tests {
     fn conflict_repair_move_requires_at_least_two_heads() {
         let result = build_conflict_repair_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:cell:cx.component.realm.organization.v1:cx:realm:0196419b-0000-7000-8000-000000000003",
-            &["cx:anchor:sha256:only-one".to_owned()],
+            "ck:space:0196419b-0000-7000-8000-000000000003",
+            "ck:cell:cx.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
+            &["ck:anchor:sha256:only-one".to_owned()],
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),
             fixed_anchor_ref(),
@@ -1408,13 +1408,13 @@ mod tests {
     #[test]
     fn conflict_repair_move_emits_head_in_and_recovery_preconditions() {
         let heads = vec![
-            "cx:anchor:sha256:headA".to_owned(),
-            "cx:anchor:sha256:headB".to_owned(),
+            "ck:anchor:sha256:headA".to_owned(),
+            "ck:anchor:sha256:headB".to_owned(),
         ];
         let unsigned = build_conflict_repair_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:cell:cx.component.realm.organization.v1:cx:realm:0196419b-0000-7000-8000-000000000003",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
+            "ck:cell:cx.component.realm.organization.v1:ck:realm:0196419b-0000-7000-8000-000000000003",
             &heads,
             "cap.recovery-01",
             serde_json::json!({"title": "merged"}),
@@ -1464,20 +1464,20 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("repair_of array on effect value");
         assert_eq!(repair_of.len(), 2);
-        assert_eq!(repair_of[0].as_str(), Some("cx:anchor:sha256:headA"),);
-        assert_eq!(repair_of[1].as_str(), Some("cx:anchor:sha256:headB"),);
+        assert_eq!(repair_of[0].as_str(), Some("ck:anchor:sha256:headA"),);
+        assert_eq!(repair_of[1].as_str(), Some("ck:anchor:sha256:headB"),);
     }
 
     #[test]
     fn conflict_repair_move_wraps_scalar_winner_under_value_field() {
         let heads = vec![
-            "cx:anchor:sha256:headA".to_owned(),
-            "cx:anchor:sha256:headB".to_owned(),
+            "ck:anchor:sha256:headA".to_owned(),
+            "ck:anchor:sha256:headB".to_owned(),
         ];
         let unsigned = build_conflict_repair_move(
             "did:web:admin.example",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
-            "cx:cell:cx.component.flow.position.v1:cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
+            "ck:cell:cx.component.flow.position.v1:ck:flow:01abcd",
             &heads,
             "cap.recovery-01",
             // Scalar winner — must be wrapped so repair_of is reachable.
@@ -1505,10 +1505,10 @@ mod tests {
     fn flow_position_builder_targets_flow_position_cell_with_subject() {
         let unsigned = build_flow_position_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:flow:01abcd",
             serde_json::json!({
-                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000001",
+                "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000001",
                 "rank": "r042",
                 "title": "Add tests",
             }),
@@ -1519,30 +1519,30 @@ mod tests {
         let effect = &unsigned.move_obj.effects[0];
         assert_eq!(
             effect.cell.as_str(),
-            "cx:cell:cx.component.flow.position.v1:cx:flow:01abcd"
+            "ck:cell:cx.component.flow.position.v1:ck:flow:01abcd"
         );
         assert_eq!(effect.op.op_type, LatticeOpType::Set);
         let value = effect.op.value.as_ref().expect("set carries value");
         assert_eq!(
             value.get("list_space_id").and_then(|v| v.as_str()),
-            Some("cx:space:0196419b-0000-7000-8000-000000000001")
+            Some("ck:space:0196419b-0000-7000-8000-000000000001")
         );
         assert_eq!(value.get("rank").and_then(|v| v.as_str()), Some("r042"));
     }
 
     /// spec/v1/zh/models/realm-and-space.md §3.6: the position cell key is
-    /// `cx:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`.
+    /// `ck:cell:cx.component.flow.position.v1:<board_space_id>:<flow_id>`.
     /// This pins the composite subject so a future refactor that drops one
     /// segment fails loudly.
     #[test]
     fn flow_position_cell_id_is_composite_board_flow() {
         let cell = flow_position_cell_id(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:01abcd",
         );
         assert_eq!(
             cell,
-            "cx:cell:cx.component.flow.position.v1:cx:space:0196419b-0000-7000-8000-000000000010:cx:flow:01abcd"
+            "ck:cell:cx.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
         );
     }
 
@@ -1558,12 +1558,12 @@ mod tests {
     fn flow_position_cas_move_initial_emits_head_eq_null_and_spec_effect() {
         let unsigned = build_flow_position_cas_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:01abcd",
             &FlowPositionExpectation::Initial,
             &FlowPositionEffect::SetPosition {
-                list_space_id: "cx:space:0196419b-0000-7000-8000-000000000020".to_owned(),
+                list_space_id: "ck:space:0196419b-0000-7000-8000-000000000020".to_owned(),
                 rank: "mV".to_owned(),
             },
             fixed_anchor_ref(),
@@ -1575,7 +1575,7 @@ mod tests {
         assert_eq!(
             pre["cell"].as_str(),
             Some(
-                "cx:cell:cx.component.flow.position.v1:cx:space:0196419b-0000-7000-8000-000000000010:cx:flow:01abcd"
+                "ck:cell:cx.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
             )
         );
         assert_eq!(pre["predicate"]["op"].as_str(), Some("head_eq"));
@@ -1588,7 +1588,7 @@ mod tests {
         assert_eq!(effect["op"]["kind"].as_str(), Some("set"));
         assert_eq!(
             effect["op"]["value"]["list_space_id"].as_str(),
-            Some("cx:space:0196419b-0000-7000-8000-000000000020"),
+            Some("ck:space:0196419b-0000-7000-8000-000000000020"),
             "spec cell shape uses list_space_id, not list_id",
         );
         assert_eq!(effect["op"]["value"]["rank"].as_str(), Some("mV"));
@@ -1602,15 +1602,15 @@ mod tests {
     fn flow_position_cas_move_with_expected_position_emits_head_eq_value() {
         let unsigned = build_flow_position_cas_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:01abcd",
             &FlowPositionExpectation::At {
-                list_space_id: "cx:space:0196419b-0000-7000-8000-000000000030".to_owned(),
+                list_space_id: "ck:space:0196419b-0000-7000-8000-000000000030".to_owned(),
                 rank: "h0".to_owned(),
             },
             &FlowPositionEffect::SetPosition {
-                list_space_id: "cx:space:0196419b-0000-7000-8000-000000000020".to_owned(),
+                list_space_id: "ck:space:0196419b-0000-7000-8000-000000000020".to_owned(),
                 rank: "mV".to_owned(),
             },
             fixed_anchor_ref(),
@@ -1622,13 +1622,13 @@ mod tests {
         assert_eq!(pre["op"].as_str(), Some("head_eq"));
         assert_eq!(
             pre["value"]["list_space_id"].as_str(),
-            Some("cx:space:0196419b-0000-7000-8000-000000000030")
+            Some("ck:space:0196419b-0000-7000-8000-000000000030")
         );
         assert_eq!(pre["value"]["rank"].as_str(), Some("h0"));
         let effect = &body["effects"][0];
         assert_eq!(
             effect["op"]["value"]["list_space_id"].as_str(),
-            Some("cx:space:0196419b-0000-7000-8000-000000000020")
+            Some("ck:space:0196419b-0000-7000-8000-000000000020")
         );
         assert_eq!(effect["op"]["value"]["rank"].as_str(), Some("mV"));
     }
@@ -1639,11 +1639,11 @@ mod tests {
     fn flow_position_cas_move_remove_emits_set_null_effect() {
         let unsigned = build_flow_position_cas_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:01abcd",
             &FlowPositionExpectation::At {
-                list_space_id: "cx:space:0196419b-0000-7000-8000-000000000040".to_owned(),
+                list_space_id: "ck:space:0196419b-0000-7000-8000-000000000040".to_owned(),
                 rank: "zz".to_owned(),
             },
             &FlowPositionEffect::Remove,
@@ -1665,12 +1665,12 @@ mod tests {
     /// Reducer-side schema rule distinguishes this from cross-list move.
     #[test]
     fn flow_position_cas_move_in_list_reorder_keeps_same_list() {
-        let list = "cx:space:0196419b-0000-7000-8000-000000000050".to_owned();
+        let list = "ck:space:0196419b-0000-7000-8000-000000000050".to_owned();
         let unsigned = build_flow_position_cas_move(
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000000",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:01abcd",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:01abcd",
             &FlowPositionExpectation::At {
                 list_space_id: list.clone(),
                 rank: "h0".to_owned(),

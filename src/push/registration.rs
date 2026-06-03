@@ -4,7 +4,7 @@
 //! request builder, registration-state persistence helper, VAPID describe
 //! fetch). What was missing was a *single* end-to-end orchestrator that
 //! resolves a real platform token via the active [`PushTokenProvider`],
-//! posts the register-device request through the chime [`ContrixPushClient`]
+//! posts the register-device request through the chime [`CokretPushClient`]
 //! pointed at the floria notify gateway, and persists the resulting
 //! [`PushRegistrationState`] to [`LocalStateStore`].
 //!
@@ -35,7 +35,7 @@
 //! ```
 
 use chime::{
-    ContrixPushClient, GatewayBinding, PushDeviceConfig, PushGatewayType, PushPreferences,
+    CokretPushClient, GatewayBinding, PushDeviceConfig, PushGatewayType, PushPreferences,
     PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse,
     build_register_device_request,
 };
@@ -71,7 +71,7 @@ pub enum PushRegistrationError {
     /// chime SDK reported a transport / HTTP failure.
     Transport(String),
     /// No coauth session grant is available to populate
-    /// `X-Contrix-Session-Grant`.
+    /// `X-Cokret-Session-Grant`.
     MissingSessionGrant,
     /// The persisted grant is not usable for this registration.
     SessionGrantMismatch { reason: String },
@@ -133,7 +133,7 @@ pub struct RegisterContext {
     pub principal_id: Option<String>,
     /// API access token (chime client posts `Authorization: Bearer …`).
     pub bearer_token: Option<String>,
-    /// X-Contrix-Session-Grant header (coauth-issued grant). `None`
+    /// X-Cokret-Session-Grant header (coauth-issued grant). `None`
     /// means yougen loads the persisted coauth session grant from
     /// `LocalStateStore`, mints the matching introspection proof headers,
     /// and fails closed if no grant is available.
@@ -181,7 +181,7 @@ pub async fn register_via_chime(
         .map_err(|err| PushRegistrationError::PlaceholderTokenRejected(err.to_string()))?;
 
     let mut client =
-        ContrixPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
+        CokretPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
     if let Some(token) = ctx.bearer_token.as_deref() {
         client = client.with_bearer_token(token);
     }
@@ -193,8 +193,8 @@ pub async fn register_via_chime(
         session_grant.proof_jwt.as_deref(),
     ) {
         client = client
-            .with_header("X-Contrix-Session-Grant-Challenge", challenge)
-            .and_then(|client| client.with_header("X-Contrix-Session-Grant-Proof", proof_jwt))
+            .with_header("X-Cokret-Session-Grant-Challenge", challenge)
+            .and_then(|client| client.with_header("X-Cokret-Session-Grant-Proof", proof_jwt))
             .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
     }
 
@@ -460,7 +460,7 @@ mod tests {
         PersistedSessionGrant {
             grant_jwt: "header.payload.signature".to_owned(),
             session_private_key_pem: pem,
-            grant_id: "cx:grant:push-local".to_owned(),
+            grant_id: "ck:grant:push-local".to_owned(),
             audience: "https://principal.example/".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
@@ -513,10 +513,10 @@ mod tests {
     #[test]
     fn build_request_stamps_active_circle_into_idempotency_key() {
         let mut c = ctx("dev_yougen");
-        c.active_circle_id = Some("cx:circle:opsroom".to_owned());
+        c.active_circle_id = Some("ck:circle:opsroom".to_owned());
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
         let key = request.idempotency_key.as_deref().expect("idempotency_key");
-        assert!(key.contains("cx:circle:opsroom"), "idempotency_key={key}");
+        assert!(key.contains("ck:circle:opsroom"), "idempotency_key={key}");
     }
 
     #[test]

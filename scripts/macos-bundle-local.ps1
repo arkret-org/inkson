@@ -76,7 +76,7 @@ try {
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>yougen</string>
-  <key>CFBundleIdentifier</key><string>com.contrix.yougen</string>
+  <key>CFBundleIdentifier</key><string>com.cokret.yougen</string>
   <key>CFBundleName</key><string>yougen</string>
   <key>CFBundleVersion</key><string>$Version</string>
   <key>CFBundleShortVersionString</key><string>$Version</string>

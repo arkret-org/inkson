@@ -19,13 +19,13 @@
 Clone the workspace and the sibling SDK:
 
 ```powershell
-git clone <contrix-dev> contrix-dev
-cd contrix-dev
+git clone <cokret-dev> cokret-dev
+cd cokret-dev
 ls
-# yougen/ chime/ soland/ floria/ contrix-rust-sdk/ ...
+# yougen/ chime/ soland/ floria/ cokret-rust-sdk/ ...
 ```
 
-All commands below run from `contrix-dev/yougen/`.
+All commands below run from `cokret-dev/yougen/`.
 
 ---
 

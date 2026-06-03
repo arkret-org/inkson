@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chime::{ContrixPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
+use chime::{CokretPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
 use contrix_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
 use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
@@ -223,7 +223,7 @@ pub struct MorphProjectionView {
 }
 
 #[derive(Clone)]
-pub struct ContrixApi {
+pub struct CokretApi {
     base_url: Url,
     pub(crate) http: Client,
     access_token: Option<String>,
@@ -241,9 +241,9 @@ pub struct ContrixApi {
     events_describe_cache: Arc<OnceCell<EventsDescribeResBody>>,
 }
 
-impl fmt::Debug for ContrixApi {
+impl fmt::Debug for CokretApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ContrixApi")
+        f.debug_struct("CokretApi")
             .field("base_url", &self.base_url)
             .field(
                 "access_token",
@@ -281,12 +281,12 @@ pub enum NetworkState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ContrixApiOptions {
+pub struct CokretApiOptions {
     pub timeout: Duration,
     pub retry: RetryPolicy,
 }
 
-impl Default for ContrixApiOptions {
+impl Default for CokretApiOptions {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(10),
@@ -328,18 +328,18 @@ pub struct ResolveHandleContext<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ContrixApiError {
+pub struct CokretApiError {
     pub status: StatusCode,
     pub error: ErrorEnvelope,
 }
 
-impl fmt::Display for ContrixApiError {
+impl fmt::Display for CokretApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Contrix API returned {}: {}", self.status, self.error)
+        write!(f, "Cokret API returned {}: {}", self.status, self.error)
     }
 }
 
-impl std::error::Error for ContrixApiError {}
+impl std::error::Error for CokretApiError {}
 
 const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
 
@@ -398,7 +398,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
         return true;
     }
     error
-        .downcast_ref::<ContrixApiError>()
+        .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             if api_error.status != StatusCode::UNAUTHORIZED {
                 return false;
@@ -423,11 +423,11 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// Flow capability denial.
 pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
     error
-        .downcast_ref::<ContrixApiError>()
+        .downcast_ref::<CokretApiError>()
         .is_some_and(is_terminal_session_grant_api_error)
 }
 
-fn is_terminal_session_grant_api_error(api_error: &ContrixApiError) -> bool {
+fn is_terminal_session_grant_api_error(api_error: &CokretApiError) -> bool {
     let code = api_error.error.code();
     if matches!(
         code,
@@ -463,7 +463,7 @@ fn terminal_session_grant_message(message: &str) -> bool {
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     use contrix_sdk::error::ERROR_CODE_RATE_LIMITED;
-    let api_error = error.downcast_ref::<ContrixApiError>()?;
+    let api_error = error.downcast_ref::<CokretApiError>()?;
     if api_error.error.code() != ERROR_CODE_RATE_LIMITED {
         return None;
     }
@@ -477,7 +477,7 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
     use contrix_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
     error
-        .downcast_ref::<ContrixApiError>()
+        .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             let code = api_error.error.code();
             // `invalid_param` only counts when the message mentions the
@@ -494,7 +494,7 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
     error
-        .downcast_ref::<ContrixApiError>()
+        .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             let code = api_error.error.code();
             api_error.status == StatusCode::FORBIDDEN
@@ -510,7 +510,7 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
     error
-        .downcast_ref::<ContrixApiError>()
+        .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
             let code = api_error.error.code();
             let message = api_error.error.message().to_ascii_lowercase();
@@ -537,7 +537,7 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         .iter()
         .all(|candidate| {
             candidate
-                .strip_prefix("cx:cursor:")
+                .strip_prefix("ck:cursor:")
                 .is_some_and(|payload| !payload.is_empty())
         })
         .then(|| tokens.join(","))
@@ -642,12 +642,12 @@ struct ApiErrorBody {
     error: ErrorEnvelope,
 }
 
-impl ContrixApi {
+impl CokretApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
-        Self::new_with_options(base_url, ContrixApiOptions::default())
+        Self::new_with_options(base_url, CokretApiOptions::default())
     }
 
-    pub fn new_with_options(base_url: &str, options: ContrixApiOptions) -> anyhow::Result<Self> {
+    pub fn new_with_options(base_url: &str, options: CokretApiOptions) -> anyhow::Result<Self> {
         let base_url = validate_server_url(base_url)?;
         let http = Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
@@ -854,7 +854,7 @@ impl ContrixApi {
         .await
     }
 
-    /// A4b — resolve a `cx:blob:sha256:<hex>` reference to its
+    /// A4b — resolve a `ck:blob:sha256:<hex>` reference to its
     /// authenticated download URL on this Principal Server. Returns the
     /// `<base>/api/v1/blob/get?blob_ref=<…>&purpose=profile_avatar`
     /// shape that soland's
@@ -994,7 +994,7 @@ impl ContrixApi {
         }
 
         // R1.7: the security boundary (formerly Space) is now Realm.
-        let space_id = format!("cx:realm:{}", uuid_v7());
+        let space_id = format!("ck:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
         let mut envelopes = build_realm_bootstrap_events(
             &space_id,
@@ -1026,7 +1026,7 @@ impl ContrixApi {
                 )
             })?;
         }
-        let idempotency_key = format!("cx:operation:{}", uuid_v7());
+        let idempotency_key = format!("ck:operation:{}", uuid_v7());
         self.submit_events_batch(&envelopes, Some(&idempotency_key))
             .await?;
 
@@ -1077,7 +1077,7 @@ impl ContrixApi {
                 "realm_id is required for cx.space.create — Space must live inside a Realm"
             ));
         }
-        let space_id = format!("cx:space:{}", uuid_v7());
+        let space_id = format!("ck:space:{}", uuid_v7());
         let event = build_space_create_event(
             &space_id,
             realm_id,
@@ -1271,7 +1271,7 @@ impl ContrixApi {
                 // 404 (route absent), 501 (NotImplemented), and 405 (route
                 // exists for another method but PUT not wired) as graceful
                 // degradation — anything else propagates.
-                if let Some(api_error) = error.downcast_ref::<ContrixApiError>() {
+                if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
                     let status = api_error.status;
                     if matches!(
                         status,
@@ -1301,7 +1301,7 @@ impl ContrixApi {
         match result {
             Ok(_) => Ok(()),
             Err(error) => {
-                if let Some(api_error) = error.downcast_ref::<ContrixApiError>()
+                if let Some(api_error) = error.downcast_ref::<CokretApiError>()
                     && matches!(
                         api_error.status,
                         StatusCode::NOT_FOUND
@@ -1366,7 +1366,7 @@ impl ContrixApi {
         &self,
         after: Option<&str>,
     ) -> anyhow::Result<AccountSubscribeSnapshotOutcome> {
-        // H3 — enforce `cx:cursor:*` prefix on non-nil values. nil
+        // H3 — enforce `ck:cursor:*` prefix on non-nil values. nil
         // (`None`) is the boot bootstrap case and stays untouched.
         if let Some(token) = after {
             validate_cursor(token)?;
@@ -1387,7 +1387,7 @@ impl ContrixApi {
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {
-            return Err(ContrixApiError {
+            return Err(CokretApiError {
                 status,
                 error: decode_contrix_error(status, &bytes),
             }
@@ -1436,7 +1436,7 @@ impl ContrixApi {
     /// Message) to a directory preview via `cx.directory.resolve_target`
     /// (`POST /api/v1/directory/resolve-target`).
     ///
-    /// `address` is the canonical `web+contrix:` (or HTTPS-fragment) string
+    /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
     /// derived from [`contrix_sdk::model::parse_address`]; `token` is present
     /// iff the address carried `lt=invite` or `lt=preview`. The server binds
     /// an invite or preview token to the resolved object via the SDK's
@@ -1510,7 +1510,7 @@ impl ContrixApi {
         let status = response.status();
         if !status.is_success() {
             let bytes = response.bytes().await?;
-            return Err(ContrixApiError {
+            return Err(CokretApiError {
                 status,
                 error: decode_contrix_error(status, &bytes),
             }
@@ -1610,16 +1610,16 @@ impl ContrixApi {
         })
     }
 
-    /// Build a [`ContrixPushClient`] that mirrors this api client's auth
+    /// Build a [`CokretPushClient`] that mirrors this api client's auth
     /// state. Optional `register_device_path` / `unregister_device_path`
     /// honor a bridge-discovered endpoint.
     fn push_client(
         &self,
         register_device_path: Option<&str>,
         unregister_device_path: Option<&str>,
-    ) -> ContrixPushClient {
+    ) -> CokretPushClient {
         let mut client =
-            ContrixPushClient::new(self.base_url.as_str()).with_required_session_grant(true);
+            CokretPushClient::new(self.base_url.as_str()).with_required_session_grant(true);
         if let Some(token) = self.access_token.as_deref() {
             client = client.with_bearer_token(token);
         }
@@ -1631,9 +1631,9 @@ impl ContrixApi {
         if let Some(proof) = self.chime_session_grant_proof.as_ref()
             && let Ok(next) = client
                 .clone()
-                .with_header("X-Contrix-Session-Grant-Challenge", &proof.challenge)
+                .with_header("X-Cokret-Session-Grant-Challenge", &proof.challenge)
                 .and_then(|client| {
-                    client.with_header("X-Contrix-Session-Grant-Proof", &proof.proof_jwt)
+                    client.with_header("X-Cokret-Session-Grant-Proof", &proof.proof_jwt)
                 })
         {
             client = next;
@@ -2067,10 +2067,10 @@ impl ContrixApi {
             .header("content-type", content_type)
             .body(bytes);
         if let Some(space_id) = space_id.filter(|value| !value.trim().is_empty()) {
-            request = request.header("x-contrix-space-id", space_id.trim());
+            request = request.header("x-cokret-space-id", space_id.trim());
         }
         if let Some(filename) = filename.and_then(safe_blob_filename_header) {
-            request = request.header("x-contrix-filename", filename);
+            request = request.header("x-cokret-filename", filename);
         }
         self.send_json(self.prepare_request(request), Method::POST)
             .await
@@ -2086,10 +2086,10 @@ impl ContrixApi {
             .http
             .post(self.endpoint("api/v1/blob/upload")?)
             .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
-            .header("x-contrix-space-id", space_id)
-            .header("x-contrix-blob-encrypted", "true")
-            .header("x-contrix-attachment-envelope", envelope)
-            .header("x-contrix-content-digest", &asset.ciphertext_digest)
+            .header("x-cokret-space-id", space_id)
+            .header("x-cokret-blob-encrypted", "true")
+            .header("x-cokret-attachment-envelope", envelope)
+            .header("x-cokret-content-digest", &asset.ciphertext_digest)
             .body(asset.ciphertext.clone());
         self.send_json(self.prepare_request(request), Method::POST)
             .await
@@ -2298,7 +2298,7 @@ impl ContrixApi {
         Ok(invitee.to_owned())
     }
 
-    /// R3.2 (contrix-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
+    /// R3.2 (cokret-spec @ b56cab1) — `cx.directory.list_handles_for_subject`.
     ///
     /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
     /// DID, return the current context-visible signed handle claims +
@@ -2602,7 +2602,7 @@ impl ContrixApi {
             return self.submit_event_envelope(event).await;
         }
 
-        let mut routed = ContrixApi::new(endpoint)?;
+        let mut routed = CokretApi::new(endpoint)?;
         if let Some(token) = self.access_token.as_deref() {
             routed = routed.with_bearer(token.to_owned());
         }
@@ -2698,7 +2698,7 @@ impl ContrixApi {
 
     // ── Views — collection projection (T20) ─────────────────────────
     //
-    // Pairs with contrix-rust-sdk@9d02761 + soland@1cdab88.
+    // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
     // POST /api/v1/views/{view_id}/projection returns the typed
     // CollectionProjectionResBody defined in contrix_core::model.
     pub async fn collection_projection(
@@ -2716,7 +2716,7 @@ impl ContrixApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
-        // `cx:space:<uuid>` is RFC-3986-safe in query string position
+        // `ck:space:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
         let realm_id = scope_id_as_realm_id(space_id);
         let path = format!("api/v1/projection/spaces?realm_id={realm_id}");
@@ -3108,12 +3108,12 @@ impl ContrixApi {
     /// Resolve the current anchor head for `realm_id` to be stamped onto
     /// outgoing reducer-input events as `anchor_ref`. Wraps
     /// `GET /api/v1/snapshot/head?realm_id=...` and returns the
-    /// `cx:anchor:sha256:<hex>` ref the server projects as the realm's
+    /// `ck:anchor:sha256:<hex>` ref the server projects as the realm's
     /// head.
     pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let response = self.snapshot_head(realm_id).await?;
         // Soland projects the head as a snapshot_ref in the form
-        // `cx:anchor:sha256:<hex>` (matches event-envelope.schema.json
+        // `ck:anchor:sha256:<hex>` (matches event-envelope.schema.json
         // $defs/anchor_ref). Trust the server's wire shape and return
         // it verbatim — fail closed if the field is empty so an
         // upstream bug shows up locally before the wire round-trip.
@@ -3197,7 +3197,7 @@ impl ContrixApi {
         &self,
         request: &IceConfigRequest,
     ) -> anyhow::Result<IceConfigResponse> {
-        self.post_json("contrix/v1/ice-config", serde_json::to_value(request)?)
+        self.post_json("cokret/v1/ice-config", serde_json::to_value(request)?)
             .await
     }
 
@@ -3413,7 +3413,7 @@ impl ContrixApi {
         let status = response.status();
         if !status.is_success() {
             let bytes = response.bytes().await?;
-            return Err(ContrixApiError {
+            return Err(CokretApiError {
                 status,
                 error: decode_contrix_error(status, &bytes),
             }
@@ -3433,7 +3433,7 @@ impl ContrixApi {
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {
-            return Err(ContrixApiError {
+            return Err(CokretApiError {
                 status,
                 error: decode_contrix_error(status, &bytes),
             }
@@ -3516,7 +3516,7 @@ impl ContrixApi {
 
     fn attach_wait_for(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match self.wait_for_sync_token.as_deref() {
-            Some(sync_token) => request.header("x-contrix-wait-for", sync_token),
+            Some(sync_token) => request.header("x-cokret-wait-for", sync_token),
             None => request,
         }
     }
@@ -3527,7 +3527,7 @@ impl ContrixApi {
         request_id: &str,
     ) -> reqwest::RequestBuilder {
         request
-            .header("x-contrix-request-id", request_id)
+            .header("x-cokret-request-id", request_id)
             .header("idempotency-key", request_id)
     }
 }
@@ -3715,7 +3715,7 @@ pub fn build_presence_envelope(
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
 /// here carries `proof = None` and the submit guard / receiver will
-/// reject it. See [`super::ContrixApi::submit_call_signal_v1`] for the
+/// reject it. See [`super::CokretApi::submit_call_signal_v1`] for the
 /// signing + submit path.
 pub fn build_call_signal_envelope_v1(
     realm_id: &str,
@@ -3779,7 +3779,7 @@ pub enum BlobPresignError {
 
 impl BlobPresignError {
     pub fn from_error(error: &anyhow::Error) -> Option<Self> {
-        let api_error = error.downcast_ref::<ContrixApiError>()?;
+        let api_error = error.downcast_ref::<CokretApiError>()?;
         let code = api_error.error.code();
         match code {
             // Round R2/R3 wire codes from contrix_sdk::error.
@@ -3813,10 +3813,10 @@ impl BlobPresignError {
 }
 
 /// A4b — module-level helper for composing a blob download URL when an
-/// [`ContrixApi`] handle isn't available (e.g. read-only views that
+/// [`CokretApi`] handle isn't available (e.g. read-only views that
 /// already have the Principal Server `base_url` as a string). Keeps
 /// the URL shape canonical so callers can't accidentally desync from
-/// [`ContrixApi::blob_download_url`].
+/// [`CokretApi::blob_download_url`].
 pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
     let base = base_url.trim_end_matches('/');
     let blob_ref = query_component(canonical_blob_ref(blob_ref));
@@ -3828,7 +3828,7 @@ fn canonical_blob_ref(blob_ref: &str) -> &str {
 }
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
-/// (renamed from `handle_uri` @ contrix-spec 7157ee8 — the `contrix://`
+/// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`
 /// URI handle form has been retired).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RealmBootstrapMember {
@@ -3858,7 +3858,7 @@ impl RealmBootstrapMember {
                 "binding_source": "invite",
                 "delivery_modes": ["events", "sync", "to_device", "push", "key_packages"],
                 "resolved_at": resolved_at,
-                "service_acceptance_ref": format!("cx:event:{}", uuid_v7()),
+                "service_acceptance_ref": format!("ck:event:{}", uuid_v7()),
             })),
         }
     }
@@ -4511,7 +4511,7 @@ fn build_member_state_transition_event_with_binding(
         payload["delivery_status"] = json!("unroutable");
     }
     // R3.1: spec field is `handle` (`<localpart>:<domain>`); the prior
-    // `handle_uri` (`contrix://`) form has been retired @ 7157ee8.
+    // `handle_uri` (`cokret://`) form has been retired @ 7157ee8.
     if let Some(handle) = handle
         && !handle.trim().is_empty()
     {
@@ -4583,7 +4583,7 @@ fn event_timestamp() -> String {
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
-    format!("cx:cell:{cell_family}:{space_id}")
+    format!("ck:cell:{cell_family}:{space_id}")
 }
 
 /// Build the canonical `cx.schema.device_message.v1` envelope:
@@ -4602,7 +4602,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 /// ```
 ///
 /// Pure function so the wire shape is testable without a live HTTP
-/// client; used by [`ContrixApi::send_device_message_envelope`] (R3).
+/// client; used by [`CokretApi::send_device_message_envelope`] (R3).
 pub fn build_device_message_envelope(
     target_actor: &str,
     target_device_id: &str,
@@ -4799,13 +4799,13 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
         request_id = %envelope.request_id,
         status = %status.as_u16(),
         code = %envelope.code(),
-        "contrix error envelope decoded"
+        "cokret error envelope decoded"
     );
     envelope
 }
 
 /// Same as [`decode_contrix_error`], but also threads the
-/// `x-contrix-request-id` response header so the resulting envelope
+/// `x-cokret-request-id` response header so the resulting envelope
 /// carries the soland trace ID even when the body's `request_id` slot
 /// was missing or `"unknown"`.
 ///
@@ -4983,7 +4983,7 @@ fn safe_blob_filename_header(filename: &str) -> Option<String> {
     (!sanitized.is_empty()).then_some(sanitized)
 }
 
-/// H3 — central guard for the `cx:cursor:*` prefix invariant. Every yougen
+/// H3 — central guard for the `ck:cursor:*` prefix invariant. Every yougen
 /// entry point that takes a cursor / `next_cursor` / `after` query argument
 /// passes it through this helper before going on the wire. The nil-initial
 /// account subscribe case (`after: None`) is handled by callers using
@@ -4992,8 +4992,8 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
     if cursor.is_empty() {
         return Ok(());
     }
-    if !cursor.starts_with("cx:cursor:") {
-        anyhow::bail!("cursor must start with `cx:cursor:` (got `{}`)", cursor);
+    if !cursor.starts_with("ck:cursor:") {
+        anyhow::bail!("cursor must start with `ck:cursor:` (got `{}`)", cursor);
     }
     Ok(())
 }
@@ -5225,7 +5225,7 @@ mod tests {
 
     #[test]
     fn endpoint_join_keeps_api_paths_under_base_url() {
-        let api = ContrixApi::new("http://127.0.0.1:8787/").unwrap();
+        let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
         assert_eq!(
             api.endpoint("/api/v1/server/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/api/v1/server/describe"
@@ -5235,7 +5235,7 @@ mod tests {
     #[test]
     fn blob_download_url_strips_media_hint_before_query() {
         let url =
-            blob_download_url_for("http://127.0.0.1:8787/", "cx:blob:sha256:abcdef#image/png");
+            blob_download_url_for("http://127.0.0.1:8787/", "ck:blob:sha256:abcdef#image/png");
         assert_eq!(
             url,
             "http://127.0.0.1:8787/api/v1/blob/get?blob_ref=cx%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
@@ -5274,10 +5274,10 @@ mod tests {
             ResolveHandleContext {
                 intent: Some("invite"),
                 requester: Some("did:web:alice.example"),
-                audience: Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
-                realm_id: Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
+                audience: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
+                realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
                 expected_did: Some("did:web:bob.example"),
-                proof_challenge: Some("cx:challenge:test"),
+                proof_challenge: Some("ck:challenge:test"),
                 proofs: &["proof-a", "  ", "proof-b"],
             },
         );
@@ -5287,14 +5287,14 @@ mod tests {
         assert_eq!(body["requester"], "did:web:alice.example");
         assert_eq!(
             body["audience"],
-            "cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(
             body["realm_id"],
-            "cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(body["expected_did"], "did:web:bob.example");
-        assert_eq!(body["proof_challenge"], "cx:challenge:test");
+        assert_eq!(body["proof_challenge"], "ck:challenge:test");
         assert_eq!(body["proofs"], json!(["proof-a", "proof-b"]));
     }
 
@@ -5308,7 +5308,7 @@ mod tests {
 
     #[test]
     fn invite_handle_resolution_requires_bound_candidate_material() {
-        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let resolved: ResolveHandleResponse = serde_json::from_value(json!({
             "subject": "did:web:bob.example",
             "handle": "bob:local.host",
@@ -5364,11 +5364,11 @@ mod tests {
     fn lifecycle_projection_response_accepts_soland_legacy_keys() {
         let spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
             serde_json::from_value(json!({
-                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "total": 1,
                 "space_containers": [{
-                    "container_space_id": "cx:space:01904100-0000-7000-8000-f10dc0000001",
-                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "container_space_id": "ck:space:01904100-0000-7000-8000-f10dc0000001",
+                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                     "kind": "board",
                     "title": "Launch board",
                     "state": "active"
@@ -5380,11 +5380,11 @@ mod tests {
 
         let canonical_spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
             serde_json::from_value(json!({
-                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "total": 1,
                 "spaces": [{
-                    "space_id": "cx:space:01904100-0000-7000-8000-f10dc0000001",
-                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "space_id": "ck:space:01904100-0000-7000-8000-f10dc0000001",
+                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                     "kind": "board",
                     "title": "Launch board",
                     "state": "active"
@@ -5393,19 +5393,19 @@ mod tests {
             .unwrap();
         assert_eq!(
             canonical_spaces.items[0].container_space_id,
-            "cx:space:01904100-0000-7000-8000-f10dc0000001"
+            "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
         let flows: LifecycleProjectionResponse<FlowProjectionView> =
             serde_json::from_value(json!({
-                "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "flows": [{
-                    "flow_id": "cx:flow:01904100-0000-7000-8000-f20dc0000001",
-                    "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000000",
+                    "flow_id": "ck:flow:01904100-0000-7000-8000-f20dc0000001",
+                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                     "title": "Card",
                     "summary": "Projection-backed card",
-                    "board_space_id": "cx:space:01904100-0000-7000-8000-b0ard0000001",
-                    "list_space_id": "cx:space:01904100-0000-7000-8000-l15t00000001",
+                    "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
+                    "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
                     "rank": "U",
                     "fields": { "labels": ["demo"] },
                     "state": "archived"
@@ -5416,16 +5416,16 @@ mod tests {
         assert_eq!(flows.items[0].state, "archived");
         assert_eq!(
             flows.items[0].board_space_id.as_deref(),
-            Some("cx:space:01904100-0000-7000-8000-b0ard0000001")
+            Some("ck:space:01904100-0000-7000-8000-b0ard0000001")
         );
     }
 
     #[test]
     fn typing_envelope_uses_spec_ephemeral_shape() {
         let envelope = build_typing_envelope(
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            Some("cx:device:01904100-0000-7000-8000-a11ce0000001"),
+            Some("ck:device:01904100-0000-7000-8000-a11ce0000001"),
             true,
         )
         .unwrap();
@@ -5433,15 +5433,15 @@ mod tests {
         assert_eq!(envelope.kind, "cx.typing");
         assert_eq!(
             envelope.realm_id.to_string(),
-            "cx:realm:0196419b-0000-7000-8000-000000000000"
+            "ck:realm:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(
             envelope.payload["scope_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000000"
+            "ck:space:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(
             envelope.payload["realm_id"],
-            "cx:realm:0196419b-0000-7000-8000-000000000000"
+            "ck:realm:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
         assert_eq!(envelope.payload["typing"], true);
@@ -5457,9 +5457,9 @@ mod tests {
     #[test]
     fn read_receipt_envelope_uses_actor_not_event_as_sender() {
         let envelope = build_receipt_read_envelope(
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "cx:event:01904100-0000-7000-8000-4a4116cba4e8",
+            "ck:event:01904100-0000-7000-8000-4a4116cba4e8",
         )
         .unwrap();
 
@@ -5467,12 +5467,12 @@ mod tests {
         assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
         assert_eq!(
             envelope.realm_id.to_string(),
-            "cx:realm:0196419b-0000-7000-8000-000000000000"
+            "ck:realm:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
         assert_eq!(
             envelope.payload["event_id"],
-            "cx:event:01904100-0000-7000-8000-4a4116cba4e8"
+            "ck:event:01904100-0000-7000-8000-4a4116cba4e8"
         );
         assert_eq!(envelope.payload["schema"], "cx.schema.read_receipt.v1");
         assert!(
@@ -5488,7 +5488,7 @@ mod tests {
     fn parses_server_and_sync_payloads() {
         let description = parse_server_description(json!({
             "service_did": "did:web:server.local",
-            "trust_domain": "cx:trust_domain:server.local",
+            "trust_domain": "ck:trust_domain:server.local",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
@@ -5509,9 +5509,9 @@ mod tests {
         assert_eq!(description.protocol_version, "1.0");
 
         let sync = parse_sync(json!({
-            "cursor": "cx:cursor:test-1",
+            "cursor": "ck:cursor:test-1",
             "spaces": {
-                "cx:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
+                "ck:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
             },
             "to_device": [],
             "account_data": [],
@@ -5519,20 +5519,20 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(sync.spaces.len(), 1);
-        assert_eq!(sync.cursor, "cx:cursor:test-1");
+        assert_eq!(sync.cursor, "ck:cursor:test-1");
 
         // Spec-aligned wire shape per `client-sync.md §2`: flat
         // `spaces` keyed by realm id, explicit `left_spaces`,
         // flat arrays for top-level streams. The SDK's
         // Canonical account subscribe snapshot shape.
         let sync_v1 = parse_sync(json!({
-            "cursor": "cx:cursor:v1",
+            "cursor": "ck:cursor:v1",
             "spaces": {
-                "cx:space:joined": {
+                "ck:space:joined": {
                     "summary": {"title": "Joined"}
                 }
             },
-            "left_spaces": ["cx:space:left"],
+            "left_spaces": ["ck:space:left"],
             "to_device": [{"type": "cx.mls.welcome"}],
             "account_data": [{"data_type": "client.ui", "content": {"theme": "system"}}],
             "device_lists": {"changed": [], "left": []},
@@ -5540,25 +5540,25 @@ mod tests {
             "presence": []
         }))
         .unwrap();
-        assert_eq!(sync_v1.cursor, "cx:cursor:v1");
-        assert!(sync_v1.spaces.contains_key("cx:space:joined"));
-        assert_eq!(sync_v1.left_spaces, vec!["cx:space:left".to_owned()]);
+        assert_eq!(sync_v1.cursor, "ck:cursor:v1");
+        assert!(sync_v1.spaces.contains_key("ck:space:joined"));
+        assert_eq!(sync_v1.left_spaces, vec!["ck:space:left".to_owned()]);
         assert_eq!(sync_v1.to_device.len(), 1);
         assert_eq!(sync_v1.account_data.len(), 1);
         assert!(sync_v1.notifications.is_object());
         assert!(sync_v1.presence.is_empty());
 
         let account_frame = parse_account_subscribe_snapshot(
-            br#"{"kind":"delta","cursor":"cx:cursor:account-1","realms":{"cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"to_device":{"messages":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
-{"kind":"catchup_complete","cursor":"cx:cursor:account-1"}
+            br#"{"kind":"delta","cursor":"ck:cursor:account-1","realms":{"ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729":{"summary":{"title":"Test"}}},"to_device":{"messages":[]},"device_lists":{"changed":[],"left":[]},"account_data":{"events":[]},"presence":{"events":[]},"notifications":null,"partial":false}
+{"kind":"catchup_complete","cursor":"ck:cursor:account-1"}
 "#,
         )
         .unwrap();
-        assert_eq!(account_frame.cursor, "cx:cursor:account-1");
+        assert_eq!(account_frame.cursor, "ck:cursor:account-1");
         assert!(
             account_frame
                 .spaces
-                .contains_key("cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729")
+                .contains_key("ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729")
         );
         assert!(account_frame.left_spaces.is_empty());
 
@@ -5592,11 +5592,11 @@ mod tests {
 
     #[test]
     fn event_paths_use_v1_query_parameters() {
-        let backfill = events_query_path("cx:space:demo");
+        let backfill = events_query_path("ck:space:demo");
         assert_eq!(backfill, "api/v1/events?realms=cx%3Aspace%3Ademo");
         assert!(!backfill.contains("direction="));
 
-        let subscribe = events_subscribe_path("cx:space:demo", Some("cx:cursor:demo"), Some(true));
+        let subscribe = events_subscribe_path("ck:space:demo", Some("ck:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
             "api/v1/events/subscribe?realms=cx%3Aspace%3Ademo&after=cx%3Acursor%3Ademo&include_history=true"
@@ -5615,7 +5615,7 @@ mod tests {
     #[test]
     fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         let events = build_realm_bootstrap_events(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
             Some("Roadmap work"),
@@ -5627,7 +5627,7 @@ mod tests {
             "restricted",
             "single_did",
             "sha256",
-            "cx:trust_domain:server.example",
+            "ck:trust_domain:server.example",
             &["did:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
         )
@@ -5680,7 +5680,7 @@ mod tests {
         );
         assert_eq!(
             create.effects[0].cell,
-            "cx:cell:cx.component.realm.create.v1:cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:cell:cx.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(create.effects[0].op.kind, "set");
         // anchor_ref starts unset on the typed envelope. Realm genesis
@@ -5715,7 +5715,7 @@ mod tests {
     #[test]
     fn realm_bootstrap_handle_seed_materializes_user_and_principal_server_dids() {
         let events = build_realm_bootstrap_events(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
             None,
@@ -5727,7 +5727,7 @@ mod tests {
             "restricted",
             "single_did",
             "sha256",
-            "cx:trust_domain:server.example",
+            "ck:trust_domain:server.example",
             &["bob:example.com".to_owned()],
             &[],
         )
@@ -5751,23 +5751,23 @@ mod tests {
         assert!(
             member.payload["delivery_binding"]["service_acceptance_ref"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("cx:event:"))
+                .is_some_and(|value| value.starts_with("ck:event:"))
         );
     }
 
     #[test]
     fn member_state_invite_accept_event_carries_invite_ref() {
         let event = build_member_state_invite_accept_event(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
             "did:web:bob.example",
-            "cx:invite:0196419b-0000-7000-8000-000000000020",
+            "ck:invite:0196419b-0000-7000-8000-000000000020",
         )
         .expect("invite accept event");
 
         assert_eq!(event.kind, "cx.member.state");
         assert_eq!(
             event.realm_id,
-            "cx:realm:0196419b-0000-7000-8000-000000000010"
+            "ck:realm:0196419b-0000-7000-8000-000000000010"
         );
         assert_eq!(event.actor_id, "did:web:bob.example");
         assert_eq!(event.payload["actor_id"], "did:web:bob.example");
@@ -5775,7 +5775,7 @@ mod tests {
         assert_eq!(event.payload["reason"], "invite_accept");
         assert_eq!(
             event.payload["invite_ref"],
-            "cx:invite:0196419b-0000-7000-8000-000000000020"
+            "ck:invite:0196419b-0000-7000-8000-000000000020"
         );
         assert!(event.payload.get("invite_id").is_none());
         assert_eq!(event.payload["delivery_status"], "unroutable");
@@ -5793,17 +5793,17 @@ mod tests {
     fn events_batch_response_rejects_partial_acceptance() {
         ensure_events_submit_batch_accepted(&json!({
             "status": "accepted",
-            "accepted": ["cx:event:1"],
+            "accepted": ["ck:event:1"],
             "rejected": []
         }))
         .expect("fully accepted batch should pass");
 
         let err = ensure_events_submit_batch_accepted(&json!({
             "status": "partial",
-            "accepted": ["cx:event:1"],
+            "accepted": ["ck:event:1"],
             "rejected": [
                 {
-                    "id": "cx:event:2",
+                    "id": "ck:event:2",
                     "reason_code": "capability_denied",
                     "detail": "actor is not a member"
                 }
@@ -5815,7 +5815,7 @@ mod tests {
 
     #[test]
     fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
         let mut patch = contrix_sdk::Patch::new();
         patch
             .insert_op(
@@ -5828,7 +5828,7 @@ mod tests {
             .to_value()
             .unwrap();
         let event = OperationBuilder::new(
-            "cx:realm:0196419b-0000-7000-8000-000000000010",
+            "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "cx.flow.update",
         )
@@ -5844,12 +5844,12 @@ mod tests {
     #[test]
     fn space_create_payload_matches_spec_schema() {
         // Spec requires payload.object.realm_id to match the
-        // `^cx:realm:UUID7` pattern. Caller (yougen UI) holds the home
-        // Realm under its legacy cx:space: envelope id; the builder
+        // `^ck:realm:UUID7` pattern. Caller (yougen UI) holds the home
+        // Realm under its legacy ck:space: envelope id; the builder
         // must rewrite for the inner reference.
         let event = build_space_create_event(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Roadmap",
             Some("Q3 planning"),
@@ -5879,7 +5879,7 @@ mod tests {
     #[test]
     fn realm_bootstrap_payloads_match_spec_schema() {
         let events = build_realm_bootstrap_events(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "Engineering",
             Some("Roadmap work"),
@@ -5891,7 +5891,7 @@ mod tests {
             "restricted",
             "single_did",
             "sha256",
-            "cx:trust_domain:server.example",
+            "ck:trust_domain:server.example",
             &["did:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
         )
@@ -5922,7 +5922,7 @@ mod tests {
         let frames = parse_events_subscribe_ndjson_text(
             r#"
 {"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
-{"kind":"frontier","frontier":{"cx:space:demo":["cx:event:01"]}}
+{"kind":"frontier","frontier":{"ck:space:demo":["ck:event:01"]}}
 {"kind":"catchup_complete"}
 "#,
         )
@@ -6008,7 +6008,7 @@ mod tests {
     fn decodes_canonical_error_envelope_with_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:request:01964137-0000-7000-8000-000000000010"}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
         );
 
         assert_eq!(decoded.code(), "capability_denied");
@@ -6018,7 +6018,7 @@ mod tests {
         );
         assert_eq!(
             decoded.request_id,
-            "cx:request:01964137-0000-7000-8000-000000000010"
+            "ck:request:01964137-0000-7000-8000-000000000010"
         );
     }
 
@@ -6026,20 +6026,20 @@ mod tests {
     fn decodes_wrapped_error_envelope_without_inner_request_id() {
         let decoded = decode_contrix_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"cx:request:01964137-0000-7000-8000-000000000011"}"#,
+            br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ck:request:01964137-0000-7000-8000-000000000011"}"#,
         );
 
         assert_eq!(decoded.code(), "auth_expired");
         assert_eq!(decoded.message(), "session expired");
         assert_eq!(
             decoded.request_id,
-            "cx:request:01964137-0000-7000-8000-000000000011"
+            "ck:request:01964137-0000-7000-8000-000000000011"
         );
     }
 
     #[test]
     fn recognizes_auth_expired_errors() {
-        let error: anyhow::Error = ContrixApiError {
+        let error: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_contrix_error(
                 StatusCode::UNAUTHORIZED,
@@ -6055,7 +6055,7 @@ mod tests {
         // permanently invalid — it may just be a transient deny. The UI
         // surfaces the error and lets the user retry rather than wiping
         // the session and forcing a fresh sign-in.
-        let bare: anyhow::Error = ContrixApiError {
+        let bare: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
         }
@@ -6072,7 +6072,7 @@ mod tests {
         ] {
             let body =
                 format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
-            let aliased: anyhow::Error = ContrixApiError {
+            let aliased: anyhow::Error = CokretApiError {
                 status: StatusCode::UNAUTHORIZED,
                 error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
             }
@@ -6082,7 +6082,7 @@ mod tests {
 
         // A 401 carrying an unrelated error code (rate-limit, policy_denied
         // wrapped in 401, etc.) must not be misclassified as session death.
-        let unrelated: anyhow::Error = ContrixApiError {
+        let unrelated: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_contrix_error(
                 StatusCode::UNAUTHORIZED,
@@ -6092,7 +6092,7 @@ mod tests {
         .into();
         assert!(!is_auth_expired_error(&unrelated));
 
-        let forbidden: anyhow::Error = ContrixApiError {
+        let forbidden: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6102,7 +6102,7 @@ mod tests {
         .into();
         assert!(!is_auth_expired_error(&forbidden));
 
-        let revoked_session_grant: anyhow::Error = ContrixApiError {
+        let revoked_session_grant: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6113,7 +6113,7 @@ mod tests {
         assert!(is_terminal_session_grant_error(&revoked_session_grant));
         assert!(is_auth_expired_error(&revoked_session_grant));
 
-        let unrelated_capability_denied: anyhow::Error = ContrixApiError {
+        let unrelated_capability_denied: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6129,7 +6129,7 @@ mod tests {
 
     #[test]
     fn recognizes_plaintext_visibility_policy_errors() {
-        let error: anyhow::Error = ContrixApiError {
+        let error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6139,7 +6139,7 @@ mod tests {
         .into();
         assert!(is_plaintext_visibility_policy_error(&error));
 
-        let capability_error: anyhow::Error = ContrixApiError {
+        let capability_error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6149,7 +6149,7 @@ mod tests {
         .into();
         assert!(is_plaintext_visibility_policy_error(&capability_error));
 
-        let other_policy: anyhow::Error = ContrixApiError {
+        let other_policy: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
@@ -6162,11 +6162,11 @@ mod tests {
 
     #[test]
     fn recognizes_space_membership_denied_errors() {
-        let error: anyhow::Error = ContrixApiError {
+        let error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
             error: decode_contrix_error(
                 StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"cx:request:01964137-0000-7000-8000-000000000010"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
             ),
         }
         .into();
@@ -6175,7 +6175,7 @@ mod tests {
 
     #[test]
     fn retry_policy_defaults_to_bounded_idempotent_retries() {
-        let options = ContrixApiOptions::default();
+        let options = CokretApiOptions::default();
         assert_eq!(options.retry.max_retries, 2);
         assert!(options.timeout >= Duration::from_secs(1));
         assert!(is_retryable_method(&Method::GET));
@@ -6195,8 +6195,8 @@ mod tests {
 
     #[test]
     fn write_requests_include_request_identity_and_wait_for_headers() {
-        const WAIT_CURSOR: &str = "cx:cursor:eyJoIjoiMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMiIsInB1cnBvc2UiOiJzdHJlYW0iLCJ0IjoiMjAyNi0wNS0yOVQwMDowMDowMC4wMDBaIiwidiI6IjEiLCJ4IjoxNzgwMDAwMDAwMDAwfQ";
-        let api = ContrixApi::new("http://127.0.0.1:8787/")
+        const WAIT_CURSOR: &str = "ck:cursor:eyJoIjoiMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMiIsInB1cnBvc2UiOiJzdHJlYW0iLCJ0IjoiMjAyNi0wNS0yOVQwMDowMDowMC4wMDBaIiwidiI6IjEiLCJ4IjoxNzgwMDAwMDAwMDAwfQ";
+        let api = CokretApi::new("http://127.0.0.1:8787/")
             .unwrap()
             .with_bearer("sx_token")
             .with_wait_for(WAIT_CURSOR);
@@ -6215,7 +6215,7 @@ mod tests {
         assert_eq!(
             request
                 .headers()
-                .get("x-contrix-request-id")
+                .get("x-cokret-request-id")
                 .and_then(|value| value.to_str().ok()),
             Some("req-123")
         );
@@ -6229,7 +6229,7 @@ mod tests {
         assert_eq!(
             request
                 .headers()
-                .get("x-contrix-wait-for")
+                .get("x-cokret-wait-for")
                 .and_then(|value| value.to_str().ok()),
             Some(WAIT_CURSOR)
         );
@@ -6237,9 +6237,9 @@ mod tests {
 
     #[test]
     fn wait_for_header_rejects_malformed_sync_tokens() {
-        let malformed = ContrixApi::new("http://127.0.0.1:8787/")
+        let malformed = CokretApi::new("http://127.0.0.1:8787/")
             .unwrap()
-            .with_wait_for("cx:cursor:");
+            .with_wait_for("ck:cursor:");
         let request = malformed
             .prepare_request(
                 malformed.with_write_request_headers(
@@ -6252,12 +6252,12 @@ mod tests {
             )
             .build()
             .unwrap();
-        assert!(request.headers().get("x-contrix-wait-for").is_none());
+        assert!(request.headers().get("x-cokret-wait-for").is_none());
     }
 
     #[test]
     fn insecure_remote_http_is_rejected() {
-        let error = ContrixApi::new("http://contrix.example").unwrap_err();
+        let error = CokretApi::new("http://cokret.example").unwrap_err();
         assert!(
             error
                 .to_string()
@@ -6324,8 +6324,8 @@ mod tests {
         let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let proof = build_signed_device_verification_proof(
             "did:web:alice.example",
-            "cx:device:alice",
-            "cx:device:bob",
+            "ck:device:alice",
+            "ck:device:bob",
             "sas",
             Some([1234, 5678, 9012]),
             Some("alice-x25519"),
@@ -6352,11 +6352,11 @@ mod tests {
     #[cfg(feature = "demo-crypto")]
     #[test]
     fn demo_crypto_fallbacks_are_local_only_by_default() {
-        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
         local
             .ensure_demo_crypto_fallback_allowed("test fallback")
             .expect("local dev fallback");
-        let remote = ContrixApi::new("https://contrix.example").unwrap();
+        let remote = CokretApi::new("https://cokret.example").unwrap();
         assert!(
             remote
                 .ensure_demo_crypto_fallback_allowed("test fallback")
@@ -6367,7 +6367,7 @@ mod tests {
     #[cfg(not(feature = "demo-crypto"))]
     #[test]
     fn demo_crypto_fallbacks_are_compiled_out() {
-        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
         assert!(
             local
                 .ensure_demo_crypto_fallback_allowed("test fallback")
@@ -6393,9 +6393,9 @@ mod tests {
     #[cfg(not(feature = "demo-crypto"))]
     #[tokio::test]
     async fn upload_keys_refuses_to_ship_demo_device_signature_in_prod_build() {
-        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
         let err = api
-            .upload_keys("cx:device:test-prod-guard")
+            .upload_keys("ck:device:test-prod-guard")
             .await
             .expect_err("prod build MUST refuse to ship demo device_signature placeholders");
         let msg = format!("{err}");
@@ -6414,9 +6414,9 @@ mod tests {
         // argument well-formed so a future refactor that touches the
         // record before bailing surfaces here.
         let record: contrix_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
-            "keypackage_id": "cx:mls:kp:01904100-0000-7000-8000-000000000001",
+            "keypackage_id": "ck:mls:kp:01904100-0000-7000-8000-000000000001",
             "principal_id": "did:web:alice.example",
-            "device_id": "cx:device:01904100-0000-7000-8000-000000000001",
+            "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
             "key_package": "AAAA",
             "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "cipher_suites": ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
@@ -6424,9 +6424,9 @@ mod tests {
         }))
         .expect("MlsKeyPackageRecord fixture must deserialize");
 
-        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
         let err = api
-            .publish_mls_key_package("cx:device:test-prod-guard", &record)
+            .publish_mls_key_package("ck:device:test-prod-guard", &record)
             .await
             .expect_err("prod build MUST refuse to publish demo-signed key packages");
         let msg = format!("{err}");
@@ -6439,9 +6439,9 @@ mod tests {
     #[cfg(not(feature = "demo-crypto"))]
     #[tokio::test]
     async fn send_to_device_refuses_opaque_ciphertext_placeholder_in_prod_build() {
-        let api = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
         let err = api
-            .send_to_device("did:web:bob.example", "cx:device:test-prod-guard")
+            .send_to_device("did:web:bob.example", "ck:device:test-prod-guard")
             .await
             .expect_err("prod build MUST refuse to ship opaque ciphertext placeholders");
         let msg = format!("{err}");
@@ -6460,7 +6460,7 @@ mod tests {
     #[cfg(not(feature = "demo-crypto"))]
     #[test]
     fn demo_crypto_guard_message_names_required_build_feature() {
-        let local = ContrixApi::new("http://127.0.0.1:8787").unwrap();
+        let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
         let err = local
             .ensure_demo_crypto_fallback_allowed("upload_keys demo device_signature")
             .expect_err("prod build must fail closed even on loopback");

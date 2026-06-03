@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { mockContrixApi } from "./mockContrixApi";
+import { mockCokretApi } from "./mockCokretApi";
 
-const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
-const DEMO_REALM = DEMO_SPACE.replace(/^cx:space:/, "cx:realm:");
-const CHILD_SPACE = "cx:space:01launchchild0000000000000";
-const CHILD_REALM = CHILD_SPACE.replace(/^cx:space:/, "cx:realm:");
+const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = DEMO_SPACE.replace(/^ck:space:/, "ck:realm:");
+const CHILD_SPACE = "ck:space:01launchchild0000000000000";
+const CHILD_REALM = CHILD_SPACE.replace(/^ck:space:/, "ck:realm:");
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -74,7 +74,7 @@ async function writeLocalConfig(
       JSON.stringify({
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
-        device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
         session_token: "sx:e2e-token",
         ...parsed,
         ...nextConfig,
@@ -88,7 +88,7 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  await mockContrixApi(page);
+  await mockCokretApi(page);
   if (testInfo.title.startsWith("login page")) {
     return;
   }
@@ -101,7 +101,7 @@ test.beforeEach(async ({ page }, testInfo) => {
       JSON.stringify({
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
-        device_id: "cx:device:01964137-0000-7000-8000-0000000000a1",
+        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
         session_token: "sx:e2e-token",
       }),
     );
@@ -114,17 +114,17 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await refreshServer(page);
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
-  await expect(page.getByTestId("sync-cursor")).toContainText("cx:cursor:e2e-2");
-  await expect(page.getByTestId("space-list")).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
+  await expect(page.getByTestId("space-list")).toContainText("Cokret Demo Space");
   await expect(page.getByTestId("space-list")).toContainText("Launch Child Space");
   await expect(
-    page.getByTestId("space-button").filter({ hasText: "Contrix Demo Space" }).locator(".sidebar-nav-icon"),
+    page.getByTestId("space-button").filter({ hasText: "Cokret Demo Space" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
   await expect(
     page.getByTestId("space-button").filter({ hasText: "Launch Child Space" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Space");
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
   await page.getByTestId("account-menu-button").click();
@@ -132,7 +132,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("spaces-summary")).toContainText("Recent Realms & Spaces");
   await expect(
-    page.getByTestId("dashboard-space-card").filter({ hasText: "Contrix Demo Space" }).locator(".pill.muted.xs"),
+    page.getByTestId("dashboard-space-card").filter({ hasText: "Cokret Demo Space" }).locator(".pill.muted.xs"),
   ).toHaveText("Realm");
   await expect(
     page.getByTestId("dashboard-space-card").filter({ hasText: "Launch Child Space" }).locator(".pill.muted.xs"),
@@ -168,12 +168,12 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await refreshServer(page);
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
-  await expect(page.getByTestId("account-menu")).toContainText("cx:device:");
+  await expect(page.getByTestId("account-menu")).toContainText("ck:device:");
   await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
   await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
   await page.getByTestId("account-menu-copy-did").click();
   await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
   const refreshBox = await page.getByTestId("account-menu-session-refresh").boundingBox();
   const logoutBox = await page.getByTestId("account-menu-session-logout").boundingBox();
@@ -270,7 +270,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
 
 test("connect refresh canonicalizes stale account DID but preserves device override", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
-  const deviceId = "cx:device:01964137-0000-7000-8000-0000000000b0";
+  const deviceId = "ck:device:01964137-0000-7000-8000-0000000000b0";
   await writeLocalConfig(page, { account_did: staleDid, device_id: deviceId });
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
@@ -549,7 +549,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("identifier mimi://remote.example/alice reachable true");
 
   await page.getByTestId("mimi-proxy-download").click();
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download cx:blob:sha256:e2e");
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download ck:blob:sha256:e2e");
 
   const submit = page.waitForRequest("**/api/v1/mimi/flows/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
@@ -627,8 +627,8 @@ test("directory search resolve and space selection flow works", async ({ page })
 
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("directory-result")).toContainText("Contrix Demo Space");
-  await expect(page.getByTestId("index-query-results")).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("directory-result")).toContainText("Cokret Demo Space");
+  await expect(page.getByTestId("index-query-results")).toContainText("Cokret Demo Space");
   await expect(page.getByTestId("generic-entity-card")).toHaveAttribute("data-render-kind", "card");
   await expect(page.getByTestId("entity-type-label")).toContainText("space");
   await expect(page.getByTestId("entity-facets")).toContainText("renderable");
@@ -638,7 +638,7 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
-  await expect(page.getByTestId("directory-result").first()).toContainText("Contrix Demo Space");
+  await expect(page.getByTestId("directory-result").first()).toContainText("Cokret Demo Space");
 
   await page.getByTestId("directory-advanced-diagnostics-toggle").click();
   await page.getByTestId("tab-objects").click();
@@ -649,13 +649,13 @@ test("directory search resolve and space selection flow works", async ({ page })
   await expect(page.getByTestId("protocol-object-results")).toContainText("locked");
 
   await page.getByTestId("tab-organizations").click();
-  await page.getByTestId("directory-search-input").fill("contrix");
+  await page.getByTestId("directory-search-input").fill("cokret");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("org-result")).toContainText("Contrix Labs");
+  await expect(page.getByTestId("org-result")).toContainText("Cokret Labs");
   await expect(page.getByTestId("org-result")).toContainText("listed");
   await page.getByTestId("org-search-members").click();
   await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
-  await expect(page.getByTestId("directory-search-input")).toHaveValue("contrix.example");
+  await expect(page.getByTestId("directory-search-input")).toHaveValue("cokret.example");
 });
 
 test("command palette closes with Escape and outside click", async ({ page }) => {
@@ -787,14 +787,14 @@ test("notifications are derived from index projections and respect per-space mut
     .click();
   const acceptBody = await acceptInvite.then((request) => request.postDataJSON());
   expect(acceptBody.kind).toBe("cx.member.state");
-  expect(acceptBody.payload.invite_ref).toBe("cx:invite:01904100-0000-7000-8000-000000000099");
+  expect(acceptBody.payload.invite_ref).toBe("ck:invite:01904100-0000-7000-8000-000000000099");
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
   await expect(page.getByTestId("notifications-status")).toContainText("Joined Realm");
 });
 
 test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText("cx:cursor:e2e-2");
+  await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
@@ -839,11 +839,11 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   ]);
   expect(JSON.stringify(realmCreateBody)).toContain("cx.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created cx:realm:/);
+  await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created ck:realm:/);
   await expect(page.getByTestId("space-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
   await expect(page.getByTestId("mls-backup-banner")).toBeVisible();
-  await expect(page.getByTestId("space-lifecycle-flow").getByTestId("selected-space-id")).toContainText("cx:realm:");
+  await expect(page.getByTestId("space-lifecycle-flow").getByTestId("selected-space-id")).toContainText("ck:realm:");
 
   await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
@@ -855,11 +855,11 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("composer-input").fill("setup flow message");
   await page.getByTestId("send-button").click();
-  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("setup flow message");
   await expect(page.getByTestId("write-status")).toContainText("persisted");
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("cx:event:");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:");
 });
 
 test("card detail embeds discussion directly without legacy discussion chrome", async ({ page }) => {
@@ -880,24 +880,24 @@ test("card detail embeds discussion directly without legacy discussion chrome", 
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
   const chatSend = page.waitForRequest("**/api/v1/events");
-  await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #cx:task:123");
+  await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ck:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("cx.message.create");
-  expect(chatBody.payload.message_id).toMatch(/^cx:message:/);
-  expect(chatBody.payload.flow_id).toContain("cx:flow:");
+  expect(chatBody.payload.message_id).toMatch(/^ck:message:/);
+  expect(chatBody.payload.flow_id).toContain("ck:flow:");
   expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("cx.content.text");
-  expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #cx:task:123");
+  expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ck:task:123");
   expect(chatBody.payload.mentions).toBeUndefined();
   expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();
-  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ck:task:123");
   await page.getByTestId("card-detail-tab-description").click();
   await expect(page.getByTestId("card-description-panel")).toBeVisible();
   await expect(page.getByTestId("card-discussion-panel")).toHaveCount(1);
   await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
   await page.getByTestId("card-detail-tab-discussion").click();
-  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #cx:task:123");
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ck:task:123");
   await expect(page.getByTestId("discussion-timeline-protocol")).toHaveCount(0);
 });
 
@@ -963,7 +963,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
             message: "transient send failure",
           },
         },
-        request_id: "cx:request:e2e-send-failed",
+        request_id: "ck:request:e2e-send-failed",
       }),
     });
   });
@@ -1002,7 +1002,7 @@ test("chat membership denial restores draft without panicking", async ({ page })
           code: "capability_denied",
           message: "actor is not a member of the event Space",
         },
-        request_id: "cx:request:01964137-0000-7000-8000-000000000013",
+        request_id: "ck:request:01964137-0000-7000-8000-000000000013",
       }),
     });
   });
@@ -1047,7 +1047,7 @@ test("chat retries plaintext sends after granting current service visibility", a
               "private plaintext message operations require this service in plaintext_visible_services",
           },
         },
-        request_id: "cx:request:e2e-policy-denied",
+        request_id: "ck:request:e2e-policy-denied",
       }),
     });
   });
@@ -1108,7 +1108,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("composer-input").fill("plain e2e message");
   await page.getByTestId("send-button").click();
-  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message");
   await expect(page.getByTestId("write-status")).toContainText("persisted");
 
@@ -1121,7 +1121,7 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   await page.getByTestId("edit-button").last().click();
   await page.getByTestId("edit-composer").locator("textarea").fill("plain e2e message edited");
   await page.getByTestId("save-edit-button").click();
-  expect((await editRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  expect((await editRequest).headers()["x-cokret-request-id"]).toBeTruthy();
   await expect(page.getByTestId("timeline")).toContainText("plain e2e message edited");
   await expect(page.getByTestId("revision-chain")).toContainText("plain e2e message");
   await expect(page.getByTestId("event-fact").last()).toContainText("fact");
@@ -1134,9 +1134,9 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
   );
   await page.getByTestId("redact-button").last().click();
   await page.getByTestId("confirm-redact-button").click();
-  expect((await redactRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  expect((await redactRequest).headers()["x-cokret-request-id"]).toBeTruthy();
   await expect(page.getByTestId("redacted-tombstone")).toContainText("[Message redacted]");
-  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone cx:event:");
+  await expect(page.getByTestId("event-fact").last()).toContainText("tombstone ck:event:");
 
   await page.getByTestId("composer-input").fill("secret e2e message");
   await page.getByTestId("encrypt-local-button").click();
@@ -1156,10 +1156,10 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
 
   expect(receiptBody.kind).toBe("cx.receipt.read");
-  expect(receiptBody.realm_id).toBe("cx:realm:0196419b-0000-7000-8000-000000000000");
+  expect(receiptBody.realm_id).toBe("ck:realm:0196419b-0000-7000-8000-000000000000");
   expect(receiptBody.payload.receipt_type).toBe("read");
   expect(receiptBody.payload.schema).toBe("cx.schema.read_receipt.v1");
-  expect(receiptBody.payload.event_id).toContain("summary-cx:space");
+  expect(receiptBody.payload.event_id).toContain("summary-ck:space");
   await expect(page.getByTestId("read-receipt-status")).toContainText("cx.receipt.read");
   await expect(page.getByTestId("read-cursor-status")).toContainText("Read marker:");
   await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
@@ -1175,7 +1175,7 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
   await expect(page.getByTestId("blob-status")).toContainText("upload hash ok");
   await expect(page.getByTestId("blob-status")).toContainText("no token in media URL");
   await expect(page.getByTestId("blob-policy-panel")).toContainText("unsafe or opaque type opens as attachment");
-  await expect(page.getByTestId("blob-policy-panel")).toContainText("Thumbnail: cx:blob:sha256:e2e-thumb");
+  await expect(page.getByTestId("blob-policy-panel")).toContainText("Thumbnail: ck:blob:sha256:e2e-thumb");
 
   const downloadRequest = page.waitForRequest("**/api/v1/blob/get?blob_ref=*");
   await page.getByTestId("verify-blob-download").click();
@@ -1201,7 +1201,7 @@ test("plaintext boundary blocks private drafts until exposure is acknowledged", 
   const sendRequest = page.waitForRequest("**/api/v1/events");
   await page.getByTestId("plaintext-boundary-ack").click();
   await page.getByTestId("send-button").click();
-  expect((await sendRequest).headers()["x-contrix-request-id"]).toBeTruthy();
+  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
   await expect(page.getByTestId("write-status")).toContainText("persisted");
 });
 
@@ -1223,7 +1223,7 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
-  await page.goto("/space/cx:space:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
+  await page.goto("/space/ck:space:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("space-admin-panel")).toBeVisible();
   await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
   await page.getByTestId("queue-discussion-admission").click();
@@ -1238,7 +1238,7 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
   expect(inviteBody.kind).toBe("cx.invite.create");
-  expect(inviteBody.payload.invite_id).toBe("cx:invite:e2e");
+  expect(inviteBody.payload.invite_id).toBe("ck:invite:e2e");
   await expect(page.getByTestId("space-admin-status")).toContainText("invited did:web:carol.example");
   await expect(page.getByTestId("invite-row")).toContainText("pending");
 

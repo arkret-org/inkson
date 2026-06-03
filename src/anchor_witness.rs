@@ -245,7 +245,7 @@ mod tests {
     fn quorum_of_one_with_pinned_signer_passes() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:1".to_owned(),
+            anchor_id: "ck:anchor:1".to_owned(),
             post_state_root: "sha256:root1".to_owned(),
             witnesses: vec![make_witness(
                 "did:web:alice.example",
@@ -262,7 +262,7 @@ mod tests {
     fn quorum_of_two_satisfied_by_two_distinct_pinned_signers() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:2".to_owned(),
+            anchor_id: "ck:anchor:2".to_owned(),
             post_state_root: "sha256:root2".to_owned(),
             witnesses: vec![
                 make_witness("did:web:alice.example", "alice.example", "sig-a"),
@@ -278,7 +278,7 @@ mod tests {
     fn unknown_signer_domain_is_rejected() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:3".to_owned(),
+            anchor_id: "ck:anchor:3".to_owned(),
             post_state_root: "sha256:root3".to_owned(),
             witnesses: vec![make_witness(
                 "did:web:carol.example",
@@ -300,7 +300,7 @@ mod tests {
     fn duplicate_signer_inflates_count_and_is_rejected() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:4".to_owned(),
+            anchor_id: "ck:anchor:4".to_owned(),
             post_state_root: "sha256:root4".to_owned(),
             witnesses: vec![
                 make_witness("did:web:alice.example", "alice.example", "sig-a"),
@@ -321,7 +321,7 @@ mod tests {
     fn signature_failure_propagates_specific_signer_did() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:5".to_owned(),
+            anchor_id: "ck:anchor:5".to_owned(),
             post_state_root: "sha256:root5".to_owned(),
             witnesses: vec![
                 make_witness("did:web:alice.example", "alice.example", "good-sig"),
@@ -342,7 +342,7 @@ mod tests {
     fn threshold_not_met_when_fewer_signers_than_required() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:6".to_owned(),
+            anchor_id: "ck:anchor:6".to_owned(),
             post_state_root: "sha256:root6".to_owned(),
             witnesses: vec![make_witness(
                 "did:web:alice.example",
@@ -365,7 +365,7 @@ mod tests {
     fn zero_threshold_is_explicitly_rejected() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:7".to_owned(),
+            anchor_id: "ck:anchor:7".to_owned(),
             post_state_root: "sha256:root7".to_owned(),
             witnesses: vec![make_witness(
                 "did:web:alice.example",
@@ -385,7 +385,7 @@ mod tests {
     fn empty_witness_list_rejected() {
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:8".to_owned(),
+            anchor_id: "ck:anchor:8".to_owned(),
             post_state_root: "sha256:root8".to_owned(),
             witnesses: vec![],
             threshold_required: 1,
@@ -425,7 +425,7 @@ mod tests {
         // root, preventing replay across anchors.
         let bundle = make_bundle();
         let chain = AnchorWitnessChain {
-            anchor_id: "cx:anchor:9".to_owned(),
+            anchor_id: "ck:anchor:9".to_owned(),
             post_state_root: "sha256:expected".to_owned(),
             witnesses: vec![make_witness(
                 "did:web:alice.example",

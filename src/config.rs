@@ -14,7 +14,7 @@ const DEFAULT_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEFAULT_ACCOUNT_DID: &str = "";
-const DEVICE_ID_PREFIX: &str = "cx:device:";
+const DEVICE_ID_PREFIX: &str = "ck:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
 /// P3B.4: localStorage key for the multi-profile config holding the
@@ -96,7 +96,7 @@ impl ClientConfig {
 /// peek pattern.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountProfile {
-    /// Stable, opaque id (UUIDv7 prefixed `cx:profile:`). NOT derived
+    /// Stable, opaque id (UUIDv7 prefixed `ck:profile:`). NOT derived
     /// from the account_did — DIDs can rotate via inception-upgrade,
     /// but the profile id should stay put so the switcher UI doesn't
     /// lose its row.
@@ -120,7 +120,7 @@ impl AccountProfile {
         session_token: impl Into<String>,
     ) -> Self {
         Self {
-            profile_id: format!("cx:profile:{}", uuid_v7()),
+            profile_id: format!("ck:profile:{}", uuid_v7()),
             label: String::new(),
             server_url: server_url.into(),
             account_did: account_did.into(),
@@ -262,7 +262,7 @@ impl MultiProfileConfig {
         // idempotent (the v2 blob, if it already exists, wins anyway —
         // this branch only runs when v2 is empty).
         profile.profile_id = format!(
-            "cx:profile:legacy-{}",
+            "ck:profile:legacy-{}",
             profile.account_did.replace(':', "-")
         );
         let id = profile.profile_id.clone();
@@ -556,7 +556,7 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.server_url, "https://local.host");
         assert!(config.account_did.is_empty());
-        assert!(config.device_id.starts_with("cx:device:"));
+        assert!(config.device_id.starts_with("ck:device:"));
         assert!(is_valid_device_id(&config.device_id));
         assert!(config.session_token.is_empty());
     }
@@ -564,10 +564,10 @@ mod tests {
     #[test]
     fn validate_server_url_allows_https_and_loopback_http() {
         assert_eq!(
-            validate_server_url("https://contrix.example")
+            validate_server_url("https://cokret.example")
                 .unwrap()
                 .as_str(),
-            "https://contrix.example/"
+            "https://cokret.example/"
         );
         assert_eq!(
             validate_server_url("http://127.0.0.1:8787")
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn validate_server_url_rejects_insecure_remote_http() {
-        let error = validate_server_url("http://contrix.example").unwrap_err();
+        let error = validate_server_url("http://cokret.example").unwrap_err();
         assert!(
             error
                 .to_string()
@@ -600,7 +600,7 @@ mod tests {
         store.save_fields(
             "http://server.local".to_owned(),
             "did:web:bob.example".to_owned(),
-            "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
             "sx_token".to_owned(),
         );
 
@@ -609,7 +609,7 @@ mod tests {
             ClientConfig::from_fields(
                 "http://server.local",
                 "did:web:bob.example",
-                "cx:device:01964137-0000-7000-8000-000000000001",
+                "ck:device:01964137-0000-7000-8000-000000000001",
                 "sx_token",
             )
         );
@@ -623,7 +623,7 @@ mod tests {
         writer.save_fields(
             "http://persisted.local".to_owned(),
             "did:web:persisted.example".to_owned(),
-            "cx:device:01964137-0000-7000-8000-000000000002".to_owned(),
+            "ck:device:01964137-0000-7000-8000-000000000002".to_owned(),
             "sx_persisted".to_owned(),
         );
 
@@ -633,7 +633,7 @@ mod tests {
             ClientConfig::from_fields(
                 "http://persisted.local",
                 "did:web:persisted.example",
-                "cx:device:01964137-0000-7000-8000-000000000002",
+                "ck:device:01964137-0000-7000-8000-000000000002",
                 "sx_persisted",
             )
         );
@@ -676,9 +676,9 @@ mod tests {
     #[test]
     fn legacy_config_round_trips_into_single_profile() {
         let legacy = ClientConfig::from_fields(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000003",
+            "ck:device:01964137-0000-7000-8000-000000000003",
             "session-secret",
         );
         let multi = MultiProfileConfig::from_legacy(legacy.clone());
@@ -686,15 +686,15 @@ mod tests {
         assert!(multi.active_profile_id.is_some());
         let active = multi.active().expect("active profile");
         assert_eq!(active.account_did, "did:web:alice.example");
-        assert_eq!(active.server_url, "https://contrix.example");
+        assert_eq!(active.server_url, "https://cokret.example");
     }
 
     #[test]
     fn empty_legacy_config_yields_no_profile() {
         let legacy = ClientConfig::from_fields(
-            "https://contrix.example",
+            "https://cokret.example",
             "", // empty DID = fresh install
-            "cx:device:01964137-0000-7000-8000-000000000004",
+            "ck:device:01964137-0000-7000-8000-000000000004",
             "",
         );
         let multi = MultiProfileConfig::from_legacy(legacy);
@@ -706,9 +706,9 @@ mod tests {
     fn upsert_and_activate_replaces_matching_profile() {
         let mut multi = MultiProfileConfig::default();
         let first = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000005",
+            "ck:device:01964137-0000-7000-8000-000000000005",
             "token-a",
         );
         let first_id = multi.upsert_and_activate(first);
@@ -716,9 +716,9 @@ mod tests {
         // Same (server_url, account_did) — should overwrite rather
         // than append a new row.
         let updated = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000006",
+            "ck:device:01964137-0000-7000-8000-000000000006",
             "token-b",
         );
         let updated_id = multi.upsert_and_activate(updated);
@@ -732,29 +732,29 @@ mod tests {
     fn activate_rejects_unknown_profile_id() {
         let mut multi = MultiProfileConfig::default();
         let profile = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000007",
+            "ck:device:01964137-0000-7000-8000-000000000007",
             "token",
         );
         multi.upsert_and_activate(profile);
-        assert!(!multi.activate("cx:profile:nonexistent"));
+        assert!(!multi.activate("ck:profile:nonexistent"));
     }
 
     #[test]
     fn remove_resets_active_pointer_when_active_removed() {
         let mut multi = MultiProfileConfig::default();
         let first = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000008",
+            "ck:device:01964137-0000-7000-8000-000000000008",
             "token-a",
         );
         let first_id = multi.upsert_and_activate(first);
         let second = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:bob.example",
-            "cx:device:01964137-0000-7000-8000-000000000009",
+            "ck:device:01964137-0000-7000-8000-000000000009",
             "token-b",
         );
         let second_id = multi.upsert_and_activate(second);
@@ -774,9 +774,9 @@ mod tests {
     fn active_as_client_config_round_trips_active_profile() {
         let mut multi = MultiProfileConfig::default();
         let profile = AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-00000000000a",
+            "ck:device:01964137-0000-7000-8000-00000000000a",
             "token",
         );
         multi.upsert_and_activate(profile);
@@ -792,9 +792,9 @@ mod tests {
 
         let mut multi = MultiProfileConfig::default();
         multi.upsert_and_activate(AccountProfile::new(
-            "https://contrix.example",
+            "https://cokret.example",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-00000000000b",
+            "ck:device:01964137-0000-7000-8000-00000000000b",
             "tok",
         ));
         store.save_profiles(&multi).expect("write profiles");

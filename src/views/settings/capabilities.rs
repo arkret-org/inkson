@@ -16,7 +16,7 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -143,7 +143,7 @@ pub fn CapabilitiesSettingsCard(
             return;
         }
         spawn(async move {
-            match with_authed_api(&base, tok, |api: ContrixApi| async move {
+            match with_authed_api(&base, tok, |api: CokretApi| async move {
                 api.effective_grants(&did).await
             })
             .await

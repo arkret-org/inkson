@@ -14,7 +14,7 @@ To raise verbosity in a dev session:
 
 | Target | How |
 | --- | --- |
-| Native | `RUST_LOG=yougen=debug,contrix=info cargo run` |
+| Native | `RUST_LOG=yougen=debug,cokret=info cargo run` |
 | Web | DevTools → Console; pass `?log=debug` if your dev server honours it. |
 
 Log line fields you can rely on:
@@ -23,7 +23,7 @@ Log line fields you can rely on:
 - `action` — verbose dotted name (`oidc.refresh`, `mls.commit`,
   `push.subscribe`).
 - `outcome` — `success` / `error` / `denied`.
-- `request_id` — soland's `x-contrix-request-id` for every HTTP exchange
+- `request_id` — soland's `x-cokret-request-id` for every HTTP exchange
   the line refers to (P5 addition; see §3 below).
 - `note` — optional free-form context.
 
@@ -70,7 +70,7 @@ the toggle is flipped again.
 
 ## 3. `request_id` propagation (P5)
 
-Every yougen → soland HTTP call sets the `x-contrix-request-id` header.
+Every yougen → soland HTTP call sets the `x-cokret-request-id` header.
 soland echoes the value in:
 
 - Success response bodies (when applicable).
@@ -79,7 +79,7 @@ soland echoes the value in:
 
 The P5 work threads the same value end-to-end on the client:
 
-1. `crate::api` stores the inbound `x-contrix-request-id` on every
+1. `crate::api` stores the inbound `x-cokret-request-id` on every
    response.
 2. `tracing` log lines emitted during the call carry the value via the
    `request_id` field so a `grep` across yougen + soland logs lines up.

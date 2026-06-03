@@ -1,4 +1,4 @@
-//! Cursor types are owned by the Contrix Rust SDK.
+//! Cursor types are owned by the Cokret Rust SDK.
 //!
 //! Round R2/R3 (T03): the SDK now exposes
 //! [`contrix_sdk::cursor::generate_cursor_handle`] which yields a
@@ -8,7 +8,7 @@
 //!
 //! P3B.9.2: re-export `SpacePosition` and add the small UI-facing
 //! helpers ([`flow_position_label`], [`flow_position_hlc`]) that consume
-//! the new Flow position projection fields shipped on `contrix-service-api`.
+//! the new Flow position projection fields shipped on `cokret-service-api`.
 //! UI callers (kanban move arrow, timeline scroll-to-position) should
 //! prefer these over decoding the raw JSON.
 
@@ -50,7 +50,7 @@ pub fn flow_position_label(position: &SpacePosition, last_read_at: Option<&str>)
 /// subscribe Space-position JSON. Returns `None` when the field is
 /// absent or non-string (older soland builds / SDK projections).
 ///
-/// Spec field name registered on `contrix-service-api/openapi.yaml`.
+/// Spec field name registered on `cokret-service-api/openapi.yaml`.
 /// Once the SDK promotes it onto [`SpacePosition`] directly, replace
 /// the JSON lookup with a struct field read.
 pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
@@ -77,7 +77,7 @@ mod tests {
 
     fn sample_position() -> SpacePosition {
         SpacePosition {
-            p: vec!["cx:event:tip-1".to_owned(), "cx:event:tip-2".to_owned()],
+            p: vec!["ck:event:tip-1".to_owned(), "ck:event:tip-2".to_owned()],
             order: "2026-05-26T00:00:00Z-0001".to_owned(),
             h: "sha256:abcd".to_owned(),
         }

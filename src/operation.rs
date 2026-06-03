@@ -1,12 +1,12 @@
 //! Typed v1 Event Envelope used by yougen's active write paths.
 //!
-//! Spec source of truth: `contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+//! Spec source of truth: `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //!
 //! # Signing
 //!
 //! All envelopes are produced with `proofs: Vec::new()`. The detached JWS
 //! proof is attached exclusively by [`crate::event_signer::sign_with_active`]
-//! from inside [`crate::api::ContrixApi::submit_event_envelope`]. There is
+//! from inside [`crate::api::CokretApi::submit_event_envelope`]. There is
 //! NO placeholder proof: a submit without an installed signer is rejected
 //! locally with `no active signer configured` rather than shipped to the
 //! wire in any form.
@@ -97,8 +97,8 @@ pub fn set_proof_mode(mode: ProofMode) {
 
 pub(crate) fn scope_id_as_realm_id(value: &str) -> String {
     value
-        .strip_prefix("cx:space:")
-        .map(|suffix| format!("cx:realm:{suffix}"))
+        .strip_prefix("ck:space:")
+        .map(|suffix| format!("ck:realm:{suffix}"))
         .unwrap_or_else(|| value.to_owned())
 }
 
@@ -355,10 +355,10 @@ impl OperationBuilder {
         }
         let actor_seq = next_seq();
         // Normalise the wire `realm_id` field — callers may still hand in
-        // the legacy `cx:space:` form during the inversion migration.
+        // the legacy `ck:space:` form during the inversion migration.
         let realm_id = scope_id_as_realm_id(&self.realm_id);
         EventEnvelope {
-            event_id: format!("cx:event:{}", uuid_v7()),
+            event_id: format!("ck:event:{}", uuid_v7()),
             kind: self.op_type,
             actor_id: self.actor,
             actor_seq,
@@ -456,10 +456,10 @@ impl EventEnvelope {
 }
 
 fn typed_operation_id(operation_id: &str) -> String {
-    if operation_id.starts_with("cx:operation:") {
+    if operation_id.starts_with("ck:operation:") {
         operation_id.to_owned()
     } else {
-        format!("cx:operation:{operation_id}")
+        format!("ck:operation:{operation_id}")
     }
 }
 
@@ -467,7 +467,7 @@ fn typed_operation_id(operation_id: &str) -> String {
 ///
 /// Thin wrapper over the SDK's `new_prefixed_uuid7` (RFC 9562 UUIDv7 via the
 /// `uuid` crate, with same-millisecond monotonicity) called with an empty
-/// prefix. Callers add their own typed prefix (`cx:operation:`, `cx:device:`,
+/// prefix. Callers add their own typed prefix (`ck:operation:`, `ck:device:`,
 /// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
 /// same-millisecond monotonic guarantee.
 pub fn uuid_v7() -> String {
@@ -593,7 +593,7 @@ pub mod cx_ops {
     }
 
     /// Build a `cx.flow.watch.set` operation. Spec:
-    /// `contrix-spec/spec/v1/zh/models/flow-and-message.md §8.3` —
+    /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §8.3` —
     /// writes the cas-register cell `cx.component.flow.watch.v1` keyed by
     /// `(flow_id, watcher_actor_id)`.
     ///
@@ -633,7 +633,7 @@ pub mod cx_ops {
     }
 
     /// Build a `cx.flow.tracks.update` operation. Spec:
-    /// `contrix-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
+    /// `cokret-spec/spec/v1/zh/models/flow-and-message.md §3` (post dc01ad7).
     ///
     /// This is the single unified track-mutation event that replaces
     /// `cx.flow.track.{enable,disable,update,set_primary}`.
@@ -908,8 +908,8 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
         let discussion_flow_id = realm_id
-            .strip_prefix("cx:realm:")
-            .map(|suffix| format!("cx:flow:{suffix}"))
+            .strip_prefix("ck:realm:")
+            .map(|suffix| format!("ck:flow:{suffix}"))
             .unwrap_or_else(|| morph_id.to_owned());
         let content = contrix_sdk::ContentBlock::text(body)
             .with_field(
@@ -944,7 +944,7 @@ pub mod cx_ops {
         morph_id: &str,
         target_ref: &str,
     ) -> OperationBuilder {
-        let relation_id = format!("cx:relation:{}", uuid_v7());
+        let relation_id = format!("ck:relation:{}", uuid_v7());
         OperationBuilder::new(space_id, actor, "cx.relation.create")
             .target_ref(morph_id)
             .body(json!({
@@ -1613,7 +1613,7 @@ pub mod cx_ops {
 
     /// Round 4 (spec a77b995) — validate an `applet_id` against the
     /// canonical [`contrix_sdk::AppletIdentifier`] shape (DID *or*
-    /// `cx:applet:<uuidv7>`). Returns the typed identifier so callers
+    /// `ck:applet:<uuidv7>`). Returns the typed identifier so callers
     /// can stash it without re-parsing. Wire-breaking: plain strings
     /// outside these two forms are rejected.
     pub fn parse_applet_identifier(
@@ -1623,13 +1623,13 @@ pub mod cx_ops {
             contrix_sdk::Did::new(applet_id)
                 .map(contrix_sdk::AppletIdentifier::Did)
                 .map_err(|e| format!("invalid applet DID: {e}"))
-        } else if applet_id.starts_with("cx:applet:") {
+        } else if applet_id.starts_with("ck:applet:") {
             contrix_sdk::AppletId::new(applet_id)
                 .map(contrix_sdk::AppletIdentifier::Cx)
-                .map_err(|e| format!("invalid cx:applet:<uuidv7>: {e}"))
+                .map_err(|e| format!("invalid ck:applet:<uuidv7>: {e}"))
         } else {
             Err(format!(
-                "applet_id {applet_id:?} is neither a DID nor cx:applet:<uuidv7> \
+                "applet_id {applet_id:?} is neither a DID nor ck:applet:<uuidv7> \
                  (round 4 schema_violation)"
             ))
         }
@@ -1795,7 +1795,7 @@ mod tests {
 
     fn spec_schema(name: &str) -> serde_json::Value {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../contrix-spec/spec/v1/artifacts/schemas")
+            .join("../cokret-spec/spec/v1/artifacts/schemas")
             .join(name);
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("read spec schema {}: {err}", path.display()));
@@ -1897,12 +1897,12 @@ mod tests {
 
     #[test]
     fn operation_builder_generates_valid_envelope() {
-        let op = OperationBuilder::new("cx:realm:test", "did:web:alice", "cx.message.create")
+        let op = OperationBuilder::new("ck:realm:test", "did:web:alice", "cx.message.create")
             .body(json!({"content": {"kind": "cx.content.text", "body": "hello"}}))
             .build("test_node");
 
         assert!(!op.local_operation_id().is_empty());
-        assert_eq!(op.realm_id, "cx:realm:test");
+        assert_eq!(op.realm_id, "ck:realm:test");
         assert_eq!(op.actor_id, "did:web:alice");
         assert_eq!(op.kind, "cx.message.create");
         assert!(!op.hlc.is_empty());
@@ -1914,7 +1914,7 @@ mod tests {
 
     #[test]
     fn operation_round_trip_serde() {
-        let op = OperationBuilder::new("cx:space:s1", "did:web:bob", "cx.message.create")
+        let op = OperationBuilder::new("ck:space:s1", "did:web:bob", "cx.message.create")
             .body(json!({"content": {"kind": "cx.content.text", "body": "hello world"}}))
             .build("node");
         let json = serde_json::to_string(&op).unwrap();
@@ -1925,9 +1925,9 @@ mod tests {
     #[test]
     fn document_morph_create_carries_document_body() {
         let op = cx_ops::document_morph_create(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:morph:0196419b-0000-7000-8000-000000000002",
+            "ck:morph:0196419b-0000-7000-8000-000000000002",
             "Untitled Document",
             json!({"blocks": [{"id": "block-1", "kind": "Heading", "content": "Hi"}]}),
         )
@@ -1936,7 +1936,7 @@ mod tests {
         assert_eq!(op.kind, "cx.morph.create");
         assert_eq!(
             op.payload["object"]["id"],
-            "cx:morph:0196419b-0000-7000-8000-000000000002"
+            "ck:morph:0196419b-0000-7000-8000-000000000002"
         );
         assert!(op.payload.get("morph_id").is_none());
         assert_eq!(op.payload["object"]["morph_type"], "document");
@@ -1952,11 +1952,11 @@ mod tests {
     #[test]
     fn kanban_card_flow_create_carries_position_in_metadata_fields() {
         let op = cx_ops::kanban_card_flow_create(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000004",
-            "cx:space:0196419b-0000-7000-8000-000000000002",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "ck:flow:0196419b-0000-7000-8000-000000000004",
+            "ck:space:0196419b-0000-7000-8000-000000000002",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
             "Move-backed card",
             "h1",
         )
@@ -1964,10 +1964,10 @@ mod tests {
         let flow_schema = spec_schema("flow.schema.json");
 
         assert_eq!(op.kind, "cx.flow.create");
-        assert_eq!(op.realm_id, "cx:realm:0196419b-0000-7000-8000-000000000001");
+        assert_eq!(op.realm_id, "ck:realm:0196419b-0000-7000-8000-000000000001");
         assert_eq!(
             op.payload["object"]["realm_id"],
-            "cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_required_fields_present(&flow_schema, &op.payload["object"]);
         assert_eq!(
@@ -1976,11 +1976,11 @@ mod tests {
         );
         assert_eq!(
             op.payload["object"]["metadata"]["fields"]["board_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000002"
+            "ck:space:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(
             op.payload["object"]["metadata"]["fields"]["list_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000003"
+            "ck:space:0196419b-0000-7000-8000-000000000003"
         );
         assert_eq!(
             op.payload["object"]["metadata"]["title"],
@@ -1997,8 +1997,8 @@ mod tests {
 
     #[test]
     fn mls_commit_builder_matches_registered_payload_schema() {
-        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
-        let group_id = "cx:mls_group:kanban-test";
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
+        let group_id = "ck:mls_group:kanban-test";
         let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
             contrix_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             group_id,
@@ -2006,7 +2006,7 @@ mod tests {
             1,
             vec![
                 contrix_sdk::EventId::new(
-                    "cx:event:0196419b-0000-7000-8000-000000000002".to_owned(),
+                    "ck:event:0196419b-0000-7000-8000-000000000002".to_owned(),
                 )
                 .unwrap(),
             ],
@@ -2020,7 +2020,7 @@ mod tests {
         let payload = contrix_sdk::MlsCommitPayload::new(
             group_id,
             0,
-            "cx:event:0196419b-0000-7000-8000-000000000001",
+            "ck:event:0196419b-0000-7000-8000-000000000001",
             Vec::new(),
             1,
             contrix_sdk::Hash::new(
@@ -2045,9 +2045,9 @@ mod tests {
     #[test]
     fn document_morph_update_targets_existing_morph_id() {
         let op = cx_ops::document_morph_update(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:morph:0196419b-0000-7000-8000-000000000002",
+            "ck:morph:0196419b-0000-7000-8000-000000000002",
             json!({"blocks": []}),
         )
         .build("test_node");
@@ -2055,7 +2055,7 @@ mod tests {
         assert_eq!(op.kind, "cx.morph.update");
         assert_eq!(
             op.payload["target_ref"],
-            "cx:morph:0196419b-0000-7000-8000-000000000002"
+            "ck:morph:0196419b-0000-7000-8000-000000000002"
         );
         assert!(op.payload.get("morph_id").is_none());
         assert!(op.payload["patch"]["fields"]["value"]["document"]["blocks"].is_array());
@@ -2066,9 +2066,9 @@ mod tests {
     #[test]
     fn document_comment_create_carries_anchor_range() {
         let op = cx_ops::document_comment_create(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:morph:0196419b-0000-7000-8000-000000000002",
+            "ck:morph:0196419b-0000-7000-8000-000000000002",
             4,
             9,
             "needs detail",
@@ -2079,7 +2079,7 @@ mod tests {
         assert_eq!(op.kind, "cx.message.create");
         assert_eq!(
             op.payload["content"]["morph_id"],
-            "cx:morph:0196419b-0000-7000-8000-000000000002"
+            "ck:morph:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(op.payload["content"]["anchor_range"]["start"], 4);
         assert_eq!(op.payload["content"]["anchor_range"]["end"], 9);
@@ -2089,9 +2089,9 @@ mod tests {
 
     #[test]
     fn incident_status_update_uses_schema_safe_fields_patch() {
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
         let op = cx_ops::incident_status_update(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
             "mitigated",
@@ -2113,9 +2113,9 @@ mod tests {
     #[test]
     fn discussion_flow_create_emits_discussion_track() {
         let op = cx_ops::discussion_flow_create(
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000001",
+            "ck:flow:0196419b-0000-7000-8000-000000000001",
             "Ops",
         )
         .unwrap()
@@ -2123,7 +2123,7 @@ mod tests {
         assert_eq!(op.kind, "cx.flow.create");
         assert_eq!(
             op.payload["object"]["id"],
-            "cx:flow:0196419b-0000-7000-8000-000000000001"
+            "ck:flow:0196419b-0000-7000-8000-000000000001"
         );
         assert!(op.payload.get("flow_id").is_none());
         assert_eq!(
@@ -2142,9 +2142,9 @@ mod tests {
 
     #[test]
     fn flow_tracks_update_primary_uses_is_primary_patch_key() {
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000001";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000001";
         let op = cx_ops::flow_tracks_update_set_primary(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
             "discussion",
@@ -2164,9 +2164,9 @@ mod tests {
 
     #[test]
     fn flow_update_patch_uses_canonical_payload_patch() {
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
         let op = cx_ops::flow_update_patch(
-            "cx:space:0196419b-0000-7000-8000-000000000010",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             flow_id,
             json!({
@@ -2185,11 +2185,11 @@ mod tests {
 
     #[test]
     fn flow_update_builders_match_registered_object_patch_schema() {
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000001";
         let actor = "did:web:alice.example";
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
-        let board_space_id = "cx:space:0196419b-0000-7000-8000-000000000010";
-        let list_space_id = "cx:space:0196419b-0000-7000-8000-000000000011";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+        let board_space_id = "ck:space:0196419b-0000-7000-8000-000000000010";
+        let list_space_id = "ck:space:0196419b-0000-7000-8000-000000000011";
 
         let events = [
             cx_ops::flow_update_patch(
@@ -2244,11 +2244,11 @@ mod tests {
 
     #[test]
     fn object_patch_family_builders_match_registered_payload_schema() {
-        let realm_id = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let actor = "did:web:alice.example";
-        let flow_id = "cx:flow:0196419b-0000-7000-8000-000000000002";
-        let morph_id = "cx:morph:0196419b-0000-7000-8000-000000000003";
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000004";
+        let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
+        let morph_id = "ck:morph:0196419b-0000-7000-8000-000000000003";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000004";
 
         let events = [
             cx_ops::flow_tracks_update_set_primary(realm_id, actor, flow_id, "discussion")
@@ -2290,17 +2290,17 @@ mod tests {
     #[test]
     fn flow_position_cas_update_emits_canonical_move_payload() {
         let op = cx_ops::flow_position_cas_update(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             "cx.flow.move",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:0196419b-0000-7000-8000-000000000020",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:0196419b-0000-7000-8000-000000000020",
             json!({
-                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
                 "rank": "a1"
             }),
             json!({
-                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000040",
+                "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000040",
                 "rank": "b1"
             }),
         )
@@ -2309,16 +2309,16 @@ mod tests {
         assert_eq!(op.kind, "cx.flow.move");
         assert_eq!(
             op.payload["board_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000010"
+            "ck:space:0196419b-0000-7000-8000-000000000010"
         );
         assert_eq!(
             op.payload["target_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000040"
+            "ck:space:0196419b-0000-7000-8000-000000000040"
         );
         assert_eq!(op.payload["rank"], "b1");
         assert_eq!(
             op.payload["expected_position"]["space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000030"
+            "ck:space:0196419b-0000-7000-8000-000000000030"
         );
         assert_eq!(op.payload["expected_position"]["rank"], "a1");
         assert!(op.payload.get("board_place_id").is_none());
@@ -2329,17 +2329,17 @@ mod tests {
     #[test]
     fn flow_position_cas_update_emits_canonical_reorder_payload() {
         let op = cx_ops::flow_position_cas_update(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             "cx.flow.reorder",
-            "cx:space:0196419b-0000-7000-8000-000000000010",
-            "cx:flow:0196419b-0000-7000-8000-000000000020",
+            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:flow:0196419b-0000-7000-8000-000000000020",
             json!({
-                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
                 "rank": "a1"
             }),
             json!({
-                "list_space_id": "cx:space:0196419b-0000-7000-8000-000000000030",
+                "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
                 "rank": "a2"
             }),
         )
@@ -2348,11 +2348,11 @@ mod tests {
         assert_eq!(op.kind, "cx.flow.reorder");
         assert_eq!(
             op.payload["board_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000010"
+            "ck:space:0196419b-0000-7000-8000-000000000010"
         );
         assert_eq!(
             op.payload["space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000030"
+            "ck:space:0196419b-0000-7000-8000-000000000030"
         );
         assert_eq!(op.payload["rank"], "a2");
         assert_eq!(op.payload["expected_position"]["rank"], "a1");
@@ -2364,18 +2364,18 @@ mod tests {
     #[test]
     fn conflict_repair_emits_recovery_preconditions_effects_and_refs() {
         let heads = vec![
-            "cx:event:0196419b-0000-7000-8000-000000000001".to_owned(),
-            "cx:event:0196419b-0000-7000-8000-000000000002".to_owned(),
+            "ck:event:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ck:event:0196419b-0000-7000-8000-000000000002".to_owned(),
         ];
         let event = cx_ops::conflict_repair(
-            "cx:space:test",
+            "ck:space:test",
             "did:web:alice.example",
-            "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card",
+            "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card",
             &heads,
-            "cx:capability:recovery",
-            "cx:snapshot:sha256:witness",
-            "cx:proof:sha256:proof",
-            json!({"list_space_id": "cx:space:list", "rank": "U"}),
+            "ck:capability:recovery",
+            "ck:snapshot:sha256:witness",
+            "ck:proof:sha256:proof",
+            json!({"list_space_id": "ck:space:list", "rank": "U"}),
         )
         .build("node");
 
@@ -2399,37 +2399,37 @@ mod tests {
     #[test]
     fn space_create_emits_canonical_space_object() {
         let op = cx_ops::space_create(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
-            "cx:space:0196419b-0000-7000-8000-000000000002",
+            "ck:space:0196419b-0000-7000-8000-000000000002",
             "list",
             "To Do",
-            Some("cx:space:0196419b-0000-7000-8000-000000000003"),
+            Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
         )
         .build("node");
         assert_eq!(op.kind, "cx.space.create");
         assert_eq!(
             op.local_target_ref(),
-            Some("cx:space:0196419b-0000-7000-8000-000000000002")
+            Some("ck:space:0196419b-0000-7000-8000-000000000002")
         );
         assert!(op.payload.get("place_id").is_none());
         assert!(op.payload.get("board_place_id").is_none());
         assert_eq!(op.payload["object"]["schema"], "cx.schema.space.v1");
         assert_eq!(
             op.payload["object"]["id"],
-            "cx:space:0196419b-0000-7000-8000-000000000002"
+            "ck:space:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(
             op.payload["object"]["realm_id"],
-            "cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert!(op.payload["object"].get("space_id").is_none());
         assert_eq!(op.payload["object"]["kind"], "list");
         assert!(op.payload["object"].get("board_place_id").is_none());
         assert_eq!(
             op.payload["object"]["parent_space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000003"
+            "ck:space:0196419b-0000-7000-8000-000000000003"
         );
         assert_eq!(op.payload["object"]["rank"], "U");
         assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
@@ -2444,17 +2444,17 @@ mod tests {
     #[test]
     fn spec_space_schema_accepts_client_space_create_payload_shape() {
         // R1.7 rename: the container schema artifact is now space.schema.json
-        // (the former place.schema.json was retired in contrix-spec's R1.7
+        // (the former place.schema.json was retired in cokret-spec's R1.7
         // pass). The builder still has the legacy helper name
         // `space_create` emits a canonical Space object.
         let schema = spec_schema("space.schema.json");
         let op = cx_ops::space_create(
-            "cx:realm:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:space:0196419b-0000-7000-8000-000000000002",
+            "ck:space:0196419b-0000-7000-8000-000000000002",
             "list",
             "To Do",
-            Some("cx:space:0196419b-0000-7000-8000-000000000003"),
+            Some("ck:space:0196419b-0000-7000-8000-000000000003"),
             Some("U"),
         )
         .build("node");
@@ -2463,12 +2463,12 @@ mod tests {
         assert_eq!(object["schema"], schema["properties"]["schema"]["const"]);
         assert_eq!(
             object["realm_id"],
-            "cx:realm:0196419b-0000-7000-8000-000000000001"
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(op.kind, "cx.space.create");
         assert!(op.payload.get("place_id").is_none());
         assert!(serde_json::to_string(&op).unwrap().contains("\"realm_id\""));
-        assert!(!serde_json::to_string(&op).unwrap().contains("cx:list:"));
+        assert!(!serde_json::to_string(&op).unwrap().contains("ck:list:"));
     }
 
     #[test]
@@ -2476,9 +2476,9 @@ mod tests {
         let schema = spec_schema("patch.schema.json");
         let ops = patch_schema_ops(&schema);
         let op = cx_ops::flow_tracks_update_set_primary(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000004",
+            "ck:flow:0196419b-0000-7000-8000-000000000004",
             "discussion",
         )
         .build("node");
@@ -2501,9 +2501,9 @@ mod tests {
         let schema = spec_schema("patch.schema.json");
         let ops = patch_schema_ops(&schema);
         let op = cx_ops::flow_update_patch(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000004",
+            "ck:flow:0196419b-0000-7000-8000-000000000004",
             json!({
                 "title": { "$op": "set", "value": "Launch checklist" },
                 "summary": { "$op": "set", "value": "Ship blockers only" },
@@ -2535,7 +2535,7 @@ mod tests {
     fn spec_event_schema_lists_client_write_kinds() {
         let schema_text = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json"),
+                .join("../cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json"),
         )
         .unwrap();
         for kind in [
@@ -2555,7 +2555,7 @@ mod tests {
 
     #[test]
     fn canonical_digest_is_stable_across_key_order() {
-        let mut op_a = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+        let mut op_a = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
             .body(json!({"b": 2, "a": 1}))
             .build("node");
         op_a.event_id = "fixed".into();
@@ -2574,7 +2574,7 @@ mod tests {
     #[test]
     fn sign_ed25519_attaches_typed_proof() {
         use ed25519_dalek::SigningKey;
-        let mut op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -2591,7 +2591,7 @@ mod tests {
 
     #[test]
     fn require_proof_fails_when_unsigned() {
-        let mut op = OperationBuilder::new("cx:space:s1", "did:web:alice", "cx.message.create")
+        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "cx.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         op.proofs.clear();
@@ -2600,9 +2600,9 @@ mod tests {
 
     #[test]
     fn invite_helpers_emit_canonical_kinds() {
-        let invite_id = "cx:invite:01904100-0000-7000-8000-000000000001";
+        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
         let create = cx_ops::invite_create_structured(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
             "did:web:bob.example",
@@ -2626,7 +2626,7 @@ mod tests {
         assert_registered_payload_valid(&create);
 
         let accept = cx_ops::invite_accept(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
             invite_id,
         )
@@ -2637,7 +2637,7 @@ mod tests {
         assert_registered_payload_valid(&accept);
 
         let cancel = cx_ops::invite_cancel(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
             Some("expired"),
@@ -2652,9 +2652,9 @@ mod tests {
 
     #[test]
     fn space_lifecycle_helpers_emit_canonical_kinds() {
-        let container_space_id = "cx:space:01904100-0000-7000-8000-1fb50799ad42";
+        let container_space_id = "ck:space:01904100-0000-7000-8000-1fb50799ad42";
         let archive = cx_ops::space_archive(
-            "cx:realm:01904100-0000-7000-8000-1fb50799ad40",
+            "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
             "did:web:alice.example",
             container_space_id,
         )
@@ -2665,7 +2665,7 @@ mod tests {
         assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
         let restore = cx_ops::space_restore(
-            "cx:realm:01904100-0000-7000-8000-1fb50799ad40",
+            "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
             "did:web:alice.example",
             container_space_id,
         )
@@ -2678,9 +2678,9 @@ mod tests {
 
     #[test]
     fn flow_lifecycle_helpers_emit_canonical_kinds() {
-        let flow_id = "cx:flow:01904100-0000-7000-8000-1fb50799ad50";
+        let flow_id = "ck:flow:01904100-0000-7000-8000-1fb50799ad50";
         let archive =
-            cx_ops::flow_archive("cx:space:test", "did:web:alice.example", flow_id).build("node");
+            cx_ops::flow_archive("ck:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(archive.kind, "cx.flow.archive");
         assert_eq!(archive.payload["target_ref"], flow_id);
         assert!(archive.payload.get("flow_id").is_none());
@@ -2688,7 +2688,7 @@ mod tests {
         assert_registered_payload_valid(&archive);
 
         let restore =
-            cx_ops::flow_restore("cx:space:test", "did:web:alice.example", flow_id).build("node");
+            cx_ops::flow_restore("ck:space:test", "did:web:alice.example", flow_id).build("node");
         assert_eq!(restore.kind, "cx.flow.restore");
         assert_eq!(restore.payload["target_ref"], flow_id);
         assert!(restore.payload.get("flow_id").is_none());
@@ -2702,8 +2702,8 @@ mod tests {
     #[test]
     fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         let service_did = "did:web:applet.example";
-        let session_id = "cx:session:01904100-0000-7000-8000-aa55aa55aa55";
-        let space = "cx:space:test";
+        let session_id = "ck:session:01904100-0000-7000-8000-aa55aa55aa55";
+        let space = "ck:space:test";
         let actor = "did:web:alice.example";
 
         let reg = cx_ops::applet_registration(space, actor, service_did, "extensions", &["read"])
@@ -2723,7 +2723,7 @@ mod tests {
         let start = cx_ops::applet_protocol_session_start(
             space,
             actor,
-            "cx:applet:dummy",
+            "ck:applet:dummy",
             session_id,
             json!({"op": "ping"}),
         )
@@ -2759,8 +2759,8 @@ mod tests {
     #[test]
     fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         let agent = "did:web:researcher.agent.example";
-        let session_id = "cx:session:01904100-0000-7000-8000-bb66bb66bb66";
-        let space = "cx:space:test";
+        let session_id = "ck:session:01904100-0000-7000-8000-bb66bb66bb66";
+        let space = "ck:space:test";
         let actor = "did:web:alice.example";
 
         let endpoint = cx_ops::agent_endpoint(space, actor, agent, "cx.agent.v1", &["flow.read"])
@@ -2776,14 +2776,14 @@ mod tests {
             session_id,
             "http_custom",
             json!({"query": "summarize"}),
-            "cx:grant:01904100-0000-7000-8000-000000000099",
+            "ck:grant:01904100-0000-7000-8000-000000000099",
         )
         .build("node");
         assert_eq!(start.kind, "cx.agent.protocol_session.start");
         assert_eq!(start.payload["counterparty_agent"], agent);
         assert_eq!(
             start.payload["capability_grant"],
-            "cx:grant:01904100-0000-7000-8000-000000000099"
+            "ck:grant:01904100-0000-7000-8000-000000000099"
         );
 
         let status =

@@ -9,7 +9,7 @@
 //!
 //! The queue lives in a `std::sync::Mutex` static so the producer side
 //! (`crate::api`) does not need to thread a Dioxus `Signal` through
-//! every `ContrixApi` call. The consumer side (this component) drains
+//! every `CokretApi` call. The consumer side (this component) drains
 //! the queue at the top of each render — Dioxus is single-threaded on
 //! the renderer thread, so the lock is uncontended in practice.
 //!

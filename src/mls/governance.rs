@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 pub struct GovernanceBindingPayload {
     /// MLS group id (Space-scoped).
     pub group_id: String,
-    /// `cx:space:` typed-id.
+    /// `ck:space:` typed-id.
     pub space_id: String,
     /// Epoch the commit advances from.
     pub prev_epoch: u64,
@@ -140,11 +140,11 @@ mod tests {
     use super::*;
 
     fn space_id() -> SpaceId {
-        SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
+        SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
     }
 
     fn anchor() -> AnchorId {
-        AnchorId::new(format!("cx:anchor:sha256:{}", "a".repeat(64))).unwrap()
+        AnchorId::new(format!("ck:anchor:sha256:{}", "a".repeat(64))).unwrap()
     }
 
     fn schedule_hash() -> Hash {

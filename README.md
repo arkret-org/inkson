@@ -1,8 +1,8 @@
 # yougen
 
-> **Spec target**: [contrix-spec @ c2848a4](../contrix-spec) (R3.4 sync 2026-05-31)
+> **Spec target**: [cokret-spec @ c2848a4](../cokret-spec) (R3.4 sync 2026-05-31)
 
-Cross-platform Contrix client built with Dioxus 0.7.
+Cross-platform Cokret client built with Dioxus 0.7.
 
 ## Pre-commit hook setup
 
@@ -15,7 +15,7 @@ git config core.hooksPath .githooks
 The hook runs `cargo fmt --all -- --check` and `cargo clippy --no-deps -- -D
 warnings` on staged Rust changes. If `.githooks/pre-commit` is missing on
 a branch, copy it from
-[`contrix-rust-sdk`](https://github.com/contrix-dev/contrix-rust-sdk) and
+[`cokret-rust-sdk`](https://github.com/cokret-dev/cokret-rust-sdk) and
 adapt to your local toolchain.
 
 ## Realm vs Space
@@ -33,7 +33,7 @@ i18n keys in `src/i18n.rs`; protocol-level identifiers stay reachable via
 
 ## Round R4 (protocol review closures)
 
-Spec round 4 (`contrix-spec` range `2a4d39b..a77b995`, 8 commits) brings
+Spec round 4 (`cokret-spec` range `2a4d39b..a77b995`, 8 commits) brings
 several client-visible changes. See [`CHANGELOG.md`](CHANGELOG.md)
 `[Unreleased]` and [`../_todos.md`](../_todos.md) for the canonical
 wire-breaking list.
@@ -59,7 +59,7 @@ wire-breaking list.
 
 Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
 [`CHANGELOG.md`](CHANGELOG.md) `[Unreleased]` and
-[`../contrix-spec/CHANGELOG.md`](../contrix-spec/CHANGELOG.md) for the
+[`../cokret-spec/CHANGELOG.md`](../cokret-spec/CHANGELOG.md) for the
 normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
@@ -103,7 +103,7 @@ Platform notes:
 - Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
 - Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
-- All platforms use the same typed API client, bounded retry/backoff policy, Contrix error envelope decoding, and encrypted-payload preservation path.
+- All platforms use the same typed API client, bounded retry/backoff policy, Cokret error envelope decoding, and encrypted-payload preservation path.
 
 The Rust crate also runs normal verification:
 
@@ -111,7 +111,7 @@ The Rust crate also runs normal verification:
 cargo test
 ```
 
-Browser workflow verification uses Playwright with mocked Contrix HTTP endpoints:
+Browser workflow verification uses Playwright with mocked Cokret HTTP endpoints:
 
 ```powershell
 npm install
@@ -120,7 +120,7 @@ npm run e2e
 
 The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/api/v1/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
-The e2e suite under `tests/e2e/` is **mock-only**: it pins yougen's UI surface against the contract in `tests/e2e/mockContrixContract.ts` and never speaks to a real Contrix server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `yougen` and a real `soland` process. Any test that needs a live server should be added there, not here.
+The e2e suite under `tests/e2e/` is **mock-only**: it pins yougen's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Cokret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `yougen` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 
@@ -143,11 +143,11 @@ The repository includes CI for:
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `contrix-rust-sdk` and `chime` next to `yougen` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/contrix-rust-sdk` and `${OWNER}/chime`.
+CI checks out `cokret-rust-sdk` and `chime` next to `yougen` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `yougen`, `contrix-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `yougen`, `cokret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
 
 The smoke job installs the Linux desktop build packages and runs:
 
@@ -157,9 +157,9 @@ cargo check --locked --all-targets
 cargo test --locked
 ```
 
-The expected Gitea repository names are `${OWNER}/contrix-rust-sdk` and `${OWNER}/chime`.
+The expected Gitea repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `yougen`, `contrix-rust-sdk`, and `chime`:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `yougen`, `cokret-rust-sdk`, and `chime`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
@@ -190,5 +190,5 @@ Unauthenticated users see only the login or registration entry screen. After a r
 
 <!-- circle-rollout milestone pointer -->
 > **Active milestone tracking** (local-only, gitignored): see
-> `_yougen_todos.md` in the parent `contrix-dev/` directory for the
+> `_yougen_todos.md` in the parent `cokret-dev/` directory for the
 > circle-rollout (CXP-0007) work item list and per-stage checkpoints.

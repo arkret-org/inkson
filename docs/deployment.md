@@ -1,7 +1,7 @@
 # yougen Deployment Guide
 
 yougen is a client artifact. Deployment means packaging a desktop or web build
-and pointing it at already deployed Contrix services.
+and pointing it at already deployed Cokret services.
 
 ## Service pairing
 
@@ -140,9 +140,9 @@ soland response headers for the yougen web origin:
 Access-Control-Allow-Origin: https://<yougen-web-origin>
 Access-Control-Allow-Credentials: true
 Access-Control-Allow-Headers: authorization, content-type, idempotency-key,
-                              x-contrix-request-id, dpop
+                              x-cokret-request-id, dpop
 Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
-Access-Control-Expose-Headers: x-contrix-request-id
+Access-Control-Expose-Headers: x-cokret-request-id
 Access-Control-Max-Age: 600
 ```
 

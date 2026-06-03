@@ -7,7 +7,7 @@ use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Router};
 use serde_json::Value;
 
-use crate::api::{ContrixApi, is_auth_expired_error};
+use crate::api::{CokretApi, is_auth_expired_error};
 use crate::components::{SecurityStateBadge, UiIcon};
 use crate::config::{
     ClientConfig, LocalConfigStore, is_valid_device_id, normalize_device_id, normalize_server_url,
@@ -2362,7 +2362,7 @@ body {
   }
 }
 
-/* Contrix design implementation layer. */
+/* Cokret design implementation layer. */
 .shell {
   grid-template-columns: 316px minmax(0, 1fr) 352px;
 }
@@ -6063,7 +6063,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                 "root_space_id",
             ],
         )
-        .filter(|parent| parent != space_id && parent.starts_with("cx:space:"))
+        .filter(|parent| parent != space_id && parent.starts_with("ck:space:"))
         {
             return Some(parent);
         }
@@ -6090,7 +6090,7 @@ fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
                     container,
                     &["parent_space_id", "parent_id", "parent", "target_parent_id"],
                 )
-                .filter(|parent| parent != space_id && parent.starts_with("cx:space:"))
+                .filter(|parent| parent != space_id && parent.starts_with("ck:space:"))
                 {
                     return Some(parent);
                 }
@@ -6148,7 +6148,7 @@ fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
 
     children
         .into_iter()
-        .filter(|child| child != space_id && child.starts_with("cx:space:"))
+        .filter(|child| child != space_id && child.starts_with("ck:space:"))
         .collect()
 }
 
@@ -7543,9 +7543,9 @@ pub fn RouterView() -> Element {
     let topbar_search_is_open =
         palette_open() || topbar_search_expanded() || !global_query().is_empty();
     let document_title = if matches!(&route, Route::Dashboard) {
-        "Yougen | Contrix".to_owned()
+        "Yougen | Cokret".to_owned()
     } else {
-        format!("{route_title} | Yougen | Contrix")
+        format!("{route_title} | Yougen | Cokret")
     };
     let shell_class = format!(
         "shell app {}{}{}{}",
@@ -7633,7 +7633,7 @@ pub fn RouterView() -> Element {
                                     div { class: "auth-logo", "C" }
                                     div {
                                         h1 { "Restoring session" }
-                                        p { "Contrix" }
+                                        p { "Cokret" }
                                     }
                                 }
                                 div { class: "auth-restore-indicator", "aria-hidden": "true" }
@@ -7816,7 +7816,7 @@ pub fn RouterView() -> Element {
                         UiIcon { name: "menu" }
                     }
                 }
-                div { class: "brand", "Contrix" }
+                div { class: "brand", "Cokret" }
                 button {
                     class: "btn icon sm ghost",
                     "data-testid": "mobile-theme-toggle",
@@ -7957,10 +7957,10 @@ pub fn RouterView() -> Element {
                     },
                 }
                 div { class: "sidebar-header",
-                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Yougen | Contrix Home",
+                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Yougen | Cokret Home",
                         span { class: "logo", "⌘" }
                         span { class: "product-meta",
-                            span { class: "product-name", "Yougen | Contrix" }
+                            span { class: "product-name", "Yougen | Cokret" }
                         }
                     }
                 }
@@ -8675,7 +8675,7 @@ pub fn RouterView() -> Element {
                                                     let device = device_id();
                                                     account_session_state.set("Refreshing session".to_owned());
                                                     spawn(async move {
-                                                        match ContrixApi::new(&base) {
+                                                        match CokretApi::new(&base) {
                                                             Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
@@ -8702,7 +8702,7 @@ pub fn RouterView() -> Element {
                                                                         // *keep* the user signed in, not bounce
                                                                         // them to login on a routine token rollover.
                                                                         if let Some(fresh) = crate::session::refresh_current_bearer().await {
-                                                                            let canonical_actor = match ContrixApi::new(&base) {
+                                                                            let canonical_actor = match CokretApi::new(&base) {
                                                                                 Ok(api) => api
                                                                                     .with_bearer(fresh)
                                                                                     .account_me()
@@ -8800,7 +8800,7 @@ pub fn RouterView() -> Element {
                                                 // response after the wipe.
                                                 sync_generation.set(sync_generation() + 1);
                                                 spawn(async move {
-                                                    let api_result = ContrixApi::new(&base)
+                                                    let api_result = CokretApi::new(&base)
                                                         .map(|api| api.with_bearer(api_token));
                                                     let logout_message = match api_result {
                                                         Ok(api) => match api.logout().await {
@@ -9194,7 +9194,7 @@ pub fn RouterView() -> Element {
                             selected_space.set(sid.to_owned());
                         }
                         let document_ref = match &route {
-                            Route::DocumentSpace { space_id } if space_id.starts_with("cx:morph:") => {
+                            Route::DocumentSpace { space_id } if space_id.starts_with("ck:morph:") => {
                                 Some(space_id.clone())
                             }
                             _ => None,
@@ -9760,9 +9760,9 @@ fn persist_space_surface_preference(
 
 fn default_flow_id_for_scope(scope_id: &str) -> String {
     scope_id
-        .strip_prefix("cx:realm:")
-        .or_else(|| scope_id.strip_prefix("cx:space:"))
-        .map(|suffix| format!("cx:flow:{suffix}"))
+        .strip_prefix("ck:realm:")
+        .or_else(|| scope_id.strip_prefix("ck:space:"))
+        .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| scope_id.to_owned())
 }
 
@@ -10090,7 +10090,7 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
 
     // A space cached against the previous server's view is meaningless
     // on the new server (different service DID, different membership,
-    // potentially overlapping cx:space ids that point at unrelated
+    // potentially overlapping ck:space ids that point at unrelated
     // rooms). Wipe the account-scoped cache before re-pointing the URL
     // so the next sync starts from a clean slate. Device-level state
     // (local_identity, push_registration) is preserved.
@@ -10211,7 +10211,7 @@ async fn reissue_development_session(
     if !can_attempt_development_session_reissue(principal_server_url, actor_did, device_id) {
         return None;
     }
-    let api = ContrixApi::new(principal_server_url).ok()?;
+    let api = CokretApi::new(principal_server_url).ok()?;
     let description = api.describe().await.ok()?;
     if !description.development_mode {
         return None;
@@ -10405,7 +10405,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
         last_error.set(None);
-        match ContrixApi::new(&base) {
+        match CokretApi::new(&base) {
             Ok(api) => {
                 // Probe `/server/describe` for status text, but treat failure
                 // as non-fatal: a transient describe error (CORS preflight,
@@ -10453,7 +10453,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             let mut store = state_store.write();
                             let mut snapshot = store.load();
                             // `TypedTrustDomainId` enforces a non-empty
-                            // `cx:trust_domain:<scope>` shape at deserialize
+                            // `ck:trust_domain:<scope>` shape at deserialize
                             // time, so the previous "is_empty" guard is
                             // structurally impossible. Always cache.
                             snapshot.server_trust_domain =
@@ -11098,7 +11098,7 @@ pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<
 }
 
 fn is_realm_or_space_projection_id(id: &str) -> bool {
-    id.starts_with("cx:realm:") || id.starts_with("cx:space:")
+    id.starts_with("ck:realm:") || id.starts_with("ck:space:")
 }
 
 fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
@@ -11115,7 +11115,7 @@ fn projection_preview_kind(id: &str, body: &Value) -> SpacePreviewKind {
     {
         Some("space") | Some("cx.schema.space.v1") => SpacePreviewKind::Space,
         Some("realm") | Some("cx.schema.realm.v1") => SpacePreviewKind::Realm,
-        _ if id.starts_with("cx:space:") && extract_parent_space_id(id, body).is_some() => {
+        _ if id.starts_with("ck:space:") && extract_parent_space_id(id, body).is_some() => {
             SpacePreviewKind::Space
         }
         _ => SpacePreviewKind::Realm,
@@ -11139,11 +11139,11 @@ fn server_set_contains_realm_id(server_set: &BTreeSet<String>, realm_id: &str) -
     if server_set.contains(realm_id) {
         return true;
     }
-    if let Some(suffix) = realm_id.strip_prefix("cx:realm:") {
-        return server_set.contains(&format!("cx:space:{suffix}"));
+    if let Some(suffix) = realm_id.strip_prefix("ck:realm:") {
+        return server_set.contains(&format!("ck:space:{suffix}"));
     }
-    if let Some(suffix) = realm_id.strip_prefix("cx:space:") {
-        return server_set.contains(&format!("cx:realm:{suffix}"));
+    if let Some(suffix) = realm_id.strip_prefix("ck:space:") {
+        return server_set.contains(&format!("ck:realm:{suffix}"));
     }
     false
 }
@@ -11169,7 +11169,7 @@ pub fn should_retain_projection_after_full_sync(
     if server_set.contains(id) {
         return true;
     }
-    if !id.starts_with("cx:space:") || projection_preview_kind(id, body) != SpacePreviewKind::Space
+    if !id.starts_with("ck:space:") || projection_preview_kind(id, body) != SpacePreviewKind::Space
     {
         return false;
     }
@@ -11361,7 +11361,7 @@ mod tests {
             grant_id: "grant-1".to_owned(),
             audience: "https://local.host/api".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
-            device_id: "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
             principal_server_url: "https://local.host".to_owned(),
             session_grant_exchange_path: "api/v1/auth/session-grant/exchange".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
@@ -11373,7 +11373,7 @@ mod tests {
     #[test]
     fn development_session_reissue_is_local_did_and_protocol_device_only() {
         let actor = "did:web:alice.example";
-        let device = "cx:device:01964137-0000-7000-8000-000000000001";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
 
         assert!(can_attempt_development_session_reissue(
             "https://local.host",
@@ -11405,7 +11405,7 @@ mod tests {
     #[test]
     fn bootstrap_development_reissue_requires_matching_account_scope_owner() {
         let actor = "did:web:alice.example";
-        let device = "cx:device:01964137-0000-7000-8000-000000000001";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
         let mut state = ClientLocalState::default();
 
         assert!(!can_bootstrap_with_development_session_reissue(
@@ -11452,7 +11452,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "legacy-token",
         );
 
@@ -11472,7 +11472,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "legacy-token",
         );
 
@@ -11492,7 +11492,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "legacy-token",
         );
 
@@ -11505,7 +11505,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "legacy-token",
         );
 
@@ -11525,7 +11525,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "bridge-token",
         );
 
@@ -11546,7 +11546,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "bridge-token",
         );
 
@@ -11566,7 +11566,7 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             "bridge-token",
         );
 
@@ -11706,22 +11706,22 @@ mod tests {
     #[test]
     fn kanban_board_route_uses_space_context_for_mls_bootstrap() {
         let route = Route::KanbanBoard {
-            space_id: "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-            board_id: "cx:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+            space_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
         };
 
         assert!(route_uses_space_context(&route));
         assert_eq!(
             route.space_id(),
-            Some("cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+            Some("ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
         );
     }
 
     #[test]
     fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
         let route = Route::KanbanBoard {
-            space_id: "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-            board_id: "cx:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+            space_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
         };
         let space_id = route.space_id().expect("board route carries a realm id");
 
@@ -11729,7 +11729,7 @@ mod tests {
             "http://localhost:8080",
             "secret-session-token",
             "did:web:yougen.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
             space_id,
             true,
             true,
@@ -11748,8 +11748,8 @@ mod tests {
         let base = "https://local.host/";
         let session = "session-token";
         let actor = "did:web:yougen.example";
-        let device = "cx:device:01964137-0000-7000-8000-000000000001";
-        let space = "cx:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
+        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let space = "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
 
         assert_eq!(
             mls_welcome_bootstrap_key(base, session, actor, device, space, false, true),
@@ -11786,41 +11786,41 @@ mod tests {
     #[test]
     fn space_tree_uses_parent_links_for_nested_menu() {
         let spaces = vec![
-            preview("cx:space:root", "Root", None),
-            preview("cx:space:child", "Child", Some("cx:space:root")),
-            preview("cx:space:deep", "Deep", Some("cx:space:child")),
+            preview("ck:space:root", "Root", None),
+            preview("ck:space:child", "Child", Some("ck:space:root")),
+            preview("ck:space:deep", "Deep", Some("ck:space:child")),
         ];
 
         let items = space_tree_items(&spaces);
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].space.space_id, "cx:space:root");
+        assert_eq!(items[0].space.space_id, "ck:space:root");
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].descendant_count, 2);
-        assert_eq!(items[1].space.space_id, "cx:space:child");
+        assert_eq!(items[1].space.space_id, "ck:space:child");
         assert_eq!(items[1].depth, 1);
-        assert_eq!(items[2].space.space_id, "cx:space:deep");
+        assert_eq!(items[2].space.space_id, "ck:space:deep");
         assert_eq!(items[2].depth, 2);
     }
 
     #[test]
     fn scoped_space_ids_support_exact_and_descendants() {
         let spaces = vec![
-            preview("cx:space:root", "Root", None),
-            preview("cx:space:child", "Child", Some("cx:space:root")),
-            preview("cx:space:deep", "Deep", Some("cx:space:child")),
+            preview("ck:space:root", "Root", None),
+            preview("ck:space:child", "Child", Some("ck:space:root")),
+            preview("ck:space:deep", "Deep", Some("ck:space:child")),
         ];
 
         assert_eq!(
-            scoped_space_ids(&spaces, "cx:space:root", SpaceScopeMode::Exact),
-            vec!["cx:space:root".to_owned()]
+            scoped_space_ids(&spaces, "ck:space:root", SpaceScopeMode::Exact),
+            vec!["ck:space:root".to_owned()]
         );
         assert_eq!(
-            scoped_space_ids(&spaces, "cx:space:root", SpaceScopeMode::IncludeDescendants),
+            scoped_space_ids(&spaces, "ck:space:root", SpaceScopeMode::IncludeDescendants),
             vec![
-                "cx:space:root".to_owned(),
-                "cx:space:child".to_owned(),
-                "cx:space:deep".to_owned()
+                "ck:space:root".to_owned(),
+                "ck:space:child".to_owned(),
+                "ck:space:deep".to_owned()
             ]
         );
     }
@@ -11829,22 +11829,22 @@ mod tests {
     fn sync_projection_parses_space_hierarchy_fields() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:space:root".to_owned(),
+            "ck:space:root".to_owned(),
             json!({
                 "summary": {
                     "title": "Root",
                     "summary": "Root Space",
-                    "child_space_ids": ["cx:space:child"]
+                    "child_space_ids": ["ck:space:child"]
                 }
             }),
         );
         spaces.insert(
-            "cx:space:child".to_owned(),
+            "ck:space:child".to_owned(),
             json!({
                 "summary": {
                     "title": "Child",
                     "summary": "Child Space",
-                    "parent_space_id": "cx:space:root"
+                    "parent_space_id": "ck:space:root"
                 }
             }),
         );
@@ -11852,15 +11852,15 @@ mod tests {
         let previews = space_previews_from_sync_spaces(&spaces);
         let root = previews
             .iter()
-            .find(|space| space.space_id == "cx:space:root")
+            .find(|space| space.space_id == "ck:space:root")
             .expect("root preview");
         let child = previews
             .iter()
-            .find(|space| space.space_id == "cx:space:child")
+            .find(|space| space.space_id == "ck:space:child")
             .expect("child preview");
 
-        assert_eq!(root.child_space_ids, vec!["cx:space:child".to_owned()]);
-        assert_eq!(child.parent_space_id.as_deref(), Some("cx:space:root"));
+        assert_eq!(root.child_space_ids, vec!["ck:space:child".to_owned()]);
+        assert_eq!(child.parent_space_id.as_deref(), Some("ck:space:root"));
         assert_eq!(root.kind, SpacePreviewKind::Realm);
         assert_eq!(child.kind, SpacePreviewKind::Space);
     }
@@ -11869,17 +11869,17 @@ mod tests {
     fn sync_projection_marks_schema_space_with_home_realm() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:realm:root".to_owned(),
+            "ck:realm:root".to_owned(),
             json!({
                 "schema": "cx.schema.realm.v1",
                 "summary": {"title": "Root"}
             }),
         );
         spaces.insert(
-            "cx:space:child".to_owned(),
+            "ck:space:child".to_owned(),
             json!({
                 "schema": "cx.schema.space.v1",
-                "realm_id": "cx:realm:root",
+                "realm_id": "ck:realm:root",
                 "summary": {"title": "Child"}
             }),
         );
@@ -11887,17 +11887,17 @@ mod tests {
         let previews = space_previews_from_sync_spaces(&spaces);
         let child = previews
             .iter()
-            .find(|space| space.space_id == "cx:space:child")
+            .find(|space| space.space_id == "ck:space:child")
             .expect("child preview");
 
         assert_eq!(child.kind, SpacePreviewKind::Space);
-        assert_eq!(child.realm_id, "cx:realm:root");
+        assert_eq!(child.realm_id, "ck:realm:root");
         assert_eq!(child.parent_space_id, None);
 
         let items = space_tree_items(&previews);
         let child_item = items
             .iter()
-            .find(|item| item.space.space_id == "cx:space:child")
+            .find(|item| item.space.space_id == "ck:space:child")
             .expect("child tree item");
         assert_eq!(child_item.depth, 1);
     }
@@ -11922,7 +11922,7 @@ mod tests {
     fn sync_projection_filters_flow_entries_out_of_space_list() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:space:root".to_owned(),
+            "ck:space:root".to_owned(),
             json!({
                 "summary": {
                     "title": "Root",
@@ -11931,18 +11931,18 @@ mod tests {
             }),
         );
         spaces.insert(
-            "cx:flow:discussion".to_owned(),
+            "ck:flow:discussion".to_owned(),
             json!({
-                "flow_id": "cx:flow:discussion",
+                "flow_id": "ck:flow:discussion",
                 "summary": {
                     "title": "Should not be a Space"
                 }
             }),
         );
         spaces.insert(
-            "cx:space:flow-projection".to_owned(),
+            "ck:space:flow-projection".to_owned(),
             json!({
-                "flow_id": "cx:flow:nested",
+                "flow_id": "ck:flow:nested",
                 "summary": {
                     "title": "Flow projection",
                     "category": "discussion"
@@ -11953,7 +11953,7 @@ mod tests {
         let previews = space_previews_from_sync_spaces(&spaces);
 
         assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].space_id, "cx:space:root");
+        assert_eq!(previews[0].space_id, "ck:space:root");
     }
 
     /// Regression: soland inlines the primary flow under `summary.flow`
@@ -11961,26 +11961,26 @@ mod tests {
     /// without joining a separate fanout). A previous filter treated
     /// any `summary.flow` as a flow-as-space projection and dropped the
     /// Space from the sidebar entirely. Only top-level `flow*`/`tracks`
-    /// or a flow-shaped `summary.category` should reject a `cx:space:`.
+    /// or a flow-shaped `summary.category` should reject a `ck:space:`.
     #[test]
     fn sync_projection_keeps_real_space_with_inlined_primary_flow() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:space:0196419b-0000-7000-8000-000000000000".to_owned(),
+            "ck:space:0196419b-0000-7000-8000-000000000000".to_owned(),
             json!({
                 "ephemeral": [],
                 "flows": [{
-                    "flow_id": "cx:flow:0196419b-0000-7000-8000-000000000000",
-                    "title": "Contrix Demo Space",
+                    "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
+                    "title": "Cokret Demo Space",
                 }],
                 "summary": {
                     "category": "collaboration",
-                    "title": "Contrix Demo Space",
+                    "title": "Cokret Demo Space",
                     "summary": "Shared demo Space served by soland",
                     "tags": ["demo"],
                     "flow": {
-                        "flow_id": "cx:flow:0196419b-0000-7000-8000-000000000000",
-                        "title": "Contrix Demo Space",
+                        "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
+                        "title": "Cokret Demo Space",
                         "tracks": { "discussion": { "enabled": true } },
                     },
                 },
@@ -11994,9 +11994,9 @@ mod tests {
         assert_eq!(previews.len(), 1);
         assert_eq!(
             previews[0].space_id,
-            "cx:space:0196419b-0000-7000-8000-000000000000"
+            "ck:space:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(previews[0].name, "Contrix Demo Space");
+        assert_eq!(previews[0].name, "Cokret Demo Space");
         assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
     }
 
@@ -12004,19 +12004,19 @@ mod tests {
     fn sync_projection_keeps_realm_ids_from_account_subscribe() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729".to_owned(),
+            "ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729".to_owned(),
             json!({
                 "bottom_cells": [],
                 "ephemeral": [],
                 "flows": [{
-                    "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                    "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
                     "kind": "discussion",
                     "title": "Test"
                 }],
                 "state": [],
                 "state_after": {
                     "events": [{
-                        "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                        "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
                         "kind": "discussion",
                         "title": "Test"
                     }]
@@ -12024,7 +12024,7 @@ mod tests {
                 "summary": {
                     "category": null,
                     "flow": {
-                        "flow_id": "cx:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
+                        "flow_id": "ck:flow:019e4cdc-b435-7e52-9ada-39d5ec134729",
                         "kind": "discussion",
                         "title": "Test"
                     },
@@ -12042,7 +12042,7 @@ mod tests {
         assert_eq!(previews.len(), 1);
         assert_eq!(
             previews[0].space_id,
-            "cx:realm:019e4cdc-b435-7e52-9ada-39d5ec134729"
+            "ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729"
         );
         assert_eq!(previews[0].name, "Test");
         assert_eq!(previews[0].kind, SpacePreviewKind::Realm);
@@ -12050,17 +12050,17 @@ mod tests {
 
     #[test]
     fn merge_timeline_events_keeps_existing_messages_on_summary_only_delta() {
-        let mut summary = TimelineEvent::system_notice("summary-cx:realm:test", "server", "old");
-        summary.space_id = Some("cx:realm:test".to_owned());
+        let mut summary = TimelineEvent::system_notice("summary-ck:realm:test", "server", "old");
+        summary.space_id = Some("ck:realm:test".to_owned());
         let message = TimelineEvent {
-            id: "cx:event:message".to_owned(),
-            space_id: Some("cx:realm:test".to_owned()),
+            id: "ck:event:message".to_owned(),
+            space_id: Some("ck:realm:test".to_owned()),
             body: "welcome".to_owned(),
             ..TimelineEvent::default()
         };
         let mut updated_summary =
-            TimelineEvent::system_notice("summary-cx:realm:test", "server", "new");
-        updated_summary.space_id = Some("cx:realm:test".to_owned());
+            TimelineEvent::system_notice("summary-ck:realm:test", "server", "new");
+        updated_summary.space_id = Some("ck:realm:test".to_owned());
 
         let merged = merge_timeline_events(&[summary, message], vec![updated_summary]);
 
@@ -12072,35 +12072,35 @@ mod tests {
     #[test]
     fn full_sync_keep_set_preserves_local_space_under_joined_realm() {
         let mut server_set = BTreeSet::new();
-        server_set.insert("cx:realm:root".to_owned());
+        server_set.insert("ck:realm:root".to_owned());
 
         let mut cached = BTreeMap::new();
         cached.insert(
-            "cx:realm:root".to_owned(),
+            "ck:realm:root".to_owned(),
             json!({"summary": {"title": "Root"}}),
         );
         cached.insert(
-            "cx:space:child".to_owned(),
+            "ck:space:child".to_owned(),
             json!({
                 "__kind": "space",
-                "realm_id": "cx:realm:root",
+                "realm_id": "ck:realm:root",
                 "summary": {"title": "Child"}
             }),
         );
         cached.insert(
-            "cx:space:stale".to_owned(),
+            "ck:space:stale".to_owned(),
             json!({
                 "__kind": "space",
-                "realm_id": "cx:realm:missing",
+                "realm_id": "ck:realm:missing",
                 "summary": {"title": "Stale"}
             }),
         );
 
         let keep = full_sync_projection_keep_set(&server_set, &cached);
 
-        assert!(keep.contains("cx:realm:root"));
-        assert!(keep.contains("cx:space:child"));
-        assert!(!keep.contains("cx:space:stale"));
+        assert!(keep.contains("ck:realm:root"));
+        assert!(keep.contains("ck:space:child"));
+        assert!(!keep.contains("ck:space:stale"));
     }
 
     #[test]
@@ -12111,20 +12111,20 @@ mod tests {
         // flow-like projections out of the sidebar — verify that here.
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "cx:flow:discussion".to_owned(),
+            "ck:flow:discussion".to_owned(),
             json!({
-                "flow_id": "cx:flow:discussion",
+                "flow_id": "ck:flow:discussion",
                 "summary": {"title": "Discussion", "category": "discussion"}
             }),
         );
         spaces.insert(
-            "cx:space:real".to_owned(),
+            "ck:space:real".to_owned(),
             json!({"summary": {"title": "Real Space"}}),
         );
 
         let previews = space_previews_from_sync_spaces(&spaces);
 
         assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].space_id, "cx:space:real");
+        assert_eq!(previews[0].space_id, "ck:space:real");
     }
 }

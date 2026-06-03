@@ -8,7 +8,7 @@
 //!
 //! This module wires three pieces together:
 //!
-//! 1. **Serialize on commit.** The SDK's `ContrixMlsGroup` already exposes `export_state_record()`
+//! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()`
 //!    / `restore_from_state_record()` so the openmls provider storage can be round-tripped through
 //!    a typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
 //!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
@@ -21,7 +21,7 @@
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
-//! [`contrix_sdk::ContrixMlsGroup::join_from_welcome`].
+//! [`contrix_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
 //!    `cx.schema.key_backup.v1` request body used by `PUT /api/v1/keys/backups/{backup_id}`. The
@@ -411,7 +411,7 @@ impl MlsSnapshotEnvelope {
 /// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
 /// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
 /// via the OpenMLS provider. Callers that need an executable
-/// [`contrix_sdk::ContrixMlsGroup`] should use [`restore_envelope`].
+/// [`contrix_sdk::CokretMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
@@ -424,7 +424,7 @@ pub fn restore_state_record_only(
 
 /// Helper used by the boot path and local MLS actions. Decrypts the envelope,
 /// sanity-checks the epoch, and reconstructs the SDK group via
-/// [`contrix_sdk::ContrixMlsGroup::restore_from_state_record`].
+/// [`contrix_sdk::CokretMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Anchor view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
@@ -433,10 +433,10 @@ pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
     current_epoch_floor: u64,
-) -> Result<contrix_sdk::ContrixMlsGroup, EnvelopeError> {
+) -> Result<contrix_sdk::CokretMlsGroup, EnvelopeError> {
     let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
-    contrix_sdk::ContrixMlsGroup::restore_from_state_record(&record)
+    contrix_sdk::CokretMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
 }
 
@@ -461,7 +461,7 @@ fn derive_key(snapshot_secret: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
 }
 
 fn is_protocol_device_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("cx:device:") else {
+    let Some(rest) = value.strip_prefix("ck:device:") else {
         return false;
     };
     rest.len() == 36
@@ -521,14 +521,14 @@ mod tests {
     fn persist_restore_round_trip_recovers_group_state() {
         let bytes = fake_state_record_bytes("aabbccdd", 7);
         let envelope = encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "aabbccdd",
             7,
             &bytes,
             "correct horse battery staple",
             &fixed_salt(),
         );
-        assert_eq!(envelope.space_id, "cx:space:demo");
+        assert_eq!(envelope.space_id, "ck:space:demo");
         assert_eq!(envelope.group_id, "aabbccdd");
         assert_eq!(envelope.epoch, 7);
         // Ciphertext is not the plaintext — encryption did something.
@@ -543,7 +543,7 @@ mod tests {
     fn snapshot_secret_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
         let envelope = encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "dead",
             1,
             &bytes,
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn outdated_snapshot_is_rejected_via_epoch_check() {
         let bytes = fake_state_record_bytes("beef", 3);
-        let envelope = encrypt_state("cx:space:demo", "beef", 3, &bytes, "p1", &fixed_salt());
+        let envelope = encrypt_state("ck:space:demo", "beef", 3, &bytes, "p1", &fixed_salt());
 
         // current_epoch_floor == 3 → still acceptable (>=).
         let ok = decrypt_with_epoch_check(&envelope, "p1", 3);
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn malformed_hex_surfaces_typed_error() {
-        let mut envelope = encrypt_state("cx:space:demo", "feed", 1, b"abc", "p", &fixed_salt());
+        let mut envelope = encrypt_state("ck:space:demo", "feed", 1, b"abc", "p", &fixed_salt());
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn key_backup_body_carries_envelope_meta_and_blob() {
         let envelope = encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "aaaa",
             42,
             b"placeholder",
@@ -609,24 +609,24 @@ mod tests {
             &fixed_salt(),
         );
         let body = envelope.to_key_backup_body(
-            "cx:backup:01964137-0000-7000-8000-000000000000",
+            "ck:backup:01964137-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
         );
         assert_eq!(
             body["backup_id"],
-            "cx:backup:01964137-0000-7000-8000-000000000000"
+            "ck:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(
             body["device_id"],
-            "cx:device:01964137-0000-7000-8000-000000000001"
+            "ck:device:01964137-0000-7000-8000-000000000001"
         );
         assert_eq!(body["backup_class"], "mls_history");
         assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
         assert!(
             body["series_id"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("cx:backup_series:"))
+                .is_some_and(|value| value.starts_with("ck:backup_series:"))
         );
         assert_eq!(body["series_seq"], 0);
         assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
@@ -638,14 +638,14 @@ mod tests {
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
-            "contrix-key-backup/mls_history/mls_snapshot/v1"
+            "cokret-key-backup/mls_history/mls_snapshot/v1"
         );
         crate::key_backup::validate_key_backup_envelope(
             &body,
             Some(crate::key_backup::KeyBackupClass::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
-        assert_eq!(body["envelope_meta"]["space_ref"], "cx:space:demo");
+        assert_eq!(body["envelope_meta"]["space_ref"], "ck:space:demo");
         assert_eq!(body["envelope_meta"]["epoch"], 42);
         // The ciphertext is a base64url-encoded JSON envelope — it
         // round-trips back to the same struct without exposing plaintext
@@ -653,7 +653,7 @@ mod tests {
         let blob = body["ciphertext"].as_str().unwrap();
         let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
         let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.space_id, "cx:space:demo");
+        assert_eq!(parsed.space_id, "ck:space:demo");
         assert_eq!(parsed.epoch, 42);
     }
 
@@ -675,7 +675,7 @@ mod tests {
         // inner bytes don't parse as `MlsGroupStateRecord`. The error
         // is `InvalidStateRecord`, distinct from `SecretMismatch`.
         let envelope = encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "z",
             0,
             b"this is not json",
@@ -698,22 +698,22 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
-        let identity = ContrixMlsIdentity::new_basic(
+        let identity = CokretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),
-            // SDK 0.7 requires the canonical `cx:device:<uuid7>` form.
-            DeviceId::new("cx:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
+            // SDK 0.7 requires the canonical `ck:device:<uuid7>` form.
+            DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(b"cx:space:round28-snapshot").unwrap();
+        let group = identity.create_group(b"ck:space:round28-snapshot").unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
         let original_epoch = record.epoch;
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "cx:space:round28-snapshot",
+            "ck:space:round28-snapshot",
             &original_group_id,
             original_epoch,
             &bytes,

@@ -5,7 +5,7 @@ use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::api::{
-    ContrixApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
+    CokretApi, is_auth_expired_error, is_plaintext_visibility_policy_error,
     is_space_membership_denied_error,
 };
 use crate::audit::build_audit_ryw_receipt;
@@ -54,7 +54,7 @@ struct ChannelEntity {
 /// the chat composer banner and timeline accent rail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FlowScopeCircle {
-    /// `cx:circle:…`
+    /// `ck:circle:…`
     circle_id: String,
     /// Circle title used in the banner heading + accent-rail tooltip.
     title: String,
@@ -244,7 +244,7 @@ fn run_local_mls_encrypt(
             space_id,
             principal_id,
             device_id,
-            "application/vnd.contrix.message+json",
+            "application/vnd.cokret.message+json",
             aad_value,
             plaintext_bytes,
         )
@@ -269,7 +269,7 @@ fn chat_sha256_hash_from_ref(value: &str) -> Option<String> {
     {
         return Some(value.to_owned());
     }
-    for prefix in ["cx:anchor:", "cx:state:"] {
+    for prefix in ["ck:anchor:", "ck:state:"] {
         if let Some(rest) = value.strip_prefix(prefix) {
             return chat_sha256_hash_from_ref(rest);
         }
@@ -284,7 +284,7 @@ fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> Str
         .chain(anchor_view.leaves.iter())
         .chain(anchor_view.state_root.iter())
         .find_map(|value| {
-            if value.starts_with("cx:event:") && contrix_sdk::EventId::new(value.clone()).is_ok() {
+            if value.starts_with("ck:event:") && contrix_sdk::EventId::new(value.clone()).is_ok() {
                 Some(value.clone())
             } else {
                 chat_sha256_hash_from_ref(value)
@@ -590,7 +590,7 @@ fn mention_handle_label_from_value(value: &str) -> Option<String> {
 fn participant_handle_label_from_value(value: &Value, did: Option<&str>) -> Option<String> {
     let object = value.as_object()?;
     // R3.1 wire rename: spec field is `handle`. Older payloads may
-    // still ship `handle_uri` (contrix:// URI form retired @ 7157ee8);
+    // still ship `handle_uri` (cokret:// URI form retired @ 7157ee8);
     // accept both for migration compatibility.
     [
         "handle",
@@ -1310,7 +1310,7 @@ fn watch_level_from_wire(value: &str) -> WatchLevel {
 }
 
 fn is_schema_message_id(value: &str) -> bool {
-    let Some(suffix) = value.trim().strip_prefix("cx:message:") else {
+    let Some(suffix) = value.trim().strip_prefix("ck:message:") else {
         return false;
     };
     !suffix.is_empty()
@@ -1320,7 +1320,7 @@ fn is_schema_message_id(value: &str) -> bool {
 }
 
 fn new_chat_message_id() -> String {
-    format!("cx:message:{}", uuid_v7())
+    format!("ck:message:{}", uuid_v7())
 }
 
 fn schema_message_id_or_new(value: &str) -> String {
@@ -1728,8 +1728,8 @@ fn chat_message_from_event_with_sidecar(
                 .and_then(|unsigned| unsigned.get("local_target_ref"))
                 .and_then(Value::as_str)
         })
-        .filter(|value| value.starts_with("cx:flow:"))
-        .unwrap_or("cx:flow:general")
+        .filter(|value| value.starts_with("ck:flow:"))
+        .unwrap_or("ck:flow:general")
         .to_owned();
     // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we
@@ -1931,8 +1931,8 @@ fn poll_cards_from_sync_spaces(
 fn normalize_sync_space_id(space_id: &str) -> String {
     let trimmed = space_id.trim();
     trimmed
-        .strip_prefix("cx:space:")
-        .map(|suffix| format!("cx:realm:{suffix}"))
+        .strip_prefix("ck:space:")
+        .map(|suffix| format!("ck:realm:{suffix}"))
         .unwrap_or_else(|| trimmed.to_owned())
 }
 
@@ -2133,14 +2133,14 @@ fn first_string_in_candidate_paths<'a>(
 
 fn default_discussion_flow_id(space_id: &str) -> String {
     let trimmed = space_id.trim();
-    if let Some(suffix) = trimmed.strip_prefix("cx:space:") {
-        format!("cx:flow:{suffix}")
+    if let Some(suffix) = trimmed.strip_prefix("ck:space:") {
+        format!("ck:flow:{suffix}")
     } else if let Some(suffix) = trimmed.strip_prefix("space:") {
-        format!("cx:flow:{suffix}")
-    } else if trimmed.starts_with("cx:flow:") {
+        format!("ck:flow:{suffix}")
+    } else if trimmed.starts_with("ck:flow:") {
         trimmed.to_owned()
     } else {
-        format!("cx:flow:{}", trimmed.trim_start_matches("cx:"))
+        format!("ck:flow:{}", trimmed.trim_start_matches("ck:"))
     }
 }
 
@@ -2193,7 +2193,7 @@ fn channel_from_flow_projection(
 
     let flow_id = first_string_in_candidate_paths(&[flow], &[&["flow_id"], &["id"]])
         .map(str::trim)
-        .filter(|id| id.starts_with("cx:flow:"))
+        .filter(|id| id.starts_with("ck:flow:"))
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_discussion_flow_id(space_id));
     let name = first_string_in_candidate_paths(&[flow], &[&["title"], &["name"]])
@@ -2278,7 +2278,7 @@ fn flow_scope_circle_from_projection(flow: &Value) -> Option<FlowScopeCircle> {
         ],
     )
     .map(str::trim)
-    .filter(|value| value.starts_with("cx:circle:"))
+    .filter(|value| value.starts_with("ck:circle:"))
     .map(ToOwned::to_owned)?;
 
     let title = first_string_in_candidate_paths(
@@ -2393,7 +2393,7 @@ fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntit
         ],
     )?
     .trim();
-    if !flow_id.starts_with("cx:flow:") {
+    if !flow_id.starts_with("ck:flow:") {
         return None;
     }
 
@@ -2538,7 +2538,7 @@ fn merge_poll_cards(
 }
 
 async fn submit_chat_operation_with_plaintext_retry(
-    api: &ContrixApi,
+    api: &CokretApi,
     space_id: &str,
     actor_did: &str,
     plaintext_visible_services: &[String],
@@ -3337,7 +3337,7 @@ pub fn ChatPanel(
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
                                         let create_card = new_channel_create_card();
-                                        let flow_id = format!("cx:flow:{}", uuid_v7());
+                                        let flow_id = format!("ck:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match cx_ops::discussion_flow_create(
                                             &space,
@@ -6007,7 +6007,7 @@ pub fn ChatPanel(
                                 // P1: encrypt the canonical Content Block JSON
                                 // (`cx.content.text`), NOT the bare body bytes, so
                                 // strict receivers can parse the decrypted payload
-                                // as `application/vnd.contrix.message+json` and the
+                                // as `application/vnd.cokret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
                                 let secure_content_value = sdk_payload_value(
                                     contrix_sdk::ContentBlock::text(&body).to_value(),
@@ -6110,7 +6110,7 @@ pub fn ChatPanel(
                                 // /sync and drifts behind the local snapshot, which
                                 // tripped the next_epoch == base_epoch + 1 violation.
                                 let prev_epoch = mls_commit_epoch.saturating_sub(1);
-                                let commit_event_id = format!("cx:event:{}", uuid_v7());
+                                let commit_event_id = format!("ck:event:{}", uuid_v7());
                                 let commit_event_id_typed =
                                     match contrix_sdk::EventId::new(commit_event_id.clone()) {
                                         Ok(value) => value,
@@ -6721,25 +6721,25 @@ mod tests {
     #[test]
     fn parses_message_event_with_operation_body_shape() {
         let event = json!({
-            "id": "cx:event:body-shape",
+            "id": "ck:event:body-shape",
             "type": "cx.message.create",
             "actor": "did:web:alice.example",
-            "space_id": "cx:space:demo",
+            "space_id": "ck:space:demo",
             "created_at": "2026-05-14T01:23:45Z",
             "causal": {"actor_seq": 42},
             "body": {
                 "body": "restored from durable history",
-                "flow_id": "cx:flow:announce",
+                "flow_id": "ck:flow:announce",
                 "message_id": "chat-msg-local",
                 "mentions": [{"kind": "actor", "target": "did:web:bob.example", "token": "@bob"}]
             }
         });
 
-        let message = chat_message_from_event("cx:space:fallback", &event).unwrap();
+        let message = chat_message_from_event("ck:space:fallback", &event).unwrap();
 
-        assert_eq!(message.id, "cx:event:body-shape");
-        assert_eq!(message.space_id, "cx:space:demo");
-        assert_eq!(message.flow_id, "cx:flow:announce");
+        assert_eq!(message.id, "ck:event:body-shape");
+        assert_eq!(message.space_id, "ck:space:demo");
+        assert_eq!(message.flow_id, "ck:flow:announce");
         assert_eq!(message.body, "restored from durable history");
         assert_eq!(message.sender, "did:web:alice.example");
         assert_eq!(message.mentions[0].target, "did:web:bob.example");
@@ -6749,7 +6749,7 @@ mod tests {
     fn parses_message_event_with_nested_envelope_payload_shape() {
         let event = json!({
             "event": {
-                "event_id": "cx:event:nested",
+                "event_id": "ck:event:nested",
                 "kind": "cx.message.create",
                 "actor_id": "did:web:alice.example",
                 "actor_seq": 43,
@@ -6758,27 +6758,27 @@ mod tests {
                         "kind": "cx.content.text",
                         "body": "nested payload message"
                     },
-                    "flow_id": "cx:flow:support",
+                    "flow_id": "ck:flow:support",
                     "message_id": "chat-msg-nested"
                 }
             }
         });
 
-        let message = chat_message_from_event("cx:space:demo", &event).unwrap();
+        let message = chat_message_from_event("ck:space:demo", &event).unwrap();
 
-        assert_eq!(message.id, "cx:event:nested");
-        assert_eq!(message.flow_id, "cx:flow:support");
+        assert_eq!(message.id, "ck:event:nested");
+        assert_eq!(message.flow_id, "ck:flow:support");
         assert_eq!(message.body, "nested payload message");
     }
 
     #[test]
     fn chat_message_create_operation_emits_schema_canonical_content() {
         let op = chat_message_create_operation(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:01904100-0000-7000-8000-000000000001",
+            "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:01904100-0000-7000-8000-000000000001",
+            "ck:message:01904100-0000-7000-8000-000000000001",
             "hello from chat",
             &[],
             None,
@@ -6787,11 +6787,11 @@ mod tests {
         assert_eq!(op.kind, "cx.message.create");
         assert_eq!(
             op.payload["message_id"].as_str(),
-            Some("cx:message:01904100-0000-7000-8000-000000000001")
+            Some("ck:message:01904100-0000-7000-8000-000000000001")
         );
         assert_eq!(
             op.payload["flow_id"].as_str(),
-            Some("cx:flow:01904100-0000-7000-8000-000000000001")
+            Some("ck:flow:01904100-0000-7000-8000-000000000001")
         );
         assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
         assert_eq!(
@@ -6820,11 +6820,11 @@ mod tests {
     fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
         let mentions = parse_structured_mentions("ping @here and @carol:example.com");
         let op = chat_message_create_operation(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:01904100-0000-7000-8000-000000000001",
+            "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:01904100-0000-7000-8000-000000000002",
+            "ck:message:01904100-0000-7000-8000-000000000002",
             "ping @here and @carol:example.com",
             &mentions,
             None,
@@ -6845,19 +6845,19 @@ mod tests {
     #[test]
     fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         let op = chat_message_create_operation(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:01904100-0000-7000-8000-000000000001",
+            "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
-            "cx:message:01904100-0000-7000-8000-000000000003",
+            "ck:message:01904100-0000-7000-8000-000000000003",
             "reply body",
             &[],
-            Some("cx:message:01904100-0000-7000-8000-000000000004"),
+            Some("ck:message:01904100-0000-7000-8000-000000000004"),
         );
 
         assert_eq!(
             op.payload["reply_to"].as_str(),
-            Some("cx:message:01904100-0000-7000-8000-000000000004")
+            Some("ck:message:01904100-0000-7000-8000-000000000004")
         );
         assert!(op.payload.get("thread_id").is_none());
         contrix_sdk::schema::event_payload_validator_catalog()
@@ -6869,26 +6869,26 @@ mod tests {
     fn chat_message_ids_use_schema_prefix() {
         let id = new_chat_message_id();
 
-        assert!(id.starts_with("cx:message:"));
+        assert!(id.starts_with("ck:message:"));
         assert!(is_schema_message_id(&id));
-        assert!(is_schema_message_id("cx:message:local-1"));
+        assert!(is_schema_message_id("ck:message:local-1"));
         assert!(!is_schema_message_id("chat-msg-local"));
-        assert!(schema_message_id_or_new("chat-msg-local").starts_with("cx:message:"));
+        assert!(schema_message_id_or_new("chat-msg-local").starts_with("ck:message:"));
     }
 
     #[test]
     fn restores_messages_from_local_raw_operations() {
         let state = ClientLocalState {
             raw_operations: vec![crate::local_state::RawOperationRecord {
-                operation_id: "cx:operation:local".to_owned(),
-                space_id: Some("cx:space:local".to_owned()),
+                operation_id: "ck:operation:local".to_owned(),
+                space_id: Some("ck:space:local".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "event_id": "cx:event:local",
+                    "event_id": "ck:event:local",
                     "kind": "cx.message.create",
                     "actor": "did:web:alice.example",
                     "body": "local fallback message",
-                    "flow_id": "cx:flow:announce",
+                    "flow_id": "ck:flow:announce",
                     "message_id": "chat-msg-local"
                 }),
             }],
@@ -6898,8 +6898,8 @@ mod tests {
         let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].space_id, "cx:space:local");
-        assert_eq!(messages[0].flow_id, "cx:flow:announce");
+        assert_eq!(messages[0].space_id, "ck:space:local");
+        assert_eq!(messages[0].flow_id, "ck:flow:announce");
         assert_eq!(messages[0].body, "local fallback message");
     }
 
@@ -6917,23 +6917,23 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("yougen-x10_6-rebuild-sidecar-{}", uuid_v7()));
         let mut store = LocalStateStore::with_path(temp);
         store.save_private_plaintext(
-            "cx:space:local",
-            "cx:flow:announce",
+            "ck:space:local",
+            "ck:flow:announce",
             "message:chat-msg-enc",
             "secret discussion body",
         );
 
         let state = ClientLocalState {
             raw_operations: vec![crate::local_state::RawOperationRecord {
-                operation_id: "cx:operation:enc".to_owned(),
-                space_id: Some("cx:space:local".to_owned()),
+                operation_id: "ck:operation:enc".to_owned(),
+                space_id: Some("ck:space:local".to_owned()),
                 received_at: chrono::Utc::now(),
                 // Encrypted stub: identity only, NO plaintext body.
                 payload: json!({
-                    "event_id": "cx:event:enc",
+                    "event_id": "ck:event:enc",
                     "kind": "cx.message.create",
                     "actor": "did:web:alice.example",
-                    "flow_id": "cx:flow:announce",
+                    "flow_id": "ck:flow:announce",
                     "message_id": "chat-msg-enc",
                     "encrypted_content": true,
                     "status": "accepted"
@@ -6947,7 +6947,7 @@ mod tests {
         // discussion does not look empty.
         let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
         assert_eq!(without_sidecar.len(), 1);
-        assert_eq!(without_sidecar[0].flow_id, "cx:flow:announce");
+        assert_eq!(without_sidecar[0].flow_id, "ck:flow:announce");
         assert_eq!(without_sidecar[0].body, "");
         assert!(matches!(
             without_sidecar[0].crypto_state,
@@ -6958,7 +6958,7 @@ mod tests {
         // restored and the message is fully resolved (not stuck decrypting).
         let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
         assert_eq!(restored.len(), 1);
-        assert_eq!(restored[0].flow_id, "cx:flow:announce");
+        assert_eq!(restored[0].flow_id, "ck:flow:announce");
         assert_eq!(restored[0].body, "secret discussion body");
         assert!(matches!(
             restored[0].crypto_state,
@@ -7217,7 +7217,7 @@ mod tests {
         let records = vec![
             RawOperationRecord {
                 operation_id: "op-1".to_owned(),
-                space_id: Some("cx:space:demo".to_owned()),
+                space_id: Some("ck:space:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "cx.agent.endpoint",
@@ -7226,7 +7226,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "op-2".to_owned(),
-                space_id: Some("cx:space:other".to_owned()),
+                space_id: Some("ck:space:other".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "cx.agent.endpoint",
@@ -7235,7 +7235,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "op-3".to_owned(),
-                space_id: Some("cx:space:demo".to_owned()),
+                space_id: Some("ck:space:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "cx.message.create",
@@ -7244,7 +7244,7 @@ mod tests {
             },
         ];
 
-        let agent_ids = agent_ids_from_raw_operations(&records, "cx:space:demo");
+        let agent_ids = agent_ids_from_raw_operations(&records, "ck:space:demo");
         assert_eq!(
             agent_ids,
             vec!["did:web:researcher-agent.example".to_owned()]
@@ -7254,15 +7254,15 @@ mod tests {
     #[test]
     fn channel_from_flow_event_requires_real_discussion_track() {
         let event = json!({
-            "event_id": "cx:event:flow",
+            "event_id": "ck:event:flow",
             "kind": "cx.flow.create",
-            "space_id": "cx:space:demo",
-            "flow_id": "cx:flow:ops",
+            "space_id": "ck:space:demo",
+            "flow_id": "ck:flow:ops",
             "title": "Ops discussion",
             "category": "support",
             "summary": "Operations support",
             "flow": {
-                "id": "cx:flow:ops",
+                "id": "ck:flow:ops",
                 "title": "Ops discussion",
                 "tracks": {
                     "discussion": {"profile": "discussion"}
@@ -7270,9 +7270,9 @@ mod tests {
             }
         });
 
-        let channel = channel_from_flow_event("cx:space:demo", &event).unwrap();
+        let channel = channel_from_flow_event("ck:space:demo", &event).unwrap();
 
-        assert_eq!(channel.flow_id, "cx:flow:ops");
+        assert_eq!(channel.flow_id, "ck:flow:ops");
         assert_eq!(channel.name, "Ops discussion");
         assert_eq!(channel.category, "support");
         assert_eq!(channel.kind, "discussion");
@@ -7283,13 +7283,13 @@ mod tests {
     #[test]
     fn channel_from_flow_event_ignores_non_discussion_flows() {
         let event = json!({
-            "event_id": "cx:event:flow",
+            "event_id": "ck:event:flow",
             "kind": "cx.flow.create",
-            "space_id": "cx:space:demo",
-            "flow_id": "cx:flow:doc",
+            "space_id": "ck:space:demo",
+            "flow_id": "ck:flow:doc",
             "title": "Doc flow",
             "flow": {
-                "id": "cx:flow:doc",
+                "id": "ck:flow:doc",
                 "title": "Doc flow",
                 "tracks": {
                     "document": {"profile": "document"}
@@ -7297,7 +7297,7 @@ mod tests {
             }
         });
 
-        assert!(channel_from_flow_event("cx:space:demo", &event).is_none());
+        assert!(channel_from_flow_event("ck:space:demo", &event).is_none());
     }
 
     #[test]
@@ -7306,7 +7306,7 @@ mod tests {
             "summary": {
                 "title": "Demo Space",
                 "flow": {
-                    "flow_id": "cx:flow:demo",
+                    "flow_id": "ck:flow:demo",
                     "title": "General",
                     "summary": "Space-wide conversation",
                     "tracks": {
@@ -7317,9 +7317,9 @@ mod tests {
             }
         });
 
-        let channel = default_discussion_channel("cx:space:demo", Some(&body));
+        let channel = default_discussion_channel("ck:space:demo", Some(&body));
 
-        assert_eq!(channel.flow_id, "cx:flow:demo");
+        assert_eq!(channel.flow_id, "ck:flow:demo");
         assert_eq!(channel.name, "General");
         assert_eq!(channel.kind, "discussion");
         assert_eq!(channel.topic.as_deref(), Some("Space-wide conversation"));
@@ -7328,9 +7328,9 @@ mod tests {
 
     #[test]
     fn default_discussion_channel_synthesizes_default_flow_when_projection_is_absent() {
-        let channel = default_discussion_channel("cx:space:demo", None);
+        let channel = default_discussion_channel("ck:space:demo", None);
 
-        assert_eq!(channel.flow_id, "cx:flow:demo");
+        assert_eq!(channel.flow_id, "ck:flow:demo");
         assert_eq!(channel.name, "Discussion");
         assert_eq!(channel.category, "default flow");
         assert!(channel.is_default);
@@ -7434,16 +7434,16 @@ mod tests {
             "scheme": "mls-rfc9420",
             "group_id": "group-x",
             "epoch": 1,
-            "content_type": "application/vnd.contrix.message+json",
+            "content_type": "application/vnd.cokret.message+json",
             "ciphertext": "AAAA",
             "payload_digest": "sha256:0",
         });
         assert!(
             decrypt_chat_encrypted_content(
                 &store,
-                "cx:space:none",
+                "ck:space:none",
                 "did:web:alice.example",
-                "cx:device:01964137-0000-7000-8000-000000000001",
+                "ck:device:01964137-0000-7000-8000-000000000001",
                 &envelope,
             )
             .is_none()
@@ -7457,11 +7457,11 @@ mod tests {
             "content": {
                 "type": "cx.message.create",
                 "body": "[encrypted]",
-                "flow_id": "cx:flow:1",
+                "flow_id": "ck:flow:1",
                 "encrypted_content": {"ciphertext": "blob"},
             }
         });
-        let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
+        let msg = chat_message_from_event("ck:space:demo", &event).expect("message");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 
@@ -7471,39 +7471,39 @@ mod tests {
             "event_id": "evt:bodyless",
             "content": {
                 "type": "cx.message.create",
-                "flow_id": "cx:flow:1",
-                "message_id": "cx:message:1",
+                "flow_id": "ck:flow:1",
+                "message_id": "ck:message:1",
                 "encrypted_content": {
                     "scheme": "mls-rfc9420",
                     "version": "1.0",
-                    "group_id": "cx:mls:test",
+                    "group_id": "ck:mls:test",
                     "epoch": 1,
-                    "content_type": "application/vnd.contrix.message+json",
+                    "content_type": "application/vnd.cokret.message+json",
                     "ciphertext": "AAAA",
                     "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                 },
             }
         });
 
-        let msg = chat_message_from_event("cx:space:demo", &event).expect("message");
+        let msg = chat_message_from_event("ck:space:demo", &event).expect("message");
 
         assert_eq!(msg.body, "");
-        assert_eq!(msg.flow_id, "cx:flow:1");
+        assert_eq!(msg.flow_id, "ck:flow:1");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 
     #[test]
     fn chat_message_revise_operation_uses_schema_target_ref() {
         let op = chat_message_revise_operation(
-            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
             "edited",
         );
 
         assert_eq!(
             op.payload["target_ref"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
@@ -7517,15 +7517,15 @@ mod tests {
     #[test]
     fn chat_reaction_add_operation_uses_schema_target_ref() {
         let op = chat_reaction_add_operation(
-            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
             "+1",
         );
 
         assert_eq!(
             op.payload["target_ref"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
         assert_eq!(op.payload["key"], "+1");
         assert!(op.payload.get("event_id").is_none());

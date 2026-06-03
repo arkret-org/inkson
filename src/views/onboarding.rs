@@ -22,7 +22,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
 use crate::local_state::LocalStateStore;
 use crate::routes::Route;
@@ -112,7 +112,7 @@ pub fn OnboardingPanel(
     let mut step = use_signal(|| OnboardingStep::DidMethod);
     let mut did_method = use_signal(|| DEFAULT_PRINCIPAL_DID_METHOD.to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
-    let mut handle_domain = use_signal(|| "users.contrix.social".to_owned());
+    let mut handle_domain = use_signal(|| "users.cokret.social".to_owned());
 
     let initial_choice = state_store
         .read()
@@ -220,7 +220,7 @@ pub fn OnboardingPanel(
                                 let display = register_display_name();
                                 let device = register_device_id();
                                 spawn(async move {
-                                    match ContrixApi::new(&base) {
+                                    match CokretApi::new(&base) {
                                         Ok(api) => match api.register_account(
                                             &actor,
                                             &handle,
@@ -658,7 +658,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it the Contrix principal control state could become permanently unrecoverable."
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it the Cokret principal control state could become permanently unrecoverable."
             }
             div {
                 class: "muted",

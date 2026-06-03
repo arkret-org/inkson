@@ -25,7 +25,7 @@ use dioxus_router::Link;
 use dioxus_router::hooks::use_navigator;
 use serde_json::Value;
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::i18n::tr;
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -347,7 +347,7 @@ fn run_search(
     has_searched.set(true);
     spawn(async move {
         let space_ids: Vec<String> = Vec::new();
-        match with_authed_api(&base_url, api_token, move |api: ContrixApi| {
+        match with_authed_api(&base_url, api_token, move |api: CokretApi| {
             let q = query_trimmed.clone();
             async move {
                 api.index_search(&q, &space_ids, Some(&["message"]), 50)
@@ -407,19 +407,19 @@ mod tests {
     #[test]
     fn result_destination_prefers_message_anchor() {
         let row = json!({
-            "space_id": "cx:space:demo",
-            "event_id": "cx:event:message",
+            "space_id": "ck:space:demo",
+            "event_id": "ck:event:message",
             "content": {"body": "hit"}
         });
         let destination = result_destination(&row).expect("destination");
-        assert_eq!(destination.anchor.as_deref(), Some("cx:event:message"));
+        assert_eq!(destination.anchor.as_deref(), Some("ck:event:message"));
         match destination.route {
             Route::TimelineMessage {
                 space_id,
                 message_id,
             } => {
-                assert_eq!(space_id, "cx:space:demo");
-                assert_eq!(message_id, "cx:event:message");
+                assert_eq!(space_id, "ck:space:demo");
+                assert_eq!(message_id, "ck:event:message");
             }
             other => panic!("expected TimelineMessage, got {other:?}"),
         }

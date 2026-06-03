@@ -127,7 +127,7 @@ pub struct SpaceLifecycleResponse {
 // (Move/Anchor pipeline DTOs deleted; all writes now go through
 // cx.events.submit via SubmitEventResponse.)
 
-/// Outcome of [`crate::api::ContrixApi::set_account_data`]. Captures the
+/// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
 /// soland's `account_data` PUT is being rolled out incrementally and the
 /// client must keep working when the endpoint isn't wired yet.
@@ -152,7 +152,7 @@ pub const OP_EVENTS_SUBMIT: &str = "cx.events.submit";
 ///
 /// Yougen no longer maintains its own `ServerDescription` struct; the SDK
 /// type is now the single source of truth, matching the spec at
-/// `contrix-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
+/// `cokret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
 /// (17 required v2 fields, typed `claimed_profiles` / `compat_surfaces`,
 /// validated `Did` / `TypedTrustDomainId`). Because yougen cannot add
 /// inherent impls on a foreign type, the previous helper methods now live
@@ -268,7 +268,7 @@ pub struct SyncDescribeResBody {
 /// Wire-shape sync response — re-exports the SDK's canonical
 /// [`contrix_sdk::model::SyncResBody`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
-/// at `contrix-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
+/// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
 /// own a custom `ClientSyncResponse` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
@@ -334,10 +334,10 @@ pub struct RealmJoinCandidate {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpacePreviewKind {
-    /// `cx:realm:*` — security / sync / E2EE boundary.
+    /// `ck:realm:*` — security / sync / E2EE boundary.
     #[default]
     Realm,
-    /// `cx:space:*` — navigation container inside a Realm.
+    /// `ck:space:*` — navigation container inside a Realm.
     Space,
 }
 
@@ -490,43 +490,43 @@ mod tests {
     #[test]
     fn projection_realm_id_uses_space_home_realm() {
         let spaces = vec![
-            preview("cx:realm:root", SpacePreviewKind::Realm, "", None),
+            preview("ck:realm:root", SpacePreviewKind::Realm, "", None),
             preview(
-                "cx:space:child",
+                "ck:space:child",
                 SpacePreviewKind::Space,
-                "cx:realm:root",
-                Some("cx:realm:root"),
+                "ck:realm:root",
+                Some("ck:realm:root"),
             ),
         ];
 
         assert_eq!(
-            projection_realm_id_for_space(&spaces, "cx:space:child"),
-            "cx:realm:root"
+            projection_realm_id_for_space(&spaces, "ck:space:child"),
+            "ck:realm:root"
         );
     }
 
     #[test]
     fn projection_realm_id_climbs_legacy_parent_links() {
         let spaces = vec![
-            preview("cx:space:legacy-root", SpacePreviewKind::Realm, "", None),
+            preview("ck:space:legacy-root", SpacePreviewKind::Realm, "", None),
             preview(
-                "cx:space:legacy-child",
+                "ck:space:legacy-child",
                 SpacePreviewKind::Space,
                 "",
-                Some("cx:space:legacy-root"),
+                Some("ck:space:legacy-root"),
             ),
         ];
 
         assert_eq!(
-            projection_realm_id_for_space(&spaces, "cx:space:legacy-child"),
-            "cx:space:legacy-root"
+            projection_realm_id_for_space(&spaces, "ck:space:legacy-child"),
+            "ck:space:legacy-root"
         );
     }
 
     #[test]
     fn known_projection_realm_id_waits_for_unknown_routes() {
         assert_eq!(
-            projection_realm_id_for_known_space(&[], "cx:space:child"),
+            projection_realm_id_for_known_space(&[], "ck:space:child"),
             None
         );
     }

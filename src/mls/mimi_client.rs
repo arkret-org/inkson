@@ -1,6 +1,6 @@
 //! Client for the soland MIMI provider facade.
 //!
-//! Spec: `contrix-spec/spec/v1/zh/extensions/mimi-interop.md` §5
+//! Spec: `cokret-spec/spec/v1/zh/extensions/mimi-interop.md` §5
 //! (Endpoint Surface).
 //!
 //! The MIMI facade exposes RPC endpoints under
@@ -13,11 +13,11 @@
 //!
 //! Write paths (`submit_message`, `room_update`, `notify`,
 //! `report_abuse`) are explicitly NOT in this client — those are
-//! initiated by Contrix-native authoring surfaces (`chat.rs` etc.)
+//! initiated by Cokret-native authoring surfaces (`chat.rs` etc.)
 //! and surfaced through the canonical timeline by soland's facade
 //! mapping (see `routing/interop/mimi.rs`). Crossing into MIMI's
 //! write side directly from yougen would bypass capability checks
-//! and policy gating that the Contrix path enforces.
+//! and policy gating that the Cokret path enforces.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -190,7 +190,7 @@ impl MimiClient {
     }
 
     /// POST `/api/v1/mimi/consent/request`. Body fields (per spec
-    /// §10) include the target identifier + Contrix space binding.
+    /// §10) include the target identifier + Cokret space binding.
     /// Returns the issued `consent_id` and initial state (typically
     /// `"requested"`).
     pub async fn request_consent(

@@ -191,9 +191,9 @@ mod tests {
     #[test]
     fn call_state_emits_canonical_kind() {
         let op = build_call_state(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:call:c1",
+            "ck:call:c1",
             CallState::Connected,
             None,
         )
@@ -205,10 +205,10 @@ mod tests {
     #[test]
     fn call_recording_start_lists_consents() {
         let op = build_call_recording_start(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:call:c1",
-            "cx:recording:r1",
+            "ck:call:c1",
+            "ck:recording:r1",
             vec!["did:web:alice".into(), "did:web:bob".into()],
         )
         .build("node");
@@ -218,10 +218,10 @@ mod tests {
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> contrix_sdk::EphemeralEnvelope {
         let mut env = crate::api::build_call_signal_envelope_v1(
-            "cx:realm:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000002",
-            "cx:call:01904100-0000-7000-8000-000000000003",
+            "ck:device:01904100-0000-7000-8000-000000000002",
+            "ck:call:01904100-0000-7000-8000-000000000003",
             signal_type,
             seq,
             serde_json::json!({}),
@@ -246,10 +246,10 @@ mod tests {
     #[test]
     fn v1_builder_rejects_unknown_signal_type() {
         let err = crate::api::build_call_signal_envelope_v1(
-            "cx:realm:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:device:01904100-0000-7000-8000-000000000002",
-            "cx:call:01904100-0000-7000-8000-000000000003",
+            "ck:device:01904100-0000-7000-8000-000000000002",
+            "ck:call:01904100-0000-7000-8000-000000000003",
             "sdp_offer",
             1,
             serde_json::json!({}),
@@ -280,16 +280,16 @@ mod tests {
         // rejects it (the v2 schema requires proof).
         let env = contrix_sdk::EphemeralEnvelope::new(
             "cx.call.signal",
-            contrix_sdk::RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            contrix_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             contrix_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(
-                contrix_sdk::DeviceId::new("cx:device:01904100-0000-7000-8000-000000000002")
+                contrix_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000002")
                     .unwrap(),
             ),
             chrono::Utc::now(),
             chrono::Utc::now() + chrono::Duration::seconds(60),
             serde_json::json!({
-                "call_id": "cx:call:01904100-0000-7000-8000-000000000003",
+                "call_id": "ck:call:01904100-0000-7000-8000-000000000003",
                 "signal_type": "invite",
                 "seq": 1u64,
                 "data": {},

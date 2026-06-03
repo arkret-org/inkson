@@ -67,8 +67,8 @@ pub const VAULT_NONCE_SALT_LEN: usize = 16;
 pub const VAULT_AEAD_NAME: &str = "xchacha20_poly1305";
 pub const VAULT_AEAD_PROFILE: &str = "cx.aead.xchacha20_poly1305.v1";
 
-const HKDF_COMMITMENT_INFO: &[u8] = b"contrix-key-backup-commitment-v1";
-const HKDF_NONCE_INFO: &[u8] = b"contrix-key-backup-aead-nonce-v1";
+const HKDF_COMMITMENT_INFO: &[u8] = b"cokret-key-backup-commitment-v1";
+const HKDF_NONCE_INFO: &[u8] = b"cokret-key-backup-aead-nonce-v1";
 
 /// Outcome of `derive_vault_kek`: the KEK plus the parameters that
 /// generated it. The parameters are serialised into the backup body so
@@ -155,17 +155,17 @@ fn hkdf_subkey(root: &[u8; VAULT_KDF_OUTPUT_LEN], info: &[u8]) -> Result<[u8; 32
     Ok(out)
 }
 
-/// Domain-isolated AEAD wrap key: `HKDF(root, "contrix-key-backup/<class>/<subdomain>/v1")`.
+/// Domain-isolated AEAD wrap key: `HKDF(root, "cokret-key-backup/<class>/<subdomain>/v1")`.
 fn vault_aead_key(
     root: &[u8; VAULT_KDF_OUTPUT_LEN],
     backup_class: &str,
     subdomain: &str,
 ) -> Result<[u8; 32]> {
-    let info = format!("contrix-key-backup/{backup_class}/{subdomain}/v1");
+    let info = format!("cokret-key-backup/{backup_class}/{subdomain}/v1");
     hkdf_subkey(root, info.as_bytes())
 }
 
-/// `key_commitment = SHA256(HKDF(root, "contrix-key-backup-commitment-v1"))`
+/// `key_commitment = SHA256(HKDF(root, "cokret-key-backup-commitment-v1"))`
 /// (key-management.md §7.5). Lets a recovering client reject a wrong passphrase
 /// before touching the ciphertext.
 pub fn vault_key_commitment(root: &VaultKek) -> Result<String> {
@@ -582,9 +582,9 @@ mod tests {
 
     fn test_ctx<'a>(aad: &'a [u8]) -> VaultSealContext<'a> {
         VaultSealContext {
-            backup_id: "cx:backup:01964137-0000-7000-8000-00000000beef",
+            backup_id: "ck:backup:01964137-0000-7000-8000-00000000beef",
             actor_id: "did:web:alice.example",
-            device_id: "cx:device:01964137-0000-7000-8000-000000000001",
+            device_id: "ck:device:01964137-0000-7000-8000-000000000001",
             backup_class: "secret_storage",
             subdomain: "recovery_vault",
             backup_version: "kb_1",

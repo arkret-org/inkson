@@ -11,7 +11,7 @@
 //! * [`crate::coauth::CoauthApi::exchange_pkce_code_for_tokens`] does the actual
 //!   `authorization_code` POST against the IdP's token endpoint and returns a typed
 //!   [`OidcTokenResponse`].
-//! * [`crate::api::ContrixApi::exchange_session_grant_at`] swaps a coauth-issued audience grant JWT
+//! * [`crate::api::CokretApi::exchange_session_grant_at`] swaps a coauth-issued audience grant JWT
 //!   for an authenticated Principal Server session (a `DevLoginResponse` with access_token +
 //!   refresh).
 //!
@@ -32,7 +32,7 @@ use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-use crate::api::{ContrixApi, SessionGrantIntrospectionProof};
+use crate::api::{CokretApi, SessionGrantIntrospectionProof};
 use crate::coauth::{
     CoauthApi, OidcTokenResponse, PersistedOidcScaffold,
     build_session_grant_introspection_proof_bundle, extract_authorization_code_from_callback,
@@ -46,7 +46,7 @@ use crate::models::DevLoginResponse;
 /// bundle and (optionally) an audience-grant exchange.
 ///
 /// `audience_grant_jwt` is `None` until the IdP-issued `id_token` /
-/// access_token has been presented to coauth's `/contrix/session-grants`
+/// access_token has been presented to coauth's `/cokret/session-grants`
 /// endpoint and a per-audience grant JWT has been minted. Callers that
 /// already hold an audience grant (e.g. coauth's
 /// `CoauthLoginResponse::session_grant`) can pass it straight through;
@@ -73,7 +73,7 @@ pub struct CallbackProcessRequest<'a> {
 /// server can verify the grant binding without a round-trip to coauth
 /// (per `cx.session_grant.introspection_proof.v1`).
 pub struct AudienceGrantExchange<'a> {
-    pub principal_api: &'a ContrixApi,
+    pub principal_api: &'a CokretApi,
     pub session_grant_exchange_path: &'a str,
     pub grant_id: &'a str,
     pub grant_jwt: &'a str,

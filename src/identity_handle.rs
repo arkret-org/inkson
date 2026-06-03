@@ -1,7 +1,7 @@
-/// Utilities for Contrix user handles.
+/// Utilities for Cokret user handles.
 ///
-/// R3.1 wire form (contrix-spec @ 7157ee8): the canonical handle is
-/// `<localpart>:<domain>(:<port>)?`. The previous `contrix://domain/users/local`
+/// R3.1 wire form (cokret-spec @ 7157ee8): the canonical handle is
+/// `<localpart>:<domain>(:<port>)?`. The previous `cokret://domain/users/local`
 /// URI form has been retired. `acct:<localpart>@<domain>` remains an interop
 /// alias only.
 ///
@@ -29,9 +29,9 @@ pub fn parse_user_handle(input: &str) -> Option<ParsedUserHandle> {
         return None;
     }
 
-    // R3.1: the contrix:// URI handle form is retired. Inputs are
+    // R3.1: the cokret:// URI handle form is retired. Inputs are
     // `<localpart>:<domain>` or `acct:<localpart>@<domain>`.
-    if trimmed.starts_with("contrix://") {
+    if trimmed.starts_with("cokret://") {
         return None;
     }
 
@@ -335,8 +335,8 @@ mod tests {
         assert!(parse_user_handle("did:web:alice.example").is_none());
         assert!(parse_user_handle("@alice").is_none());
         assert!(parse_user_handle("alice.example.com").is_none());
-        // R3.1: contrix:// URI form is retired.
-        assert!(parse_user_handle("contrix://example.com/users/alice").is_none());
+        // R3.1: cokret:// URI form is retired.
+        assert!(parse_user_handle("cokret://example.com/users/alice").is_none());
     }
 
     #[test]

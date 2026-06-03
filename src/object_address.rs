@@ -1,4 +1,4 @@
-//! R3.3 (CXP-0011, contrix-spec @ cced4b8) — client-side shareable object
+//! R3.3 (CXP-0011, cokret-spec @ cced4b8) — client-side shareable object
 //! links.
 //!
 //! A user can share a Realm / Flow / Message as a link. This module is the
@@ -8,7 +8,7 @@
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message) plus routing hints.
 //!   [`ShareTarget::build_links`] produces both output forms.
-//! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+contrix:` "open in
+//! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+cokret:` "open in
 //!   app" form.
 //! * [`OpenedLink`] — the result of parsing + resolving a pasted link, routed to a local
 //!   [`crate::routes::Route`] by `target_kind`.
@@ -25,8 +25,8 @@
 //!
 //! ## Web protocol-handler registration — design choice
 //! yougen deliberately ships the **HTTPS-fragment-only** landing path and does
-//! NOT register a `web+contrix:` web protocol handler by default. Rationale:
-//! `navigator.registerProtocolHandler('web+contrix', template)` is only privacy
+//! NOT register a `web+cokret:` web protocol handler by default. Rationale:
+//! `navigator.registerProtocolHandler('web+cokret', template)` is only privacy
 //! safe if the template substitutes `%s` INSIDE its own fragment
 //! (`https://app.example/open#%s`); a template that puts `%s` in the path or
 //! query would leak the substituted object id / invite token to the handler
@@ -37,8 +37,8 @@
 //!
 //! Native OS deep-link registration (Info.plist `CFBundleURLTypes` /
 //! AndroidManifest `<intent-filter>` / freedesktop `.desktop` `MimeType` /
-//! Windows `HKCR\web+contrix` registry) is out of scope here.
-// TODO(R3.3.1): native OS deep-link registration for the `web+contrix:` scheme.
+//! Windows `HKCR\web+cokret` registry) is out of scope here.
+// TODO(R3.3.1): native OS deep-link registration for the `web+cokret:` scheme.
 
 use contrix_sdk::model::{
     AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, TargetKind, build_address,
@@ -49,7 +49,7 @@ use crate::routes::Route;
 
 /// The local object a user is sharing. Mirrors the SDK address hierarchy
 /// `realm ⊃ flow ⊃ message`. `realm` is a bare uuid or a domain-style alias
-/// (the `cx:realm:` sigil is stripped); `flow`/`message` are bare uuids.
+/// (the `ck:realm:` sigil is stripped); `flow`/`message` are bare uuids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShareTarget {
     Realm {
@@ -67,7 +67,7 @@ pub enum ShareTarget {
 }
 
 impl ShareTarget {
-    /// Build a [`ShareTarget`] from possibly-`cx:`-prefixed ids, stripping the
+    /// Build a [`ShareTarget`] from possibly-`ck:`-prefixed ids, stripping the
     /// sigil so the SDK grammar receives the bare path segments it expects.
     pub fn realm(realm_id: &str) -> Self {
         ShareTarget::Realm {
@@ -142,7 +142,7 @@ impl ShareTarget {
     /// Build both shareable link forms for this target.
     ///
     /// `landing` is the configured HTTPS landing host (e.g.
-    /// `https://share.contrix.example`); the target + token always live in the
+    /// `https://share.cokret.example`); the target + token always live in the
     /// fragment so the host never sees them. `via` is accepted for older
     /// callers but is not serialized by the current SDK address grammar.
     pub fn build_links(
@@ -192,7 +192,7 @@ impl ShareTarget {
     ///
     /// Fails closed when the realm segment is an alias (the digest is
     /// meaningless over an alias — the caller must resolve the alias to a
-    /// canonical `cx:realm:<uuid>` first).
+    /// canonical `ck:realm:<uuid>` first).
     // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
     // via the directory before digesting (TargetDescriptor::set_realm_id).
     pub fn invite_target_digest(&self) -> anyhow::Result<String> {
@@ -208,7 +208,7 @@ impl ShareTarget {
         let parsed = self.to_parsed_address(&[], AddressAction::View, link_type, None);
         let mut descriptor = TargetDescriptor::from_parsed(&parsed);
         descriptor.link_type = link_type;
-        if !descriptor.realm_id.starts_with("cx:realm:") {
+        if !descriptor.realm_id.starts_with("ck:realm:") {
             return Err(anyhow::anyhow!(
                 "cannot bind a token to an alias realm — resolve to a canonical realm_id first"
             ));
@@ -223,7 +223,7 @@ pub struct ShareLinks {
     /// Canonical HTTPS landing link — the default copy-paste form. Target +
     /// token live in the `#` fragment and never reach the landing server.
     pub https_landing: String,
-    /// `web+contrix:` URI — the "open in app" form for OS / browser handlers.
+    /// `web+cokret:` URI — the "open in app" form for OS / browser handlers.
     pub web_contrix: String,
     /// The link type both forms encode.
     pub link_type: LinkType,
@@ -239,7 +239,7 @@ pub struct OpenedLink {
 }
 
 impl OpenedLink {
-    /// Parse a pasted `web+contrix:` or HTTPS-fragment link. Fails closed on
+    /// Parse a pasted `web+cokret:` or HTTPS-fragment link. Fails closed on
     /// any malformed grammar (the SDK parser owns the fail-closed rules).
     pub fn parse(input: &str) -> anyhow::Result<Self> {
         let address =
@@ -250,7 +250,7 @@ impl OpenedLink {
 
     /// The canonical address string to send to `directory_resolve_target`. We
     /// re-serialize through [`build_address`] so the server receives the
-    /// canonical `web+contrix:` form regardless of which envelope the user
+    /// canonical `web+cokret:` form regardless of which envelope the user
     /// pasted.
     pub fn resolve_address(&self) -> String {
         build_address(&self.address)
@@ -293,12 +293,12 @@ impl OpenedLink {
     }
 }
 
-/// Strip a leading `cx:<kind>:` sigil so the SDK grammar receives the bare
+/// Strip a leading `ck:<kind>:` sigil so the SDK grammar receives the bare
 /// path segment (uuid or alias). Idempotent on already-bare input.
 fn strip_sigil(id: &str) -> String {
     let id = id.trim();
-    if let Some(rest) = id.strip_prefix("cx:") {
-        // `cx:realm:<uuid>` → `<uuid>`; alias strings have no `cx:` prefix.
+    if let Some(rest) = id.strip_prefix("ck:") {
+        // `ck:realm:<uuid>` → `<uuid>`; alias strings have no `ck:` prefix.
         rest.split_once(':')
             .map(|(_, v)| v.to_owned())
             .unwrap_or_else(|| id.to_owned())
@@ -308,40 +308,40 @@ fn strip_sigil(id: &str) -> String {
 }
 
 fn typed_realm(bare: &str) -> String {
-    if bare.starts_with("cx:realm:") {
+    if bare.starts_with("ck:realm:") {
         bare.to_owned()
     } else {
-        format!("cx:realm:{bare}")
+        format!("ck:realm:{bare}")
     }
 }
 
 fn typed_flow(bare: &str) -> String {
-    if bare.starts_with("cx:flow:") {
+    if bare.starts_with("ck:flow:") {
         bare.to_owned()
     } else {
-        format!("cx:flow:{bare}")
+        format!("ck:flow:{bare}")
     }
 }
 
 fn typed_message(bare: &str) -> String {
-    if bare.starts_with("cx:message:") {
+    if bare.starts_with("ck:message:") {
         bare.to_owned()
     } else {
-        format!("cx:message:{bare}")
+        format!("ck:message:{bare}")
     }
 }
 
-/// Build the privacy-safe web protocol-handler template for `web+contrix:`.
+/// Build the privacy-safe web protocol-handler template for `web+cokret:`.
 ///
 /// Returns `https://<landing>/open#%s` — the `%s` lives in the FRAGMENT, so
-/// the browser-substituted `web+contrix:` URI stays out of the path/query and
+/// the browser-substituted `web+cokret:` URI stays out of the path/query and
 /// never reaches the landing host. Callers who register a handler MUST use a
 /// template shaped like this; see the module-level design note.
 pub fn web_protocol_handler_template(landing: &str) -> String {
     format!("{}/open#%s", landing.trim_end_matches('/'))
 }
 
-/// wasm-only: opt-in registration of the `web+contrix:` web protocol handler,
+/// wasm-only: opt-in registration of the `web+cokret:` web protocol handler,
 /// using the fragment-only template from [`web_protocol_handler_template`].
 ///
 /// This is NOT called by the default UI flow (yougen prefers the
@@ -357,7 +357,7 @@ pub fn register_web_protocol_handler(landing: &str) -> Result<(), String> {
     // `registerProtocolHandler(scheme, url, title)`; the `title` arg was
     // dropped from the living standard but is still required by the binding.
     navigator
-        .register_protocol_handler("web+contrix", &template, "Contrix")
+        .register_protocol_handler("web+cokret", &template, "Cokret")
         .map_err(|err| format!("registerProtocolHandler failed: {err:?}"))
 }
 
@@ -369,35 +369,35 @@ mod tests {
     const F: &str = "01904100-0000-7000-8000-0000000000bb";
     const M: &str = "01904100-0000-7000-8000-0000000000dd";
     const VIA: &str = "did:web:relay.example";
-    const LANDING: &str = "https://share.contrix.example";
+    const LANDING: &str = "https://share.cokret.example";
 
     #[test]
     fn strip_sigil_handles_typed_and_bare_ids() {
-        assert_eq!(strip_sigil("cx:realm:abc"), "abc");
-        assert_eq!(strip_sigil("cx:flow:def"), "def");
+        assert_eq!(strip_sigil("ck:realm:abc"), "abc");
+        assert_eq!(strip_sigil("ck:flow:def"), "def");
         assert_eq!(strip_sigil("bare-uuid"), "bare-uuid");
         assert_eq!(strip_sigil("team.example.com"), "team.example.com");
     }
 
     #[test]
     fn realm_links_use_fragment_for_https() {
-        let target = ShareTarget::realm(&format!("cx:realm:{R}"));
+        let target = ShareTarget::realm(&format!("ck:realm:{R}"));
         let links = target.build_reference_links(LANDING, &[], AddressAction::View);
         // HTTPS landing keeps the target in the fragment.
         assert!(
             links
                 .https_landing
-                .starts_with("https://share.contrix.example/#realm/")
+                .starts_with("https://share.cokret.example/#realm/")
         );
         assert!(links.https_landing.contains(R));
-        // The web+contrix: form is the canonical scheme.
-        assert_eq!(links.web_contrix, format!("web+contrix:realm/{R}"));
+        // The web+cokret: form is the canonical scheme.
+        assert_eq!(links.web_contrix, format!("web+cokret:realm/{R}"));
         assert_eq!(links.link_type, LinkType::Reference);
     }
 
     #[test]
     fn flow_links_ignore_via_and_roundtrip() {
-        let target = ShareTarget::flow(&format!("cx:realm:{R}"), &format!("cx:flow:{F}"));
+        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
         assert!(links.web_contrix.contains(&format!("realm/{R}/flow/{F}")));
         assert!(!links.web_contrix.contains("via="));
@@ -411,9 +411,9 @@ mod tests {
     #[test]
     fn message_link_routes_to_message_anchor() {
         let target = ShareTarget::message(
-            &format!("cx:realm:{R}"),
-            &format!("cx:flow:{F}"),
-            &format!("cx:message:{M}"),
+            &format!("ck:realm:{R}"),
+            &format!("ck:flow:{F}"),
+            &format!("ck:message:{M}"),
         );
         let links = target.build_links(
             LANDING,
@@ -429,8 +429,8 @@ mod tests {
                 space_id,
                 message_id,
             } => {
-                assert_eq!(space_id, format!("cx:flow:{F}"));
-                assert_eq!(message_id, format!("cx:message:{M}"));
+                assert_eq!(space_id, format!("ck:flow:{F}"));
+                assert_eq!(message_id, format!("ck:message:{M}"));
             }
             other => panic!("expected TimelineMessage route, got {other:?}"),
         }
@@ -438,22 +438,22 @@ mod tests {
 
     #[test]
     fn realm_target_routes_to_space() {
-        let opened = OpenedLink::parse(&format!("web+contrix:realm/{R}")).unwrap();
+        let opened = OpenedLink::parse(&format!("web+cokret:realm/{R}")).unwrap();
         match opened.route_for(TargetKind::Realm) {
-            Route::Space { space_id } => assert_eq!(space_id, format!("cx:realm:{R}")),
+            Route::Space { space_id } => assert_eq!(space_id, format!("ck:realm:{R}")),
             other => panic!("expected Space route, got {other:?}"),
         }
     }
 
     #[test]
     fn alias_realm_routes_to_directory() {
-        let opened = OpenedLink::parse("web+contrix:realm/team.example.com").unwrap();
+        let opened = OpenedLink::parse("web+cokret:realm/team.example.com").unwrap();
         assert_eq!(opened.route_for(TargetKind::Realm), Route::Directory);
     }
 
     #[test]
     fn invite_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::flow(&format!("cx:realm:{R}"), &format!("cx:flow:{F}"));
+        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
         let links = target.build_links(
             LANDING,
             &[VIA.to_owned()],
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn preview_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::flow(&format!("cx:realm:{R}"), &format!("cx:flow:{F}"));
+        let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
         let links = target.build_preview_links(
             LANDING,
             &[VIA.to_owned()],
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn reference_link_drops_stray_token() {
-        let target = ShareTarget::realm(&format!("cx:realm:{R}"));
+        let target = ShareTarget::realm(&format!("ck:realm:{R}"));
         // Even if a token is passed, a reference link must not carry it.
         let links = target.build_links(
             LANDING,
@@ -516,14 +516,14 @@ mod tests {
     #[test]
     fn parse_fails_closed_on_garbage() {
         assert!(OpenedLink::parse("not-a-link").is_err());
-        assert!(OpenedLink::parse(&format!("web+contrix:space/{R}")).is_err());
-        assert!(OpenedLink::parse(&format!("web+contrix:realm/{R}/flow/{F}")).is_ok());
+        assert!(OpenedLink::parse(&format!("web+cokret:space/{R}")).is_err());
+        assert!(OpenedLink::parse(&format!("web+cokret:realm/{R}/flow/{F}")).is_ok());
     }
 
     #[test]
     fn protocol_handler_template_keeps_substitution_in_fragment() {
         let template = web_protocol_handler_template(LANDING);
-        assert_eq!(template, "https://share.contrix.example/open#%s");
+        assert_eq!(template, "https://share.cokret.example/open#%s");
         // The `%s` MUST be in the fragment, never the path/query.
         let (before_fragment, fragment) = template.split_once('#').unwrap();
         assert!(!before_fragment.contains("%s"));

@@ -1,6 +1,6 @@
 # yougen — Recovery Flow
 
-> How to recover Contrix Principal access and encrypted backup material when
+> How to recover Cokret Principal access and encrypted backup material when
 > the device that holds your signing key is lost, broken, or revoked. Spec
 > source: `identity/key-management.md` §7-§8 and
 > `crypto-media/device-lifecycle.md` §15.

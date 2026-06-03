@@ -276,7 +276,7 @@ pub(crate) fn message_create_operation(
 ) -> EventEnvelope {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `flow_id` and `track_name` (`flow-and-message.md` §2). The default Flow
-    // for a Realm/Space is `cx:flow:<uuid>` (typed-id re-tag, matching
+    // for a Realm/Space is `ck:flow:<uuid>` (typed-id re-tag, matching
     // soland's `flow_id_from_space_id`); the default track is "discussion".
     let flow_id = default_flow_id_for_scope(space_id);
     let mut content = contrix_sdk::ContentBlock::text(body);
@@ -307,9 +307,9 @@ pub(crate) fn message_create_operation(
 
 fn default_flow_id_for_scope(scope_id: &str) -> String {
     scope_id
-        .strip_prefix("cx:realm:")
-        .or_else(|| scope_id.strip_prefix("cx:space:"))
-        .map(|suffix| format!("cx:flow:{suffix}"))
+        .strip_prefix("ck:realm:")
+        .or_else(|| scope_id.strip_prefix("ck:space:"))
+        .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| scope_id.to_owned())
 }
 
@@ -340,7 +340,7 @@ fn pending_send_error_is_permanent(error: &str) -> bool {
 }
 
 async fn submit_timeline_message_with_plaintext_retry(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     space_id: &str,
     actor_did: &str,
     operation: &EventEnvelope,
@@ -1635,7 +1635,7 @@ pub fn TimelinePanel(
                                 &account_did_key,
                                 &device_id_key,
                                 &space_for_encrypt,
-                                "cx:message:local-compose",
+                                "ck:message:local-compose",
                                 &body,
                             ) {
                                 Ok(message) => {
@@ -1909,7 +1909,7 @@ pub fn TimelinePanel(
                                     &ac,
                                     &dc,
                                     &space_for_encrypt,
-                                    "cx:message:local-compose",
+                                    "ck:message:local-compose",
                                     &body,
                                 ) {
                                     Ok(message) => {
@@ -2322,7 +2322,7 @@ mod tests {
     #[test]
     fn message_create_operation_retags_realm_scope_to_flow_id() {
         let op = message_create_operation(
-            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
             None,
             "hello",
@@ -2331,7 +2331,7 @@ mod tests {
 
         assert_eq!(
             op.payload["flow_id"],
-            "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+            "ck:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
         assert_eq!(op.payload["track_name"], "discussion");
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
@@ -2345,7 +2345,7 @@ mod tests {
     #[test]
     fn message_create_operation_retags_space_scope_to_flow_id() {
         let op = message_create_operation(
-            "cx:space:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:space:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
             None,
             "hello",
@@ -2354,7 +2354,7 @@ mod tests {
 
         assert_eq!(
             op.payload["flow_id"],
-            "cx:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
+            "ck:flow:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22"
         );
         assert!(op.payload.get("priority").is_none());
         assert!(op.payload.get("notification_priority").is_none());
@@ -2382,15 +2382,15 @@ mod tests {
     #[test]
     fn message_revise_operation_carries_schema_target_ref() {
         let op = message_revise_operation(
-            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
             "edited",
         );
 
         assert_eq!(
             op.payload["target_ref"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert_eq!(op.payload["content"]["body"], "edited");
@@ -2404,15 +2404,15 @@ mod tests {
     #[test]
     fn reaction_add_operation_uses_schema_target_ref() {
         let op = reaction_add_operation(
-            "cx:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
             "+1",
         );
 
         assert_eq!(
             op.payload["target_ref"],
-            "cx:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+            "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
         );
         assert_eq!(op.payload["key"], "+1");
         assert!(op.payload.get("event_id").is_none());

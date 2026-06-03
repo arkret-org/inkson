@@ -1,4 +1,4 @@
-//! Yougen-side wrappers for the Contrix object model objects.
+//! Yougen-side wrappers for the Cokret object model objects.
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
 //! turn them into [`crate::operation::EventEnvelope`] write actions. The
@@ -119,82 +119,82 @@ mod tests {
     #[test]
     fn morph_update_emits_canonical_kind() {
         let op = build_morph_update(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:morph:abc",
+            "ck:morph:abc",
             json!({"morph_type": "task"}),
         )
         .build("node");
         assert_eq!(op.kind, "cx.morph.update");
-        assert_eq!(op.payload["morph_id"], "cx:morph:abc");
+        assert_eq!(op.payload["morph_id"], "ck:morph:abc");
         assert_eq!(op.payload["patch"]["morph_type"], "task");
     }
 
     #[test]
     fn relation_create_carries_kind_and_endpoints() {
         let op = build_relation_create(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:relation:r1",
+            "ck:relation:r1",
             "cx.relation.parent_of",
-            "cx:flow:f1",
-            "cx:flow:f2",
+            "ck:flow:f1",
+            "ck:flow:f2",
         )
         .build("node");
         assert_eq!(op.kind, "cx.relation.create");
         assert_eq!(op.payload["kind"], "cx.relation.parent_of");
-        assert_eq!(op.payload["source"], "cx:flow:f1");
-        assert_eq!(op.payload["target"], "cx:flow:f2");
+        assert_eq!(op.payload["source"], "ck:flow:f1");
+        assert_eq!(op.payload["target"], "ck:flow:f2");
     }
 
     #[test]
     fn container_move_item_uses_spec_position_payload() {
         let op = build_container_move_item(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:space:0196419b-0000-7000-8000-000000000001",
-            "cx:flow:f1",
-            "cx:flow:f1",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
+            "ck:flow:f1",
+            "ck:flow:f1",
             "r0",
         )
         .build("node");
         assert_eq!(op.kind, "cx.container.move_item");
         assert_eq!(
             op.local_target_ref(),
-            Some("cx:space:0196419b-0000-7000-8000-000000000001")
+            Some("ck:space:0196419b-0000-7000-8000-000000000001")
         );
         assert_eq!(
             op.payload["container_ref"],
-            "cx:space:0196419b-0000-7000-8000-000000000001"
+            "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["source_ref"], "cx:flow:f1");
-        assert_eq!(op.payload["target_ref"], "cx:flow:f1");
+        assert_eq!(op.payload["source_ref"], "ck:flow:f1");
+        assert_eq!(op.payload["target_ref"], "ck:flow:f1");
         assert_eq!(op.payload["rank"], "r0");
     }
 
     #[test]
     fn container_rebalance_flattens_items() {
         let op = build_container_rebalance(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:space:0196419b-0000-7000-8000-000000000001",
-            "cx:flow:f1",
-            "cx:flow:f2",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
+            "ck:flow:f1",
+            "ck:flow:f2",
             "r1",
             vec![
-                ("cx:flow:f1".to_owned(), "r0".to_owned()),
-                ("cx:flow:f2".to_owned(), "r1".to_owned()),
+                ("ck:flow:f1".to_owned(), "r0".to_owned()),
+                ("ck:flow:f2".to_owned(), "r1".to_owned()),
             ],
         )
         .build("node");
         assert_eq!(op.kind, "cx.container.rebalance");
         assert_eq!(
             op.payload["container_ref"],
-            "cx:space:0196419b-0000-7000-8000-000000000001"
+            "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["target_ref"], "cx:flow:f2");
+        assert_eq!(op.payload["target_ref"], "ck:flow:f2");
         assert_eq!(op.payload["rank"], "r1");
-        assert_eq!(op.payload["items"][0]["item_ref"], "cx:flow:f1");
+        assert_eq!(op.payload["items"][0]["item_ref"], "ck:flow:f1");
         assert_eq!(op.payload["items"][1]["rank"], "r1");
     }
 }

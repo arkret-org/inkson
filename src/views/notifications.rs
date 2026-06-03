@@ -1125,14 +1125,14 @@ mod tests {
             "notification_id": "n1",
             "kind": "cx.notification",
             "notification_type": "message",
-            "realm_id": "cx:realm:quiet",
+            "realm_id": "ck:realm:quiet",
             "body": "hello"
         })];
         let rules = crate::notification_rules::parse_push_rules(&json!({
             "rules": [{
                 "rule_id": "override.quiet",
                 "conditions": [
-                    {"kind": "field_match", "field": "space_id", "pattern": "cx:realm:quiet"}
+                    {"kind": "field_match", "field": "space_id", "pattern": "ck:realm:quiet"}
                 ],
                 "actions": ["dont_notify"]
             }]
@@ -1147,14 +1147,14 @@ mod tests {
     #[test]
     fn pending_invites_are_hydrated_as_notifications() {
         let invite = json!({
-            "invite_id": "cx:invite:01904100-0000-7000-8000-000000000001",
-            "space_id": "cx:realm:01904100-0000-7000-8000-000000000002",
+            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000001",
+            "space_id": "ck:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "created_at": "2026-05-29T00:00:00Z",
         });
         let duplicate_invite = json!({
-            "invite_id": "cx:invite:01904100-0000-7000-8000-000000000099",
-            "space_id": "cx:realm:01904100-0000-7000-8000-000000000002",
+            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000099",
+            "space_id": "ck:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "created_at": "2026-05-29T00:00:01Z",
         });
@@ -1170,7 +1170,7 @@ mod tests {
         assert_eq!(notifications[0].title, "Realm invite");
         assert_eq!(
             notifications[0].realm_id,
-            "cx:realm:01904100-0000-7000-8000-000000000002"
+            "ck:realm:01904100-0000-7000-8000-000000000002"
         );
         assert_eq!(notifications[0].body, "You were invited to join a Realm.");
         assert_eq!(notifications[0].action_label.as_deref(), Some("Accept"));
@@ -1180,7 +1180,7 @@ mod tests {
         ));
 
         let joined_realms =
-            BTreeSet::from(["cx:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
+            BTreeSet::from(["ck:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
@@ -1192,8 +1192,8 @@ mod tests {
             "notification_id": "n1",
             "event_kind": "cx.message.create",
             "notification_type": "mention",
-            "space_id": "cx:space:e2ee",
-            "flow_id": "cx:flow:1",
+            "space_id": "ck:space:e2ee",
+            "flow_id": "ck:flow:1",
             "track_name": "discussion",
             "watch_state": "participating",
             "encrypted": true,

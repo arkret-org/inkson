@@ -16,7 +16,7 @@
 //!      NOT the dev placeholder `"a..b"`.
 //!   3. `proofs[0].event_digest` starts with `sha256:` and has 64 hex chars.
 //!   4. `anchor_ref` is `Some(_)` for reducer-input kinds AND matches
-//!      `^cx:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the all-zero hash.
+//!      `^ck:anchor:sha256:[0-9a-f]{64}$`. The fake anchor is NOT the all-zero hash.
 //!
 //! The `roundtrip_through_live_soland_endpoint` test below is the live
 //! variant — it is marked `#[ignore]` because it requires a soland
@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 use yougen::api;
 use yougen::operation::EventEnvelope;
 
-const TEST_REALM_ID: &str = "cx:realm:0196419b-0000-7000-8000-000000000001";
+const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_ACTOR_DID: &str = "did:web:alice.example";
 
 /// Deterministic Ed25519 seed used in this test process. Different
@@ -51,7 +51,7 @@ fn signing_key() -> SigningKey {
 }
 
 /// Stamp the envelope with a real Ed25519 detached-JWS proof and a
-/// concrete `cx:anchor:sha256:<hex>` ref derived from the envelope's
+/// concrete `ck:anchor:sha256:<hex>` ref derived from the envelope's
 /// own kind. We deliberately do NOT use the zero hash, so the test
 /// catches a downstream regression that would forget to mint a real
 /// anchor.
@@ -63,7 +63,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     hasher.update(envelope.kind.as_bytes());
     hasher.update(b":anchor_staleness_drill");
     let digest = hasher.finalize();
-    envelope.anchor_ref = Some(format!("cx:anchor:sha256:{:x}", digest));
+    envelope.anchor_ref = Some(format!("ck:anchor:sha256:{:x}", digest));
 
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
@@ -87,7 +87,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
         "restricted",
         "single_did",
         "sha256",
-        "cx:trust_domain:server.example",
+        "ck:trust_domain:server.example",
         &[],
     )
     .expect("build_realm_create_event succeeds");
@@ -114,7 +114,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         "restricted",
         "single_did",
         "sha256",
-        "cx:trust_domain:server.example",
+        "ck:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
     )
@@ -204,15 +204,15 @@ fn assert_anchor_ref_is_real(envelope: &EventEnvelope) {
             envelope.kind
         )
     });
-    let anchor_re = Regex::new(r"^cx:anchor:sha256:[0-9a-f]{64}$").expect("anchor regex compiles");
+    let anchor_re = Regex::new(r"^ck:anchor:sha256:[0-9a-f]{64}$").expect("anchor regex compiles");
     assert!(
         anchor_re.is_match(anchor),
-        "envelope kind={} anchor_ref `{}` does not match cx:anchor:sha256:<64 hex>",
+        "envelope kind={} anchor_ref `{}` does not match ck:anchor:sha256:<64 hex>",
         envelope.kind,
         anchor
     );
     let zero_anchor =
-        "cx:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        "ck:anchor:sha256:0000000000000000000000000000000000000000000000000000000000000000";
     assert_ne!(
         anchor, zero_anchor,
         "envelope kind={} anchor_ref is the all-zero sha256 hash (placeholder leak)",
@@ -247,7 +247,7 @@ fn roundtrip_through_live_soland_endpoint() {
     };
 
     // The live path needs:
-    //   1. A test ContrixApi pointed at `url`.
+    //   1. A test CokretApi pointed at `url`.
     //   2. An installed real Ed25519 signer (yougen::event_signer::install_active_signer).
     //   3. A `cx.realm.create` round-trip whose returned envelope must pass the same assertions
     //      exercised above.

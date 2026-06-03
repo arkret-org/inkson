@@ -16,7 +16,7 @@
 //!       "invite_id": "inv-01abc",
 //!       "target": "did:web:bob.example",
 //!       "issuer": "did:web:alice.example",
-//!       "space_id": "cx:space:01...",
+//!       "space_id": "ck:space:01...",
 //!       "reason": "rate_limited",
 //!       "created_at": "2026-05-09T00:00:00Z",
 //!       "state": "pending_review"
@@ -342,7 +342,7 @@ mod tests {
                     "invite_id": "inv-01abc",
                     "target": "did:web:bob.example",
                     "issuer": "did:web:alice.example",
-                    "space_id": "cx:space:0196419b-0000-7000-8000-000000000000",
+                    "space_id": "ck:space:0196419b-0000-7000-8000-000000000000",
                     "reason": "rate_limited",
                     "state": "pending_review"
                 }

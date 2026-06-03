@@ -414,7 +414,7 @@ pub fn build_poll_create_op(
             "poll cx.message.create payload serialize",
         ))
         .build("yougen");
-    let message_ref = envelope.event_id.replacen("cx:event:", "cx:message:", 1);
+    let message_ref = envelope.event_id.replacen("ck:event:", "ck:message:", 1);
     envelope.payload["message_id"] = json!(message_ref);
     envelope.payload["content"]["message_id"] = json!(message_ref);
     envelope
@@ -472,8 +472,8 @@ pub fn new_poll_id() -> String {
 }
 
 fn flow_id_from_space_id(space_id: &str) -> String {
-    let suffix = space_id.replace("cx:realm:", "").replace("cx:space:", "");
-    format!("cx:flow:{suffix}")
+    let suffix = space_id.replace("ck:realm:", "").replace("ck:space:", "");
+    format!("ck:flow:{suffix}")
 }
 
 #[cfg(test)]
@@ -544,9 +544,9 @@ mod tests {
         draft.set_option(0, "yes".into());
         draft.set_option(1, "no".into());
         let op = build_poll_create_op(
-            "cx:space:01904100-0000-7000-8000-000000000010",
+            "ck:space:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "cx:flow:01904100-0000-7000-8000-000000000011",
+            "ck:flow:01904100-0000-7000-8000-000000000011",
             "poll-x",
             &draft,
         );
@@ -581,7 +581,7 @@ mod tests {
                 {"id": "no", "voters": []}
             ]
         });
-        let card = PollCard::from_content("cx:event:1".to_owned(), &content).unwrap();
+        let card = PollCard::from_content("ck:event:1".to_owned(), &content).unwrap();
         assert_eq!(card.poll_id, "poll-1");
         assert_eq!(card.votes_for(0), 1);
         assert_eq!(card.votes_for(1), 0);

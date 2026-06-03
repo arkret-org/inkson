@@ -80,7 +80,7 @@ mod verification_key_poll_tests {
                 {"type": "cx.mls.welcome", "body": {"unrelated": true}},
                 {
                     "type": "cx.key.verification.key",
-                    "body": {"key": "bob-pub-b64==", "from_device": "cx:device:abc"},
+                    "body": {"key": "bob-pub-b64==", "from_device": "ck:device:abc"},
                 },
             ]
         });
@@ -143,7 +143,7 @@ mod qr_tests {
 
     #[test]
     fn typical_payload_produces_svg() {
-        let svg = render_qr_svg("contrix:verify:cx:device:abc:cx:device:xyz");
+        let svg = render_qr_svg("cokret:verify:ck:device:abc:ck:device:xyz");
         // qrcode 0.14 emits an `<?xml …?>` declaration before `<svg`.
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
@@ -316,7 +316,7 @@ pub fn VerifyDevicePanel(
                                     let device_id = device_id.clone();
                                     move |_| {
                                         qr_data.set(format!(
-                                            "contrix:verify:{}:{}",
+                                            "cokret:verify:{}:{}",
                                             device_id, target_device()
                                         ));
                                     }
@@ -1110,7 +1110,7 @@ pub fn VerifyDevicePanel(
                                             .and_then(|s| contrix_sdk::TypedTrustDomainId::new(s).ok())
                                             .unwrap_or_else(|| {
                                                 contrix_sdk::TypedTrustDomainId::new(
-                                                    "cx:trust_domain:unknown.local",
+                                                    "ck:trust_domain:unknown.local",
                                                 )
                                                 .expect("sentinel trust domain")
                                             });
@@ -1150,7 +1150,7 @@ pub fn VerifyDevicePanel(
                                         //    authorization events MUST live
                                         //    in the principal control
                                         //    space, derived as
-                                        //    `cx:space:control:<did>`. The
+                                        //    `ck:space:control:<did>`. The
                                         //    SDK exposes the canonical
                                         //    derivation; we route through
                                         //    it so the server-side pinning
@@ -1246,7 +1246,7 @@ mod cross_signing_view_tests {
 
     #[test]
     fn initial_plan_lists_publish_and_device_authorized_events() {
-        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "cx:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ck:device:01a");
         let kinds = plan.event_kinds();
         assert!(kinds.contains(&"cx.cross_signing.publish"));
         assert!(kinds.contains(&"cx.device.authorize"));

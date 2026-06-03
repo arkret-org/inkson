@@ -5,7 +5,7 @@
 //! - **Encrypted Cloud Vault**: the passphrase is stretched on-device with Argon2id
 //!   (`recovery_crypto::derive_vault_kek`) and the resulting key encrypts a JSON payload with
 //!   XChaCha20-Poly1305 before being POSTed to `PUT /api/v1/keys/backups/{backup_id}` via
-//!   [`crate::api::ContrixApi::put_key_backup`]. The server never sees the passphrase or the
+//!   [`crate::api::CokretApi::put_key_backup`]. The server never sees the passphrase or the
 //!   plaintext.
 //! - **Recovery Key**: 256 bits of entropy, formatted as Crockford-base32 groups. The plaintext
 //!   only lives in memory between Generate and the user's Copy / Print interaction; only a SHA-256
@@ -138,7 +138,7 @@ mod restore_parse_tests {
     #[test]
     fn parse_backup_summary_extracts_kdf_and_aead_fields() {
         let row = parse_backup_summary(&json!({
-            "backup_id": "cx:backup:01964137-0000-7000-8000-000000000000",
+            "backup_id": "ck:backup:01964137-0000-7000-8000-000000000000",
             "backup_class": "secret_storage",
             "backup_version": "kb_1",
             "created_at": "2026-05-15T00:00:00Z",
@@ -153,7 +153,7 @@ mod restore_parse_tests {
         .unwrap();
         assert_eq!(
             row.backup_id,
-            "cx:backup:01964137-0000-7000-8000-000000000000"
+            "ck:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(row.backup_class, "secret_storage");
         assert_eq!(row.backup_version, "kb_1");
@@ -165,9 +165,9 @@ mod restore_parse_tests {
 
     #[test]
     fn parse_backup_list_handles_envelope() {
-        let enveloped = json!({"backups": [{"backup_id": "cx:backup:x"}]});
+        let enveloped = json!({"backups": [{"backup_id": "ck:backup:x"}]});
         assert_eq!(parse_backup_list(&enveloped).len(), 1);
-        assert!(parse_backup_list(&json!([{"backup_id": "cx:backup:y"}])).is_empty());
+        assert!(parse_backup_list(&json!([{"backup_id": "ck:backup:y"}])).is_empty());
     }
 
     #[test]
@@ -366,7 +366,7 @@ pub fn RecoveryPanel(
             // is wired.
             //
             // TODO(R3.1): replace placeholder rows with a real
-            // `ContrixApi::recovery_policy_get` / `recovery_receipt_list`
+            // `CokretApi::recovery_policy_get` / `recovery_receipt_list`
             // fetch and decode against the schemas above.
             div { class: "event", "data-testid": "recovery-policy-panel",
                 div { class: "event-head",
@@ -424,7 +424,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery options" }
                     span { "Encrypted Vault · Social Recovery · Recovery Key" }
-                    HelpTip { text: "Contrix never stores your passphrase on the server. Backups are encrypted on-device before upload. A recovery option may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
+                    HelpTip { text: "Cokret never stores your passphrase on the server. Backups are encrypted on-device before upload. A recovery option may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
@@ -549,7 +549,7 @@ pub fn RecoveryPanel(
                                 let actor = actor_key.clone();
                                 let device = device_id();
                                 let next_backup_id = if vault_backup_id().is_empty() {
-                                    format!("cx:backup:{}", uuid_v7())
+                                    format!("ck:backup:{}", uuid_v7())
                                 } else {
                                     vault_backup_id()
                                 };
@@ -641,7 +641,7 @@ pub fn RecoveryPanel(
                                             ) {
                                                 Ok(account_secret) => {
                                                     let mls_backup_id =
-                                                        format!("cx:backup:{}", uuid_v7());
+                                                        format!("ck:backup:{}", uuid_v7());
                                                     match crate::mls::account_recovery::build_mls_account_secret_backup_body_with_kek(
                                                         &mls_backup_id,
                                                         &actor_for_async,
@@ -736,7 +736,7 @@ pub fn RecoveryPanel(
                     span { "high-entropy string · keep offline" }
                 }
                 div { class: "muted",
-                    "A fallback for when every device is lost and no guardian is reachable. Contrix never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it."
+                    "A fallback for when every device is lost and no guardian is reachable. Cokret never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",

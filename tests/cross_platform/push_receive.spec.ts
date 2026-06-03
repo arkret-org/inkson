@@ -153,7 +153,7 @@ test.describe("desktop push receive smoke", () => {
               space_title: "hidden space",
               title: "hidden title",
               sender: "did:web:alice.example",
-              collapse_key: "cx:event:1",
+              collapse_key: "ck:event:1",
             },
           });
         });

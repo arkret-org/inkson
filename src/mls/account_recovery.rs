@@ -234,7 +234,7 @@ pub fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value
 }
 
 /// Iterate the `{"backups": [...]}` payload returned by
-/// [`crate::api::ContrixApi::list_key_backups`].
+/// [`crate::api::CokretApi::list_key_backups`].
 ///
 /// The selection helpers below are consumed by the async auto-restore helpers
 /// (now available on all targets) and their tests.
@@ -469,7 +469,7 @@ pub struct RestoreReport {
 /// is required — this is the SAFE half that can run at silent boot to *detect*
 /// whether account-secret recovery is available.
 pub async fn fetch_mls_account_secret_backup(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
 ) -> Result<Option<Value>> {
     let payload = api
         .list_key_backups()
@@ -485,7 +485,7 @@ pub async fn fetch_mls_account_secret_backup(
 /// before acquiring `state_store.write()`, then pass the returned payload into
 /// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
 /// state write guard out of the network await.
-pub async fn fetch_mls_restore_payload(api: &crate::api::ContrixApi) -> Result<Value> {
+pub async fn fetch_mls_restore_payload(api: &crate::api::CokretApi) -> Result<Value> {
     api.list_key_backups()
         .await
         .map_err(|err| anyhow!("list key backups: {err}"))
@@ -669,7 +669,7 @@ fn restore_private_plaintext_sidecar(
 /// This is the function the recovery UI / a future "unlock MLS" prompt calls
 /// once the user has supplied the passphrase. Returns per-backup counts.
 pub async fn auto_restore_mls_history_with_passphrase(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_did: &str,
@@ -749,7 +749,7 @@ fn series_supersedes_digest(previous: &Value) -> String {
 
 /// Generate a fresh protocol `backup_id` for a new envelope in a series.
 fn fresh_backup_id() -> String {
-    format!("cx:backup:{}", crate::operation::uuid_v7())
+    format!("ck:backup:{}", crate::operation::uuid_v7())
 }
 
 /// Verify the `supersedes` chain of a key-backup series back to genesis.
@@ -875,7 +875,7 @@ pub fn select_superseded_backup_ids(
 /// best-effort). Returns `(deleted, failed)`. Called AFTER the new series is
 /// confirmed uploaded so a delete failure never leaves the user unrecoverable.
 pub async fn delete_backups(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     actor_did: &str,
     backup_ids: &[String],
 ) -> (Vec<String>, Vec<String>) {
@@ -906,7 +906,7 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
 /// function returns `Ok`, so local snapshots and the local secret advance
 /// together.
 pub async fn upload_mls_account_secret_rotation_after_device_revoke(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_did: &str,
     device_id: &str,
@@ -1023,7 +1023,7 @@ pub fn mls_backup_prompt_required(
 /// account-secret backup's `backup_id`/series so the upload stays in the same
 /// rotation series. Returns the `backup_id` it wrote.
 pub async fn upload_mls_account_secret_backup_with_passphrase(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_did: &str,
     device_id: &str,
@@ -1072,7 +1072,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 /// wrote. Errors if no local account secret exists (the user hasn't used
 /// encryption, so there is nothing to wrap the sidecar with).
 pub async fn upload_mls_private_plaintext_backup(
-    api: &crate::api::ContrixApi,
+    api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_did: &str,
     device_id: &str,
@@ -1111,9 +1111,9 @@ mod tests {
     use crate::key_backup::{KeyBackupClass, validate_key_backup_envelope};
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    const BACKUP_ID: &str = "cx:backup:01964137-0000-7000-8000-00000000beef";
+    const BACKUP_ID: &str = "ck:backup:01964137-0000-7000-8000-00000000beef";
     const ACTOR: &str = "did:web:alice.example";
-    const DEVICE: &str = "cx:device:01964137-0000-7000-8000-000000000001";
+    const DEVICE: &str = "ck:device:01964137-0000-7000-8000-000000000001";
     const PASSPHRASE: &[u8] = b"correct horse battery staple";
     const ACCOUNT_SECRET: &str = "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N";
 
@@ -1155,7 +1155,7 @@ mod tests {
 
     fn history_body(envelope: &crate::mls::persistence::MlsSnapshotEnvelope) -> Value {
         envelope.to_key_backup_body(
-            "cx:backup:01964137-0000-7000-8000-00000000feed",
+            "ck:backup:01964137-0000-7000-8000-00000000feed",
             ACTOR,
             DEVICE,
         )
@@ -1285,8 +1285,8 @@ mod tests {
         // unrelated recovery vault, and the account-secret backup.
         let payload = serde_json::json!({
             "backups": [
-                { "backup_id": "cx:backup:a", "backup_class": "mls_history" },
-                { "backup_id": "cx:backup:b", "backup_class": "recovery",
+                { "backup_id": "ck:backup:a", "backup_class": "mls_history" },
+                { "backup_id": "ck:backup:b", "backup_class": "recovery",
                   "contents": [ { "secret_id": "yougen_recovery_vault_payload" } ] },
                 account_secret_body.clone(),
             ]
@@ -1295,7 +1295,7 @@ mod tests {
         assert!(is_mls_account_secret_backup(&found));
         // No-account-secret payload returns None.
         let none_payload = serde_json::json!({
-            "backups": [ { "backup_id": "cx:backup:a", "backup_class": "mls_history" } ]
+            "backups": [ { "backup_id": "ck:backup:a", "backup_class": "mls_history" } ]
         });
         assert!(select_mls_account_secret_backup(&none_payload).is_none());
         // Absent/empty payloads are tolerated.
@@ -1305,10 +1305,10 @@ mod tests {
     #[test]
     fn select_account_secret_prefers_highest_series_seq() {
         let mut older = wrap();
-        older["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-00000000bee1");
+        older["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-00000000bee1");
         older["series_seq"] = serde_json::json!(1);
         let mut newer = wrap();
-        newer["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-00000000bee2");
+        newer["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-00000000bee2");
         newer["series_seq"] = serde_json::json!(2);
         let payload = serde_json::json!({
             "backups": [newer.clone(), older]
@@ -1324,7 +1324,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "stale-local-secret").unwrap();
         let state = temp_state_store("prompt-missing-history");
-        let envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&envelope)]
         });
@@ -1339,7 +1339,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
         let mut state = temp_state_store("prompt-current-history");
-        let envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
         state.save_mls_snapshot(envelope.space_id.clone(), envelope.clone());
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&envelope)]
@@ -1364,13 +1364,13 @@ mod tests {
         // server signature that must be rejected.
         let mut genesis = wrap();
         genesis["series_id"] =
-            serde_json::json!("cx:backup_series:01964137-0000-7000-8000-0000000000c1");
+            serde_json::json!("ck:backup_series:01964137-0000-7000-8000-0000000000c1");
         genesis["series_seq"] = serde_json::json!(0);
         let mut forged_tail = genesis.clone();
         forged_tail["backup_id"] =
-            serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000c2");
+            serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000c2");
         forged_tail["series_seq"] = serde_json::json!(2);
-        forged_tail["supersedes"] = serde_json::json!("cx:backup:does-not-exist");
+        forged_tail["supersedes"] = serde_json::json!("ck:backup:does-not-exist");
         forged_tail["supersedes_digest"] = serde_json::json!("sha256:deadbeef");
 
         let err = verify_series_chain(&forged_tail, &[genesis, forged_tail.clone()])
@@ -1383,14 +1383,14 @@ mod tests {
         // Mirror what the upload path now produces: genesis then a successor
         // linked by apply_next_series.
         let mut genesis = wrap();
-        genesis["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000d0");
+        genesis["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000d0");
         genesis["series_id"] =
-            serde_json::json!("cx:backup_series:01964137-0000-7000-8000-0000000000d1");
+            serde_json::json!("ck:backup_series:01964137-0000-7000-8000-0000000000d1");
         genesis["series_seq"] = serde_json::json!(0);
 
         let mut successor = wrap();
         successor["backup_id"] =
-            serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000d2");
+            serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000d2");
         apply_next_series(Some(&genesis), &mut successor);
 
         verify_series_chain(&successor, &[genesis, successor.clone()])
@@ -1409,12 +1409,12 @@ mod tests {
             .unwrap();
         let mut state = temp_state_store("prompt-forked-secret");
         // Server backup is encrypted under the real account secret...
-        let server_envelope = history_envelope("cx:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let server_envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
         // ...but the local snapshot was saved under the forked random secret at
         // the same (or higher) epoch, so it self-decrypts and passes the old
         // epoch/group gates.
         let local_envelope =
-            history_envelope("cx:space:prompt", "group-a", 7, "forked-random-secret");
+            history_envelope("ck:space:prompt", "group-a", 7, "forked-random-secret");
         state.save_mls_snapshot(local_envelope.space_id.clone(), local_envelope);
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&server_envelope)]
@@ -1433,11 +1433,11 @@ mod tests {
         // (empty secure store) recovers WITHOUT the passphrase, using only the
         // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
         // on host (real OpenMLS group), no live soland.
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
-        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
-        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
-        let identity = ContrixMlsIdentity::new_basic(
+        let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
+        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
@@ -1522,11 +1522,11 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_replaces_stale_local_secret_before_history_replay() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
-        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
-        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
-        let identity = ContrixMlsIdentity::new_basic(
+        let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
+        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
@@ -1589,7 +1589,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
         let payload = serde_json::json!({
-            "backups": [ { "backup_id": "cx:backup:a", "backup_class": "mls_history" } ]
+            "backups": [ { "backup_id": "ck:backup:a", "backup_class": "mls_history" } ]
         });
         assert!(mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
     }
@@ -1610,32 +1610,32 @@ mod tests {
         // orphan it under the deleted old secret while keeping it readable by the
         // compromised old secret. Only the freshly-uploaded `keep` ids survive.
         let mut old_account = wrap();
-        old_account["backup_id"] = serde_json::json!("cx:backup:old-account");
-        let env_a = history_envelope("cx:space:a", "g-a", 1, ACCOUNT_SECRET);
+        old_account["backup_id"] = serde_json::json!("ck:backup:old-account");
+        let env_a = history_envelope("ck:space:a", "g-a", 1, ACCOUNT_SECRET);
         let mut hist_a = history_body(&env_a);
-        hist_a["backup_id"] = serde_json::json!("cx:backup:old-hist-a");
+        hist_a["backup_id"] = serde_json::json!("ck:backup:old-hist-a");
         // A server-only space (not rewrapped locally) — MUST still be deleted.
-        let env_b = history_envelope("cx:space:b", "g-b", 1, ACCOUNT_SECRET);
+        let env_b = history_envelope("ck:space:b", "g-b", 1, ACCOUNT_SECRET);
         let mut hist_b = history_body(&env_b);
-        hist_b["backup_id"] = serde_json::json!("cx:backup:old-hist-b");
+        hist_b["backup_id"] = serde_json::json!("ck:backup:old-hist-b");
         // The just-uploaded new history for space a (in keep) must NOT be deleted.
         let mut new_hist_a = history_body(&env_a);
-        new_hist_a["backup_id"] = serde_json::json!("cx:backup:new-hist-a");
+        new_hist_a["backup_id"] = serde_json::json!("ck:backup:new-hist-a");
         let payload = serde_json::json!({ "backups": [old_account, hist_a, hist_b, new_hist_a] });
 
         let keep = vec![
-            "cx:backup:new-account".to_owned(),
-            "cx:backup:new-hist-a".to_owned(),
+            "ck:backup:new-account".to_owned(),
+            "ck:backup:new-hist-a".to_owned(),
         ];
         let superseded = select_superseded_backup_ids(&payload, &keep);
-        assert!(superseded.contains(&"cx:backup:old-account".to_owned()));
-        assert!(superseded.contains(&"cx:backup:old-hist-a".to_owned()));
+        assert!(superseded.contains(&"ck:backup:old-account".to_owned()));
+        assert!(superseded.contains(&"ck:backup:old-hist-a".to_owned()));
         assert!(
-            superseded.contains(&"cx:backup:old-hist-b".to_owned()),
+            superseded.contains(&"ck:backup:old-hist-b".to_owned()),
             "server-only (non-rewrapped) old history must ALSO be deleted"
         );
         assert!(
-            !superseded.contains(&"cx:backup:new-hist-a".to_owned()),
+            !superseded.contains(&"ck:backup:new-hist-a".to_owned()),
             "freshly uploaded history must be kept"
         );
     }
@@ -1644,15 +1644,15 @@ mod tests {
     fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
         // P1 rollback guard: within one series (same secret_version), a low-seq
         // link with a NEWER created_at MUST NOT beat the true higher-seq tail.
-        let series = "cx:backup_series:01964137-0000-7000-8000-0000000000e0";
+        let series = "ck:backup_series:01964137-0000-7000-8000-0000000000e0";
         let mut tail = wrap();
-        tail["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000e2");
+        tail["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000e2");
         tail["series_id"] = serde_json::json!(series);
         tail["series_seq"] = serde_json::json!(2);
         tail["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
         // A resurrected old seq=1 with a LATER timestamp (server injection).
         let mut stale = wrap();
-        stale["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000e1");
+        stale["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000e1");
         stale["series_id"] = serde_json::json!(series);
         stale["series_seq"] = serde_json::json!(1);
         stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
@@ -1669,10 +1669,10 @@ mod tests {
     fn select_history_backups_filters_by_class() {
         let payload = serde_json::json!({
             "backups": [
-                { "backup_id": "cx:backup:a", "backup_class": "mls_history" },
-                { "backup_id": "cx:backup:b", "backup_class": "secret_storage" },
-                { "backup_id": "cx:backup:c", "backup_class": "mls_history" },
-                { "backup_id": "cx:backup:d" },
+                { "backup_id": "ck:backup:a", "backup_class": "mls_history" },
+                { "backup_id": "ck:backup:b", "backup_class": "secret_storage" },
+                { "backup_id": "ck:backup:c", "backup_class": "mls_history" },
+                { "backup_id": "ck:backup:d" },
             ]
         });
         let histories = select_mls_history_backups(&payload);
@@ -1695,9 +1695,9 @@ mod tests {
         fields.insert("body".to_owned(), "\"author body\"".to_owned());
         fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
         let mut flows = std::collections::BTreeMap::new();
-        flows.insert("cx:flow:alpha".to_owned(), fields);
+        flows.insert("ck:flow:alpha".to_owned(), fields);
         let mut spaces = std::collections::BTreeMap::new();
-        spaces.insert("cx:space:demo".to_owned(), flows);
+        spaces.insert("ck:space:demo".to_owned(), flows);
         spaces
     }
 
@@ -1763,14 +1763,14 @@ mod tests {
     fn select_sidecar_finds_and_prefers_highest_series_seq() {
         let (_json, base_body) = wrap_sidecar();
         let mut older = base_body.clone();
-        older["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000a1");
+        older["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000a1");
         older["series_seq"] = serde_json::json!(1);
         let mut newer = base_body.clone();
-        newer["backup_id"] = serde_json::json!("cx:backup:01964137-0000-7000-8000-0000000000a2");
+        newer["backup_id"] = serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000a2");
         newer["series_seq"] = serde_json::json!(2);
         let payload = serde_json::json!({
             "backups": [
-                { "backup_id": "cx:backup:h", "backup_class": "mls_history" },
+                { "backup_id": "ck:backup:h", "backup_class": "mls_history" },
                 older,
                 newer.clone(),
             ]
@@ -1787,13 +1787,13 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_brings_back_the_sidecar_into_the_store() {
-        use contrix_sdk::{ContrixMlsIdentity, DeviceId, Did};
+        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         // Build a real, decryptable account-secret + history backup so Step 1/2
         // succeed and the account secret is local for the sidecar KEK source.
-        let device_a = "cx:device:01964137-0000-7000-8000-00000000000a";
-        let space = "cx:space:01964137-0000-7000-8000-0000000000ab";
-        let identity = ContrixMlsIdentity::new_basic(
+        let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
+        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
@@ -1830,11 +1830,11 @@ mod tests {
             "sidecar must be restored"
         );
         assert_eq!(
-            state.private_plaintext_for("cx:space:demo", "cx:flow:alpha", "body"),
+            state.private_plaintext_for("ck:space:demo", "ck:flow:alpha", "body"),
             Some("\"author body\"".to_owned())
         );
         assert_eq!(
-            state.private_plaintext_for("cx:space:demo", "cx:flow:alpha", "synthesis"),
+            state.private_plaintext_for("ck:space:demo", "ck:flow:alpha", "synthesis"),
             Some("\"author synthesis\"".to_owned())
         );
     }

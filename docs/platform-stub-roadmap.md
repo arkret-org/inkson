@@ -7,7 +7,7 @@ can wire the platform-specific path now and light up the real
 implementation later without churn.
 
 This document tracks what each stub needs to become a real backend,
-which upstream SDK changes (in `contrix-rust-sdk`) it depends on, and
+which upstream SDK changes (in `cokret-rust-sdk`) it depends on, and
 the target milestone.
 
 ## Current state (excerpt from `src/key_store.rs:197-297`)
@@ -37,7 +37,7 @@ backend today and the body will fill in later.
   read prompts the user. yougen does not currently bundle a macOS
   shell, so this stub stays a stub until the desktop shell crate is
   on the roadmap.
-- **SDK dependency**: the upstream `contrix-rust-sdk` does not yet
+- **SDK dependency**: the upstream `cokret-rust-sdk` does not yet
   publish a `KeyStore` trait — yougen owns the local one. Once the
   SDK trait lands, this implementation will be moved alongside it and
   this crate will re-export.
@@ -83,7 +83,7 @@ backend today and the body will fill in later.
 ## SDK trait dependency
 
 All three stubs are blocked on the same upstream change:
-`contrix-rust-sdk` currently only exposes
+`cokret-rust-sdk` currently only exposes
 `PlatformKeyStoreDescriptor` / `PlatformKeyStoreKind` — descriptor
 types with no trait. Once the SDK ships a real `KeyStore` trait,
 yougen's local trait becomes a thin re-export and these three structs

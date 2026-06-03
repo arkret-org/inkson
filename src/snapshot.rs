@@ -153,7 +153,7 @@ mod tests {
         ReducerSnapshotManifest {
             schema: contrix_sdk::REDUCER_SNAPSHOT_SCHEMA.to_owned(),
             reducer_profile: contrix_sdk::REDUCER_SNAPSHOT_PROFILE.to_owned(),
-            space_id: SpaceId::new("cx:space:01964137-0000-7000-8000-000000000000".to_owned())
+            space_id: SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned())
                 .unwrap(),
             space_version: "0".to_owned(),
             frontier: Vec::new(),
@@ -181,13 +181,13 @@ mod tests {
             },
             state_digest: test_hash('1'),
             snapshot_frontier: vec![
-                EventId::new("cx:event:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
+                EventId::new("ck:event:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
             ],
             chunks: vec![SnapshotBootstrapChunk {
                 chunk_id: "chunk-0".to_owned(),
                 digest: test_hash('2'),
                 size_bytes: 128,
-                fetch_ref: "cx:blob:snapshot-chunk-0".to_owned(),
+                fetch_ref: "ck:blob:snapshot-chunk-0".to_owned(),
             }],
         };
         bootstrap.signature.payload_digest = bootstrap.signing_payload_digest().unwrap();

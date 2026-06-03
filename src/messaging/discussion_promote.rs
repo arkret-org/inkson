@@ -66,7 +66,7 @@ pub struct PromoteIds {
 impl PromoteIds {
     pub fn fresh() -> Self {
         Self {
-            child_space_id: format!("cx:space:{}", uuid_v7()),
+            child_space_id: format!("ck:space:{}", uuid_v7()),
             child_edge_event_id: format!("evt-child-{}", uuid_v7()),
             parent_edge_event_id: format!("evt-parent-{}", uuid_v7()),
         }
@@ -223,9 +223,9 @@ mod tests {
     fn promote_ops_emits_four_events_when_flow_known() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            Some("cx:flow:0196419b-0000-7000-8000-000000000002"),
+            Some("ck:flow:0196419b-0000-7000-8000-000000000002"),
             &ids,
             "Child",
         );
@@ -245,16 +245,16 @@ mod tests {
     #[test]
     fn flow_discussion_ref_update_matches_registered_payload_schema() {
         let event = build_flow_discussion_ref_op(
-            "cx:space:0196419b-0000-7000-8000-000000000001",
+            "ck:space:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "cx:flow:0196419b-0000-7000-8000-000000000002",
-            "cx:space:0196419b-0000-7000-8000-000000000003",
+            "ck:flow:0196419b-0000-7000-8000-000000000002",
+            "ck:space:0196419b-0000-7000-8000-000000000003",
         );
         assert_eq!(event.kind, "cx.flow.update");
         assert!(event.payload.get("discussion_space_ref").is_none());
         assert_eq!(
             event.payload["patch"]["discussion_space_ref"]["value"],
-            "cx:space:0196419b-0000-7000-8000-000000000003"
+            "ck:space:0196419b-0000-7000-8000-000000000003"
         );
         contrix_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&event.kind, &event.payload)
@@ -270,7 +270,7 @@ mod tests {
     fn promote_ops_skips_flow_update_without_flow_id() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
-            "cx:space:parent",
+            "ck:space:parent",
             "did:web:alice.example",
             None,
             &ids,

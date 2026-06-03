@@ -204,7 +204,7 @@ pub fn WebRtcCallPanel(
                         input {
                             "data-testid": "webrtc-space-id-input",
                             value: "{call_space_id}",
-                            placeholder: "cx:realm:...",
+                            placeholder: "ck:realm:...",
                             oninput: move |evt| call_space_id.set(evt.value()),
                         }
                         label { "Peer" }

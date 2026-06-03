@@ -6,7 +6,7 @@
 //! has permission to execute.
 //!
 //! The view is pure projection — writes go out through
-//! [`crate::api::ContrixApi`] handlers that are wired up by the
+//! [`crate::api::CokretApi`] handlers that are wired up by the
 //! follow-up P3B.2 commits. The Realm-detail entry point lives in
 //! [`crate::views::space_admin`] (see the "create Circle" modal section
 //! at the bottom).
@@ -138,9 +138,9 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
 /// R3 spec sync (b47ff6ec) — Circle selector grant page stub.
 ///
 /// `resource-selector.schema.json` now accepts the `circle` selector
-/// kind with `circle_id` pattern `^cx:circle:[0-9a-f]{8}-...$`. This
+/// kind with `circle_id` pattern `^ck:circle:[0-9a-f]{8}-...$`. This
 /// view lists the grants attached to a Circle and (in R3.1) will let
-/// admins attach / detach capability grants scoped by `cx:circle:<uuid>`.
+/// admins attach / detach capability grants scoped by `ck:circle:<uuid>`.
 ///
 /// TODO(R3.1): wire to soland's `/api/v1/circles/{id}/grants` once that
 /// endpoint lands. For now this is a documented stub that surfaces the
@@ -153,7 +153,7 @@ pub struct CircleGrantRow {
     /// `cx.call.join`, `cx.call.record`).
     pub action: String,
     /// Capability scope expressed as a resource selector. For Circle
-    /// grants this is `{"kind":"circle","circle_id":"cx:circle:<uuid>"}`.
+    /// grants this is `{"kind":"circle","circle_id":"ck:circle:<uuid>"}`.
     pub scope_summary: String,
     /// `granted_at` timestamp for the audit trail.
     pub granted_at: String,
@@ -174,7 +174,7 @@ pub fn CircleGrantsPanel(summary: CircleSummary, grants: Vec<CircleGrantRow>) ->
                 p { class: "muted",
                     "Grants scoped to this Circle use the new `circle` resource selector "
                     "(spec b47ff6ec / `resource-selector.schema.json`). Selector form: "
-                    "`cx:circle:<uuid>`."
+                    "`ck:circle:<uuid>`."
                 }
             }
             if grants.is_empty() {
@@ -235,8 +235,8 @@ mod tests {
 
     fn sample() -> CircleSummary {
         CircleSummary {
-            id: "cx:circle:ops".to_owned(),
-            realm_id: "cx:realm:home".to_owned(),
+            id: "ck:circle:ops".to_owned(),
+            realm_id: "ck:realm:home".to_owned(),
             title: "Ops".to_owned(),
             short_name: "Ops".to_owned(),
             color_token: "indigo".to_owned(),
@@ -250,7 +250,7 @@ mod tests {
     fn summary_round_trips_to_scope() {
         let scope = sample().into_scope();
         assert!(matches!(scope, CircleScope::Circle { .. }));
-        assert_eq!(scope.circle_id(), Some("cx:circle:ops"));
+        assert_eq!(scope.circle_id(), Some("ck:circle:ops"));
     }
 
     #[test]

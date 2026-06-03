@@ -186,7 +186,7 @@ impl AccountDataStore {
 ///
 /// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
 /// of the most-recently uploaded avatar reference. The blob_ref itself
-/// (`cx:blob:sha256:<hex>`) is public — the avatar is also published via
+/// (`ck:blob:sha256:<hex>`) is public — the avatar is also published via
 /// `cx.account.update_profile` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
 /// up the same blob without needing to re-fetch `/account/me`.
@@ -282,7 +282,7 @@ pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<
 ///
 /// The same string is the path segment passed to soland's
 /// `PUT /api/v1/account_data/{type}` endpoint. Callers should already have
-/// validated `space_id` shape (`cx:space:<uuid>`).
+/// validated `space_id` shape (`ck:space:<uuid>`).
 pub fn space_remark_account_data_key(space_id: &str) -> String {
     format!("cx.contacts.space.{space_id}")
 }
@@ -557,7 +557,7 @@ const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
 
 /// Canonical wire body for the `cx.account.blocklist` account-data entry.
 /// The settings UI calls this just before PUTting via
-/// [`crate::api::ContrixApi::set_account_data`]; keep the shape aligned with
+/// [`crate::api::CokretApi::set_account_data`]; keep the shape aligned with
 /// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
 pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     let entries = entries
@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn space_remark_key_round_trip() {
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
         let key = space_remark_account_data_key(space_id);
         assert_eq!(key, format!("cx.contacts.space.{space_id}"));
         assert_eq!(space_id_from_space_remark_key(&key), Some(space_id));
@@ -856,13 +856,13 @@ mod tests {
         // Empty fields MUST NOT appear on the wire — keeps the payload
         // tombstone-friendly and avoids leaking placeholder data.
         let remark = SpaceRemark::new(
-            "cx:space:0196419b-0000-7000-8000-000000000000",
+            "ck:space:0196419b-0000-7000-8000-000000000000",
             "Acme · Eng",
         );
         let wire = serde_json::to_value(&remark).unwrap();
         assert_eq!(
             wire["space_id"],
-            "cx:space:0196419b-0000-7000-8000-000000000000"
+            "ck:space:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(wire["local_name"], "Acme · Eng");
         assert_eq!(wire["version"], 1);
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn space_remark_display_name_prefers_local_name() {
-        let r = SpaceRemark::new("cx:space:abc", "Acme · Eng");
+        let r = SpaceRemark::new("ck:space:abc", "Acme · Eng");
         assert_eq!(r.display_name("Engineering"), "Acme · Eng");
         let empty = SpaceRemark {
             local_name: "   ".into(),
@@ -1056,11 +1056,11 @@ mod tests {
         assert!(body.get("avatar_blob_ref").is_none());
 
         let mut per_space = BTreeMap::new();
-        per_space.insert("cx:space:abc".to_owned(), "kanban".to_owned());
+        per_space.insert("ck:space:abc".to_owned(), "kanban".to_owned());
         let body = build_client_ui_body(Some("night"), Some(true), &per_space, None);
         assert_eq!(body["theme"], "night");
         assert_eq!(body["sidebar_collapsed"], true);
-        assert_eq!(body["per_space_view"]["cx:space:abc"], "kanban");
+        assert_eq!(body["per_space_view"]["ck:space:abc"], "kanban");
 
         // Empty theme string is dropped (treated as unset).
         let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);
@@ -1071,7 +1071,7 @@ mod tests {
     // ── A4b — avatar_blob_ref round-trip through client.ui ─────────────
     #[test]
     fn avatar_blob_ref_round_trips_through_client_ui() {
-        let blob_ref = "cx:blob:sha256:0123456789abcdef";
+        let blob_ref = "ck:blob:sha256:0123456789abcdef";
         let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), Some(blob_ref));
         assert_eq!(body["avatar_blob_ref"], blob_ref);
         assert_eq!(
@@ -1141,7 +1141,7 @@ mod tests {
     #[test]
     fn build_account_data_set_emits_canonical_kind() {
         let op = build_account_data_set(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
             &AccountDataKey::ClientReadReceipts,
             json!({"send": false}),

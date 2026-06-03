@@ -1153,7 +1153,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("consent.revoke.cascade_button", "Revoke all observed dots");
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
-    // contrix-spec error code expansion (CXP-0010 media binding,
+    // cokret-spec error code expansion (CXP-0010 media binding,
     // agent FSM, handle homograph wire-level enforce, recovery
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
@@ -1228,7 +1228,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "Recording destination is not a Contrix authenticated blob — refusing to record.",
+        "Recording destination is not a Cokret authenticated blob — refusing to record.",
     );
 
     // Handle wire-level enforce.
@@ -1321,7 +1321,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "录制目标不是 Contrix 认证 blob — 拒绝录制。",
+        "录制目标不是 Cokret 认证 blob — 拒绝录制。",
     );
 
     dict.set(
@@ -1363,7 +1363,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     dict.set("object_link.open", "Open shared link");
     dict.set(
         "object_link.open_placeholder",
-        "Paste a web+contrix: or https share link",
+        "Paste a web+cokret: or https share link",
     );
     dict.set("object_link.opening", "Opening link\u{2026}");
     dict.set(
@@ -2053,7 +2053,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set("object_link.open", "打开分享链接");
     dict.set(
         "object_link.open_placeholder",
-        "粘贴 web+contrix: 或 https 分享链接",
+        "粘贴 web+cokret: 或 https 分享链接",
     );
     dict.set("object_link.opening", "正在打开链接…");
     dict.set("object_link.error.unavailable", "链接不可用或已过期。");

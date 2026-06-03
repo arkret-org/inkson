@@ -284,7 +284,7 @@ pub fn LoadingSpinner(label: Option<String>) -> Element {
 /// component renders a consistent UI indicator for that boundary.
 #[component]
 pub fn LazyLinkBadge(
-    /// Opaque reference to the target Space (sha256 digest, cx:space:… ID,
+    /// Opaque reference to the target Space (sha256 digest, ck:space:… ID,
     /// or omitted).
     target_ref: Option<String>,
     /// Short reason: locked / external / restricted / quarantined.

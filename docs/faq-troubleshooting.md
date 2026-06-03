@@ -1,7 +1,7 @@
 # yougen — FAQ & Troubleshooting
 
 Common issues and their fixes. Every server-error toast in yougen surfaces
-the `x-contrix-request-id` header from soland — capture that ID before
+the `x-cokret-request-id` header from soland — capture that ID before
 filing a bug.
 
 ---
@@ -13,7 +13,7 @@ filing a bug.
 **Checks**:
 
 1. The soland origin you pasted resolves and serves
-   `/.well-known/contrix-discovery`.
+   `/.well-known/cokret-discovery`.
 2. TLS is valid for that origin (browser builds enforce HTTPS).
 3. Your network does not block WebSocket upgrade.
 
@@ -195,7 +195,7 @@ To opt in to Sentry capture specifically you also need a build-time
 
 ## How do I capture the request_id for a bug report?
 
-Every error toast renders `request_id: cx:request:...`. Hover the toast
+Every error toast renders `request_id: ck:request:...`. Hover the toast
 to see the full ID, or click the **Copy ID** button. The same ID appears
 in `tracing` log lines emitted by `crate::api` so backend logs cross-
 reference cleanly.

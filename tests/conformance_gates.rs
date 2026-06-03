@@ -1,12 +1,12 @@
 //! Conformance gate: every typed builder in yougen MUST produce an
-//! EventEnvelope that validates against contrix-spec event-envelope.schema.json.
+//! EventEnvelope that validates against cokret-spec event-envelope.schema.json.
 //!
 //! Stream J of `_claude_todos.md`. Two families of gates live here:
 //!
 //! 1. **J1 — event-schema gate.** For each typed builder in `yougen::api`, run build → stamp the
 //!    wire-only fields a real submitter would attach (`anchor_ref`, `proofs[0]` from a real Ed25519
 //!    signer) → serialise → validate against
-//!    `contrix-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`. Schema requires
+//!    `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`. Schema requires
 //!    reducer-input events to carry `preconditions`, `effects`, `anchor_ref`, and at least one
 //!    proof; the gate therefore covers both the builder output and the sign-and-stamp pipeline
 //!    immediately downstream.
@@ -37,8 +37,8 @@ fn spec_artifact(path: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
-        .expect("yougen lives next to contrix-spec")
-        .join("contrix-spec")
+        .expect("yougen lives next to cokret-spec")
+        .join("cokret-spec")
         .join("spec")
         .join("v1")
         .join("artifacts")
@@ -114,7 +114,7 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
         let event_schema_id = event_schema
             .get("$id")
             .and_then(Value::as_str)
-            .unwrap_or("https://contrix.io/artifacts/schemas/event-envelope.schema.json")
+            .unwrap_or("https://cokret.io/artifacts/schemas/event-envelope.schema.json")
             .to_owned();
 
         let mut registry = Registry::new();
@@ -174,12 +174,12 @@ fn test_signing_key() -> &'static SigningKey {
     })
 }
 
-const TEST_REALM_ID: &str = "cx:realm:0196419b-0000-7000-8000-000000000001";
-const TEST_SPACE_ID: &str = "cx:space:0196419b-0000-7000-8000-000000000002";
+const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
+const TEST_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-000000000002";
 const TEST_ACTOR_DID: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
-    "cx:anchor:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    "ck:anchor:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Stamp the wire fields the submit pipeline would normally attach
 /// (anchor_ref + Ed25519 proof) so the envelope satisfies the
@@ -214,9 +214,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // Correct shape but wrong event_id pattern (should reject — uuid7
     // pattern requires `7<...>` in time-hi field).
     let bogus = serde_json::json!({
-        "event_id": "cx:event:not-a-uuid",
+        "event_id": "ck:event:not-a-uuid",
         "kind": "cx.realm.create",
-        "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00Z",
@@ -235,9 +235,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
-        "event_id": "cx:event:0196419b-0000-7777-8000-000000000003",
+        "event_id": "ck:event:0196419b-0000-7777-8000-000000000003",
         "kind": "cx.realm.create",
-        "realm_id": "cx:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00Z",
@@ -300,7 +300,7 @@ fn build_realm_create_event_matches_event_schema() {
         "restricted",
         "single_did",
         "sha256",
-        "cx:trust_domain:server.example",
+        "ck:trust_domain:server.example",
         &[],
     )
     .expect("build_realm_create_event succeeds");
@@ -452,7 +452,7 @@ fn build_member_state_event_matches_event_schema() {
         "restricted",
         "single_did",
         "sha256",
-        "cx:trust_domain:server.example",
+        "ck:trust_domain:server.example",
         &[TEST_INVITEE_DID.to_owned()],
         &[],
     )

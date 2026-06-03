@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn new_comment_extracts_mentions_eagerly() {
         let comment = CardComment::new(
-            "cx:flow:card1",
+            "ck:flow:card1",
             "did:web:alice.example",
             "ping @did:web:bob.example and @did:key:z6Mksample",
         );
@@ -146,12 +146,12 @@ mod tests {
     #[test]
     fn build_payload_carries_thread_root_and_mentions() {
         let comment = CardComment::new(
-            "cx:flow:card1",
+            "ck:flow:card1",
             "did:web:alice.example",
             "hi @did:web:bob.example",
         );
         let payload = build_card_comment_payload(&comment);
-        assert_eq!(payload["thread_root"], "cx:flow:card1");
+        assert_eq!(payload["thread_root"], "ck:flow:card1");
         assert_eq!(payload["author_did"], "did:web:alice.example");
         assert_eq!(payload["body"], "hi @did:web:bob.example");
         assert_eq!(
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn comment_round_trips_through_serde() {
         let comment = CardComment::new(
-            "cx:flow:card1",
+            "ck:flow:card1",
             "did:web:alice.example",
             "@did:web:bob hello",
         );

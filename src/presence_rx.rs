@@ -364,11 +364,11 @@ mod tests {
 
     fn envelope(kind: &str, payload: Value) -> EventEnvelope {
         EventEnvelope {
-            event_id: "cx:event:1".to_owned(),
+            event_id: "ck:event:1".to_owned(),
             kind: kind.to_owned(),
             actor_id: "did:web:alice".to_owned(),
             actor_seq: 1,
-            realm_id: "cx:realm:1".to_owned(),
+            realm_id: "ck:realm:1".to_owned(),
             created_at: "2026-05-19T00:00:00Z".to_owned(),
             hlc: "01970e589d21-0001-a13f9c2e".to_owned(),
             prev_refs: Vec::new(),
@@ -388,11 +388,11 @@ mod tests {
     fn parse_typing_extracts_actor_and_flow() {
         let env = envelope(
             "cx.typing",
-            json!({"actor_id": "did:web:alice", "flow_id": "cx:flow:1", "started_at": 1716000000}),
+            json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1", "started_at": 1716000000}),
         );
         let parsed = parse_typing(&env).expect("parse");
         assert_eq!(parsed.actor_id, "did:web:alice");
-        assert_eq!(parsed.flow_id, "cx:flow:1");
+        assert_eq!(parsed.flow_id, "ck:flow:1");
         assert_eq!(parsed.started_at, Some(1716000000));
     }
 
@@ -400,7 +400,7 @@ mod tests {
     fn parse_typing_started_at_is_optional() {
         let env = envelope(
             "cx.typing",
-            json!({"actor_id": "did:web:alice", "flow_id": "cx:flow:1"}),
+            json!({"actor_id": "did:web:alice", "flow_id": "ck:flow:1"}),
         );
         let parsed = parse_typing(&env).expect("parse");
         assert_eq!(parsed.started_at, None);
@@ -445,16 +445,16 @@ mod tests {
             "cx.read_cursor.advance",
             json!({
                 "schema": "cx.schema.read_cursor.v1",
-                "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                 "actor_id": "did:web:alice",
-                "device_id": "cx:device:01904100-0000-7000-8000-000000000001",
+                "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
                 "read_scope": {
                     "kind": "flow",
-                    "ref": "cx:flow:01904100-0000-7000-8000-000000000001",
+                    "ref": "ck:flow:01904100-0000-7000-8000-000000000001",
                     "track_name": "discussion"
                 },
                 "position": {
-                    "event_id": "cx:event:01904100-0000-7000-8000-000000000042",
+                    "event_id": "ck:event:01904100-0000-7000-8000-000000000042",
                     "hlc": "01970e589d21-0001-a13f9c2e"
                 }
             }),
@@ -462,14 +462,14 @@ mod tests {
         let parsed = parse_read_cursor(&env).expect("parse");
         assert_eq!(
             parsed.realm_id,
-            "cx:realm:01904100-0000-7000-8000-000000000001"
+            "ck:realm:01904100-0000-7000-8000-000000000001"
         );
         assert_eq!(parsed.actor_id, "did:web:alice");
         assert_eq!(parsed.read_scope.kind, "flow");
         assert_eq!(parsed.read_scope.track.as_deref(), Some("discussion"));
         assert_eq!(
             parsed.position.event_id,
-            "cx:event:01904100-0000-7000-8000-000000000042"
+            "ck:event:01904100-0000-7000-8000-000000000042"
         );
         assert_eq!(parsed.position.hlc, "01970e589d21-0001-a13f9c2e");
     }
@@ -479,14 +479,14 @@ mod tests {
         let env = envelope(
             "cx.read_cursor.advance",
             json!({
-                "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                 "actor_id": "did:web:alice",
                 "read_scope": {
                     "kind": "flow_discussion",
-                    "ref": "cx:flow:01904100-0000-7000-8000-000000000001"
+                    "ref": "ck:flow:01904100-0000-7000-8000-000000000001"
                 },
                 "position": {
-                    "event_id": "cx:event:01904100-0000-7000-8000-000000000042",
+                    "event_id": "ck:event:01904100-0000-7000-8000-000000000042",
                     "hlc": "01970e589d21-0001-a13f9c2e"
                 }
             }),
@@ -500,20 +500,20 @@ mod tests {
         agg.ingest_typing(
             TypingEvent {
                 actor_id: "did:web:alice".to_owned(),
-                flow_id: "cx:flow:1".to_owned(),
+                flow_id: "ck:flow:1".to_owned(),
                 started_at: Some(1000),
             },
             1000,
         );
         // 4 seconds later — still within TTL.
-        let still_typing = agg.typing_in_flow("cx:flow:1", 1004);
+        let still_typing = agg.typing_in_flow("ck:flow:1", 1004);
         assert_eq!(still_typing, vec!["did:web:alice".to_owned()]);
         // 6 seconds later — past TTL.
-        let stale = agg.typing_in_flow("cx:flow:1", 1006);
+        let stale = agg.typing_in_flow("ck:flow:1", 1006);
         assert!(stale.is_empty());
         agg.evict_stale_typing(1006);
         // Map should be empty now.
-        assert!(agg.typing_in_flow("cx:flow:1", 1006).is_empty());
+        assert!(agg.typing_in_flow("ck:flow:1", 1006).is_empty());
     }
 
     #[test]
@@ -525,17 +525,17 @@ mod tests {
             last_seen: Some(1000),
         });
         agg.ingest_read_cursor(ReadMarkerEvent {
-            realm_id: "cx:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             actor_id: "did:web:alice".to_owned(),
-            device_id: "cx:device:01904100-0000-7000-8000-000000000001".to_owned(),
+            device_id: "ck:device:01904100-0000-7000-8000-000000000001".to_owned(),
             read_scope: ReadScopeEvent {
                 kind: "flow".to_owned(),
-                object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+                object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
                 track: Some("discussion".to_owned()),
                 track_scope: None,
             },
             position: ReadCursorPositionEvent {
-                event_id: "cx:event:01904100-0000-7000-8000-000000000042".to_owned(),
+                event_id: "ck:event:01904100-0000-7000-8000-000000000042".to_owned(),
                 hlc: "01970e589d21-0001-a13f9c2e".to_owned(),
             },
         });
@@ -543,20 +543,20 @@ mod tests {
         assert_eq!(presence.status, PresenceStatus::Away);
         let scope = ReadScopeEvent {
             kind: "flow".to_owned(),
-            object_ref: Some("cx:flow:01904100-0000-7000-8000-000000000001".to_owned()),
+            object_ref: Some("ck:flow:01904100-0000-7000-8000-000000000001".to_owned()),
             track: Some("discussion".to_owned()),
             track_scope: None,
         };
         let marker = agg
             .read_cursor(
-                "cx:realm:01904100-0000-7000-8000-000000000001",
+                "ck:realm:01904100-0000-7000-8000-000000000001",
                 "did:web:alice",
                 &scope,
             )
             .unwrap();
         assert_eq!(
             marker.position.event_id,
-            "cx:event:01904100-0000-7000-8000-000000000042"
+            "ck:event:01904100-0000-7000-8000-000000000042"
         );
     }
 

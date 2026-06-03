@@ -9,7 +9,7 @@ use crate::recovery_crypto::{
 };
 
 const KEY_BACKUP_SCHEMA: &str = "cx.schema.key_backup.v1";
-pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-contrix-key-backup-delete-proof";
+pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-cokret-key-backup-delete-proof";
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
 /// §7.4.1 / §7.6 + the `cx.schema.key_backup.v1` `signed_fields.allOf`). Optional
@@ -203,7 +203,7 @@ impl TryFrom<&str> for KeyBackupClass {
 }
 
 pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
-    format!("contrix-key-backup/{}/{subdomain}/v1", class.as_str())
+    format!("cokret-key-backup/{}/{subdomain}/v1", class.as_str())
 }
 
 pub fn key_backup_delete_ownership_proof(actor_did: &str, backup_id: &str) -> String {
@@ -254,7 +254,7 @@ pub fn attach_key_backup_genesis_series(body: &mut Value) {
     if let Some(object) = body.as_object_mut() {
         object
             .entry("series_id")
-            .or_insert_with(|| json!(format!("cx:backup_series:{}", crate::operation::uuid_v7())));
+            .or_insert_with(|| json!(format!("ck:backup_series:{}", crate::operation::uuid_v7())));
         object.entry("series_seq").or_insert_with(|| json!(0));
         // Genesis carries `supersedes: null` explicitly so it is present in the
         // envelope and covered by `auth_data.signed_fields` (the schema requires
@@ -284,11 +284,11 @@ pub fn validate_key_backup_envelope(
 ) -> Result<(), String> {
     let backup_id = required_str(body, "backup_id")?;
     if !is_protocol_backup_id(backup_id) {
-        return Err("backup_id must be cx:backup:<uuidv7>".to_owned());
+        return Err("backup_id must be ck:backup:<uuidv7>".to_owned());
     }
     let series_id = required_str(body, "series_id")?;
     if !is_protocol_backup_series_id(series_id) {
-        return Err("series_id must be cx:backup_series:<uuidv7>".to_owned());
+        return Err("series_id must be ck:backup_series:<uuidv7>".to_owned());
     }
     if body.get("series_seq").and_then(Value::as_u64).is_none() {
         return Err("series_seq must be a non-negative integer".to_owned());
@@ -318,7 +318,7 @@ pub fn validate_key_backup_envelope(
     if let Some(device_id) = body.get("device_id").and_then(Value::as_str)
         && !is_protocol_device_id(device_id)
     {
-        return Err("device_id must be cx:device:<uuidv7> when present".to_owned());
+        return Err("device_id must be ck:device:<uuidv7> when present".to_owned());
     }
 
     validate_contents(body, class)?;
@@ -1030,7 +1030,7 @@ fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
 }
 
 fn is_protocol_device_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("cx:device:") else {
+    let Some(rest) = value.strip_prefix("ck:device:") else {
         return false;
     };
     rest.len() == 36
@@ -1043,7 +1043,7 @@ fn is_protocol_device_id(value: &str) -> bool {
 }
 
 fn is_protocol_backup_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("cx:backup:") else {
+    let Some(rest) = value.strip_prefix("ck:backup:") else {
         return false;
     };
     rest.len() == 36
@@ -1056,7 +1056,7 @@ fn is_protocol_backup_id(value: &str) -> bool {
 }
 
 fn is_protocol_backup_series_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("cx:backup_series:") else {
+    let Some(rest) = value.strip_prefix("ck:backup_series:") else {
         return false;
     };
     rest.len() == 36
@@ -1095,9 +1095,9 @@ mod tests {
     use super::*;
     use crate::recovery_crypto::{VAULT_SALT_LEN, derive_vault_kek_with_salt};
 
-    const BACKUP_ID: &str = "cx:backup:01964137-0000-7000-8000-00000000beef";
+    const BACKUP_ID: &str = "ck:backup:01964137-0000-7000-8000-00000000beef";
     const ACTOR: &str = "did:web:alice.example";
-    const DEVICE: &str = "cx:device:01964137-0000-7000-8000-000000000001";
+    const DEVICE: &str = "ck:device:01964137-0000-7000-8000-000000000001";
 
     fn test_root() -> VaultKek {
         derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -1144,7 +1144,7 @@ mod tests {
         assert_eq!(body["device_id"], DEVICE);
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
-            "contrix-key-backup/secret_storage/recovery_vault/v1"
+            "cokret-key-backup/secret_storage/recovery_vault/v1"
         );
         validate_key_backup_put_request(BACKUP_ID, &body)
             .expect("secret_storage recovery vault envelope should validate");
@@ -1185,7 +1185,7 @@ mod tests {
         let mut body =
             build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
         body["recovery_policy_ref"] = json!({
-            "policy_id": "cx:policy:01964137-0000-7000-8000-0000000000aa",
+            "policy_id": "ck:policy:01964137-0000-7000-8000-0000000000aa",
             "policy_version": 3,
         });
         let signing_key = SigningKey::from_bytes(&[43u8; 32]);
@@ -1266,13 +1266,13 @@ mod tests {
     fn did_recovery_backup_uses_separate_domain_and_hpke() {
         let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let body = build_did_recovery_backup_body(
-            "cx:backup:01964137-0000-7000-8000-00000000d1d0",
+            "ck:backup:01964137-0000-7000-8000-00000000d1d0",
             ACTOR,
             DEVICE,
             &pk,
             "did:web:alice.example#recovery",
             b"recovery share",
-            "cx:policy:01964137-0000-7000-8000-0000000000aa",
+            "ck:policy:01964137-0000-7000-8000-0000000000aa",
             1,
         )
         .unwrap();
@@ -1285,7 +1285,7 @@ mod tests {
         // 6.2 — did_recovery MUST carry recovery_policy_ref (top-level).
         assert_eq!(
             body["recovery_policy_ref"]["policy_id"],
-            "cx:policy:01964137-0000-7000-8000-0000000000aa"
+            "ck:policy:01964137-0000-7000-8000-0000000000aa"
         );
         assert_eq!(body["recovery_policy_ref"]["policy_version"], 1);
         assert!(
@@ -1297,7 +1297,7 @@ mod tests {
         assert_eq!(body["contents"][0]["item_type"], "recovery_key_share");
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
-            "contrix-key-backup/did_recovery/recovery_policy/v1"
+            "cokret-key-backup/did_recovery/recovery_policy/v1"
         );
         validate_key_backup_envelope(&body, Some(KeyBackupClass::DidRecovery))
             .expect("did_recovery HPKE envelope should validate");
@@ -1384,7 +1384,7 @@ mod tests {
     #[test]
     fn mls_history_accepts_secret_storage_key() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "group-a",
             3,
             b"opaque sdk state",
@@ -1392,7 +1392,7 @@ mod tests {
             b"salt",
         );
         let body = envelope.to_key_backup_body(
-            "cx:backup:01964137-0000-7000-8000-00000000feed",
+            "ck:backup:01964137-0000-7000-8000-00000000feed",
             ACTOR,
             DEVICE,
         );
@@ -1452,7 +1452,7 @@ mod tests {
     #[test]
     fn mls_history_rejects_obvious_plaintext_fields() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "cx:space:demo",
+            "ck:space:demo",
             "group-a",
             3,
             b"not real sdk state",
@@ -1460,9 +1460,9 @@ mod tests {
             b"salt",
         );
         let mut body = envelope.to_key_backup_body(
-            "cx:backup:01964137-0000-7000-8000-00000000beef",
+            "ck:backup:01964137-0000-7000-8000-00000000beef",
             "did:web:alice.example",
-            "cx:device:01964137-0000-7000-8000-000000000001",
+            "ck:device:01964137-0000-7000-8000-000000000001",
         );
         body["serialized_state"] = json!("plaintext sdk bytes");
 
@@ -1493,7 +1493,7 @@ mod tests {
         let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
 
         let err = validate_key_backup_put_request(
-            "cx:backup:01964137-0000-7000-8000-00000000badd",
+            "ck:backup:01964137-0000-7000-8000-00000000badd",
             &body,
         )
         .expect_err("path/body backup id mismatch must be rejected");
@@ -1505,9 +1505,9 @@ mod tests {
         assert_eq!(
             key_backup_delete_ownership_proof(
                 "did:web:alice.example",
-                "cx:backup:01964137-0000-7000-8000-00000000beef"
+                "ck:backup:01964137-0000-7000-8000-00000000beef"
             ),
-            "dev-ssk-delete:v1:did:web:alice.example:cx:backup:01964137-0000-7000-8000-00000000beef"
+            "dev-ssk-delete:v1:did:web:alice.example:ck:backup:01964137-0000-7000-8000-00000000beef"
         );
     }
 }

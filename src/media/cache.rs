@@ -86,7 +86,7 @@ impl From<std::io::Error> for MediaCacheError {
 /// Compute the cache key for `content_id` at `version_tag`. The output
 /// is a hex sha256 over `content_id || ":" || version_tag`. Pass
 /// `""` for `version_tag` when the content id is itself
-/// content-addressed (e.g. `cx:blob:sha256:<hex>` which already
+/// content-addressed (e.g. `ck:blob:sha256:<hex>` which already
 /// changes on re-upload).
 pub fn cache_key(content_id: &str, version_tag: &str) -> String {
     let mut hasher = Sha256::new();
@@ -467,11 +467,11 @@ mod tests {
 
     #[test]
     fn cache_key_changes_with_version_tag() {
-        let a = cache_key("cx:blob:sha256:abc", "v1");
-        let b = cache_key("cx:blob:sha256:abc", "v2");
+        let a = cache_key("ck:blob:sha256:abc", "v1");
+        let b = cache_key("ck:blob:sha256:abc", "v2");
         assert_ne!(a, b);
         // Same inputs → same key (deterministic).
-        assert_eq!(a, cache_key("cx:blob:sha256:abc", "v1"));
+        assert_eq!(a, cache_key("ck:blob:sha256:abc", "v1"));
     }
 
     #[test]
@@ -562,9 +562,9 @@ mod tests {
         let cache = DiskCacheStore::new(&root, DEFAULT_CACHE_MAX_BYTES).unwrap();
         let source = synth_png(800, 600, [30, 60, 90]);
         let (key, thumb) = cache
-            .put_from_source("cx:blob:sha256:test", "v1", &source)
+            .put_from_source("ck:blob:sha256:test", "v1", &source)
             .unwrap();
-        assert_eq!(key, cache_key("cx:blob:sha256:test", "v1"));
+        assert_eq!(key, cache_key("ck:blob:sha256:test", "v1"));
         let loaded = cache.get(&key).unwrap().unwrap();
         assert_eq!(loaded, thumb);
         // Sanity: thumb bytes are JPEG (start with 0xFF 0xD8).

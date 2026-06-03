@@ -13,7 +13,7 @@
 //! presence sidebar listing actors actively editing the document, a
 //! comment composer wired to range start/end inputs, version restore /
 //! diff buttons, and the supporting state machines for both. The data
-//! is sourced from soland's document Morph projection when a `cx:morph:*`
+//! is sourced from soland's document Morph projection when a `ck:morph:*`
 //! route or persisted document id is available, with local draft fallback
 //! for offline creation.
 
@@ -168,7 +168,7 @@ fn morph_id_storage_key(space_id: &str) -> String {
 /// matching `cx.morph.create` event is accepted; once accepted, the
 /// reducer takes ownership.
 fn mint_morph_id() -> String {
-    format!("cx:morph:{}", crate::operation::uuid_v7())
+    format!("ck:morph:{}", crate::operation::uuid_v7())
 }
 
 /// Serialize the editable document for the synthesis-track body.
@@ -552,7 +552,7 @@ pub fn DocumentPanel(
         let actor_key = actor_key.clone();
         use_effect(move || {
             let morph_id = current_morph_id();
-            if !morph_id.starts_with("cx:morph:") || hydrated_document_id() == morph_id {
+            if !morph_id.starts_with("ck:morph:") || hydrated_document_id() == morph_id {
                 return;
             }
             hydrated_document_id.set(morph_id.clone());
@@ -799,7 +799,7 @@ pub fn DocumentPanel(
                                     .build("yougen");
                                     let relation_op = linked_incident_for_wire
                                         .trim()
-                                        .starts_with("cx:")
+                                        .starts_with("ck:")
                                         .then(|| {
                                             cx_ops::document_relation_create(
                                                 &operation_space_id,
@@ -1177,7 +1177,7 @@ pub fn DocumentPanel(
                                     } else {
                                         document_realm_id()
                                     };
-                                    if !morph_id.starts_with("cx:morph:") || realm_id.trim().is_empty() {
+                                    if !morph_id.starts_with("ck:morph:") || realm_id.trim().is_empty() {
                                         comment_status.set(format!("comment {id} added locally"));
                                         return;
                                     }
@@ -1472,15 +1472,15 @@ mod tests {
 
     #[test]
     fn storage_key_includes_space_id() {
-        let key = storage_key("cx:space:abc");
-        assert!(key.contains("cx:space:abc"));
+        let key = storage_key("ck:space:abc");
+        assert!(key.contains("ck:space:abc"));
         assert!(key.starts_with("document.draft."));
     }
 
     #[test]
     fn morph_id_storage_key_is_distinct_from_draft_key() {
-        let draft_key = storage_key("cx:space:s1");
-        let morph_key = morph_id_storage_key("cx:space:s1");
+        let draft_key = storage_key("ck:space:s1");
+        let morph_key = morph_id_storage_key("ck:space:s1");
         assert_ne!(draft_key, morph_key);
         assert!(morph_key.starts_with("document.morph_id."));
     }
@@ -1512,18 +1512,18 @@ mod tests {
     #[test]
     fn document_body_payload_carries_schema_version_and_blocks() {
         let blocks = default_draft().blocks;
-        let body = document_body_payload(&blocks, Some("cx:flow:incident"));
+        let body = document_body_payload(&blocks, Some("ck:flow:incident"));
         assert_eq!(body["schema_version"], 1);
         assert_eq!(body["blocks"].as_array().unwrap().len(), 2);
-        assert_eq!(body["linked_incident_id"], "cx:flow:incident");
+        assert_eq!(body["linked_incident_id"], "ck:flow:incident");
         assert_eq!(body["relations"][0]["rel"], "postmortem_for");
     }
 
     #[test]
     fn mint_morph_id_emits_typed_cx_morph_prefix() {
         let id = mint_morph_id();
-        assert!(id.starts_with("cx:morph:"));
-        assert!(id.len() > "cx:morph:".len());
+        assert!(id.starts_with("ck:morph:"));
+        assert!(id.len() > "ck:morph:".len());
         let again = mint_morph_id();
         assert_ne!(id, again, "minted ids must be unique");
     }

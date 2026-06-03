@@ -3,12 +3,12 @@
 //!
 //! Surfaces:
 //! - `device-list` — wrapper element listing the principal's active devices (`GET /api/v1/devices`
-//!   via [`crate::api::ContrixApi::list_devices`])
+//!   via [`crate::api::CokretApi::list_devices`])
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke hits
-//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::ContrixApi::revoke_device`], then
+//!   `POST /api/v1/devices/{device_id}/revoke` via [`crate::api::CokretApi::revoke_device`], then
 //!   rotates the account MLS history secret and rewraps local `mls_history` backups.
 //!
 //! The pair flow on `/settings/devices/pair` carries:

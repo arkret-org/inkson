@@ -1,7 +1,7 @@
 //! Federation trust bundle + transaction verification helpers.
 //!
 //! Spec: `sync/federation.md`. Cross-domain Event exchange requires:
-//! - Each domain advertises `.well-known/contrix/server` with its service DID.
+//! - Each domain advertises `.well-known/cokret/server` with its service DID.
 //! - Trust anchors are pinned per peer domain (DID + public key).
 //! - Every `FederationTransaction` carries a signature the receiver verifies against the origin
 //!   domain's trust anchor.
@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use contrix_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownContrixServer};
+use contrix_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownCokretServer};
 use serde::{Deserialize, Serialize};
 
 /// Outcome of trust bundle verification.
@@ -211,12 +211,12 @@ impl TrustBundle {
         TrustCheck::Trusted
     }
 
-    /// Verify a `.well-known/contrix/server` record against this bundle:
+    /// Verify a `.well-known/cokret/server` record against this bundle:
     /// the record's service DID must be pinned for `expected_domain`.
     pub fn verify_well_known(
         &self,
         expected_domain: &str,
-        record: &WellKnownContrixServer,
+        record: &WellKnownCokretServer,
     ) -> TrustCheck {
         let anchor = match self.anchors.get(expected_domain) {
             Some(a) => a,
@@ -242,7 +242,7 @@ pub enum WellKnownFetchError {
     Network(String),
     /// Server returned a non-2xx status.
     HttpStatus { status: u16, body: String },
-    /// Response body wasn't a parseable `WellKnownContrixServer`.
+    /// Response body wasn't a parseable `WellKnownCokretServer`.
     Decode(String),
 }
 
@@ -261,11 +261,11 @@ impl std::fmt::Display for WellKnownFetchError {
 
 impl std::error::Error for WellKnownFetchError {}
 
-/// F-WELLKNOWN-1: derive the `.well-known/contrix/server` URL from a
+/// F-WELLKNOWN-1: derive the `.well-known/cokret/server` URL from a
 /// service base URL.
 ///
 /// Per `discovery/server-discovery.md`, the well-known record lives at
-/// `https://<host>/.well-known/contrix/server` relative to the origin
+/// `https://<host>/.well-known/cokret/server` relative to the origin
 /// — not under the service's `/api/v1` namespace. This helper trims a
 /// trailing slash and concatenates the well-known path, returning an
 /// error when `base_url` is empty or doesn't carry a scheme.
@@ -298,16 +298,16 @@ pub fn well_known_contrix_server_url(base_url: &str) -> Result<String, WellKnown
             "missing host: {trimmed}"
         )));
     }
-    Ok(format!("{scheme}{host_only}/.well-known/contrix/server"))
+    Ok(format!("{scheme}{host_only}/.well-known/cokret/server"))
 }
 
 /// F-WELLKNOWN-1: fetch + parse the peer domain's
-/// `.well-known/contrix/server` record.
+/// `.well-known/cokret/server` record.
 ///
 /// Spec `discovery/server-discovery.md` mandates clients call this on
 /// first contact with a new domain so they can pre-flight the service
 /// DID against the trust bundle before issuing any privileged request.
-/// Yougen wraps the SDK [`WellKnownContrixServer`] type — that struct
+/// Yougen wraps the SDK [`WellKnownCokretServer`] type — that struct
 /// owns the JSON shape, and yougen owns the HTTP + error mapping.
 ///
 /// This helper deliberately does **no** caching; the caller threads
@@ -316,7 +316,7 @@ pub fn well_known_contrix_server_url(base_url: &str) -> Result<String, WellKnown
 /// pinned anchor). Caching is a follow-up.
 pub async fn fetch_well_known_contrix_server(
     base_url: &str,
-) -> Result<WellKnownContrixServer, WellKnownFetchError> {
+) -> Result<WellKnownCokretServer, WellKnownFetchError> {
     let url = well_known_contrix_server_url(base_url)?;
     let response = reqwest::Client::new()
         .get(&url)
@@ -332,7 +332,7 @@ pub async fn fetch_well_known_contrix_server(
         });
     }
     response
-        .json::<WellKnownContrixServer>()
+        .json::<WellKnownCokretServer>()
         .await
         .map_err(|err| WellKnownFetchError::Decode(err.to_string()))
 }
@@ -451,7 +451,7 @@ mod tests {
     fn well_known_matches_pinned_did() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
-        let record = WellKnownContrixServer {
+        let record = WellKnownCokretServer {
             service_did: contrix_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             base_url: "https://bob.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
@@ -469,7 +469,7 @@ mod tests {
     fn well_known_with_wrong_did_is_rejected() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
-        let record = WellKnownContrixServer {
+        let record = WellKnownCokretServer {
             service_did: contrix_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
             base_url: "https://eve.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
@@ -490,23 +490,23 @@ mod tests {
         // Plain origin.
         assert_eq!(
             well_known_contrix_server_url("https://bob.example").unwrap(),
-            "https://bob.example/.well-known/contrix/server"
+            "https://bob.example/.well-known/cokret/server"
         );
         // Origin + trailing slash.
         assert_eq!(
             well_known_contrix_server_url("https://bob.example/").unwrap(),
-            "https://bob.example/.well-known/contrix/server"
+            "https://bob.example/.well-known/cokret/server"
         );
         // Origin + API prefix gets stripped — well-known lives at the
         // top of the host, not nested under /api/v1.
         assert_eq!(
             well_known_contrix_server_url("https://bob.example/api/v1").unwrap(),
-            "https://bob.example/.well-known/contrix/server"
+            "https://bob.example/.well-known/cokret/server"
         );
         // Loopback dev URLs are allowed.
         assert_eq!(
             well_known_contrix_server_url("http://127.0.0.1:8080").unwrap(),
-            "http://127.0.0.1:8080/.well-known/contrix/server"
+            "http://127.0.0.1:8080/.well-known/cokret/server"
         );
     }
 

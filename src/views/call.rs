@@ -8,7 +8,7 @@
 //! R3 spec sync (b47ff6ec) — also surfaces CXP-0010 media-binding wire
 //! contract status: token-exchange integration, focus_unavailable_for_client
 //! handling, MLS-exporter SFrame key derivation, participant identity
-//! cross-check, and Contrix-blob recording pipeline. See
+//! cross-check, and Cokret-blob recording pipeline. See
 //! [`crate::media::rtc`] for the typed predicates / error reasons.
 
 use dioxus::prelude::*;
@@ -77,7 +77,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     span { class: "badge", "spec b47ff6ec" }
                 }
                 div { class: "muted",
-                    "Token exchange + MLS-exporter SFrame keying + participant identity cross-check + Contrix-blob recording pipeline are wire-contract aligned with the b47ff6ec spec. Live SFU UI is deferred behind experimental-webrtc."
+                    "Token exchange + MLS-exporter SFrame keying + participant identity cross-check + Cokret-blob recording pipeline are wire-contract aligned with the b47ff6ec spec. Live SFU UI is deferred behind experimental-webrtc."
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -114,9 +114,9 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                     div { class: "metric",
                         strong { "Recording pipeline" }
-                        span { "data-testid": "media-binding-recording-pipeline", "Contrix blob only" }
+                        span { "data-testid": "media-binding-recording-pipeline", "Cokret blob only" }
                         div { class: "muted",
-                            "Egress destinations outside the Contrix authenticated blob upload are rejected (recording_artifact_pipeline_bypassed)."
+                            "Egress destinations outside the Cokret authenticated blob upload are rejected (recording_artifact_pipeline_bypassed)."
                         }
                     }
                 }
@@ -137,18 +137,18 @@ mod tests {
         // counted: starts with cx.call.
         store.append_raw_operation(
             "op-1".to_owned(),
-            Some("cx:space:s".to_owned()),
+            Some("ck:space:s".to_owned()),
             json!({"kind": "cx.call.signal"}),
         );
         store.append_raw_operation(
             "op-2".to_owned(),
-            Some("cx:space:s".to_owned()),
+            Some("ck:space:s".to_owned()),
             json!({"kind": "cx.call.state"}),
         );
         // NOT counted
         store.append_raw_operation(
             "op-3".to_owned(),
-            Some("cx:space:s".to_owned()),
+            Some("ck:space:s".to_owned()),
             json!({"kind": "cx.message.create"}),
         );
 

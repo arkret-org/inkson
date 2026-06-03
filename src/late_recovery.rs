@@ -132,7 +132,7 @@ mod tests {
     fn ev(orig_min: i64, rec_min: i64, revoked: bool) -> LateRecoveredEvent {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         LateRecoveredEvent {
-            event_id: "cx:event:01904100-0000-7000-8000-000000000001".to_owned(),
+            event_id: "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
             actor_did: "did:web:alice.example".to_owned(),
             original_received_at: base + Duration::minutes(orig_min),
             recovered_at: base + Duration::minutes(rec_min),
@@ -172,16 +172,16 @@ mod tests {
         use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
-            realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor: Did::new("did:web:alice.example").unwrap(),
             access_kind: AccessKind::E2EELateRecovery,
             late_recovery_original_event_id: Some(
-                EventId::new("cx:event:01904100-0000-7000-8000-000000000007").unwrap(),
+                EventId::new("ck:event:01904100-0000-7000-8000-000000000007").unwrap(),
             ),
             observed_at: base + Duration::minutes(30),
         };
         let ev = LateRecoveredEvent::from_audit_policy_access(&payload, base, false).unwrap();
-        assert_eq!(ev.event_id, "cx:event:01904100-0000-7000-8000-000000000007");
+        assert_eq!(ev.event_id, "ck:event:01904100-0000-7000-8000-000000000007");
         assert_eq!(ev.lag_minutes(), 30);
         assert!(!should_filter_recovered_event(&ev));
     }
@@ -191,7 +191,7 @@ mod tests {
         use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
-            realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor: Did::new("did:web:alice.example").unwrap(),
             access_kind: AccessKind::Audit,
             late_recovery_original_event_id: None,

@@ -2,17 +2,17 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{
-    ContrixApi, is_auth_expired_error, is_terminal_session_grant_error,
+    CokretApi, is_auth_expired_error, is_terminal_session_grant_error,
     normalize_wait_for_sync_token,
 };
 use crate::config::{ClientConfig, LocalConfigStore};
 
-/// R3.2 (contrix-spec @ b56cab1) — composer/render-side mention node.
+/// R3.2 (cokret-spec @ b56cab1) — composer/render-side mention node.
 ///
 /// `target` carries the authoritative reference: for `kind == "actor"`
 /// it is the principal DID (`subject_id` in spec terms — the ONLY field
 /// used for actor attribution / resolution / render lookup); for entity
-/// references it is the `cx:...` id. The remaining fields are compose-time
+/// references it is the `ck:...` id. The remaining fields are compose-time
 /// audit metadata ONLY and MUST NOT drive the current display value:
 /// the render path runs §3.2.1 / the SDK `render_mention()` helper off
 /// `target` instead. See [`crate::views::helpers::render_actor_mention`].
@@ -20,7 +20,7 @@ use crate::config::{ClientConfig, LocalConfigStore};
 pub struct StructuredMention {
     pub kind: String,
     /// Authoritative reference. For actor mentions this is the principal
-    /// DID (`subject_id`); for entities the `cx:` id; for audience
+    /// DID (`subject_id`); for entities the `ck:` id; for audience
     /// mentions the canonical audience token.
     #[serde(alias = "subject_id")]
     pub target: String,
@@ -59,7 +59,7 @@ fn audience_mention_audience_from_token(token: &str) -> Option<&'static str> {
 }
 
 /// Create an authenticated API client from a base URL and optional access token.
-pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<ContrixApi> {
+pub fn authed_api(base_url: &str, access_token: String) -> anyhow::Result<CokretApi> {
     authed_api_with_sync(base_url, access_token, None)
 }
 
@@ -69,8 +69,8 @@ pub fn authed_api_with_sync(
     base_url: &str,
     access_token: String,
     wait_for_sync_token: Option<String>,
-) -> anyhow::Result<ContrixApi> {
-    let mut api = ContrixApi::new(base_url)?;
+) -> anyhow::Result<CokretApi> {
+    let mut api = CokretApi::new(base_url)?;
     if !access_token.is_empty() {
         api = api.with_bearer(access_token);
     }
@@ -196,7 +196,7 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 /// labels, and message-author lines stay consistent.
 ///
 /// The `did` argument falls back to a handle-shaped display label when
-/// the DID is the materialized form of a Contrix user handle, then to a
+/// the DID is the materialized form of a Cokret user handle, then to a
 /// compact display-only protocol id. Use the original DID for inputs,
 /// copies, routes, and protocol payloads.
 pub fn display_name_for_did(
@@ -215,7 +215,7 @@ pub fn display_name_for_did(
 /// Reason a view-side API call failed. Roughly mirrors `connect()`'s
 /// three-way error split:
 ///
-/// * `Unavailable` — `ContrixApi::new` rejected the base URL (bad scheme, parse error, etc.). The
+/// * `Unavailable` — `CokretApi::new` rejected the base URL (bad scheme, parse error, etc.). The
 ///   session is intact; the user should fix the server URL.
 /// * `AuthExpired` — the server returned a definitive session-death code (per
 ///   [`is_auth_expired_error`]). The caller MUST clear the session and bounce to login, exactly as
@@ -247,8 +247,8 @@ impl ApiCallError {
     }
 }
 
-/// Build an authenticated [`ContrixApi`] and pass it to the closure,
-/// folding `ContrixApi::new` errors + auth-expired errors + generic
+/// Build an authenticated [`CokretApi`] and pass it to the closure,
+/// folding `CokretApi::new` errors + auth-expired errors + generic
 /// API errors into a single [`ApiCallError`] so call sites can write:
 ///
 /// ```ignore
@@ -271,7 +271,7 @@ pub async fn with_authed_api<F, Fut, T>(
     f: F,
 ) -> Result<T, ApiCallError>
 where
-    F: FnOnce(ContrixApi) -> Fut,
+    F: FnOnce(CokretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     if access_token.trim().is_empty() {
@@ -287,7 +287,7 @@ where
 }
 
 /// Same as [`with_authed_api`] but also forwards a sync-cursor token to
-/// the resulting `ContrixApi` so any subsequent read is fenced behind
+/// the resulting `CokretApi` so any subsequent read is fenced behind
 /// the latest write (read-your-writes consistency). Pass the result of
 /// [`active_sync_token`] as `wait_for_sync_token`.
 pub async fn with_authed_api_with_sync<F, Fut, T>(
@@ -297,7 +297,7 @@ pub async fn with_authed_api_with_sync<F, Fut, T>(
     f: F,
 ) -> Result<T, ApiCallError>
 where
-    F: FnOnce(ContrixApi) -> Fut,
+    F: FnOnce(CokretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     if access_token.trim().is_empty() {
@@ -367,10 +367,10 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
             }
             continue;
         }
-        if let Some(entity) = normalized.strip_prefix("#cx:") {
+        if let Some(entity) = normalized.strip_prefix("#ck:") {
             mentions.push(StructuredMention {
                 kind: "entity".to_owned(),
-                target: format!("cx:{entity}"),
+                target: format!("ck:{entity}"),
                 token: normalized.to_owned(),
                 display_name_at_time: String::new(),
                 handle_at_time: String::new(),
@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn parses_actor_and_entity_mentions() {
         let mentions = parse_structured_mentions(
-            "ping @did:web:bob.example and @Alice and @carol:example.com about #cx:task:123 and #topic-demo",
+            "ping @did:web:bob.example and @Alice and @carol:example.com about #ck:task:123 and #topic-demo",
         );
 
         assert_eq!(mentions.len(), 3);
@@ -688,7 +688,7 @@ mod tests {
         assert!(
             mentions
                 .iter()
-                .any(|mention| mention.target == "cx:task:123")
+                .any(|mention| mention.target == "ck:task:123")
         );
         assert!(
             mentions
@@ -835,8 +835,8 @@ mod tests {
     #[test]
     fn short_protocol_id_compacts_typed_uuid_tail() {
         assert_eq!(
-            short_protocol_id("cx:space:0196419b-0000-7000-8000-000000000000"),
-            "cx:space:0196419b...000000"
+            short_protocol_id("ck:space:0196419b-0000-7000-8000-000000000000"),
+            "ck:space:0196419b...000000"
         );
     }
 

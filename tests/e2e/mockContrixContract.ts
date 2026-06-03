@@ -3,9 +3,9 @@
 // `cotest/tests/fixtures/yougen_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
-const DEMO_SPACE = "cx:space:0196419b-0000-7000-8000-000000000000";
+const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
 
-export function mockContrixContract(req) {
+export function mockCokretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
   const path = canonicalPath(req.path ?? "/");
   const body = req.body ?? {};
@@ -13,7 +13,7 @@ export function mockContrixContract(req) {
   if (method === "GET" && path === "/api/v1/server/describe") {
     return json({
       service_did: "did:web:server.local",
-      trust_domain: "cx:trust_domain:server.local",
+      trust_domain: "ck:trust_domain:server.local",
       service_type: "principal_server",
       protocol_version: "1.0",
       supported_profiles: [
@@ -37,7 +37,7 @@ export function mockContrixContract(req) {
 
   if (method === "POST" && path === "/api/v1/events") {
     return json({
-      event_id: body.event_id ?? firstEventId(body.events) ?? "cx:event:e2e",
+      event_id: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
       status: "accepted",
       canonical_digest: "sha256:e2e-event",
       sync_token: "sx:e2e:event",
@@ -45,7 +45,7 @@ export function mockContrixContract(req) {
       receipt: {
         idempotent: false,
         reducer_profile: "cx.reducer.v1",
-        projection_source: body.event_id ?? firstEventId(body.events) ?? "cx:event:e2e",
+        projection_source: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
       },
     });
   }
@@ -86,7 +86,7 @@ export function mockContrixContract(req) {
   if (method === "POST" && path === "/api/v1/devices/pairing-challenge") {
     const deviceId = body.device_id ?? "dev_yougen";
     return json({
-      challenge_id: `cx:device_challenge:${deviceId}`,
+      challenge_id: `ck:device_challenge:${deviceId}`,
       device_id: deviceId,
       expires_at: "2026-04-28T12:05:00Z",
       server_signature: "mock-signature",
@@ -149,8 +149,8 @@ function json(body, status = 200) {
 // this response against a live soland process.
 function spacePreview() {
   return {
-    realm_id: DEMO_SPACE.replace(/^cx:space:/, "cx:realm:"),
-    name: "Contrix Demo Space",
+    realm_id: DEMO_SPACE.replace(/^ck:space:/, "ck:realm:"),
+    name: "Cokret Demo Space",
     description: "Shared demo Space served by mocked server",
     public: true,
     category: null,

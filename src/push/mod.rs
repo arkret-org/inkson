@@ -140,9 +140,9 @@ fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Resu
         }
         Value::String(value)
             if value.starts_with("did:")
-                || value.starts_with("cx:space:")
-                || value.starts_with("cx:flow:")
-                || value.starts_with("cx:event:") =>
+                || value.starts_with("ck:space:")
+                || value.starts_with("ck:flow:")
+                || value.starts_with("ck:event:") =>
         {
             anyhow::bail!("blind push payload leaks stable id at {path}");
         }
@@ -1190,10 +1190,10 @@ mod tests {
         let request = build_register_request("dev_yougen").unwrap();
         let mut response = RegisterDeviceResponse::default();
         response.ok = true;
-        response.registration_id = Some("cx:push:test".to_owned());
+        response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
 
-        assert_eq!(state.registration_id.as_deref(), Some("cx:push:test"));
+        assert_eq!(state.registration_id.as_deref(), Some("ck:push:test"));
         assert_eq!(state.device_id, "dev_yougen");
         assert!(state.push_key_hash.starts_with("sha256:"));
         assert!(!state.push_key_hash.contains("placeholder"));
@@ -1204,12 +1204,12 @@ mod tests {
         let request = build_register_request("dev_yougen").unwrap();
         let mut response = RegisterDeviceResponse::default();
         response.ok = true;
-        response.registration_id = Some("cx:push:test".to_owned());
+        response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
         let unregister = build_unregister_request("dev_yougen", Some(&state)).unwrap();
 
         assert_eq!(unregister.device_id, "dev_yougen");
-        assert_eq!(unregister.registration_id.as_deref(), Some("cx:push:test"));
+        assert_eq!(unregister.registration_id.as_deref(), Some("ck:push:test"));
         assert_eq!(unregister.app_id.as_deref(), Some("yougen"));
     }
 
@@ -1282,10 +1282,10 @@ mod tests {
         validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
 
         for payload in [
-            serde_json::json!({"space_id": "cx:space:demo"}),
-            serde_json::json!({"event": {"event_id": "cx:event:1"}}),
+            serde_json::json!({"space_id": "ck:space:demo"}),
+            serde_json::json!({"event": {"event_id": "ck:event:1"}}),
             serde_json::json!({"sender": "did:web:alice.example"}),
-            serde_json::json!({"items": [{"flow_id": "cx:flow:demo"}]}),
+            serde_json::json!({"items": [{"flow_id": "ck:flow:demo"}]}),
             serde_json::json!({"local_name": "Alice from Ops"}),
             serde_json::json!({"remark": "private label"}),
             serde_json::json!({"opaque": "did:web:alice.example"}),

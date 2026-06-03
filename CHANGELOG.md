@@ -1,27 +1,27 @@
 # Yougen Changelog
 
 All notable yougen changes are recorded here. Yougen is the Dioxus
-cross-platform Contrix v1 reference client (macOS / Windows / Linux / iOS /
+cross-platform Cokret v1 reference client (macOS / Windows / Linux / iOS /
 Android / web).
 
-## R3.4 — Spec sync 2026-05-31 (contrix-spec @ c2848a4)
+## R3.4 — Spec sync 2026-05-31 (cokret-spec @ c2848a4)
 
-- Synced protocol-facing names and fixtures to `c2848a4`: event envelope schema naming, `_ids` grant constraints, accountability principal vocabulary, `cx:rtc_participant:` media participants, agent session start fields, and key-backup signature algorithm naming where applicable.
+- Synced protocol-facing names and fixtures to `c2848a4`: event envelope schema naming, `_ids` grant constraints, accountability principal vocabulary, `ck:rtc_participant:` media participants, agent session start fields, and key-backup signature algorithm naming where applicable.
 
 > No version tag, no crates.io / Docker Hub / npm publish — git commit only.
 
-## R3.3 — Spec sync 2026-05-28 (contrix-spec @ cced4b8)
+## R3.3 — Spec sync 2026-05-28 (cokret-spec @ cced4b8)
 
 - CXP-0011: client-side shareable object links. New `src/object_address.rs`
   wraps the SDK addressing grammar (`parse_address` / `build_address` /
   `build_https_landing` / `target_digest`) into a typed `ShareTarget`
   (Realm / Flow / Message) that builds both link forms — the default
   HTTPS-fragment landing link (target + token live in the `#` fragment, never
-  reaching the landing host) and the `web+contrix:` "open in app" form — plus
+  reaching the landing host) and the `web+cokret:` "open in app" form — plus
   `OpenedLink` which parses either form, fails closed on bad grammar, and routes
   to the local UI by `target_kind` (Realm → Space page, Flow → flow timeline,
   Message → message anchor).
-- New `ContrixApi::directory_resolve_target` wraps `cx.directory.resolve_target`
+- New `CokretApi::directory_resolve_target` wraps `cx.directory.resolve_target`
   (mirrors `resolve_realm`); the directory view gains a minimal "Open shared
   link" entry point that resolves a pasted link and navigates on success. All
   resolve failures collapse to one friendly "link unavailable or expired"
@@ -41,7 +41,7 @@ Android / web).
 
 > No version tag, no crates.io / Docker Hub / npm publish — git commit only.
 
-## R3.2 — Spec sync 2026-05-28 (contrix-spec @ b56cab1)
+## R3.2 — Spec sync 2026-05-28 (cokret-spec @ b56cab1)
 
 - Dropped `MemberIdentity.primary_handle`/`handles[]`; roster `identity_state_digest` → `member_display_state_digest`; payload digest → `identity_payload_digest`.
 - Mention shape v2: `subject_id` authoritative; `handle_at_time`/`display_name_at_time`/`mention_text_original` audit-only. Render path uses the SDK `render_mention` helper with `MentionRender` fallback tiers (verified/cached/name-only/unresolved CSS).
@@ -49,12 +49,12 @@ Android / web).
 - Live claim-set snapshot plumbing + DID metadata as_of resolution deferred `TODO(R3.2.1)`.
 
 > No version tag, no crates.io / Docker Hub / npm publish — git commit only.
-## R3 — Spec sync 2026-05-27 (contrix-spec @ b47ff6ec)
+## R3 — Spec sync 2026-05-27 (cokret-spec @ b47ff6ec)
 
 - CALL-1 / CALL-2: RTC token acquisition wires the chime / SDK `cx.call.media.token_exchange` helper in `src/media/rtc.rs`; `focus_unavailable_for_client` surfaced as a retry / leave-call toast in `src/views/call.rs` with no silent focus fallback.
-- MEDIA-1..3: documented SFrame-key derivation from MLS-Exporter `cx-rtc-frame-key/v1` (rejects backend-supplied keys with `e2ee_key_source_unauthorised`); ParticipantConnected cross-check against `cx.call.state.participants[]` (`participant_identity_unrecognised`); recording-artifact pipeline rejects non-Contrix Egress destinations (`recording_artifact_pipeline_bypassed`). Renderer enforcement stubbed for R3.1.
+- MEDIA-1..3: documented SFrame-key derivation from MLS-Exporter `cx-rtc-frame-key/v1` (rejects backend-supplied keys with `e2ee_key_source_unauthorised`); ParticipantConnected cross-check against `cx.call.state.participants[]` (`participant_identity_unrecognised`); recording-artifact pipeline rejects non-Cokret Egress destinations (`recording_artifact_pipeline_bypassed`). Renderer enforcement stubbed for R3.1.
 - AGENT-1..3: HTTP path switched `/revoke` → `/deactivate`; agent list renders `paused` / `deactivated` states with Resume / Provision affordances and a default-hide-deactivated filter (`src/views/agents.rs`); localized en + zh toasts for `pairing_request_expired`, `proof_invalid`, `agent_paused`, `agent_deactivated`.
-- HDL-1 / CURSOR-1 / SEL-1: new `src/identity_handle.rs` plus onboarding inline NFC + script-mixed warnings and friendly `handle_homograph_forbidden` copy; cursors treated as fully opaque in the network layer; circle UI uses `cx:circle:<uuid>` selector kind for grant pages.
+- HDL-1 / CURSOR-1 / SEL-1: new `src/identity_handle.rs` plus onboarding inline NFC + script-mixed warnings and friendly `handle_homograph_forbidden` copy; cursors treated as fully opaque in the network layer; circle UI uses `ck:circle:<uuid>` selector kind for grant pages.
 - REC-1: recovery stub view (`src/views/recovery.rs`) renders policy detail (proof_kind enum, threshold), receipt history with `proof_summary[]`, and surfaces `recovery_witness_revoke_lagging` / `recovery_policy_mismatch` / `challenge_proof_invalid`.
 
 > No version tag, no crates.io / Docker Hub / npm publish — git commit only.
@@ -173,10 +173,10 @@ Android / web).
   removed: those scenarios are covered more strictly by the sibling
   [`cotest`](../cotest) joint suite (`cotest/e2e/`), which already boots a real
   `soland` process and drives the yougen UI against it. Yougen's own e2e keeps
-  watch over the UI contract (`tests/e2e/mockContrixContract.ts`); end-to-end
+  watch over the UI contract (`tests/e2e/mockCokretContract.ts`); end-to-end
   protocol coverage belongs in cotest.
 
-### Round R4 — protocol review closures (2026-05-20, contrix-spec `2a4d39b..a77b995`)
+### Round R4 — protocol review closures (2026-05-20, cokret-spec `2a4d39b..a77b995`)
 
 Closes the round-4 protocol-review commits on the client surfaces. See
 [`../_todos.md`](../_todos.md) for the workstream context.
@@ -200,7 +200,7 @@ Closes the round-4 protocol-review commits on the client surfaces. See
   plus the `binding_proof` transcript; the new 5 terminal states render
   in the invite UI.
 - **BREAKING** `agent_id` / `applet_id` are constructed strictly as DIDs
-  (with `cx:applet:<uuidv7>` accepted for applet IDs).
+  (with `ck:applet:<uuidv7>` accepted for applet IDs).
 - **Added** late-recovery banner is now sourced from
   `late_recovery_original_event_id` on
   `cx.audit.policy_access{access_kind=e2ee_late_recovery}`.
@@ -217,7 +217,7 @@ Closes the round-4 protocol-review commits on the client surfaces. See
 
 ### Round R2/R3 (2026-05-20) — spec close-out
 
-Closes 17 P0/P1 tasks from contrix-spec rounds R2 and R3. Wire-breaking
+Closes 17 P0/P1 tasks from cokret-spec rounds R2 and R3. Wire-breaking
 changes are intentional (aggressive mode); no backward-compat shims.
 
 #### T02 — Broadcast ephemeral signal routing
@@ -227,10 +227,10 @@ changes are intentional (aggressive mode); no backward-compat shims.
   path for `cx.call.signal` / `cx.presence` / `cx.typing` /
   `cx.receipt.read`. These four kinds MUST NOT travel via
   `cx.events.submit` any longer (the durable path).
-- `ContrixApi::submit_ephemeral_envelope` POSTs to
+- `CokretApi::submit_ephemeral_envelope` POSTs to
   `/api/v1/ephemeral` with the canonical envelope shape. Enforces the
   5-minute hard ceiling on `expires_at - sent_at` at submit time.
-- `ContrixApi::submit_to_device_ephemeral` is the equivalent for
+- `CokretApi::submit_to_device_ephemeral` is the equivalent for
   `cx.key.verification.*` (point-to-point form); routes via the existing
   `/device_messages` channel.
 - `send_typing` / `send_receipt` (REST shims) now construct an
@@ -334,4 +334,4 @@ changes are intentional (aggressive mode); no backward-compat shims.
   /  `contrix_sdk::TypedAppealId` /
   `contrix_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS`.
 - Build: `cargo build --message-format short` (Dioxus 0.7.5; SDK
-  `contrix` 0.7.0).
+  `cokret` 0.7.0).

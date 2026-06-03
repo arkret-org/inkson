@@ -193,7 +193,7 @@ fn raw_operation_kind(payload: &Value) -> Option<&str> {
 /// `space_admin::build_signed_*`, etc.). Fresh installs generate via
 /// `getrandom::fill` on first access; existing dev installs that still
 /// hold a `[42; 32]` cache are simply broken - they regenerate the next
-/// time the store is loaded with no record present (Contrix v1 protocol is
+/// time the store is loaded with no record present (Cokret v1 protocol is
 /// pre-release, with no migration path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentityRecord {
@@ -522,7 +522,7 @@ pub struct LocalAnchorView {
     /// The current `governance.covered_frontier` cell value - the lattice
     /// frontier cell that governance Moves require predecessor coverage of
     /// before they're accepted. Surfaced as a string so the UI can render
-    /// whatever shape soland publishes (typically a `cx:state:sha256:...`
+    /// whatever shape soland publishes (typically a `ck:state:sha256:...`
     /// ref). `None` means the governance cell hasn't been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier: Option<String>,
@@ -548,7 +548,7 @@ impl LocalAnchorView {
     /// SHA-256 of empty bytes — used as the "no Anchor seen yet" sentinel
     /// the Move builders historically defaulted to.
     pub const EMPTY_ANCHOR_REF: &'static str =
-        "cx:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        "ck:anchor:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     /// Pick the single Anchor ref to feed into a Move builder. Returns the
     /// first frontier head if any, otherwise the empty-bytes sentinel.
@@ -597,7 +597,7 @@ impl LocalAnchorView {
         }
         let head_a = &info.heads[0];
         let head_b = &info.heads[1];
-        let safer = if cell_ref.starts_with("cx:cell:cx.component.realm.organization.v1") {
+        let safer = if cell_ref.starts_with("ck:cell:cx.component.realm.organization.v1") {
             head_a.value.clone()
         } else {
             safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?
@@ -612,9 +612,9 @@ impl LocalAnchorView {
 /// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
 /// not a safety call, so we surface no preference and the operator picks.
 fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
-    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("cx:cell:cx.component.member.state.v1") {
+    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ck:cell:cx.component.member.state.v1") {
         member_state_safety_rank
-    } else if cell_ref.starts_with("cx:cell:cx.component.capability.grant.v1") {
+    } else if cell_ref.starts_with("ck:cell:cx.component.capability.grant.v1") {
         capability_grant_safety_rank
     } else {
         return None;
@@ -664,11 +664,11 @@ impl LocalAnchorView {
     /// ```jsonc
     /// {
     ///   "anchor_view": {
-    ///     "frontier": ["cx:anchor:sha256:..."],
+    ///     "frontier": ["ck:anchor:sha256:..."],
     ///     "leaves":   ["sha256:..."],
-    ///     "state_root": "cx:state:sha256:...",
+    ///     "state_root": "ck:state:sha256:...",
     ///     "cells": {
-    ///       "cx:cell:cx.component.member.state.v1:did:web:alice": {
+    ///       "ck:cell:cx.component.member.state.v1:did:web:alice": {
     ///         "bottom": "expose"
     ///       }
     ///     }
@@ -748,14 +748,14 @@ impl LocalAnchorView {
                         .cloned()
                         .or_else(|| status.get("register").and_then(|r| r.get("value")).cloned())
                 };
-                if cell_ref.starts_with("cx:cell:cx.component.mls.epoch.v1")
+                if cell_ref.starts_with("ck:cell:cx.component.mls.epoch.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.mls_epoch = value
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref.starts_with("cx:cell:cx.component.governance.covered_frontier.v1")
+                if cell_ref.starts_with("ck:cell:cx.component.governance.covered_frontier.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.covered_frontier = value.as_str().map(str::to_owned).or_else(|| {
@@ -768,7 +768,7 @@ impl LocalAnchorView {
                 // B3c: surface the MLS key schedule hash so the next
                 // commit's SDK MLS governance binding can carry the
                 // SDK-canonical "advance schedule" effect on it.
-                if cell_ref.starts_with("cx:cell:cx.component.key_schedule.v1")
+                if cell_ref.starts_with("ck:cell:cx.component.key_schedule.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.key_schedule_hash = value.as_str().map(str::to_owned).or_else(|| {
@@ -1177,7 +1177,7 @@ pub struct UserActionLogEntry {
 /// re-login as long as the grant itself is still valid.
 ///
 /// The fields mirror the inputs needed by
-/// [`crate::api::ContrixApi::exchange_session_grant_at_with_proof`] plus
+/// [`crate::api::CokretApi::exchange_session_grant_at_with_proof`] plus
 /// the `session_private_key_pem` the introspection proof is signed with.
 /// The private key here is the ephemeral session-grant key (coauth's
 /// `session_public_key` registration), not the long-lived device
@@ -2769,7 +2769,7 @@ impl LocalStateStore {
     /// `did:key`, and writes the record to disk. Subsequent calls return
     /// the persisted identity. If the persisted record is malformed (e.g.
     /// hand-edited or truncated) this regenerates and overwrites — the
-    /// alternative is bricking the client, and Contrix v1 is pre-release
+    /// alternative is bricking the client, and Cokret v1 is pre-release
     /// so there is no user-facing key recovery story to preserve.
     pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
         #[cfg(not(test))]
@@ -3256,7 +3256,7 @@ impl LocalStateStore {
     /// Returns the number of successfully POSTed entries; the buffer
     /// is fully drained on success and partially restored on 404.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn flush_telemetry_to_server(&mut self, api: &crate::api::ContrixApi) -> usize {
+    pub async fn flush_telemetry_to_server(&mut self, api: &crate::api::CokretApi) -> usize {
         let entries = self.drain_telemetry();
         if entries.is_empty() {
             return 0;
@@ -3417,13 +3417,13 @@ impl LocalStateStore {
 
 fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
     match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
-        Some(topic) if topic.starts_with("cx:thread:") => ReadScope {
+        Some(topic) if topic.starts_with("ck:thread:") => ReadScope {
             kind: "thread".to_owned(),
             object_ref: Some(topic.to_owned()),
             track: None,
             track_scope: None,
         },
-        Some(topic) if topic.starts_with("cx:flow:") => ReadScope {
+        Some(topic) if topic.starts_with("ck:flow:") => ReadScope {
             kind: "flow".to_owned(),
             object_ref: Some(topic.to_owned()),
             track: Some("discussion".to_owned()),
@@ -3440,9 +3440,9 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
 
 fn default_flow_id_for_realm(realm_id: &str) -> String {
     realm_id
-        .strip_prefix("cx:realm:")
-        .or_else(|| realm_id.strip_prefix("cx:space:"))
-        .map(|suffix| format!("cx:flow:{suffix}"))
+        .strip_prefix("ck:realm:")
+        .or_else(|| realm_id.strip_prefix("ck:space:"))
+        .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| realm_id.to_owned())
 }
 
@@ -3653,14 +3653,14 @@ mod tests {
         let path = temp_state_path("private-plaintext-snapshot");
         let mut store = LocalStateStore::with_path(path);
         assert!(store.private_plaintext_is_empty());
-        store.save_private_plaintext("cx:space:s1", "cx:flow:f1", "body", "\"hello body\"");
+        store.save_private_plaintext("ck:space:s1", "ck:flow:f1", "body", "\"hello body\"");
         store.save_private_plaintext(
-            "cx:space:s1",
-            "cx:flow:f1",
+            "ck:space:s1",
+            "ck:flow:f1",
             "synthesis",
             "\"hello synthesis\"",
         );
-        store.save_private_plaintext("cx:space:s2", "cx:flow:f2", "body", "\"other body\"");
+        store.save_private_plaintext("ck:space:s2", "ck:flow:f2", "body", "\"other body\"");
         assert!(!store.private_plaintext_is_empty());
 
         let json = store.private_plaintext_snapshot_json();
@@ -3673,15 +3673,15 @@ mod tests {
         assert!(fresh.private_plaintext_is_empty());
         fresh.merge_private_plaintext_map(map);
         assert_eq!(
-            fresh.private_plaintext_for("cx:space:s1", "cx:flow:f1", "body"),
+            fresh.private_plaintext_for("ck:space:s1", "ck:flow:f1", "body"),
             Some("\"hello body\"".to_owned())
         );
         assert_eq!(
-            fresh.private_plaintext_for("cx:space:s1", "cx:flow:f1", "synthesis"),
+            fresh.private_plaintext_for("ck:space:s1", "ck:flow:f1", "synthesis"),
             Some("\"hello synthesis\"".to_owned())
         );
         assert_eq!(
-            fresh.private_plaintext_for("cx:space:s2", "cx:flow:f2", "body"),
+            fresh.private_plaintext_for("ck:space:s2", "ck:flow:f2", "body"),
             Some("\"other body\"".to_owned())
         );
     }
@@ -3692,25 +3692,25 @@ mod tests {
         // local value wins on conflict.
         let path = temp_state_path("private-plaintext-conflict");
         let mut store = LocalStateStore::with_path(path);
-        store.save_private_plaintext("cx:space:s1", "cx:flow:f1", "body", "\"local newer\"");
+        store.save_private_plaintext("ck:space:s1", "ck:flow:f1", "body", "\"local newer\"");
 
         let mut fields = BTreeMap::new();
         fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
         fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
         let mut flows = BTreeMap::new();
-        flows.insert("cx:flow:f1".to_owned(), fields);
+        flows.insert("ck:flow:f1".to_owned(), fields);
         let mut incoming = BTreeMap::new();
-        incoming.insert("cx:space:s1".to_owned(), flows);
+        incoming.insert("ck:space:s1".to_owned(), flows);
         store.merge_private_plaintext_map(incoming);
 
         // Conflict: local value kept.
         assert_eq!(
-            store.private_plaintext_for("cx:space:s1", "cx:flow:f1", "body"),
+            store.private_plaintext_for("ck:space:s1", "ck:flow:f1", "body"),
             Some("\"local newer\"".to_owned())
         );
         // Gap: backup fills it.
         assert_eq!(
-            store.private_plaintext_for("cx:space:s1", "cx:flow:f1", "synthesis"),
+            store.private_plaintext_for("ck:space:s1", "ck:flow:f1", "synthesis"),
             Some("\"backup synthesis\"".to_owned())
         );
     }
@@ -3719,7 +3719,7 @@ mod tests {
     fn move_submission_record_round_trips_through_store() {
         let path = temp_state_path("move-submission");
         let mut store = LocalStateStore::with_path(path.clone());
-        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
         let mid = "sha256:111";
         store.record_move_submission(
             mid,
@@ -3727,7 +3727,7 @@ mod tests {
             "cx.consent.grant",
             MoveSubmissionState::PendingAnchor,
             None,
-            Some("cx:anchor:sha256:abc".to_owned()),
+            Some("ck:anchor:sha256:abc".to_owned()),
         );
         let listed = store.move_submissions_for_space(space);
         assert_eq!(listed.len(), 1);
@@ -3765,8 +3765,8 @@ mod tests {
         // plaintext sidecar must survive a reload (serde-persisted), since
         // it is the only place the author's own encrypted content lives.
         let path = temp_state_path("private-plaintext-sidecar");
-        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
-        let flow = "cx:flow:0196419b-0000-7000-8000-0000000000aa";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let flow = "ck:flow:0196419b-0000-7000-8000-0000000000aa";
         {
             let mut store = LocalStateStore::with_path(path.clone());
             store.save_private_plaintext(space, flow, "body", "\"author body\"");
@@ -3794,7 +3794,7 @@ mod tests {
         );
         assert!(
             reader
-                .private_plaintext_for("cx:space:other", flow, "body")
+                .private_plaintext_for("ck:space:other", flow, "body")
                 .is_none()
         );
 
@@ -3815,9 +3815,9 @@ mod tests {
     fn sync_event_states_update_submission_by_event_id() {
         let path = temp_state_path("move-event-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
         let local_id = "sha256:local-submit";
-        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000aa";
+        let event_id = "ck:event:0196419b-0000-7000-8000-0000000000aa";
         store.record_move_submission_with_event_id(
             local_id,
             Some(event_id.to_owned()),
@@ -3825,7 +3825,7 @@ mod tests {
             "cx.flow.move",
             MoveSubmissionState::PendingAnchor,
             None,
-            Some("cx:anchor:sha256:abc".to_owned()),
+            Some("ck:anchor:sha256:abc".to_owned()),
         );
 
         let updated = store.ingest_move_event_states(
@@ -3850,8 +3850,8 @@ mod tests {
     fn sync_event_states_update_legacy_submission_keyed_by_event_id() {
         let path = temp_state_path("legacy-move-event-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
-        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000bb";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let event_id = "ck:event:0196419b-0000-7000-8000-0000000000bb";
         store.record_move_submission(
             event_id,
             space,
@@ -3883,9 +3883,9 @@ mod tests {
     fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
         let path = temp_state_path("move-event-and-move-id-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:space:0196419b-0000-7000-8000-000000000001";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
         let move_id = "sha256:local-submit-with-server-event";
-        let event_id = "cx:event:0196419b-0000-7000-8000-0000000000cc";
+        let event_id = "ck:event:0196419b-0000-7000-8000-0000000000cc";
         store.record_move_submission(
             move_id,
             space,
@@ -3917,7 +3917,7 @@ mod tests {
     fn move_submission_pending_mls_binding_drives_toast() {
         let path = temp_state_path("move-mls-binding");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:space:0196419b-0000-7000-8000-000000000002";
+        let space = "ck:space:0196419b-0000-7000-8000-000000000002";
         store.record_move_submission(
             "sha256:222",
             space,
@@ -3934,7 +3934,7 @@ mod tests {
     fn mls_encrypted_projection_detects_epoch_pause_scope() {
         let path = temp_state_path("mls-encrypted-projection");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:realm:0196419b-0000-7000-8000-0000000000ee";
+        let space = "ck:realm:0196419b-0000-7000-8000-0000000000ee";
         store.save_space_projection(
             space.to_owned(),
             json!({
@@ -3947,7 +3947,7 @@ mod tests {
         );
         assert!(store.space_projection_is_mls_encrypted(space));
 
-        let plain = "cx:realm:0196419b-0000-7000-8000-0000000000ef";
+        let plain = "ck:realm:0196419b-0000-7000-8000-0000000000ef";
         store.save_space_projection(
             plain.to_owned(),
             json!({
@@ -3966,7 +3966,7 @@ mod tests {
         let path = temp_state_path("member-handle-cache");
         let mut store = LocalStateStore::with_path(path);
         let subject = "did:webvh:zQmMember";
-        let realm = "cx:realm:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         store.save_member_handle_lookup(
             subject,
             Some(realm.to_owned()),
@@ -4001,7 +4001,7 @@ mod tests {
             store
                 .cached_member_handle_lookup(
                     subject,
-                    Some("cx:realm:0196419b-0000-7000-8000-000000000002"),
+                    Some("ck:realm:0196419b-0000-7000-8000-000000000002"),
                     Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 )
                 .is_none()
@@ -4015,7 +4015,7 @@ mod tests {
         let subject = "did:webvh:zQmNoVisibleHandle";
         store.save_member_handle_lookup(
             subject,
-            Some("cx:realm:0196419b-0000-7000-8000-000000000001".to_owned()),
+            Some("ck:realm:0196419b-0000-7000-8000-000000000001".to_owned()),
             None,
             None,
             0,
@@ -4026,7 +4026,7 @@ mod tests {
         let entry = store
             .cached_member_handle_lookup(
                 subject,
-                Some("cx:realm:0196419b-0000-7000-8000-000000000001"),
+                Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
                 None,
             )
             .expect("fresh negative entry");
@@ -4059,35 +4059,35 @@ mod tests {
         let mut store = LocalStateStore::with_path(path);
         store.save_sync_cursor("sx:next");
         store.append_raw_operation(
-            "cx:operation:local-01",
-            Some("cx:space:demo".to_owned()),
+            "ck:operation:local-01",
+            Some("ck:space:demo".to_owned()),
             serde_json::json!({"type": "cx.message.create"}),
         );
-        store.save_space_projection("cx:space:demo", serde_json::json!({"name": "Demo"}));
-        store.save_draft("cx:space:demo", "hello");
+        store.save_space_projection("ck:space:demo", serde_json::json!({"name": "Demo"}));
+        store.save_draft("ck:space:demo", "hello");
 
         let state = store.load();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:next"));
         assert_eq!(
             state.raw_operations[0].operation_id,
-            "cx:operation:local-01"
+            "ck:operation:local-01"
         );
-        assert_eq!(state.space_projections["cx:space:demo"]["name"], "Demo");
-        assert_eq!(store.draft_for("cx:space:demo"), "hello");
+        assert_eq!(state.space_projections["ck:space:demo"]["name"], "Demo");
+        assert_eq!(store.draft_for("ck:space:demo"), "hello");
 
-        store.save_draft("cx:space:demo", " ");
-        assert!(store.draft_for("cx:space:demo").is_empty());
+        store.save_draft("ck:space:demo", " ");
+        assert!(store.draft_for("ck:space:demo").is_empty());
     }
 
     #[test]
     fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
         let path = temp_state_path("realm-lifecycle");
         let mut store = LocalStateStore::with_path(path.clone());
-        let realm_id = "cx:space:destroyed";
+        let realm_id = "ck:space:destroyed";
 
         assert!(!store.realm_is_destroyed(realm_id));
         store.append_raw_operation(
-            "cx:operation:destroy",
+            "ck:operation:destroy",
             Some(realm_id.to_owned()),
             serde_json::json!({"kind": "cx.realm.destroy"}),
         );
@@ -4097,7 +4097,7 @@ mod tests {
         assert!(lifecycle[realm_id].destroyed);
         assert_eq!(
             lifecycle[realm_id].destroyed_operation_id.as_deref(),
-            Some("cx:operation:destroy")
+            Some("ck:operation:destroy")
         );
 
         let reader = LocalStateStore::with_path(path);
@@ -4112,12 +4112,12 @@ mod tests {
         let path = temp_state_path("persisted");
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.save_sync_cursor("sx:persisted");
-        writer.save_draft("cx:space:persisted", "draft survives restart");
+        writer.save_draft("ck:space:persisted", "draft survives restart");
 
         let reader = LocalStateStore::with_path(path);
         let state = reader.load();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:persisted"));
-        assert_eq!(state.drafts["cx:space:persisted"], "draft survives restart");
+        assert_eq!(state.drafts["ck:space:persisted"], "draft survives restart");
     }
 
     #[test]
@@ -4126,20 +4126,20 @@ mod tests {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_notification_projection(vec![serde_json::json!({
             "notification_id": "notif-1",
-            "space_id": "cx:space:demo",
+            "space_id": "ck:space:demo",
             "kind": "message",
             "body": "Hello"
         })]);
         store.set_notification_read("notif-1", true);
         store.set_notification_archived("notif-1", true);
-        store.set_space_muted("cx:space:demo", true);
+        store.set_space_muted("ck:space:demo", true);
         store.set_notification_kind_enabled("message", false);
 
         let reader = LocalStateStore::with_path(path);
         assert_eq!(reader.notification_projection().len(), 1);
         assert!(reader.notification_state_for("notif-1").read);
         assert!(reader.notification_state_for("notif-1").archived);
-        assert!(reader.is_space_muted("cx:space:demo"));
+        assert!(reader.is_space_muted("ck:space:demo"));
         assert!(!reader.notification_kind_enabled("message"));
     }
 
@@ -4150,14 +4150,14 @@ mod tests {
         let marker = store.save_read_cursor(
             "did:web:alice.example",
             "device-1",
-            "cx:space:demo",
+            "ck:space:demo",
             None,
-            "cx:event:read-1",
+            "ck:event:read-1",
         );
 
         assert_eq!(marker.marker_type, "cx.read_cursor.advance");
-        assert_eq!(marker.body.realm_id, "cx:space:demo");
-        assert_eq!(marker.body.position.event_id, "cx:event:read-1");
+        assert_eq!(marker.body.realm_id, "ck:space:demo");
+        assert_eq!(marker.body.position.event_id, "ck:event:read-1");
         assert_eq!(marker.body.read_scope.kind, "flow");
         assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
         assert_eq!(
@@ -4168,14 +4168,14 @@ mod tests {
                     "schema": "cx.schema.read_cursor.v1",
                     "actor_id": "did:web:alice.example",
                     "device_id": "device-1",
-                    "realm_id": "cx:space:demo",
+                    "realm_id": "ck:space:demo",
                     "read_scope": {
                         "kind": "flow",
-                        "ref": "cx:flow:demo",
+                        "ref": "ck:flow:demo",
                         "track_name": "discussion"
                     },
                     "position": {
-                        "event_id": "cx:event:read-1",
+                        "event_id": "ck:event:read-1",
                         "hlc": &marker.body.position.hlc
                     },
                     "updated_at": &marker.updated_at,
@@ -4185,11 +4185,11 @@ mod tests {
 
         let reader = LocalStateStore::with_path(path);
         let persisted = reader
-            .read_cursor_for("cx:space:demo", None)
+            .read_cursor_for("ck:space:demo", None)
             .expect("read marker persisted");
         assert_eq!(persisted.actor, "did:web:alice.example");
         assert_eq!(persisted.device_id, "device-1");
-        assert_eq!(persisted.body.position.event_id, "cx:event:read-1");
+        assert_eq!(persisted.body.position.event_id, "ck:event:read-1");
     }
 
     #[test]
@@ -4199,35 +4199,35 @@ mod tests {
         store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
-            "cx:space:demo",
+            "ck:space:demo",
             None,
-            "cx:event:topic",
+            "ck:event:topic",
         );
         store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
-            "cx:space:demo",
-            Some("cx:thread:reply-1".to_owned()),
-            "cx:event:thread",
+            "ck:space:demo",
+            Some("ck:thread:reply-1".to_owned()),
+            "ck:event:thread",
         );
 
         assert_eq!(
             store
-                .read_cursor_for("cx:space:demo", None)
+                .read_cursor_for("ck:space:demo", None)
                 .expect("topic marker")
                 .body
                 .position
                 .event_id,
-            "cx:event:topic"
+            "ck:event:topic"
         );
         assert_eq!(
             store
-                .read_cursor_for("cx:space:demo", Some("cx:thread:reply-1"))
+                .read_cursor_for("ck:space:demo", Some("ck:thread:reply-1"))
                 .expect("thread marker")
                 .body
                 .position
                 .event_id,
-            "cx:event:thread"
+            "ck:event:thread"
         );
     }
 
@@ -4238,7 +4238,7 @@ mod tests {
         store.save_push_registration(PushRegistrationState {
             schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
             principal_id: None,
-            registration_id: Some("cx:push:local".to_owned()),
+            registration_id: Some("ck:push:local".to_owned()),
             device_id: "dev_yougen".to_owned(),
             platform: Some("desktop".to_owned()),
             app_id: Some("yougen".to_owned()),
@@ -4254,7 +4254,7 @@ mod tests {
 
         let mut reader = LocalStateStore::with_path(path);
         let state = reader.push_registration().expect("push registration");
-        assert_eq!(state.registration_id.as_deref(), Some("cx:push:local"));
+        assert_eq!(state.registration_id.as_deref(), Some("ck:push:local"));
         assert_eq!(state.device_id, "dev_yougen");
 
         reader.clear_push_registration();
@@ -4378,7 +4378,7 @@ mod tests {
         let path = temp_state_path("retain-prunes");
         let mut store = LocalStateStore::with_path(path);
         // Seed three spaces with overlapping per-space caches.
-        for id in ["cx:space:keep", "cx:space:drop-a", "cx:space:drop-b"] {
+        for id in ["ck:space:keep", "ck:space:drop-a", "ck:space:drop-b"] {
             store.save_space_projection(id, serde_json::json!({"name": id}));
             store.save_draft(id, "draft");
             store.set_anchor_view(id, LocalAnchorView::default());
@@ -4388,43 +4388,43 @@ mod tests {
         store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
-            "cx:space:drop-a",
+            "ck:space:drop-a",
             None,
-            "cx:event:42",
+            "ck:event:42",
         );
         store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
-            "cx:space:keep",
+            "ck:space:keep",
             None,
-            "cx:event:99",
+            "ck:event:99",
         );
 
-        let pruned = store.retain_space_projections(|id| id == "cx:space:keep");
+        let pruned = store.retain_space_projections(|id| id == "ck:space:keep");
         assert_eq!(pruned.len(), 2);
-        assert!(pruned.contains(&"cx:space:drop-a".to_owned()));
-        assert!(pruned.contains(&"cx:space:drop-b".to_owned()));
+        assert!(pruned.contains(&"ck:space:drop-a".to_owned()));
+        assert!(pruned.contains(&"ck:space:drop-b".to_owned()));
 
         let state = store.load();
         assert_eq!(state.space_projections.len(), 1);
-        assert!(state.space_projections.contains_key("cx:space:keep"));
-        assert!(!state.drafts.contains_key("cx:space:drop-a"));
-        assert!(state.drafts.contains_key("cx:space:keep"));
-        assert!(!state.anchor_views.contains_key("cx:space:drop-a"));
-        assert!(state.anchor_views.contains_key("cx:space:keep"));
-        assert!(!state.muted_spaces.contains_key("cx:space:drop-b"));
-        assert!(state.muted_spaces.contains_key("cx:space:keep"));
+        assert!(state.space_projections.contains_key("ck:space:keep"));
+        assert!(!state.drafts.contains_key("ck:space:drop-a"));
+        assert!(state.drafts.contains_key("ck:space:keep"));
+        assert!(!state.anchor_views.contains_key("ck:space:drop-a"));
+        assert!(state.anchor_views.contains_key("ck:space:keep"));
+        assert!(!state.muted_spaces.contains_key("ck:space:drop-b"));
+        assert!(state.muted_spaces.contains_key("ck:space:keep"));
         let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
         assert!(
             kept_marker_keys
                 .iter()
-                .any(|k| k.starts_with("cx:space:keep\n")),
+                .any(|k| k.starts_with("ck:space:keep\n")),
             "kept space marker should survive prune: {kept_marker_keys:?}",
         );
         assert!(
             kept_marker_keys
                 .iter()
-                .all(|k| !k.starts_with("cx:space:drop-a\n")),
+                .all(|k| !k.starts_with("ck:space:drop-a\n")),
             "pruned space marker should be gone: {kept_marker_keys:?}",
         );
     }
@@ -4433,8 +4433,8 @@ mod tests {
     fn retain_space_projections_keeps_everything_when_all_match() {
         let path = temp_state_path("retain-all");
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("cx:space:a", serde_json::json!({}));
-        store.save_space_projection("cx:space:b", serde_json::json!({}));
+        store.save_space_projection("ck:space:a", serde_json::json!({}));
+        store.save_space_projection("ck:space:b", serde_json::json!({}));
         let pruned = store.retain_space_projections(|_| true);
         assert!(pruned.is_empty());
         assert_eq!(store.load().space_projections.len(), 2);
@@ -4444,19 +4444,19 @@ mod tests {
     fn forget_space_clears_a_single_space() {
         let path = temp_state_path("forget-one");
         let mut store = LocalStateStore::with_path(path);
-        for id in ["cx:space:gone", "cx:space:stay"] {
+        for id in ["ck:space:gone", "ck:space:stay"] {
             store.save_space_projection(id, serde_json::json!({}));
             store.save_draft(id, "draft");
             store.set_anchor_view(id, LocalAnchorView::default());
         }
 
-        store.forget_space("cx:space:gone");
+        store.forget_space("ck:space:gone");
 
         let state = store.load();
-        assert!(!state.space_projections.contains_key("cx:space:gone"));
-        assert!(state.space_projections.contains_key("cx:space:stay"));
-        assert!(!state.drafts.contains_key("cx:space:gone"));
-        assert!(state.drafts.contains_key("cx:space:stay"));
+        assert!(!state.space_projections.contains_key("ck:space:gone"));
+        assert!(state.space_projections.contains_key("ck:space:stay"));
+        assert!(!state.drafts.contains_key("ck:space:gone"));
+        assert!(state.drafts.contains_key("ck:space:stay"));
     }
 
     #[test]
@@ -4465,8 +4465,8 @@ mod tests {
         let mut store = LocalStateStore::with_path(path);
         // Account-scoped projections.
         store.save_sync_cursor("sx:before");
-        store.save_space_projection("cx:space:a", serde_json::json!({}));
-        store.save_draft("cx:space:a", "draft");
+        store.save_space_projection("ck:space:a", serde_json::json!({}));
+        store.save_draft("ck:space:a", "draft");
         store.save_private_data("did:web:tester.example", "theme", "night");
         // Device-level state that MUST survive. ensure_local_identity
         // generates a fresh seed + DID and persists the record under
@@ -4533,7 +4533,7 @@ mod tests {
             .ensure_local_identity()
             .expect("ensure_local_identity should succeed in plaintext mode");
         store.save_sync_cursor("sx:alice");
-        store.save_space_projection("cx:space:a", serde_json::json!({}));
+        store.save_space_projection("ck:space:a", serde_json::json!({}));
         store.set_oidc_tokens(Some(OidcTokenBundle {
             access_token: "alice-at".to_owned(),
             refresh_token: Some("alice-rt".to_owned()),
@@ -4654,12 +4654,12 @@ mod tests {
         let path = temp_state_path("read-receipt-default");
         let mut store = LocalStateStore::with_path(path.clone());
         assert!(store.read_receipt_default_send());
-        assert!(store.read_receipt_should_send(None, Some("cx:space:any")));
+        assert!(store.read_receipt_should_send(None, Some("ck:space:any")));
 
         store.set_read_receipt_default_send(false);
         let reader = LocalStateStore::with_path(path);
         assert!(!reader.read_receipt_default_send());
-        assert!(!reader.read_receipt_should_send(None, Some("cx:space:any")));
+        assert!(!reader.read_receipt_should_send(None, Some("ck:space:any")));
     }
 
     #[test]
@@ -4667,28 +4667,28 @@ mod tests {
         let path = temp_state_path("read-receipt-resolve");
         let mut store = LocalStateStore::with_path(path.clone());
         // default = true (send)
-        store.set_read_receipt_space_override("cx:space:demo", Some(false));
-        store.set_read_receipt_flow_override("cx:flow:demo", Some(true));
+        store.set_read_receipt_space_override("ck:space:demo", Some(false));
+        store.set_read_receipt_flow_override("ck:flow:demo", Some(true));
 
         let reader = LocalStateStore::with_path(path);
         // Flow override wins.
-        assert!(reader.read_receipt_should_send(Some("cx:flow:demo"), Some("cx:space:demo")));
+        assert!(reader.read_receipt_should_send(Some("ck:flow:demo"), Some("ck:space:demo")));
         // Space override wins over default when no flow override.
-        assert!(!reader.read_receipt_should_send(None, Some("cx:space:demo")));
+        assert!(!reader.read_receipt_should_send(None, Some("ck:space:demo")));
         // Default applies when nothing matches.
-        assert!(reader.read_receipt_should_send(None, Some("cx:space:other")));
+        assert!(reader.read_receipt_should_send(None, Some("ck:space:other")));
     }
 
     #[test]
     fn read_receipt_clearing_override_falls_back_to_default() {
         let path = temp_state_path("read-receipt-clear");
         let mut store = LocalStateStore::with_path(path);
-        store.set_read_receipt_space_override("cx:space:demo", Some(false));
-        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+        store.set_read_receipt_space_override("ck:space:demo", Some(false));
+        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
 
-        store.set_read_receipt_space_override("cx:space:demo", None);
-        assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
-        assert!(store.read_receipt_space_override("cx:space:demo").is_none());
+        store.set_read_receipt_space_override("ck:space:demo", None);
+        assert!(store.read_receipt_should_send(None, Some("ck:space:demo")));
+        assert!(store.read_receipt_space_override("ck:space:demo").is_none());
     }
 
     #[test]
@@ -4696,18 +4696,18 @@ mod tests {
         let path = temp_state_path("read-receipt-policy-required");
         let mut store = LocalStateStore::with_path(path);
         // User opted out of the Space.
-        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        store.set_read_receipt_space_override("ck:space:demo", Some(false));
         // But server publishes disclosure=required → must override to true.
         store.set_read_receipt_policy_snapshot(
-            "cx:space:demo",
+            "ck:space:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "required".to_owned(),
                 visibility: Some("public".to_owned()),
             }),
         );
-        assert!(store.read_receipt_should_send(None, Some("cx:space:demo")));
+        assert!(store.read_receipt_should_send(None, Some("ck:space:demo")));
         let snap = store
-            .read_receipt_policy_for_space("cx:space:demo")
+            .read_receipt_policy_for_space("ck:space:demo")
             .unwrap();
         assert!(snap.locks_user_choice());
         assert!(!snap.lock_reason().is_empty());
@@ -4721,31 +4721,31 @@ mod tests {
         store.set_read_receipt_default_send(true);
         // Server publishes disclosure=disabled → must override to false.
         store.set_read_receipt_policy_snapshot(
-            "cx:space:demo",
+            "ck:space:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "disabled".to_owned(),
                 visibility: Some("private".to_owned()),
             }),
         );
-        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
     }
 
     #[test]
     fn server_policy_optional_does_not_lock() {
         let path = temp_state_path("read-receipt-policy-optional");
         let mut store = LocalStateStore::with_path(path);
-        store.set_read_receipt_space_override("cx:space:demo", Some(false));
+        store.set_read_receipt_space_override("ck:space:demo", Some(false));
         store.set_read_receipt_policy_snapshot(
-            "cx:space:demo",
+            "ck:space:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "optional".to_owned(),
                 visibility: None,
             }),
         );
         // optional → user override wins.
-        assert!(!store.read_receipt_should_send(None, Some("cx:space:demo")));
+        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
         let snap = store
-            .read_receipt_policy_for_space("cx:space:demo")
+            .read_receipt_policy_for_space("ck:space:demo")
             .unwrap();
         assert!(!snap.locks_user_choice());
         assert_eq!(snap.lock_reason(), "");
@@ -4755,13 +4755,13 @@ mod tests {
     fn anchor_view_default_returns_empty_bytes_sentinel() {
         let path = temp_state_path("anchor-default");
         let store = LocalStateStore::with_path(path);
-        let view = store.anchor_view_for("cx:space:demo");
+        let view = store.anchor_view_for("ck:space:demo");
         assert!(view.frontier.is_empty());
         assert!(view.leaves.is_empty());
         assert!(view.state_root.is_none());
         assert_eq!(view.move_anchor_ref(), LocalAnchorView::EMPTY_ANCHOR_REF);
         assert_eq!(
-            store.anchor_ref_for_move("cx:space:demo"),
+            store.anchor_ref_for_move("ck:space:demo"),
             LocalAnchorView::EMPTY_ANCHOR_REF
         );
     }
@@ -4772,14 +4772,14 @@ mod tests {
         {
             let mut store = LocalStateStore::with_path(path.clone());
             store.set_anchor_view(
-                "cx:space:demo",
+                "ck:space:demo",
                 LocalAnchorView {
                     frontier: vec![
-                        "cx:anchor:sha256:bbb".to_owned(),
-                        "cx:anchor:sha256:aaa".to_owned(),
+                        "ck:anchor:sha256:bbb".to_owned(),
+                        "ck:anchor:sha256:aaa".to_owned(),
                     ],
                     leaves: vec!["sha256:lf1".to_owned()],
-                    state_root: Some("cx:state:sha256:abc".to_owned()),
+                    state_root: Some("ck:state:sha256:abc".to_owned()),
                     bottom_cells: BTreeMap::new(),
                     mls_epoch: None,
                     covered_frontier: None,
@@ -4789,14 +4789,14 @@ mod tests {
             );
         }
         let reader = LocalStateStore::with_path(path);
-        let view = reader.anchor_view_for("cx:space:demo");
+        let view = reader.anchor_view_for("ck:space:demo");
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves.len(), 1);
-        assert_eq!(view.state_root.as_deref(), Some("cx:state:sha256:abc"));
-        assert_eq!(view.move_anchor_ref(), "cx:anchor:sha256:aaa");
+        assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
+        assert_eq!(view.move_anchor_ref(), "ck:anchor:sha256:aaa");
         assert_eq!(
-            reader.anchor_ref_for_move("cx:space:demo"),
-            "cx:anchor:sha256:aaa"
+            reader.anchor_ref_for_move("ck:space:demo"),
+            "ck:anchor:sha256:aaa"
         );
     }
 
@@ -4805,7 +4805,7 @@ mod tests {
         let mut view = LocalAnchorView::default();
         assert!(!view.has_bottom_cells());
         view.bottom_cells.insert(
-            "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned(),
+            "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![],
@@ -4817,26 +4817,26 @@ mod tests {
     #[test]
     fn safer_winner_for_member_state_prefers_ban_over_join() {
         let mut view = LocalAnchorView::default();
-        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![
                     BottomCellHead {
-                        move_id: "cx:event:joined".to_owned(),
+                        move_id: "ck:event:joined".to_owned(),
                         value: serde_json::json!({"membership": "join"}),
                     },
                     BottomCellHead {
-                        move_id: "cx:event:banned".to_owned(),
+                        move_id: "ck:event:banned".to_owned(),
                         value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
                     },
                 ],
             },
         );
         let (head_a, head_b, winner) = view.safer_winner_for(&cell).expect("ban beats join");
-        assert_eq!(head_a, "cx:event:joined");
-        assert_eq!(head_b, "cx:event:banned");
+        assert_eq!(head_a, "ck:event:joined");
+        assert_eq!(head_b, "ck:event:banned");
         assert_eq!(
             winner.get("membership").and_then(|v| v.as_str()),
             Some("ban")
@@ -4846,18 +4846,18 @@ mod tests {
     #[test]
     fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
         let mut view = LocalAnchorView::default();
-        let cell = "cx:cell:cx.component.capability.grant.v1:cx.grant.01".to_owned();
+        let cell = "ck:cell:cx.component.capability.grant.v1:cx.grant.01".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![
                     BottomCellHead {
-                        move_id: "cx:event:granted".to_owned(),
+                        move_id: "ck:event:granted".to_owned(),
                         value: serde_json::json!({"status": "active"}),
                     },
                     BottomCellHead {
-                        move_id: "cx:event:revoked".to_owned(),
+                        move_id: "ck:event:revoked".to_owned(),
                         value: serde_json::json!({"status": "revoked"}),
                     },
                 ],
@@ -4873,18 +4873,18 @@ mod tests {
     #[test]
     fn safer_winner_for_unknown_cell_family_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "cx:cell:cx.component.space.organization.v1:cx:space:demo".to_owned();
+        let cell = "ck:cell:cx.component.space.organization.v1:ck:space:demo".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![
                     BottomCellHead {
-                        move_id: "cx:event:a".to_owned(),
+                        move_id: "ck:event:a".to_owned(),
                         value: serde_json::json!({"title": "alpha"}),
                     },
                     BottomCellHead {
-                        move_id: "cx:event:b".to_owned(),
+                        move_id: "ck:event:b".to_owned(),
                         value: serde_json::json!({"title": "beta"}),
                     },
                 ],
@@ -4898,18 +4898,18 @@ mod tests {
     #[test]
     fn safer_winner_for_tied_heads_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
                 status: "expose".to_owned(),
                 heads: vec![
                     BottomCellHead {
-                        move_id: "cx:event:ban-a".to_owned(),
+                        move_id: "ck:event:ban-a".to_owned(),
                         value: serde_json::json!({"membership": "ban", "reason": "spam"}),
                     },
                     BottomCellHead {
-                        move_id: "cx:event:ban-b".to_owned(),
+                        move_id: "ck:event:ban-b".to_owned(),
                         value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
                     },
                 ],
@@ -4922,7 +4922,7 @@ mod tests {
     #[test]
     fn safer_winner_for_missing_heads_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "cx:cell:cx.component.member.state.v1:did:web:alice".to_owned();
+        let cell = "ck:cell:cx.component.member.state.v1:did:web:alice".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4937,41 +4937,41 @@ mod tests {
     fn anchor_view_from_sync_body_parses_full_payload() {
         let body = serde_json::json!({
             "anchor_view": {
-                "frontier": ["cx:anchor:sha256:aaa", "cx:anchor:sha256:bbb"],
+                "frontier": ["ck:anchor:sha256:aaa", "ck:anchor:sha256:bbb"],
                 "leaves":   ["sha256:lf1"],
-                "state_root": "cx:state:sha256:abc",
+                "state_root": "ck:state:sha256:abc",
                 "cells": {
-                    "cx:cell:cx.component.member.state.v1:did:web:alice": {
+                    "ck:cell:cx.component.member.state.v1:did:web:alice": {
                         "bottom": "expose",
                         "heads": [
                             {
-                                "move_id": "cx:event:joined",
+                                "move_id": "ck:event:joined",
                                 "value": {"membership": "join"}
                             },
                             {
-                                "move_id": "cx:event:banned",
+                                "move_id": "ck:event:banned",
                                 "value": {"membership": "ban", "reason": "abuse"}
                             }
                         ]
                     },
-                    "cx:cell:cx.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
+                    "ck:cell:cx.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
                 }
             }
         });
         let view = LocalAnchorView::from_sync_body(&body);
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves, vec!["sha256:lf1".to_owned()]);
-        assert_eq!(view.state_root.as_deref(), Some("cx:state:sha256:abc"));
+        assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
         // Only `bottom=expose` cells are surfaced — `reject` cells stay
         // out of the conflict map.
         assert_eq!(view.bottom_cells.len(), 1);
         let info = view
             .bottom_cells
-            .get("cx:cell:cx.component.member.state.v1:did:web:alice")
+            .get("ck:cell:cx.component.member.state.v1:did:web:alice")
             .expect("expose cell present");
         assert_eq!(info.status, "expose");
         assert_eq!(info.heads.len(), 2);
-        assert_eq!(info.heads[0].move_id, "cx:event:joined");
+        assert_eq!(info.heads[0].move_id, "ck:event:joined");
         assert_eq!(
             info.heads[1]
                 .value
@@ -4985,20 +4985,20 @@ mod tests {
     fn anchor_view_from_sync_body_parses_structured_bottoms() {
         let body = serde_json::json!({
             "bottoms": [{
-                "cell": "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card",
+                "cell": "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card",
                 "status": "conflict",
                 "bottom": {
                     "kind": "conflict",
                     "cells": [
-                        "cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card"
+                        "ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card"
                     ],
                     "event_ids": [
-                        "cx:event:0196419b-0000-7000-8000-000000000001",
-                        "cx:event:0196419b-0000-7000-8000-000000000002"
+                        "ck:event:0196419b-0000-7000-8000-000000000001",
+                        "ck:event:0196419b-0000-7000-8000-000000000002"
                     ],
                     "heads": [
-                        {"list_space_id": "cx:space:list-a", "rank": "U"},
-                        {"list_space_id": "cx:space:list-b", "rank": "U"}
+                        {"list_space_id": "ck:space:list-a", "rank": "U"},
+                        {"list_space_id": "ck:space:list-b", "rank": "U"}
                     ]
                 }
             }]
@@ -5007,20 +5007,20 @@ mod tests {
         let view = LocalAnchorView::from_sync_body(&body);
         let info = view
             .bottom_cells
-            .get("cx:cell:cx.component.flow.position.v1:cx:space:board:cx:flow:card")
+            .get("ck:cell:cx.component.flow.position.v1:ck:space:board:ck:flow:card")
             .expect("structured bottom conflict surfaced");
         assert_eq!(info.status, "conflict");
         assert_eq!(info.heads.len(), 2);
         assert_eq!(
             info.heads[0].move_id,
-            "cx:event:0196419b-0000-7000-8000-000000000001"
+            "ck:event:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(
             info.heads[1]
                 .value
                 .get("list_space_id")
                 .and_then(|v| v.as_str()),
-            Some("cx:space:list-b")
+            Some("ck:space:list-b")
         );
     }
 
@@ -5028,14 +5028,14 @@ mod tests {
     fn anchor_view_from_sync_body_extracts_mls_epoch_and_covered_frontier() {
         let body = serde_json::json!({
             "anchor_view": {
-                "frontier": ["cx:anchor:sha256:aaa"],
+                "frontier": ["ck:anchor:sha256:aaa"],
                 "leaves": [],
                 "cells": {
-                    "cx:cell:cx.component.mls.epoch.v1:cx:space:demo": {
+                    "ck:cell:cx.component.mls.epoch.v1:ck:space:demo": {
                         "value": 7
                     },
-                    "cx:cell:cx.component.governance.covered_frontier.v1:cx:space:demo": {
-                        "register": { "value": "cx:state:sha256:abcd" }
+                    "ck:cell:cx.component.governance.covered_frontier.v1:ck:space:demo": {
+                        "register": { "value": "ck:state:sha256:abcd" }
                     }
                 }
             }
@@ -5044,7 +5044,7 @@ mod tests {
         assert_eq!(view.mls_epoch, Some(7));
         assert_eq!(
             view.covered_frontier.as_deref(),
-            Some("cx:state:sha256:abcd")
+            Some("ck:state:sha256:abcd")
         );
     }
 
@@ -5056,7 +5056,7 @@ mod tests {
             "anchor_view": {
                 "frontier": [],
                 "cells": {
-                    "cx:cell:cx.component.mls.epoch.v1:cx:space:demo": {
+                    "ck:cell:cx.component.mls.epoch.v1:ck:space:demo": {
                         "value": { "epoch": 42, "members": 3 }
                     }
                 }
@@ -5070,7 +5070,7 @@ mod tests {
     fn anchor_view_from_sync_body_extracts_covered_frontier_lag() {
         let body = serde_json::json!({
             "anchor_view": {
-                "frontier": ["cx:anchor:sha256:aaa"],
+                "frontier": ["ck:anchor:sha256:aaa"],
                 "leaves": [],
                 "covered_frontier_lag": 12,
                 "cells": {}
@@ -5102,23 +5102,23 @@ mod tests {
         let path = temp_state_path("anchor-aggregate");
         let mut store = LocalStateStore::with_path(path);
         store.set_anchor_view(
-            "cx:space:one",
+            "ck:space:one",
             LocalAnchorView {
-                frontier: vec!["cx:anchor:sha256:one".to_owned()],
+                frontier: vec!["ck:anchor:sha256:one".to_owned()],
                 ..LocalAnchorView::default()
             },
         );
         store.set_anchor_view(
-            "cx:space:two",
+            "ck:space:two",
             LocalAnchorView {
-                frontier: vec!["cx:anchor:sha256:two".to_owned()],
+                frontier: vec!["ck:anchor:sha256:two".to_owned()],
                 ..LocalAnchorView::default()
             },
         );
         let all = store.anchor_views();
         assert_eq!(all.len(), 2);
-        assert!(all.contains_key("cx:space:one"));
-        assert!(all.contains_key("cx:space:two"));
+        assert!(all.contains_key("ck:space:one"));
+        assert!(all.contains_key("ck:space:two"));
     }
 
     #[test]
@@ -5245,7 +5245,7 @@ mod tests {
         {
             let mut store = LocalStateStore::with_path(path.clone());
             store.set_read_receipt_policy_snapshot(
-                "cx:space:demo",
+                "ck:space:demo",
                 Some(ReadReceiptPolicySnapshot {
                     disclosure: "required".to_owned(),
                     visibility: Some("track_scoped".to_owned()),
@@ -5254,7 +5254,7 @@ mod tests {
         }
         let reader = LocalStateStore::with_path(path);
         let snap = reader
-            .read_receipt_policy_for_space("cx:space:demo")
+            .read_receipt_policy_for_space("ck:space:demo")
             .unwrap();
         assert_eq!(snap.disclosure, "required");
         assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));
@@ -5267,7 +5267,7 @@ mod tests {
         // record.
         use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-persist");
-        let space = "cx:space:round28-mls";
+        let space = "ck:space:round28-mls";
         let envelope = encrypt_state(
             space,
             "deadbeef",
@@ -5294,7 +5294,7 @@ mod tests {
         use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-drop");
         let mut store = LocalStateStore::with_path(path);
-        let space = "cx:space:drop-me";
+        let space = "ck:space:drop-me";
         store.save_mls_snapshot(space, encrypt_state(space, "abcd", 1, b"x", "p", b"salt"));
         assert!(store.mls_snapshot_for(space).is_some());
         store.drop_mls_snapshot(space);
@@ -5346,7 +5346,7 @@ mod tests {
         assert_eq!(store.telemetry_log().len(), 1);
 
         let base = format!("http://{}/", addr);
-        let api = crate::api::ContrixApi::new(&base).unwrap();
+        let api = crate::api::CokretApi::new(&base).unwrap();
         let sent = store.flush_telemetry_to_server(&api).await;
         assert_eq!(sent, 0, "404 must not count as sent");
         // 404-tolerant: entry survives for next attempt.
@@ -5375,7 +5375,7 @@ mod tests {
     fn space_remark_set_and_display_name_prefers_local_name() {
         let path = temp_state_path("space-remark-set");
         let mut store = LocalStateStore::with_path(path);
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
         assert!(store.space_remark(space_id).is_none());
         assert_eq!(
             store.display_name_for_space(space_id, "Engineering"),
@@ -5397,7 +5397,7 @@ mod tests {
     fn space_remark_empty_value_tombstones_entry() {
         let path = temp_state_path("space-remark-tombstone");
         let mut store = LocalStateStore::with_path(path);
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
         store.set_space_remark(
             space_id,
             crate::account_data::SpaceRemark::new(space_id, "x"),
@@ -5423,8 +5423,8 @@ mod tests {
     fn space_remark_remove_clears_only_target_space() {
         let path = temp_state_path("space-remark-remove");
         let mut store = LocalStateStore::with_path(path);
-        let a = "cx:space:00000000-0000-7000-8000-000000000001";
-        let b = "cx:space:00000000-0000-7000-8000-000000000002";
+        let a = "ck:space:00000000-0000-7000-8000-000000000001";
+        let b = "ck:space:00000000-0000-7000-8000-000000000002";
         store.set_space_remark(a, crate::account_data::SpaceRemark::new(a, "A"));
         store.set_space_remark(b, crate::account_data::SpaceRemark::new(b, "B"));
 
@@ -5440,7 +5440,7 @@ mod tests {
     #[test]
     fn space_remark_persists_to_disk_between_instances() {
         let path = temp_state_path("space-remark-persist");
-        let space_id = "cx:space:0196419b-0000-7000-8000-000000000000";
+        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
         {
             let mut writer = LocalStateStore::with_path(path.clone());
             writer.set_space_remark(

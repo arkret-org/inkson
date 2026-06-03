@@ -160,14 +160,14 @@ mod tests {
     #[test]
     fn audit_accessed_emits_canonical_kind() {
         let op = build_audit_accessed(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:event:abc",
+            "ck:event:abc",
             "did:key:zDevice",
         )
         .build("node");
         assert_eq!(op.kind, "cx.audit.accessed");
-        assert_eq!(op.payload["target_ref"], "cx:event:abc");
+        assert_eq!(op.payload["target_ref"], "ck:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
             op.payload["purpose"]
@@ -183,14 +183,14 @@ mod tests {
     #[test]
     fn audit_ryw_receipt_lists_devices() {
         let op = build_audit_ryw_receipt(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:event:abc",
+            "ck:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
         assert_eq!(op.kind, "cx.audit.ryw_receipt");
-        assert_eq!(op.payload["target_ref"], "cx:event:abc");
+        assert_eq!(op.payload["target_ref"], "ck:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
             op.payload["purpose"]
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn presentation_request_carries_claim_list() {
         let op = build_presentation_request(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
@@ -219,9 +219,9 @@ mod tests {
     #[test]
     fn disclosure_receipt_records_counterparty() {
         let op = build_disclosure_receipt(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:event:req",
+            "ck:event:req",
             "did:web:bob",
             vec!["email".into()],
         )

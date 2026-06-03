@@ -2,7 +2,7 @@
 //!
 //! Yougen ships a Media classifier already (`media.rs`); this module adds the
 //! protocol-level send paths so blob references survive in event payloads
-//! with the spec's content-hash typed-id (`cx:blob:sha256:<hex>`).
+//! with the spec's content-hash typed-id (`ck:blob:sha256:<hex>`).
 //!
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
@@ -44,10 +44,10 @@ pub struct EncryptedAttachmentBundle {
     pub thumbnail: Option<EncryptedClientAsset>,
 }
 
-/// Content-address a blob payload as `cx:blob:sha256:<hex>`.
+/// Content-address a blob payload as `ck:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("cx:blob:sha256:{digest:x}")
+    format!("ck:blob:sha256:{digest:x}")
 }
 
 /// Build a `cx.blob.register` event body describing an authenticated media
@@ -186,7 +186,7 @@ fn encrypt_mls_asset_with_nonce(
         "attachment" | "thumbnail" => asset_kind,
         _ => anyhow::bail!("asset_kind must be attachment or thumbnail"),
     };
-    let aad = format!("contrix:media:v1:{realm_id}:{epoch}:{asset_kind}");
+    let aad = format!("cokret:media:v1:{realm_id}:{epoch}:{asset_kind}");
     let cipher = XChaCha20Poly1305::new(mls_exported_secret.into());
     let ciphertext = cipher
         .encrypt(
@@ -199,7 +199,7 @@ fn encrypt_mls_asset_with_nonce(
         .map_err(|err| anyhow!("xchacha20poly1305 attachment encrypt: {err}"))?;
     let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&ciphertext));
     let envelope = json!({
-        "version": "contrix.encrypted_attachment.v1",
+        "version": "cokret.encrypted_attachment.v1",
         "algorithm": MLS_ATTACHMENT_AEAD_ALGORITHM,
         "nonce": URL_SAFE_NO_PAD.encode(nonce),
         "key_ref": key_ref,
@@ -228,17 +228,17 @@ mod tests {
         let c = blob_typed_id(b"world");
         assert_eq!(a, b);
         assert_ne!(a, c);
-        assert!(a.starts_with("cx:blob:sha256:"));
+        assert!(a.starts_with("ck:blob:sha256:"));
         // sha256 hex length is 64.
-        assert_eq!(a.len(), "cx:blob:sha256:".len() + 64);
+        assert_eq!(a.len(), "ck:blob:sha256:".len() + 64);
     }
 
     #[test]
     fn blob_revoke_emits_canonical_kind() {
         let op = build_blob_revoke(
-            "cx:space:s1",
+            "ck:space:s1",
             "did:web:alice",
-            "cx:blob:sha256:dead",
+            "ck:blob:sha256:dead",
             Some("uploaded in error"),
         )
         .build("node");
@@ -254,9 +254,9 @@ mod tests {
             b"plain cat png bytes",
             "attachment",
             &key,
-            "cx:realm:encrypted",
+            "ck:realm:encrypted",
             42,
-            json!({"group_id": "cx:mls:group", "epoch": 42}),
+            json!({"group_id": "ck:mls:group", "epoch": 42}),
             nonce,
         )
         .unwrap();
@@ -293,9 +293,9 @@ mod tests {
             b"full-resolution plaintext",
             Some(b"thumbnail plaintext"),
             &key,
-            "cx:realm:encrypted",
+            "ck:realm:encrypted",
             7,
-            json!({"group_id": "cx:mls:group", "epoch": 7}),
+            json!({"group_id": "ck:mls:group", "epoch": 7}),
         )
         .unwrap();
         let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");

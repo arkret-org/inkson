@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
-use crate::api::ContrixApi;
+use crate::api::CokretApi;
 use crate::coauth::{
     CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
     build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
@@ -118,7 +118,7 @@ pub fn LoginPanel(
                 div { class: "auth-logo", "C" }
                 div {
                     h1 { if auto_capture_callback { "Completing sign in" } else { "Sign in" } }
-                    p { "Contrix" }
+                    p { "Cokret" }
                 }
             }
 
@@ -500,7 +500,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .map(|server| server.endpoint.clone())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(principal_server_url);
-    let principal = ContrixApi::new(&principal_target)
+    let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let oidc_bundle = match login.oidc_tokens.as_ref() {
         Some(tokens) => {
@@ -779,14 +779,14 @@ mod tests {
             session_private_key_pem: "private-key-pem".to_owned(),
             expires_at: "2026-05-29T12:00:00Z".to_owned(),
             audience: Some("https://local.host/api".to_owned()),
-            scopes: vec!["urn:contrix:principal-server:session.bind".to_owned()],
+            scopes: vec!["urn:cokret:principal-server:session.bind".to_owned()],
             principal_server: None,
         };
         let session = DevLoginResponse {
             access_token: "sx-bridge".to_owned(),
             token_type: "Bearer".to_owned(),
             actor: "did:web:alice.example".to_owned(),
-            device_id: "cx:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
             expires_at: "2026-05-29T11:05:00Z".to_owned(),
         };
 
@@ -806,7 +806,7 @@ mod tests {
         assert_eq!(persisted.principal_id, "did:web:alice.example");
         assert_eq!(
             persisted.device_id,
-            "cx:device:01964137-0000-7000-8000-000000000001"
+            "ck:device:01964137-0000-7000-8000-000000000001"
         );
         assert_eq!(persisted.principal_server_url, "https://local.host");
         assert_eq!(

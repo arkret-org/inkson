@@ -1,6 +1,6 @@
 //! R3.2 — Realm-scoped `cx.member.identity.update` event store.
 //!
-//! Spec source: contrix-spec @ b56cab1 (2026-05-28)
+//! Spec source: cokret-spec @ b56cab1 (2026-05-28)
 //! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
 //!
 //! Sync ingest pipeline (MID-2): when a `members[]` roster entry on an
@@ -233,13 +233,13 @@ mod tests {
 
     fn sample_payload(actor_id: &str, name: &str) -> Value {
         json!({
-            "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": actor_id,
             "segment": "member_identity",
             "identity_payload": {
                 "member_identity": {
                     "schema": "cx.schema.member_identity.v1",
-                    "realm_id": "cx:realm:01904100-0000-7000-8000-000000000001",
+                    "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
                     "actor_id": actor_id,
                     "subject_id": actor_id,
                     "display_profile": { "display_name": name },
@@ -259,9 +259,9 @@ mod tests {
     fn ingests_inline_event_and_resolves_current_identity() {
         let mut store = MemberIdentityStore::new();
         let actor = "did:web:alice.example";
-        let realm = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
-            "event_id": "cx:event:01904100-0000-7000-8000-00000000000a",
+            "event_id": "ck:event:01904100-0000-7000-8000-00000000000a",
             "kind": "cx.member.identity.update",
             "payload": sample_payload(actor, "Alice v1"),
         });
@@ -279,9 +279,9 @@ mod tests {
     fn encrypted_carrier_marks_decryption_pending() {
         let mut store = MemberIdentityStore::new();
         let actor = "did:web:alice.example";
-        let realm = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
-            "event_id": "cx:event:01904100-0000-7000-8000-00000000000b",
+            "event_id": "ck:event:01904100-0000-7000-8000-00000000000b",
             "kind": "cx.member.identity.update",
             "payload": {
                 "realm_id": realm,
@@ -308,9 +308,9 @@ mod tests {
     fn ignores_events_for_other_kinds() {
         let mut store = MemberIdentityStore::new();
         let actor = "did:web:alice.example";
-        let realm = "cx:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
-            "event_id": "cx:event:01904100-0000-7000-8000-00000000000c",
+            "event_id": "ck:event:01904100-0000-7000-8000-00000000000c",
             "kind": "cx.flow.move",
             "payload": sample_payload(actor, "Alice"),
         });
@@ -327,7 +327,7 @@ mod tests {
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
             schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-            realm_id: RealmId::new("cx:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             display_profile: DisplayProfile {

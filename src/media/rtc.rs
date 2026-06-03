@@ -1,7 +1,7 @@
 //! RTC client integration scaffolding (CXP-0010, spec head b47ff6ec).
 //!
 //! This module captures the client-side wire contract for the new media
-//! binding profile that landed in contrix-spec round R3:
+//! binding profile that landed in cokret-spec round R3:
 //!
 //! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token and `participant_binding`
 //!   from soland's `POST /rtc/token` endpoint via the SDK helper
@@ -14,10 +14,10 @@
 //! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be cross-checked against
 //!   `cx.call.state.participants[]`. A mismatch fails closed with
 //!   `participant_identity_unrecognised`.
-//! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations that bypass the Contrix
+//! - **MEDIA-3** — recording artifact pipeline rejects Egress destinations that bypass the Cokret
 //!   authenticated blob upload (`recording_artifact_pipeline_bypassed`).
 //!
-//! The actual SFU integration (LiveKit / mediasoup / janus / contrix-native)
+//! The actual SFU integration (LiveKit / mediasoup / janus / cokret-native)
 //! lives in the platform renderer; yougen ships the typed wire contract,
 //! validation predicates, and error reasons so the renderer wires into a
 //! single source of truth.
@@ -47,7 +47,7 @@ pub const SFRAME_FRAME_KEY_CONTEXT: &[u8] = &[];
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = 600;
 
 /// Error reasons surfaced by the RTC client integration. These map 1:1
-/// to the new error code enum landed in contrix-spec round R3 (§0.7).
+/// to the new error code enum landed in cokret-spec round R3 (§0.7).
 ///
 /// Toast layer copy is keyed by `error.call.<wire>` (see `i18n.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub enum RtcClientError {
     /// Server-reported focus disagrees with the call-state commit.
     FocusMismatch,
     /// `cx.realm.media_service.foci[].type` not one of the five
-    /// canonical enums (`livekit | mediasoup | janus | contrix-native
+    /// canonical enums (`livekit | mediasoup | janus | cokret-native
     /// | moq-relay`).
     UnknownFocusType,
     /// Token issuer kid does not resolve to the current
@@ -73,7 +73,7 @@ pub enum RtcClientError {
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
     E2eeKeySourceUnauthorised,
-    /// Egress destination is not a Contrix-authenticated blob upload.
+    /// Egress destination is not a Cokret-authenticated blob upload.
     /// Recording is refused.
     RecordingArtifactPipelineBypassed,
 }
@@ -134,7 +134,7 @@ pub const ALLOWED_FOCUS_TYPES: &[&str] = &[
     "livekit",
     "mediasoup",
     "janus",
-    "contrix-native",
+    "cokret-native",
     "moq-relay",
 ];
 
@@ -203,8 +203,8 @@ pub fn cross_check_participant_identity(
 /// Egress destination classification for the recording pipeline (MEDIA-3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EgressDestination {
-    /// Contrix-authenticated blob upload (the only allowed sink).
-    ContrixBlob,
+    /// Cokret-authenticated blob upload (the only allowed sink).
+    CokretBlob,
     /// Direct cloud-storage egress (S3 / GCS / Azure Blob). REJECTED.
     DirectCloudStorage,
     /// Custom webhook / RTMP / file. REJECTED.
@@ -212,7 +212,7 @@ pub enum EgressDestination {
 }
 
 /// MEDIA-3 — validates a recording artifact destination. Only the
-/// Contrix blob pipeline is accepted; any direct egress to S3/GCS/etc.
+/// Cokret blob pipeline is accepted; any direct egress to S3/GCS/etc.
 /// is rejected with [`RtcClientError::RecordingArtifactPipelineBypassed`].
 ///
 /// TODO(R3.1): wire this predicate into the renderer's Egress
@@ -222,7 +222,7 @@ pub fn validate_recording_destination(
     destination: EgressDestination,
 ) -> Result<(), RtcClientError> {
     match destination {
-        EgressDestination::ContrixBlob => Ok(()),
+        EgressDestination::CokretBlob => Ok(()),
         EgressDestination::DirectCloudStorage | EgressDestination::Other => {
             Err(RtcClientError::RecordingArtifactPipelineBypassed)
         }
@@ -286,7 +286,7 @@ mod tests {
         assert!(is_known_focus_type("livekit"));
         assert!(is_known_focus_type("mediasoup"));
         assert!(is_known_focus_type("janus"));
-        assert!(is_known_focus_type("contrix-native"));
+        assert!(is_known_focus_type("cokret-native"));
         assert!(is_known_focus_type("moq-relay"));
         assert!(!is_known_focus_type("LiveKit")); // case-sensitive
         assert!(!is_known_focus_type("zoom"));
@@ -295,23 +295,23 @@ mod tests {
     #[test]
     fn participant_identity_cross_check_fails_closed_on_unknown() {
         let mut known = BTreeSet::new();
-        known.insert("cx:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
+        known.insert("ck:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
         assert!(
             cross_check_participant_identity(
-                "cx:rtc_participant:00000000-0000-0000-0000-000000000001",
+                "ck:rtc_participant:00000000-0000-0000-0000-000000000001",
                 &known
             )
             .is_ok()
         );
         assert_eq!(
-            cross_check_participant_identity("cx:rtc_participant:unknown", &known),
+            cross_check_participant_identity("ck:rtc_participant:unknown", &known),
             Err(RtcClientError::ParticipantIdentityUnrecognised)
         );
     }
 
     #[test]
     fn recording_destination_only_accepts_contrix_blob() {
-        assert!(validate_recording_destination(EgressDestination::ContrixBlob).is_ok());
+        assert!(validate_recording_destination(EgressDestination::CokretBlob).is_ok());
         assert_eq!(
             validate_recording_destination(EgressDestination::DirectCloudStorage),
             Err(RtcClientError::RecordingArtifactPipelineBypassed)
@@ -342,15 +342,15 @@ mod tests {
     #[test]
     fn token_exchange_request_carries_required_fields() {
         let body = token_exchange_request(
-            "cx:realm:abc",
-            "cx:call:xyz",
+            "ck:realm:abc",
+            "ck:call:xyz",
             "did:web:example:users:alice",
-            "cx:device:dev-1",
-            "cx:focus:foo",
+            "ck:device:dev-1",
+            "ck:focus:foo",
         );
-        assert_eq!(body["realm_id"], "cx:realm:abc");
-        assert_eq!(body["call_id"], "cx:call:xyz");
-        assert_eq!(body["focus_id"], "cx:focus:foo");
+        assert_eq!(body["realm_id"], "ck:realm:abc");
+        assert_eq!(body["call_id"], "ck:call:xyz");
+        assert_eq!(body["focus_id"], "ck:focus:foo");
     }
 
     #[test]

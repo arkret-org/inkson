@@ -154,15 +154,15 @@ mod tests {
             "op-1",
             &json!({
                 "kind": "cx.audit.accessed",
-                "space_id": "cx:space:s1",
-                "target_event_id": "cx:event:abc",
+                "space_id": "ck:space:s1",
+                "target_event_id": "ck:event:abc",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "cx.audit.accessed");
-        assert_eq!(row.space_id.as_deref(), Some("cx:space:s1"));
-        assert_eq!(row.target_event_id.as_deref(), Some("cx:event:abc"));
+        assert_eq!(row.space_id.as_deref(), Some("ck:space:s1"));
+        assert_eq!(row.target_event_id.as_deref(), Some("ck:event:abc"));
     }
 
     #[test]
@@ -171,12 +171,12 @@ mod tests {
             "op-2",
             &json!({
                 "kind": "cx.audit.ryw_receipt",
-                "source_event_id": "cx:event:xyz",
+                "source_event_id": "ck:event:xyz",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "cx.audit.ryw_receipt");
-        assert_eq!(row.target_event_id.as_deref(), Some("cx:event:xyz"));
+        assert_eq!(row.target_event_id.as_deref(), Some("ck:event:xyz"));
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
             "op-3",
             &json!({
                 "kind": "cx.message.create",
-                "space_id": "cx:space:s1",
+                "space_id": "ck:space:s1",
             }),
         );
         assert!(none.is_none());

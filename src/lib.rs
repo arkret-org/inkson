@@ -54,7 +54,7 @@ pub mod key_store;
 pub mod late_recovery;
 pub mod local_state;
 pub mod media;
-/// R3.1 (contrix-spec @ 7157ee8) — Realm-scoped
+/// R3.1 (cokret-spec @ 7157ee8) — Realm-scoped
 /// `cx.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`contrix_sdk::MemberIdentity`] via the SDK's

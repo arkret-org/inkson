@@ -1,6 +1,6 @@
 //! Applets — registry + protocol_session controls.
 //!
-//! Spec: `contrix-spec/spec/v1/zh/extensions/applet-integration.md`.
+//! Spec: `cokret-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
 //! What the panel does today:
 //!   * Reads `cx.applet.registration` / `cx.applet.discovery` events out of the local raw-operation
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
         let op = crate::operation::cx_ops::applet_registration(
-            "cx:space:test",
+            "ck:space:test",
             "did:web:alice.example",
             "did:web:applet.example",
             "extensions",
