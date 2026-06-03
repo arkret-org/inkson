@@ -71,68 +71,43 @@ pub struct AnchorWitnessChain {
 /// a specific spec-prescribed rejection reason so the caller can
 /// surface a precise audit row rather than a generic "verification
 /// failed".
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum WitnessError {
     /// `threshold_required` was zero. A chain that can never fail
     /// proves nothing; reject up front.
+    #[error("anchor witness threshold_required must be > 0")]
     ThresholdMustBePositive,
     /// `witnesses` was empty. A chain with no signers can't satisfy
     /// any positive threshold.
+    #[error("anchor witness chain is empty")]
     NoWitnessesProvided,
     /// `anchor_id` was empty. Spec requires every witness to bind to
     /// a concrete anchor.
+    #[error("anchor witness chain has empty anchor_id")]
     MissingAnchorId,
     /// Two witnesses had the same `signer_did`. The threshold counts
     /// **distinct** trusted signers; duplicates would inflate the
     /// count and let one anchorer satisfy threshold N alone.
+    #[error("anchor witness chain repeats signer {0}")]
     DuplicateSigner(String),
     /// A witness referred to a domain that isn't pinned in the trust
     /// bundle. The receiver cannot trust the signature without a
     /// pinned anchor for that domain.
+    #[error(
+        "anchor witness signer {signer_did} (domain {signer_domain}) is not pinned in the trust bundle"
+    )]
     UnknownSigner {
         signer_did: String,
         signer_domain: String,
     },
     /// A witness's signature failed the [`SignatureVerifier`] check.
+    #[error("anchor witness signature from {signer_did} failed verification")]
     SignatureInvalid { signer_did: String },
     /// The total number of distinct trusted, signature-valid witnesses
     /// fell short of `threshold_required`.
+    #[error("anchor witness threshold not met: required {required}, present {present}")]
     ThresholdNotMet { required: usize, present: usize },
 }
-
-impl std::fmt::Display for WitnessError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ThresholdMustBePositive => {
-                f.write_str("anchor witness threshold_required must be > 0")
-            }
-            Self::NoWitnessesProvided => f.write_str("anchor witness chain is empty"),
-            Self::MissingAnchorId => f.write_str("anchor witness chain has empty anchor_id"),
-            Self::DuplicateSigner(did) => {
-                write!(f, "anchor witness chain repeats signer {did}")
-            }
-            Self::UnknownSigner {
-                signer_did,
-                signer_domain,
-            } => write!(
-                f,
-                "anchor witness signer {signer_did} (domain {signer_domain}) is not pinned in the trust bundle"
-            ),
-            Self::SignatureInvalid { signer_did } => {
-                write!(
-                    f,
-                    "anchor witness signature from {signer_did} failed verification"
-                )
-            }
-            Self::ThresholdNotMet { required, present } => write!(
-                f,
-                "anchor witness threshold not met: required {required}, present {present}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for WitnessError {}
 
 /// Function signature for the scheme-specific signature check. The
 /// closure receives `(signer_did, post_state_root, signature)` and

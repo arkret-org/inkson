@@ -313,24 +313,15 @@ impl ReconnectionCoordinator {
 }
 
 /// Errors that can occur in offline operations.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum OfflineError {
+    #[error("offline queue is full")]
     QueueFull,
+    #[error("operation failed: {0}")]
     OperationFailed(String),
+    #[error("network is offline")]
     NetworkOffline,
 }
-
-impl std::fmt::Display for OfflineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::QueueFull => write!(f, "offline queue is full"),
-            Self::OperationFailed(msg) => write!(f, "operation failed: {msg}"),
-            Self::NetworkOffline => write!(f, "network is offline"),
-        }
-    }
-}
-
-impl std::error::Error for OfflineError {}
 
 /// Builder for creating queued operations.
 pub struct QueuedOperationBuilder {

@@ -94,24 +94,15 @@ pub fn build_default_resolver(profile: DeploymentProfile) -> CompositeDidResolve
 /// - `Disallowed` — DID method is not in `allowed_methods` for the active profile.
 /// - `Unresolved` — no resolver could resolve the DID (likely missing document evidence).
 /// - `MethodMismatch` — returned document `id` does not equal the requested DID.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum VerifyError {
+    #[error("DID method not allowed: {0}")]
     Disallowed(String),
+    #[error("DID resolution failed: {0}")]
     Unresolved(String),
+    #[error("DID document id does not match requested DID")]
     MethodMismatch,
 }
-
-impl std::fmt::Display for VerifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Disallowed(d) => write!(f, "DID method not allowed: {d}"),
-            Self::Unresolved(d) => write!(f, "DID resolution failed: {d}"),
-            Self::MethodMismatch => f.write_str("DID document id does not match requested DID"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyError {}
 
 /// Verify `principal` against the resolver chain. Returns the resolved
 /// `DidDocument` on success.

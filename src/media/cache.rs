@@ -54,33 +54,18 @@ pub const THUMBNAIL_JPEG_QUALITY: u8 = 80;
 /// in `crate::blob`.
 pub const DEFAULT_CACHE_MAX_BYTES: usize = 200 * 1024 * 1024;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum MediaCacheError {
-    Io(std::io::Error),
+    #[error("media cache io: {0}")]
+    Io(#[from] std::io::Error),
     /// `image` crate failed to decode the source bytes (corrupt /
     /// unsupported format) or encode the thumbnail.
+    #[error("media cache image: {0}")]
     Image(String),
     /// Lock poisoned because another thread panicked while holding the
     /// LRU bookkeeping mutex.
+    #[error("media cache lock poisoned")]
     LockPoisoned,
-}
-
-impl std::fmt::Display for MediaCacheError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "media cache io: {err}"),
-            Self::Image(msg) => write!(f, "media cache image: {msg}"),
-            Self::LockPoisoned => write!(f, "media cache lock poisoned"),
-        }
-    }
-}
-
-impl std::error::Error for MediaCacheError {}
-
-impl From<std::io::Error> for MediaCacheError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
-    }
 }
 
 /// Compute the cache key for `content_id` at `version_tag`. The output

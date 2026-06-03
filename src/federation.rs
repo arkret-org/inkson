@@ -233,33 +233,22 @@ impl TrustBundle {
 }
 
 /// F-WELLKNOWN-1: errors surfaced by [`fetch_well_known_cokret_server`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum WellKnownFetchError {
     /// `base_url` couldn't be turned into a URL (bad scheme, missing
     /// host, etc.).
+    #[error("bad base url: {0}")]
     BadBaseUrl(String),
     /// HTTP request itself failed (network down, TLS error, etc.).
+    #[error("well-known network error: {0}")]
     Network(String),
     /// Server returned a non-2xx status.
+    #[error("well-known HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
     /// Response body wasn't a parseable `WellKnownCokretServer`.
+    #[error("well-known decode error: {0}")]
     Decode(String),
 }
-
-impl std::fmt::Display for WellKnownFetchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::BadBaseUrl(s) => write!(f, "bad base url: {s}"),
-            Self::Network(s) => write!(f, "well-known network error: {s}"),
-            Self::HttpStatus { status, body } => {
-                write!(f, "well-known HTTP {status}: {body}")
-            }
-            Self::Decode(s) => write!(f, "well-known decode error: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for WellKnownFetchError {}
 
 /// F-WELLKNOWN-1: derive the `.well-known/cokret/server` URL from a
 /// service base URL.

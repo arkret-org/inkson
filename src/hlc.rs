@@ -173,28 +173,19 @@ pub fn observe_seq(seq: u64) {
     });
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HlcError {
     /// The string is not a valid canonical v1 HLC. Format validation is
     /// delegated to the SDK (`validate_hlc_format` / `cokret_sdk::Hlc::new`),
     /// which enforces the strict `^[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{8}$` form;
     /// this variant carries the offending input.
+    #[error("invalid HLC format: {0}")]
     InvalidFormat(String),
     /// The node segment is well-formed hex per the SDK but does not fit the
     /// `u32` this struct stores.
+    #[error("invalid node component: {0}")]
     InvalidNode(String),
 }
-
-impl fmt::Display for HlcError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidFormat(s) => write!(f, "invalid HLC format: {s}"),
-            Self::InvalidNode(s) => write!(f, "invalid node component: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for HlcError {}
 
 #[cfg(test)]
 mod tests {

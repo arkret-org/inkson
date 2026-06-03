@@ -63,34 +63,24 @@ use serde_json::Value;
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
 
 /// Errors produced by the active-write signing pipeline.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EventSignerError {
     /// The active runtime [`ProofMode`] expects a real signer but none
     /// has been installed via [`install_active_signer`]. The submit
     /// guard surfaces this so the UI can prompt the user.
+    #[error(
+        "no event signer installed (active proof mode = {mode}). \
+        Boot must call event_signer::install_active_signer or downgrade \
+        to ProofMode::PlaceholderDev for dev fixtures."
+    )]
     MissingSigner { mode: &'static str },
     /// The underlying SDK backend refused to sign.
+    #[error("event signer backend rejected payload: {0}")]
     Backend(String),
     /// Canonical serialisation failed before reaching the signer.
+    #[error("canonical encoding failed before signing: {0}")]
     Encoding(String),
 }
-
-impl std::fmt::Display for EventSignerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingSigner { mode } => write!(
-                f,
-                "no event signer installed (active proof mode = {mode}). \
-                Boot must call event_signer::install_active_signer or downgrade \
-                to ProofMode::PlaceholderDev for dev fixtures."
-            ),
-            Self::Backend(msg) => write!(f, "event signer backend rejected payload: {msg}"),
-            Self::Encoding(msg) => write!(f, "canonical encoding failed before signing: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for EventSignerError {}
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
 /// the metadata yougen's UI / submit guard care about.

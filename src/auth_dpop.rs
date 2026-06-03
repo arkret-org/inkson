@@ -46,30 +46,21 @@ use crate::dpop::{
 use crate::local_state::{DpopDeviceKeyRecord, LocalStateStore};
 
 /// Errors surfaced when minting or loading the device DPoP key.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AuthDpopError {
     /// Could not generate randomness for a fresh key.
+    #[error("DPoP RNG failed: {0}")]
     Rng(String),
     /// The secure-key-store backend could not read or write the seed.
+    #[error("DPoP secure store failed: {0}")]
     SecureStore(String),
     /// The persisted seed was malformed (truncated / not base64url).
+    #[error("DPoP persisted seed invalid: {0}")]
     PersistedSeed(String),
     /// The underlying [`crate::dpop::build_dpop_proof_ed25519`] failed.
-    Mint(DpopError),
+    #[error("DPoP mint failed: {0}")]
+    Mint(#[from] DpopError),
 }
-
-impl std::fmt::Display for AuthDpopError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Rng(msg) => write!(f, "DPoP RNG failed: {msg}"),
-            Self::SecureStore(msg) => write!(f, "DPoP secure store failed: {msg}"),
-            Self::PersistedSeed(msg) => write!(f, "DPoP persisted seed invalid: {msg}"),
-            Self::Mint(err) => write!(f, "DPoP mint failed: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for AuthDpopError {}
 
 /// In-memory handle on the device's DPoP signing key. Construct via
 /// [`ensure_device_key`] or [`load_device_key`].

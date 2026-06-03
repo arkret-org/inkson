@@ -85,32 +85,21 @@ pub fn unwrap_secret(
 }
 
 /// Errors a [`SecureKeyStore`] can surface.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SecureKeyStoreError {
     /// The key was not present.
+    #[error("secret not found")]
     NotFound,
     /// Backend reachable but refused (locked keychain, biometric
     /// cancelled, permission denied, etc.).
+    #[error("secure key store backend error: {0}")]
     Backend(String),
     /// Backend not wired on this build target. Callers should fall back
     /// to a software default ([`MemorySecureKeyStore`]) and surface a
     /// "secrets stored in plaintext" warning to the user.
+    #[error("secure key store backend `{0}` is not supported")]
     Unsupported(&'static str),
 }
-
-impl std::fmt::Display for SecureKeyStoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "secret not found"),
-            Self::Backend(msg) => write!(f, "secure key store backend error: {msg}"),
-            Self::Unsupported(name) => {
-                write!(f, "secure key store backend `{name}` is not supported")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SecureKeyStoreError {}
 
 /// Pluggable string-keyed secret store. All methods take `&self` so a
 /// store can be cheaply shared via `Arc<dyn SecureKeyStore>`.

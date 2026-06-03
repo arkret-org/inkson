@@ -117,32 +117,19 @@ pub struct ReadCursorPositionEvent {
 /// Errors surfaced by the typed parsers when the payload is missing
 /// a required field. Yougen surfaces these into the audit log so a
 /// receiver-side schema drift is visible rather than swallowed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PresenceRxError {
+    #[error("{event_kind} payload missing required field `{field}`")]
     MissingField {
         event_kind: &'static str,
         field: &'static str,
     },
+    #[error("expected event kind `{expected}` but got `{actual}`")]
     WrongKind {
         expected: &'static str,
         actual: String,
     },
 }
-
-impl std::fmt::Display for PresenceRxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingField { event_kind, field } => {
-                write!(f, "{event_kind} payload missing required field `{field}`")
-            }
-            Self::WrongKind { expected, actual } => {
-                write!(f, "expected event kind `{expected}` but got `{actual}`")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PresenceRxError {}
 
 /// Parse a `ck.typing` envelope's payload into a [`TypingEvent`].
 pub fn parse_typing(

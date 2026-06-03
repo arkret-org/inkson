@@ -150,26 +150,17 @@ pub fn jwk_thumbprint_ed25519(verifying_key: &VerifyingKey) -> String {
 }
 
 /// Errors surfaced by [`build_dpop_proof_ed25519`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DpopError {
     /// A required claim (`htm` / `htu` / `jti`) was empty.
+    #[error("DPoP claim `{0}` must not be empty")]
     EmptyClaim(&'static str),
     /// `serde_json` failed to encode the header or payload — should
     /// never happen for the typed structs above, but we surface it
     /// rather than panic just in case.
+    #[error("DPoP encode failed: {0}")]
     Encode(String),
 }
-
-impl std::fmt::Display for DpopError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EmptyClaim(name) => write!(f, "DPoP claim `{name}` must not be empty"),
-            Self::Encode(msg) => write!(f, "DPoP encode failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for DpopError {}
 
 /// Convenience constructor for [`DpopClaims`] that fills in a fresh
 /// `iat` (current Unix seconds) and a 128-bit random `jti`.

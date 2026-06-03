@@ -681,11 +681,15 @@ fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationErr
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
+    #[error("unknown schema: {0}")]
     UnknownSchema(String),
+    #[error("{0}: expected object")]
     ExpectedObject(String),
+    #[error("missing required field: {0}")]
     MissingField(String),
+    #[error("invalid value for {field}, expected: {expected}")]
     InvalidValue {
         field: String,
         expected: String,
@@ -694,29 +698,9 @@ pub enum ValidationError {
     /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
     /// rejection at event ingest so a profile-drift attack / spec bump
     /// can't smuggle an unknown reducer kind into local state.
+    #[error("event kind `{0}` is outside yougen's conformance profile")]
     UnknownEventKind(String),
 }
-
-impl std::fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnknownSchema(s) => write!(f, "unknown schema: {s}"),
-            Self::ExpectedObject(s) => write!(f, "{s}: expected object"),
-            Self::MissingField(field) => write!(f, "missing required field: {field}"),
-            Self::InvalidValue { field, expected } => {
-                write!(f, "invalid value for {field}, expected: {expected}")
-            }
-            Self::UnknownEventKind(kind) => {
-                write!(
-                    f,
-                    "event kind `{kind}` is outside yougen's conformance profile"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ValidationError {}
 
 /// Space discovery state per cokret-spec section 9.2.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

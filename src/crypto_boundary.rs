@@ -73,29 +73,18 @@
 use std::fmt;
 
 /// Errors any [`CryptoBoundary`] implementation can surface.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CryptoBoundaryError {
     /// The boundary backend is unsupported in this build / environment.
     /// E.g. [`WebCryptoBoundary`] on a native target, or signing on a
     /// boundary that explicitly delegates signing to a sibling.
+    #[error("crypto boundary `{0}` not supported in this build")]
     Unsupported(&'static str),
     /// The backend was reachable but returned a domain error
     /// (verification failed, decryption failed, key wrong shape, ...).
+    #[error("crypto boundary backend error: {0}")]
     Backend(String),
 }
-
-impl fmt::Display for CryptoBoundaryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unsupported(name) => {
-                write!(f, "crypto boundary `{name}` not supported in this build")
-            }
-            Self::Backend(msg) => write!(f, "crypto boundary backend error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for CryptoBoundaryError {}
 
 /// Production-side trust boundary trait. Each operation maps to a
 /// concrete primitive; implementations document where the operation

@@ -328,19 +328,12 @@ pub struct ResolveHandleContext<'a> {
     pub proofs: &'a [&'a str],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("Cokret API returned {status}: {error}")]
 pub struct CokretApiError {
     pub status: StatusCode,
     pub error: ErrorEnvelope,
 }
-
-impl fmt::Display for CokretApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Cokret API returned {}: {}", self.status, self.error)
-    }
-}
-
-impl std::error::Error for CokretApiError {}
 
 const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
 
@@ -617,26 +610,17 @@ fn validate_invite_handle_resolution(
 /// re-buffer the entry) from "server said no" (every other error -
 /// drop and move on). Pulled out so callers can branch without
 /// parsing `anyhow::Error` strings.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AuditPostError {
     /// Server responded 404 — the audit ingest endpoint is not yet
     /// wired. Callers re-buffer the entry for a later flush attempt.
+    #[error("audit endpoint not wired (404)")]
     NotWired,
     /// Any other failure (network drop, 5xx, 4xx). Caller drops the
     /// entry — telemetry is best-effort.
+    #[error("audit post failed: {0}")]
     Other(String),
 }
-
-impl fmt::Display for AuditPostError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AuditPostError::NotWired => f.write_str("audit endpoint not wired (404)"),
-            AuditPostError::Other(msg) => write!(f, "audit post failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for AuditPostError {}
 
 #[derive(Debug, Deserialize)]
 struct ApiErrorBody {

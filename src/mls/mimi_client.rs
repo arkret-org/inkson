@@ -24,30 +24,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Errors a [`MimiClient`] call can surface.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum MimiClientError {
     /// `base_url` was malformed or `reqwest::Client::builder` failed.
+    #[error("MIMI client config: {0}")]
     InvalidConfig(String),
     /// Outbound HTTP failed (connection refused, TLS error, timeout).
+    #[error("MIMI network: {0}")]
     Network(String),
     /// Upstream returned a non-2xx response.
+    #[error("MIMI upstream {status}: {body}")]
     Upstream { status: u16, body: String },
     /// Response body did not parse as the expected JSON shape.
+    #[error("MIMI response: {0}")]
     InvalidResponse(String),
 }
-
-impl std::fmt::Display for MimiClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidConfig(msg) => write!(f, "MIMI client config: {msg}"),
-            Self::Network(msg) => write!(f, "MIMI network: {msg}"),
-            Self::Upstream { status, body } => write!(f, "MIMI upstream {status}: {body}"),
-            Self::InvalidResponse(msg) => write!(f, "MIMI response: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for MimiClientError {}
 
 /// Pinned MIMI draft versions the client speaks. Matches the
 /// `ck.profile.mimi_interop.v1` pinning declared in

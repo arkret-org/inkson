@@ -20,8 +20,6 @@
 //! rank that contains characters outside the alphabet or exceeds the
 //! 128-char limit.
 
-use std::fmt;
-
 const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const BASE: i32 = 62;
 pub const MAX_RANK_LEN: usize = 128;
@@ -30,33 +28,22 @@ pub const MAX_RANK_LEN: usize = 128;
 /// callers should fall back to `ck.container.rebalance`. `Invalid`
 /// indicates the input string is not a well-formed rank (alphabet or
 /// length violation) and is a programmer error.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RankError {
     /// No rank exists strictly between `left` and `right`. Trigger a
     /// container rebalance.
+    #[error(
+        "rank_exhausted: no valid rank between the given sentinels; trigger ck.container.rebalance"
+    )]
     Exhausted,
     /// Input string contained characters outside the alphabet or
     /// exceeded `MAX_RANK_LEN`. Position points at the first bad byte.
+    #[error("invalid rank ({reason}) at position {position}")]
     Invalid {
         reason: &'static str,
         position: usize,
     },
 }
-
-impl fmt::Display for RankError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Exhausted => f.write_str(
-                "rank_exhausted: no valid rank between the given sentinels; trigger ck.container.rebalance",
-            ),
-            Self::Invalid { reason, position } => {
-                write!(f, "invalid rank ({reason}) at position {position}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RankError {}
 
 /// Map an alphabet character to its 0..=61 index. Returns `None` for
 /// any byte outside the alphabet — callers convert to [`RankError::Invalid`].

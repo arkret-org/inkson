@@ -32,30 +32,18 @@ use crate::local_state::{LocalIdentity, LocalIdentityRecord, LocalStateStore};
 /// platform store *is* wired but failed) is deliberate — UI callers
 /// surface the former as "use software key" and the latter as a hard
 /// failure.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum KeyStoreError {
     /// The platform store hasn't been wired up on this build target. UI
     /// callers should fall back to [`InMemoryKeyStore`] (or whatever
     /// software default they accept).
+    #[error("key store backend `{0}` is not supported on this platform")]
     Unsupported(&'static str),
     /// The backend was reachable but failed (corrupt entry, permission
     /// denied, biometric prompt cancelled, etc.).
+    #[error("key store backend error: {0}")]
     Backend(String),
 }
-
-impl std::fmt::Display for KeyStoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unsupported(name) => write!(
-                f,
-                "key store backend `{name}` is not supported on this platform"
-            ),
-            Self::Backend(msg) => write!(f, "key store backend error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for KeyStoreError {}
 
 /// Pluggable signing-key store. Loaders are keyed by an opaque DID-style
 /// string (the `device_did` for now); future revisions may key by

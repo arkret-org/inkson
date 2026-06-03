@@ -50,12 +50,13 @@ use crate::push::{
 use crate::session_refresh::grant_matches_principal_server;
 
 /// Errors the orchestrator surfaces back to the UI / login flow.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PushRegistrationError {
     /// No `PushTokenProvider` installed, or the installed one declined
     /// (permission denied, browser closed, FCM token not yet available).
     /// The caller should surface a "notifications disabled" UX rather
     /// than retrying immediately.
+    #[error("no real push token available for platform `{platform}`: {reason}")]
     NoRealToken {
         platform: &'static str,
         reason: String,
@@ -64,53 +65,29 @@ pub enum PushRegistrationError {
     /// [`ensure_production_register_request`] (e.g. matches the placeholder
     /// markers). Treated as a hard fail-closed — we never want to ship a
     /// dev marker into a real gateway.
+    #[error("rejected placeholder token: {0}")]
     PlaceholderTokenRejected(String),
     /// Building the register-device wire body failed (validation,
     /// gateway URL malformed, etc.).
+    #[error("build register request failed: {0}")]
     BuildRequest(anyhow::Error),
     /// chime SDK reported a transport / HTTP failure.
+    #[error("chime transport failure: {0}")]
     Transport(String),
     /// No coauth session grant is available to populate
     /// `X-Cokret-Session-Grant`.
+    #[error("no coauth session grant available for chime registration")]
     MissingSessionGrant,
     /// The persisted grant is not usable for this registration.
+    #[error("coauth session grant cannot be used for chime: {reason}")]
     SessionGrantMismatch { reason: String },
     /// The persisted grant exists but its proof material could not be minted.
+    #[error("could not mint chime session-grant proof: {0}")]
     SessionGrantProof(anyhow::Error),
     /// An unexpected internal error.
+    #[error("push registration failed: {0}")]
     Other(anyhow::Error),
 }
-
-impl std::fmt::Display for PushRegistrationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoRealToken { platform, reason } => write!(
-                f,
-                "no real push token available for platform `{platform}`: {reason}"
-            ),
-            Self::PlaceholderTokenRejected(msg) => {
-                write!(f, "rejected placeholder token: {msg}")
-            }
-            Self::BuildRequest(err) => write!(f, "build register request failed: {err}"),
-            Self::Transport(msg) => write!(f, "chime transport failure: {msg}"),
-            Self::MissingSessionGrant => {
-                write!(
-                    f,
-                    "no coauth session grant available for chime registration"
-                )
-            }
-            Self::SessionGrantMismatch { reason } => {
-                write!(f, "coauth session grant cannot be used for chime: {reason}")
-            }
-            Self::SessionGrantProof(err) => {
-                write!(f, "could not mint chime session-grant proof: {err}")
-            }
-            Self::Other(err) => write!(f, "push registration failed: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for PushRegistrationError {}
 
 /// Inputs to [`register_via_chime`]. Tracked as a struct (vs a 6-arg
 /// fn) so call sites stay readable when `principal_id` / `bearer_token`

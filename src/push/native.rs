@@ -54,27 +54,18 @@ impl NativeNotification {
 }
 
 /// Errors surfaced by [`fire_native`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum FireError {
     /// The OS bridge itself rejected the notification (permissions
     /// denied, daemon down, etc.).
+    #[error("native notification backend error: {0}")]
     Backend(String),
     /// Native notifications aren't available on this target (wasm32
     /// in particular — browser apps go through `web-sys::Notification`
     /// instead).
+    #[error("native notifications not supported on this target")]
     Unsupported,
 }
-
-impl std::fmt::Display for FireError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Backend(e) => write!(f, "native notification backend error: {e}"),
-            Self::Unsupported => f.write_str("native notifications not supported on this target"),
-        }
-    }
-}
-
-impl std::error::Error for FireError {}
 
 /// F-OS-NOTIFY-1: fire a native desktop notification.
 ///

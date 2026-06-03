@@ -59,7 +59,6 @@
 //!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Anchor view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
-use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -129,32 +128,37 @@ pub struct MlsSnapshotEnvelope {
 /// Errors produced while encrypting / decrypting / verifying an MLS
 /// snapshot envelope. Each variant maps onto a UI-visible error
 /// message + a typed test assertion.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EnvelopeError {
     /// Device snapshot secret did not match the one used at encryption
     /// time, OR the envelope was tampered with. The two cases are
     /// indistinguishable by design (a MAC failure could be either).
+    #[error("snapshot secret mismatch (or envelope tampered)")]
     SecretMismatch,
     /// The envelope is well-formed and decrypts cleanly but its
     /// recorded epoch is strictly less than the caller-supplied
     /// "current" epoch (typically taken from the latest Anchor view).
     /// Restoring would silently fork the MLS group; the caller must
     /// fetch a newer envelope before restoring.
+    #[error("outdated snapshot: envelope epoch {envelope_epoch} < current epoch {current_epoch}")]
     OutdatedSnapshot {
         envelope_epoch: u64,
         current_epoch: u64,
     },
     /// Hex decode / structural problem.
+    #[error("malformed envelope: {0}")]
     Malformed(String),
     /// Round-trip JSON parse on the inner `MlsGroupStateRecord`
     /// failed. Distinct from [`Self::SecretMismatch`] because
     /// the MAC verified — the bytes match, but the inner shape
     /// changed. This usually means the SDK bumped its on-disk format
     /// in an incompatible way; the user must take a fresh snapshot.
+    #[error("inner state record invalid: {0}")]
     InvalidStateRecord(String),
     /// Crypto error from the SDK's `restore_from_state_record` call.
     /// Only emitted on native targets; the wasm path is feature-gated
     /// because the SDK's MLS surface is native-only inside yougen.
+    #[error("SDK restore failed: {0}")]
     SdkRestore(String),
     /// F-WASM-MLS-1: the byte-level envelope decrypted cleanly but
     /// the live MLS group can't be reconstructed on this target —
@@ -163,35 +167,11 @@ pub enum EnvelopeError {
     /// [`restore_state_record_only`]) and can render the metadata
     /// (epoch / device_id / signer_public_key), but encrypt /
     /// decrypt of new messages requires the native SDK provider.
+    #[error(
+        "wasm32 MLS group restore is not supported — use the metadata returned by restore_state_record_only"
+    )]
     WasmMlsRestoreUnsupported,
 }
-
-impl fmt::Display for EnvelopeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EnvelopeError::SecretMismatch => {
-                f.write_str("snapshot secret mismatch (or envelope tampered)")
-            }
-            EnvelopeError::OutdatedSnapshot {
-                envelope_epoch,
-                current_epoch,
-            } => write!(
-                f,
-                "outdated snapshot: envelope epoch {envelope_epoch} < current epoch {current_epoch}"
-            ),
-            EnvelopeError::Malformed(reason) => write!(f, "malformed envelope: {reason}"),
-            EnvelopeError::InvalidStateRecord(reason) => {
-                write!(f, "inner state record invalid: {reason}")
-            }
-            EnvelopeError::SdkRestore(reason) => write!(f, "SDK restore failed: {reason}"),
-            EnvelopeError::WasmMlsRestoreUnsupported => f.write_str(
-                "wasm32 MLS group restore is not supported — use the metadata returned by restore_state_record_only",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for EnvelopeError {}
 
 /// Encrypt a serialised MLS group state record under a device snapshot secret.
 /// `space_id` is metadata only (not encrypted); `state_bytes` is the

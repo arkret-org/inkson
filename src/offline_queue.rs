@@ -139,46 +139,25 @@ pub fn jittered(delay: Duration) -> Duration {
     Duration::from_nanos(nanos)
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OfflineQueueError {
     /// Underlying filesystem error during read/write.
-    Io(std::io::Error),
+    #[error("offline queue io: {0}")]
+    Io(#[from] std::io::Error),
     /// JSON serialisation / parsing error on the persisted file.
-    Json(serde_json::Error),
+    #[error("offline queue json: {0}")]
+    Json(#[from] serde_json::Error),
     /// Lock poisoned because another thread panicked while holding it.
+    #[error("offline queue lock poisoned")]
     LockPoisoned,
     /// `pop` was called with no eligible entries (all entries are
     /// either still in their backoff window or the queue is empty).
+    #[error("offline queue has no eligible entry")]
     Empty,
     /// `mark_success` / `mark_failure` referenced an id that no
     /// longer exists (already popped, or never enqueued).
+    #[error("offline queue unknown id {0}")]
     UnknownId(u64),
-}
-
-impl std::fmt::Display for OfflineQueueError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "offline queue io: {err}"),
-            Self::Json(err) => write!(f, "offline queue json: {err}"),
-            Self::LockPoisoned => write!(f, "offline queue lock poisoned"),
-            Self::Empty => write!(f, "offline queue has no eligible entry"),
-            Self::UnknownId(id) => write!(f, "offline queue unknown id {id}"),
-        }
-    }
-}
-
-impl std::error::Error for OfflineQueueError {}
-
-impl From<std::io::Error> for OfflineQueueError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
-impl From<serde_json::Error> for OfflineQueueError {
-    fn from(err: serde_json::Error) -> Self {
-        Self::Json(err)
-    }
 }
 
 /// On-disk representation of the queue. Versioned so a future schema
