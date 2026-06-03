@@ -6,7 +6,7 @@
 //! - 32-bit node hash (8 hex chars; SHA-256 prefix, see [`hash_node_id`])
 //!
 //! The node-id derivation MUST stay byte-compatible with the SDK's
-//! `contrix_sdk::hlc::HlcGenerator::compute_node_id` (SHA-256 of the node
+//! `cokret_sdk::hlc::HlcGenerator::compute_node_id` (SHA-256 of the node
 //! identifier string, big-endian first 4 bytes encoded as 8 lowercase
 //! hex chars). The cross-impl test `hash_node_id_matches_sdk_compute_node_id`
 //! at the bottom of this file pins both implementations against each
@@ -17,7 +17,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
-use contrix_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
+use cokret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
 
 /// A Hybrid Logical Clock timestamp.

@@ -1,7 +1,7 @@
 //! Conformance profiles, JSON schema validation, and security checks
 //! per cokret-spec sections 12–13.
 
-use contrix_sdk::Discoverability;
+use cokret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -27,8 +27,8 @@ pub const PROFILE_PUSH_GATEWAY: &str = "cx.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
 /// Yougen ships the canonical event payload through
-/// [`contrix_sdk::MlsGovernanceBindingPayload`] / [`contrix_sdk::MlsCommitPayload`],
-/// and the `covered_frontier_cell` add-effect through [`contrix_sdk::mls_move`].
+/// [`cokret_sdk::MlsGovernanceBindingPayload`] / [`cokret_sdk::MlsCommitPayload`],
+/// and the `covered_frontier_cell` add-effect through [`cokret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance_binding.full.v1";
@@ -564,7 +564,7 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
 /// not what the server has to expose. The server-side gate is about
 /// "can I call the endpoints I'd need" only.
 fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<String> {
-    let Some(req) = contrix_sdk::generated::profile_requirements::requirements_for(profile_id)
+    let Some(req) = cokret_sdk::generated::profile_requirements::requirements_for(profile_id)
     else {
         return vec![format!("unknown profile {profile_id}")];
     };

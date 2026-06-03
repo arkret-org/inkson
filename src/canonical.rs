@@ -1,10 +1,10 @@
 //! Canonical JSON wrapper used by yougen write paths.
 //!
-//! Re-exports `contrix_sdk::canonical` so all envelope, Move, Anchor, and key-
+//! Re-exports `cokret_sdk::canonical` so all envelope, Move, Anchor, and key-
 //! backup bodies can be hashed and signed against a single canonical encoder
 //! instead of relying on `serde_json`'s default object-key order.
 
-pub use contrix_sdk::canonical::{
+pub use cokret_sdk::canonical::{
     canonical_json_bytes as sdk_canonical_json_bytes,
     canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
     sha256_digest as sdk_sha256_digest, validate_timestamp_canonical,
@@ -13,7 +13,7 @@ use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
 /// `encoding.md` §3.2. Returns an `anyhow::Error` so call sites can chain into
-/// the rest of yougen's error surface without dragging `contrix_core::Error`
+/// the rest of yougen's error surface without dragging `cokret_core::Error`
 /// across module boundaries.
 pub fn canonical_json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     sdk_canonical_json_bytes(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))

@@ -10,7 +10,7 @@
 //!
 //! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()`
 //!    / `restore_from_state_record()` so the openmls provider storage can be round-tripped through
-//!    a typed [`contrix_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
+//!    a typed [`cokret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
 //!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
 //!    openmls provider keys.
 //!
@@ -21,7 +21,7 @@
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
-//! [`contrix_sdk::CokretMlsGroup::join_from_welcome`].
+//! [`cokret_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
 //!    `cx.schema.key_backup.v1` request body used by `PUT /api/v1/keys/backups/{backup_id}`. The
@@ -66,7 +66,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, SecondsFormat, Utc};
-use contrix_sdk::MlsGroupStateRecord;
+use cokret_sdk::MlsGroupStateRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -411,7 +411,7 @@ impl MlsSnapshotEnvelope {
 /// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
 /// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
 /// via the OpenMLS provider. Callers that need an executable
-/// [`contrix_sdk::CokretMlsGroup`] should use [`restore_envelope`].
+/// [`cokret_sdk::CokretMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
@@ -424,7 +424,7 @@ pub fn restore_state_record_only(
 
 /// Helper used by the boot path and local MLS actions. Decrypts the envelope,
 /// sanity-checks the epoch, and reconstructs the SDK group via
-/// [`contrix_sdk::CokretMlsGroup::restore_from_state_record`].
+/// [`cokret_sdk::CokretMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Anchor view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
@@ -433,10 +433,10 @@ pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
     current_epoch_floor: u64,
-) -> Result<contrix_sdk::CokretMlsGroup, EnvelopeError> {
+) -> Result<cokret_sdk::CokretMlsGroup, EnvelopeError> {
     let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
-    contrix_sdk::CokretMlsGroup::restore_from_state_record(&record)
+    cokret_sdk::CokretMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
 }
 
@@ -698,7 +698,7 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let identity = CokretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),

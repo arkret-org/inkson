@@ -105,12 +105,12 @@ Android / web).
   of this branch.
 - **Changed** `api.rs::create_circle` now serialises its wire body
   through the SDK's typed
-  [`contrix_sdk::model::CircleDisplay`] / `CircleColorToken` /
+  [`cokret_sdk::model::CircleDisplay`] / `CircleColorToken` /
   `CircleGlyph` / `CircleDirectoryVisibility` enums instead of a
   hand-rolled `json!` literal, so an invalid color token or glyph
   fails inline instead of being round-tripped through the reducer.
 - **Changed** `circle.rs` now re-exports
-  [`contrix_sdk::model::EffectiveScope`] directly; the local
+  [`cokret_sdk::model::EffectiveScope`] directly; the local
   `DecryptedScope` mirror has been deleted. The new
   `classify_scope_match` helper produces `ScopeMatch::{Realm,Circle,
   Mismatch}` for the chat renderer.
@@ -222,7 +222,7 @@ changes are intentional (aggressive mode); no backward-compat shims.
 
 #### T02 — Broadcast ephemeral signal routing
 
-- New `contrix_sdk::EphemeralEnvelope` wire schema
+- New `cokret_sdk::EphemeralEnvelope` wire schema
   (`cx.schema.ephemeral_envelope.v1`) is now the **only** approved network
   path for `cx.call.signal` / `cx.presence` / `cx.typing` /
   `cx.receipt.read`. These four kinds MUST NOT travel via
@@ -243,7 +243,7 @@ changes are intentional (aggressive mode); no backward-compat shims.
 
 #### T03 — Cursor handle generator
 
-- Re-export `contrix_sdk::cursor::generate_cursor_handle` (≥22-character
+- Re-export `cokret_sdk::cursor::generate_cursor_handle` (≥22-character
   base64url) and `CURSOR_HANDLE_MIN_LEN` from
   `crate::cursor`. Yougen never hand-rolled `h` values; future callers
   MUST use the SDK helper.
@@ -254,7 +254,7 @@ changes are intentional (aggressive mode); no backward-compat shims.
   - `AppealState` projection (None / Submitted / UnderReview / Decided /
     Closed).
   - `build_appeal_submit_op` builds a `cx.moderation.appeal.submit`
-    event using `contrix_sdk::AppealSubmitPayload` against
+    event using `cokret_sdk::AppealSubmitPayload` against
     `cx.schema.moderation_appeal.v1`. Typed-id binding via
     `TypedAppealId::new`.
   - `AppealEntrypoint` component — "Appeal this moderation decision"
@@ -330,8 +330,8 @@ changes are intentional (aggressive mode); no backward-compat shims.
 ### Internal notes
 
 - All wire payload shapes verified against
-  `contrix_sdk::EphemeralEnvelope` / `contrix_sdk::ModerationAppealPayload`
-  /  `contrix_sdk::TypedAppealId` /
-  `contrix_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS`.
+  `cokret_sdk::EphemeralEnvelope` / `cokret_sdk::ModerationAppealPayload`
+  /  `cokret_sdk::TypedAppealId` /
+  `cokret_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS`.
 - Build: `cargo build --message-format short` (Dioxus 0.7.5; SDK
   `cokret` 0.7.0).

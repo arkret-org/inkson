@@ -19,7 +19,7 @@
 //!
 //! Real BIP39 would pull a 2048-word wordlist. Bundling that wordlist
 //! in WASM today costs ~16KiB and the audited path will eventually
-//! route through `contrix_sdk` once the SDK exposes a BIP39 helper.
+//! route through `cokret_sdk` once the SDK exposes a BIP39 helper.
 //! For now we ship a curated 256-word list and pick 12 of them with
 //! `getrandom` so the entropy stays close to BIP39's 132-bit floor
 //! (256^12 ≈ 2^96; lower than 2048^12 ≈ 2^132 but high enough that
@@ -28,7 +28,7 @@
 //! the device.
 //!
 //! TODO(G3.Y1-followup): swap the curated 256-word list for the
-//! canonical BIP39 wordlist once `contrix_sdk::recovery::Bip39`
+//! canonical BIP39 wordlist once `cokret_sdk::recovery::Bip39`
 //! exposes a stable API — the recovery_crypto / vault crate already
 //! pins Argon2id parameters for the KEK derivation, the wordlist is
 //! the only remaining gap.
@@ -76,7 +76,7 @@ impl RecoveryPassphraseState {
 /// English wordlist's first 256 entries so any future migration to
 /// the full list is a strict superset. The list lives inline to keep
 /// the WASM bundle small while G3.Y1 ships; a follow-up will route
-/// through `contrix_sdk::recovery::Bip39`.
+/// through `cokret_sdk::recovery::Bip39`.
 const WORDLIST: &[&str] = &[
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", "absurd",
     "abuse", "access", "accident", "account", "accuse", "achieve", "acid", "acoustic", "acquire",

@@ -721,7 +721,7 @@ fn card_state_from_write_state(write_state: &str) -> CardState {
 /// `cx.flow.create` /
 /// `cx.flow.position`) so the tracker UI can decorate state pills.
 ///
-/// `signed_move_json` is the typed [`contrix_sdk::Move`] serialised to
+/// `signed_move_json` is the typed [`cokret_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST
 /// the exact same signed payload — server-side dedup is content-addressed
 /// on `move_id`, making replay idempotent. None means the record cannot
@@ -987,7 +987,7 @@ fn containers_with_local_space_creates(
 /// Pure adapter so it's unit-testable without a live HTTP client.
 /// Position rank, when present, drives stable ordering inside a column.
 fn collection_projection_to_columns(
-    projection: &contrix_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionResBody,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     projection
@@ -1012,7 +1012,7 @@ fn collection_projection_to_columns(
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 fn card_from_projection_item(
-    item: &contrix_sdk::CollectionProjectionItem,
+    item: &cokret_sdk::CollectionProjectionItem,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
     let id = item
@@ -1746,7 +1746,7 @@ fn overlay_local_card_creates_with_decrypt(
 }
 
 fn overlay_collection_projection_with_operations(
-    projection: &contrix_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionResBody,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],
@@ -6054,7 +6054,7 @@ pub(super) struct RealmMemberRow {
 /// either case we render the compact DID instead of a raw `did:...`.
 fn member_display_label(
     row: &RealmMemberRow,
-    identity: Option<&contrix_sdk::MemberIdentity>,
+    identity: Option<&cokret_sdk::MemberIdentity>,
     cached_primary_handle: Option<&str>,
 ) -> String {
     if let Some(handle) = member_inline_handle_label(row) {
@@ -6108,7 +6108,7 @@ fn member_fallback_handle_label(row: &RealmMemberRow) -> Option<String> {
 
 fn member_handle_lookup_subject(
     row: &RealmMemberRow,
-    identity: Option<&contrix_sdk::MemberIdentity>,
+    identity: Option<&cokret_sdk::MemberIdentity>,
 ) -> Option<String> {
     if let Some(subject) = row
         .subject_id
@@ -7163,7 +7163,7 @@ fn kanban_sha256_hash_from_ref(value: &str) -> Option<String> {
 }
 
 fn kanban_object_ref_from_anchor_ref(value: &str) -> Option<String> {
-    if value.starts_with("ck:event:") && contrix_sdk::EventId::new(value.to_owned()).is_ok() {
+    if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.to_owned()).is_ok() {
         return Some(value.to_owned());
     }
     if value.starts_with("ck:blob:sha256:")
@@ -7201,13 +7201,13 @@ fn kanban_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> S
 
 fn kanban_mls_membership_frontier(
     anchor_view: &LocalAnchorView,
-    fallback_event_id: &contrix_sdk::EventId,
-) -> Vec<contrix_sdk::EventId> {
+    fallback_event_id: &cokret_sdk::EventId,
+) -> Vec<cokret_sdk::EventId> {
     let mut frontier = anchor_view
         .frontier
         .iter()
         .chain(anchor_view.leaves.iter())
-        .filter_map(|value| contrix_sdk::EventId::new(value.clone()).ok())
+        .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
         .collect::<Vec<_>>();
     if frontier.is_empty() {
         frontier.push(fallback_event_id.clone());
@@ -7220,7 +7220,7 @@ fn kanban_mls_membership_frontier(
 fn kanban_mls_policy_root(
     anchor_view: &LocalAnchorView,
     space_id: &str,
-) -> Result<contrix_sdk::Hash, String> {
+) -> Result<cokret_sdk::Hash, String> {
     let hash = anchor_view
         .state_root
         .as_deref()
@@ -7236,7 +7236,7 @@ fn kanban_mls_policy_root(
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
             })
         });
-    contrix_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
+    cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 fn projection_creator_matches_actor(projection: &Value, actor_did: &str) -> bool {
@@ -7332,11 +7332,11 @@ pub(crate) fn build_creator_mls_genesis_event(
     }
     let anchor_view = state_store.anchor_view_for(space_id);
     let event_id = format!("ck:event:{}", uuid_v7());
-    let event_id_typed = contrix_sdk::EventId::new(event_id.clone())
+    let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
-    let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+    let realm_id = cokret_sdk::RealmId::new(scope_id_as_realm_id(space_id))
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
-    let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
+    let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
         summary.group_id.clone(),
         0,
@@ -7367,8 +7367,8 @@ fn kanban_mls_commit_event_from_store(
     state_store: &LocalStateStore,
     space_id: &str,
     actor_did: &str,
-    _schedule_hash: &contrix_sdk::Hash,
-    commit_envelope: &contrix_sdk::MlsCommitEnvelope,
+    _schedule_hash: &cokret_sdk::Hash,
+    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
     let anchor_view = state_store.anchor_view_for(space_id);
     // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
@@ -7381,11 +7381,11 @@ fn kanban_mls_commit_event_from_store(
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
     let prev_epoch = commit_envelope.epoch.saturating_sub(1);
     let event_id = format!("ck:event:{}", uuid_v7());
-    let event_id_typed = contrix_sdk::EventId::new(event_id.clone())
+    let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
-    let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+    let realm_id = cokret_sdk::RealmId::new(scope_id_as_realm_id(space_id))
         .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
-    let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
+    let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
         commit_envelope.group_id.clone(),
         prev_epoch,
@@ -7394,7 +7394,7 @@ fn kanban_mls_commit_event_from_store(
         kanban_mls_policy_root(&anchor_view, space_id)?,
     )
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
-    let payload = contrix_sdk::MlsCommitPayload::new(
+    let payload = cokret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,
         kanban_mls_base_epoch_ref(&anchor_view, space_id),
@@ -9184,7 +9184,7 @@ fn rebase_flow_position_after_conflict(
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
 fn locate_flow_position_in_projection(
-    projection: &contrix_sdk::CollectionProjectionResBody,
+    projection: &cokret_sdk::CollectionProjectionResBody,
     flow_id: &str,
 ) -> FlowPositionExpectation {
     for group in &projection.groups {
@@ -9377,7 +9377,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn assert_registered_payload_valid(event: &crate::operation::EventEnvelope) {
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&event.kind, &event.payload)
             .unwrap_or_else(|err| {
                 panic!(
@@ -9489,7 +9489,7 @@ mod tests {
 
     #[test]
     fn member_display_label_prefers_handle_shaped_user_label() {
-        use contrix_sdk::{
+        use cokret_sdk::{
             DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
         };
 
@@ -9497,11 +9497,11 @@ mod tests {
         // only; the roster label still prefers a handle-shaped label when
         // roster handle evidence or a materialized subject DID exposes one.
         let identity = MemberIdentity {
-            schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-            realm_id: contrix_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001")
+            schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
-            actor_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
-            subject_id: contrix_sdk::Did::new("did:web:acme.example:users:alice".to_owned())
+            actor_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
+            subject_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned())
                 .unwrap(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
@@ -9512,7 +9512,7 @@ mod tests {
             proof: MemberIdentityProof {
                 verification_method: "did:web:acme.example#key-1".to_owned(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
-                payload_digest: contrix_sdk::Hash::new(
+                payload_digest: cokret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 )
                 .unwrap(),
@@ -10177,7 +10177,7 @@ mod tests {
     /// this test fails and points at the renderer adapter.
     #[test]
     fn collection_projection_maps_to_kanban_columns() {
-        use contrix_sdk::{
+        use cokret_sdk::{
             CollectionProjectionDiscussion, CollectionProjectionGroup, CollectionProjectionItem,
             CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
         };
@@ -10246,7 +10246,7 @@ mod tests {
 
     #[test]
     fn collection_projection_overlay_applies_remote_encrypted_flow_updates() {
-        use contrix_sdk::{
+        use cokret_sdk::{
             CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionResBody,
             ViewId, ViewKind, ViewRenderer,
         };
@@ -10323,7 +10323,7 @@ mod tests {
     /// renders as synthesis-only without a locked_flow.
     #[test]
     fn projection_item_without_discussion_renders_synthesis_only() {
-        use contrix_sdk::CollectionProjectionItem;
+        use cokret_sdk::CollectionProjectionItem;
         let item = CollectionProjectionItem {
             object: serde_json::json!({
                 "id": "ck:flow:01doc",
@@ -11003,7 +11003,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
@@ -11572,7 +11572,7 @@ mod tests {
     /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
     #[test]
     fn locate_flow_position_finds_present_flow_with_rank() {
-        use contrix_sdk::{
+        use cokret_sdk::{
             CollectionProjectionGroup, CollectionProjectionItem, CollectionProjectionPosition,
             CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer,
         };
@@ -11614,7 +11614,7 @@ mod tests {
     /// is actually non-initial, which is the safe behaviour.
     #[test]
     fn locate_flow_position_missing_flow_returns_initial() {
-        use contrix_sdk::{CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer};
+        use cokret_sdk::{CollectionProjectionResBody, ViewId, ViewKind, ViewRenderer};
         let projection = CollectionProjectionResBody {
             kind: ViewKind::Collection,
             renderer: ViewRenderer::Board,

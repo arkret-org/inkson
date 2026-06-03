@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use contrix_sdk::push_rule_core::{
+use cokret_sdk::push_rule_core::{
     EventContext as PushRuleEventContext, ShouldNotify, evaluate_watch_level,
     reason_code as push_rule_reason_code,
 };

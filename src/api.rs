@@ -6,7 +6,7 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chime::{CokretPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
-use contrix_sdk::ErrorEnvelope;
+use cokret_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
 use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
 use reqwest::{Client, Method, StatusCode};
@@ -456,13 +456,13 @@ fn terminal_session_grant_message(message: &str) -> bool {
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the
 /// server and return its advertised `retry_after_ms` so callers can
 /// sleep for the server-suggested duration instead of the generic
-/// exponential backoff. Wire constant is pulled from `contrix_sdk`
+/// exponential backoff. Wire constant is pulled from `cokret_sdk`
 /// so a spec rename can't silently de-recognise the code.
 ///
 /// Returns `Some(retry_after_ms)` on match (with 0 when the server
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
-    use contrix_sdk::error::ERROR_CODE_RATE_LIMITED;
+    use cokret_sdk::error::ERROR_CODE_RATE_LIMITED;
     let api_error = error.downcast_ref::<CokretApiError>()?;
     if api_error.error.code() != ERROR_CODE_RATE_LIMITED {
         return None;
@@ -474,8 +474,8 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 /// or with an integrity mismatch — so the SyncEngine knows to demote to
 /// a `after=None` full sync instead of looping on the same broken cursor.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
-    use contrix_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
-    use contrix_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
+    use cokret_sdk::error::ERROR_CODE_CURSOR_INTEGRITY_INVALID;
+    use cokret_sdk::{ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_INVALID_PARAM};
     error
         .downcast_ref::<CokretApiError>()
         .is_some_and(|api_error| {
@@ -1108,7 +1108,7 @@ impl CokretApi {
     /// inline rather than as a round-tripped reducer rejection.
     ///
     /// The wire body is built from the SDK's typed
-    /// [`contrix_sdk::model::circle::CircleDisplay`] struct so the
+    /// [`cokret_sdk::model::circle::CircleDisplay`] struct so the
     /// enum values (`color_token`, glyph names) stay in sync with
     /// `spec/v1/artifacts/schemas/circle.schema.json` instead of being
     /// hand-rolled JSON strings.
@@ -1123,7 +1123,7 @@ impl CokretApi {
         directory_visibility: &str,
         initial_members: &[String],
     ) -> anyhow::Result<serde_json::Value> {
-        use contrix_sdk::model::{
+        use cokret_sdk::model::{
             CircleColorToken, CircleDirectoryVisibility, CircleDisplay, CircleGlyph, CircleSymbol,
         };
 
@@ -1241,7 +1241,7 @@ impl CokretApi {
         &self,
         space_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("admin/spaces/{space_id}/anchorer"))
+        self.get_json(&format!("_soland/admin/spaces/{space_id}/anchorer"))
             .await
     }
 
@@ -1389,7 +1389,7 @@ impl CokretApi {
         if !status.is_success() {
             return Err(CokretApiError {
                 status,
-                error: decode_contrix_error(status, &bytes),
+                error: decode_cokret_error(status, &bytes),
             }
             .into());
         }
@@ -1437,10 +1437,10 @@ impl CokretApi {
     /// (`POST /api/v1/directory/resolve-target`).
     ///
     /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
-    /// derived from [`contrix_sdk::model::parse_address`]; `token` is present
+    /// derived from [`cokret_sdk::model::parse_address`]; `token` is present
     /// iff the address carried `lt=invite` or `lt=preview`. The server binds
     /// an invite or preview token to the resolved object via the SDK's
-    /// [`contrix_sdk::model::verify_token_target`]; the client only forwards
+    /// [`cokret_sdk::model::verify_token_target`]; the client only forwards
     /// the opaque token here.
     ///
     /// Wraps the SDK's typed request/response bodies so the wire shape stays
@@ -1452,8 +1452,8 @@ impl CokretApi {
         &self,
         address: &str,
         token: Option<&str>,
-    ) -> anyhow::Result<contrix_sdk::model::DirectoryResolveTargetResBody> {
-        let body = contrix_sdk::model::DirectoryResolveTargetReqBody {
+    ) -> anyhow::Result<cokret_sdk::model::DirectoryResolveTargetResBody> {
+        let body = cokret_sdk::model::DirectoryResolveTargetReqBody {
             address: address.to_owned(),
             requester: None,
             proofs: Vec::new(),
@@ -1475,7 +1475,7 @@ impl CokretApi {
     /// invoke `on_frame` once per parsed frame.
     ///
     /// Round 4 (spec a77b995) — the parser is now typed against
-    /// [`contrix_sdk::EventsSubscribeFrameBody`] (the `tag = "kind"`,
+    /// [`cokret_sdk::EventsSubscribeFrameBody`] (the `tag = "kind"`,
     /// snake_case-discriminated frame body). Callers MUST route on the
     /// canonical variants: `Dropped { cursor }` → resume from `cursor`,
     /// `ResyncRequired` → full resync, `EpochRotation { epoch }` →
@@ -1495,7 +1495,7 @@ impl CokretApi {
         mut on_frame: F,
     ) -> anyhow::Result<()>
     where
-        F: FnMut(contrix_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
+        F: FnMut(cokret_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
     {
         if let Some(token) = after {
             validate_cursor(token)?;
@@ -1512,7 +1512,7 @@ impl CokretApi {
             let bytes = response.bytes().await?;
             return Err(CokretApiError {
                 status,
-                error: decode_contrix_error(status, &bytes),
+                error: decode_cokret_error(status, &bytes),
             }
             .into());
         }
@@ -1709,7 +1709,7 @@ impl CokretApi {
     pub async fn publish_mls_key_package(
         &self,
         device_id: &str,
-        record: &contrix_sdk::MlsKeyPackageRecord,
+        record: &cokret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<KeysUploadResBody> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload MLS demo device_signature")?;
         self.post_json(
@@ -1736,7 +1736,7 @@ impl CokretApi {
     pub async fn publish_mls_key_package(
         &self,
         _device_id: &str,
-        _record: &contrix_sdk::MlsKeyPackageRecord,
+        _record: &cokret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<KeysUploadResBody> {
         anyhow::bail!(
             "publish_mls_key_package ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
@@ -1753,7 +1753,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<Option<contrix_sdk::MlsKeyPackageRecord>> {
+    ) -> anyhow::Result<Option<cokret_sdk::MlsKeyPackageRecord>> {
         let resp = self.query_keys(actor, device_id).await?;
         // SDK `KeysQueryResBody::device_keys` is a typed
         // `BTreeMap<Did, BTreeMap<DeviceId, Value>>`; the keys are newtype
@@ -1777,7 +1777,7 @@ impl CokretApi {
         let Some((_, value)) = map.iter().next() else {
             return Ok(None);
         };
-        let record: contrix_sdk::MlsKeyPackageRecord = serde_json::from_value(value.clone())?;
+        let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(value.clone())?;
         Ok(Some(record))
     }
 
@@ -2006,7 +2006,7 @@ impl CokretApi {
         content_type: &str,
         content_length: u64,
     ) -> anyhow::Result<Value> {
-        let realm = contrix_sdk::RealmId::new(realm_id)
+        let realm = cokret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id for /blob/presign: {err}"))?;
         self.post_json(
             "api/v1/blob/presign",
@@ -2248,7 +2248,7 @@ impl CokretApi {
         if target.is_empty() {
             anyhow::bail!("invitee is required");
         }
-        if contrix_sdk::Did::new(target.to_owned()).is_ok() {
+        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
             return Ok(target.to_owned());
         }
         let handle = canonical_invitee_handle(target)?;
@@ -2256,7 +2256,7 @@ impl CokretApi {
         let subject = resolved.subject_did().ok_or_else(|| {
             anyhow::anyhow!("directory resolve_handle response did not include subject DID")
         })?;
-        contrix_sdk::Did::new(subject.to_owned())
+        cokret_sdk::Did::new(subject.to_owned())
             .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}"))?;
         Ok(subject.to_owned())
     }
@@ -2271,7 +2271,7 @@ impl CokretApi {
         if target.is_empty() {
             anyhow::bail!("invitee is required");
         }
-        if contrix_sdk::Did::new(target.to_owned()).is_ok() {
+        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
             return Ok(target.to_owned());
         }
 
@@ -2293,7 +2293,7 @@ impl CokretApi {
         let invitee = resolved.subject_did().ok_or_else(|| {
             anyhow::anyhow!("directory resolve_handle response did not include subject DID")
         })?;
-        contrix_sdk::Did::new(invitee.to_owned())
+        cokret_sdk::Did::new(invitee.to_owned())
             .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{invitee}`: {err}"))?;
         Ok(invitee.to_owned())
     }
@@ -2306,7 +2306,7 @@ impl CokretApi {
     /// handle?" panel (YG-DIR-1/2) and the own-handles list (YG-HC-2).
     ///
     /// The response is validated with
-    /// [`contrix_sdk::model::DirectoryListHandlesForSubjectResBody::validate`]
+    /// [`cokret_sdk::model::DirectoryListHandlesForSubjectResBody::validate`]
     /// which fails closed unless every `claims[].subject` byte-equals the
     /// response `subject`.
     ///
@@ -2318,14 +2318,14 @@ impl CokretApi {
         subject: &str,
         realm_id: Option<&str>,
         intent: Option<&str>,
-    ) -> anyhow::Result<contrix_sdk::model::DirectoryListHandlesForSubjectResBody> {
-        use contrix_sdk::model::DirectoryListHandlesForSubjectReqBody;
+    ) -> anyhow::Result<cokret_sdk::model::DirectoryListHandlesForSubjectResBody> {
+        use cokret_sdk::model::DirectoryListHandlesForSubjectReqBody;
 
-        let subject_did = contrix_sdk::Did::new(subject.trim().to_owned())
+        let subject_did = cokret_sdk::Did::new(subject.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
         let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
             Some(r) => Some(
-                contrix_sdk::RealmId::new(r)
+                cokret_sdk::RealmId::new(r)
                     .map_err(|err| anyhow::anyhow!("invalid realm_id `{r}`: {err}"))?,
             ),
             None => None,
@@ -2344,7 +2344,7 @@ impl CokretApi {
             cursor: None,
             limit: None,
         };
-        let res: contrix_sdk::model::DirectoryListHandlesForSubjectResBody = self
+        let res: cokret_sdk::model::DirectoryListHandlesForSubjectResBody = self
             .post_json(
                 "api/v1/directory/list-handles-for-subject",
                 serde_json::to_value(&body)?,
@@ -2700,11 +2700,11 @@ impl CokretApi {
     //
     // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
     // POST /api/v1/views/{view_id}/projection returns the typed
-    // CollectionProjectionResBody defined in contrix_core::model.
+    // CollectionProjectionResBody defined in cokret_core::model.
     pub async fn collection_projection(
         &self,
         view_id: &str,
-    ) -> anyhow::Result<contrix_sdk::CollectionProjectionResBody> {
+    ) -> anyhow::Result<cokret_sdk::CollectionProjectionResBody> {
         self.post_json(&format!("api/v1/views/{view_id}/projection"), json!({}))
             .await
     }
@@ -2741,7 +2741,7 @@ impl CokretApi {
 
     /// User-driven device revoke. Hits soland's deployment-local
     /// `cx.devices.revoke` (`POST /api/v1/devices/{device_id}/revoke`) —
-    /// NOT spec's `cx.admin.revoke_device` (`POST /admin/devices/{id}/revoke`),
+    /// NOT spec's `cx.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
     /// which is an operator-scope endpoint we don't expose from the UI.
     pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
         self.post_json(&format!("api/v1/devices/{device_id}/revoke"), json!({}))
@@ -2934,9 +2934,9 @@ impl CokretApi {
     /// Anonymous-health probes go through a separate route.
     pub async fn events_frontier_account_client(
         &self,
-    ) -> anyhow::Result<contrix_sdk::EventsFrontierAccountClientResponse> {
+    ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientResponse> {
         let body: Value = self.get_json("api/v1/events/frontier").await?;
-        let frontier: contrix_sdk::EventsFrontierAccountClientResponse =
+        let frontier: cokret_sdk::EventsFrontierAccountClientResponse =
             serde_json::from_value(body).map_err(|err| {
                 anyhow::anyhow!(
                     "events/frontier account_client decode failed (round 4 wire shape): {err}"
@@ -2944,7 +2944,7 @@ impl CokretApi {
             })?;
         if !matches!(
             frontier.peer_role,
-            contrix_sdk::FrontierPeerRole::AccountClient
+            cokret_sdk::FrontierPeerRole::AccountClient
         ) {
             anyhow::bail!(
                 "events/frontier peer_role {:?} is not account_client (federation_peer / \
@@ -3040,8 +3040,8 @@ impl CokretApi {
     /// `cx.events.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /api/v1/events` and distinguishes the three
     /// accepted body shapes (single envelope,
-    /// [`contrix_sdk::EventsSubmitBatchRequest`],
-    /// [`contrix_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
+    /// [`cokret_sdk::EventsSubmitBatchRequest`],
+    /// [`cokret_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
     /// by URL suffix. The federation shape is S2S only and yougen MUST
     /// NEVER serialise it.
     ///
@@ -3088,7 +3088,7 @@ impl CokretApi {
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<_, _>>()?;
-        let body = contrix_sdk::EventsSubmitBatchRequest {
+        let body = cokret_sdk::EventsSubmitBatchRequest {
             events: events_value,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
@@ -3135,13 +3135,13 @@ impl CokretApi {
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
-        envelope: &contrix_sdk::EphemeralEnvelope,
+        envelope: &cokret_sdk::EphemeralEnvelope,
     ) -> anyhow::Result<EphemeralSubmitResponse> {
         // Defensive re-validation. The constructor already enforced this,
         // but a caller could mutate a raw envelope in place between build
         // and submit. Fail fast with the canonical error code rather than
         // shipping a non-conformant payload to the wire.
-        if !contrix_sdk::events::is_ephemeral_kind(&envelope.kind) {
+        if !cokret_sdk::events::is_ephemeral_kind(&envelope.kind) {
             anyhow::bail!(
                 "ephemeral submit: kind {:?} is not in the broadcast ephemeral allowlist",
                 envelope.kind
@@ -3152,7 +3152,7 @@ impl CokretApi {
             .signed_duration_since(envelope.sent_at)
             .num_milliseconds();
         if window_ms <= 0
-            || (window_ms as u64) > contrix_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
+            || (window_ms as u64) > cokret_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
         {
             anyhow::bail!(
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
@@ -3415,7 +3415,7 @@ impl CokretApi {
             let bytes = response.bytes().await?;
             return Err(CokretApiError {
                 status,
-                error: decode_contrix_error(status, &bytes),
+                error: decode_cokret_error(status, &bytes),
             }
             .into());
         }
@@ -3435,7 +3435,7 @@ impl CokretApi {
         if !status.is_success() {
             return Err(CokretApiError {
                 status,
-                error: decode_contrix_error(status, &bytes),
+                error: decode_cokret_error(status, &bytes),
             }
             .into());
         }
@@ -3533,7 +3533,7 @@ impl CokretApi {
 }
 
 fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result<()> {
-    let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+    let catalog = cokret_sdk::schema::event_payload_validator_catalog();
     if !catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
@@ -3600,22 +3600,22 @@ pub fn build_typing_envelope(
     actor_did: &str,
     device_id: Option<&str>,
     typing: bool,
-) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
     let realm_id_wire = scope_id_as_realm_id(realm_id);
-    let realm = contrix_sdk::RealmId::new(realm_id_wire.clone())
+    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.typing: {err}"))?;
-    let actor = contrix_sdk::Did::new(actor_did)
+    let actor = cokret_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.typing: {err}"))?;
     let device = device_id
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
-            contrix_sdk::DeviceId::new(s)
+            cokret_sdk::DeviceId::new(s)
                 .map_err(|err| anyhow::anyhow!("invalid device_id for cx.typing: {err}"))
         })
         .transpose()?;
-    contrix_sdk::EphemeralEnvelope::new(
+    cokret_sdk::EphemeralEnvelope::new(
         "cx.typing",
         realm,
         actor,
@@ -3639,15 +3639,15 @@ pub fn build_receipt_read_envelope(
     realm_id: &str,
     actor_did: &str,
     event_id: &str,
-) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = scope_id_as_realm_id(realm_id);
-    let realm = contrix_sdk::RealmId::new(realm_id_wire.clone())
+    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.receipt.read: {err}"))?;
-    let actor = contrix_sdk::Did::new(actor_did)
+    let actor = cokret_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.receipt.read: {err}"))?;
-    contrix_sdk::EphemeralEnvelope::new(
+    cokret_sdk::EphemeralEnvelope::new(
         "cx.receipt.read",
         realm,
         actor,
@@ -3673,12 +3673,12 @@ pub fn build_presence_envelope(
     actor_did: &str,
     status: &str,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = contrix_sdk::RealmId::new(realm_id)
+    let realm = cokret_sdk::RealmId::new(realm_id)
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.presence: {err}"))?;
-    let actor = contrix_sdk::Did::new(actor_did)
+    let actor = cokret_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
     payload.insert("actor_id".into(), Value::String(actor_did.to_owned()));
@@ -3686,7 +3686,7 @@ pub fn build_presence_envelope(
     if let Some(ts) = last_active_at {
         payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
     }
-    contrix_sdk::EphemeralEnvelope::new(
+    cokret_sdk::EphemeralEnvelope::new(
         "cx.presence",
         realm,
         actor,
@@ -3703,14 +3703,14 @@ pub fn build_presence_envelope(
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical
-/// [`contrix_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
-/// where `signal_type` MUST be one of [`contrix_sdk::CALL_SIGNAL_TYPES`]
+/// [`cokret_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
+/// where `signal_type` MUST be one of [`cokret_sdk::CALL_SIGNAL_TYPES`]
 /// (13 values: `invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
 /// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
 /// `focus_leave`, `error`). `device_id` + `proof` are REQUIRED on the
 /// envelope; `seq` is strictly monotonic per
 /// `(realm_id, call_id, actor, device)` (callers manage the counter via
-/// [`contrix_sdk::CallSignalState`]).
+/// [`cokret_sdk::CallSignalState`]).
 ///
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
@@ -3725,26 +3725,26 @@ pub fn build_call_signal_envelope_v1(
     signal_type: &str,
     seq: u64,
     data: Value,
-) -> anyhow::Result<contrix_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = contrix_sdk::RealmId::new(realm_id)
+    let realm = cokret_sdk::RealmId::new(realm_id)
         .map_err(|err| anyhow::anyhow!("invalid realm_id for cx.call.signal: {err}"))?;
-    let actor = contrix_sdk::Did::new(actor_did)
+    let actor = cokret_sdk::Did::new(actor_did)
         .map_err(|err| anyhow::anyhow!("invalid actor_did for cx.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
         anyhow::bail!("cx.call.signal v2 requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
-        contrix_sdk::DeviceId::new(device_id)
+        cokret_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for cx.call.signal: {err}"))?,
     );
-    if !contrix_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
+    if !cokret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
         anyhow::bail!("cx.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
-    let call = contrix_sdk::CallId::new(call_id)
+    let call = cokret_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for cx.call.signal: {err}"))?;
-    let payload = contrix_sdk::CallSignalPayload {
+    let payload = cokret_sdk::CallSignalPayload {
         call_id: call,
         signal_type: signal_type.to_owned(),
         seq,
@@ -3753,7 +3753,7 @@ pub fn build_call_signal_envelope_v1(
     payload
         .validate_signal_type()
         .map_err(|err| anyhow::anyhow!("cx.call.signal payload rejected: {err}"))?;
-    contrix_sdk::EphemeralEnvelope::new(
+    cokret_sdk::EphemeralEnvelope::new(
         "cx.call.signal",
         realm,
         actor,
@@ -3782,7 +3782,7 @@ impl BlobPresignError {
         let api_error = error.downcast_ref::<CokretApiError>()?;
         let code = api_error.error.code();
         match code {
-            // Round R2/R3 wire codes from contrix_sdk::error.
+            // Round R2/R3 wire codes from cokret_sdk::error.
             "legal_hold_active" => Some(Self::LegalHoldActive),
             "blob_redacted" => Some(Self::BlobRedacted),
             "media_plaintext_service_not_authorised" => {
@@ -4648,7 +4648,7 @@ pub fn build_signed_device_verification_proof(
     if let Some(peer_public_key) = peer_public_key {
         body["peer_public_key"] = Value::String(peer_public_key.to_owned());
     }
-    let canonical = contrix_sdk::canonical::canonical_json_bytes(&body)
+    let canonical = cokret_sdk::canonical::canonical_json_bytes(&body)
         .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
     let header = json!({
         "alg": "EdDSA",
@@ -4723,12 +4723,12 @@ fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushR
 /// it up without each call site having to wire its own UI. The
 /// obligations array (per `authz/policy-server.md` §3) is pulled from
 /// the envelope's `details["obligations"]` slot if present.
-pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
+pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     #[derive(serde::Deserialize)]
     struct PlainEnvelope {
         #[serde(default)]
         ok: bool,
-        error: contrix_sdk::ErrorDetail,
+        error: cokret_sdk::ErrorDetail,
         #[serde(default = "default_request_id")]
         request_id: String,
     }
@@ -4792,7 +4792,7 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     // P5 — surface request_id in tracing logs so server + client
     // logs cross-reference on the same ID. The ID may have come from
-    // the body or (when callers use `decode_contrix_error_with_header`)
+    // the body or (when callers use `decode_cokret_error_with_header`)
     // from the response header.
     tracing::warn!(
         target: "yougen.api",
@@ -4804,7 +4804,7 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     envelope
 }
 
-/// Same as [`decode_contrix_error`], but also threads the
+/// Same as [`decode_cokret_error`], but also threads the
 /// `x-cokret-request-id` response header so the resulting envelope
 /// carries the soland trace ID even when the body's `request_id` slot
 /// was missing or `"unknown"`.
@@ -4812,12 +4812,12 @@ pub fn decode_contrix_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
 /// P5: callers that have access to the `reqwest::Response::headers()`
 /// map (currently only a few hot paths) should switch to this helper
 /// so error toasts can render the **Copy ID** button consistently.
-pub fn decode_contrix_error_with_header(
+pub fn decode_cokret_error_with_header(
     status: StatusCode,
     bytes: &[u8],
     response_request_id: Option<&str>,
 ) -> ErrorEnvelope {
-    let mut envelope = decode_contrix_error(status, bytes);
+    let mut envelope = decode_cokret_error(status, bytes);
     if let Some(id) = response_request_id {
         let trimmed = id.trim();
         if !trimmed.is_empty()
@@ -5027,12 +5027,12 @@ fn events_subscribe_path(
 
 /// Round 4 (spec a77b995) — parse the round-4 typed
 /// `/events/subscribe` NDJSON stream. The frame body is
-/// [`contrix_sdk::EventsSubscribeFrameBody`] (tag = "kind",
+/// [`cokret_sdk::EventsSubscribeFrameBody`] (tag = "kind",
 /// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
 /// string-line parser is deleted.
 pub fn parse_events_subscribe_ndjson_text(
     input: &str,
-) -> anyhow::Result<Vec<contrix_sdk::EventsSubscribeFrameBody>> {
+) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrameBody>> {
     let mut frames = Vec::new();
     for line in input.lines() {
         if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
@@ -5050,7 +5050,7 @@ fn drain_events_subscribe_ndjson_lines<F>(
     on_frame: &mut F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(contrix_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
+    F: FnMut(cokret_sdk::EventsSubscribeFrameBody) -> anyhow::Result<()>,
 {
     while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
         let mut line: Vec<u8> = pending.drain(..=newline).collect();
@@ -5069,7 +5069,7 @@ where
 
 fn parse_events_subscribe_ndjson_line(
     line: &[u8],
-) -> anyhow::Result<Option<contrix_sdk::EventsSubscribeFrameBody>> {
+) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrameBody>> {
     let trimmed = trim_ascii(line);
     if trimmed.is_empty() {
         return Ok(None);
@@ -5118,9 +5118,9 @@ fn parse_account_subscribe_snapshot_outcome(
         if trimmed.is_empty() {
             continue;
         }
-        let frame: contrix_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
         if frame.requires_resubscribe() {
-            let reset_cursor = frame.kind == contrix_sdk::AccountSubscribeFrameKind::ResyncRequired;
+            let reset_cursor = frame.kind == cokret_sdk::AccountSubscribeFrameKind::ResyncRequired;
             return Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
                 reconnect_after_ms: frame
                     .reconnect_after_ms()
@@ -5816,14 +5816,14 @@ mod tests {
     #[test]
     fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000002";
-        let mut patch = contrix_sdk::Patch::new();
+        let mut patch = cokret_sdk::Patch::new();
         patch
             .insert_op(
                 "fields.document",
-                contrix_sdk::PatchOp::set(json!({ "blocks": [] })),
+                cokret_sdk::PatchOp::set(json!({ "blocks": [] })),
             )
             .unwrap();
-        let payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+        let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
             .unwrap()
             .to_value()
             .unwrap();
@@ -5858,7 +5858,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
@@ -5873,7 +5873,7 @@ mod tests {
 
     /// Contract test: every event produced by `build_realm_bootstrap_events`
     /// MUST satisfy the spec payload-schema rule for its event kind, using
-    /// the same `contrix_sdk::schema::event_payload_validator_catalog` that
+    /// the same `cokret_sdk::schema::event_payload_validator_catalog` that
     /// soland runs on the wire. Catches schema drift (missing required
     /// fields, wrong patterns) at `cargo test` rather than user runtime.
     #[test]
@@ -5897,7 +5897,7 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
         for event in &events {
             if catalog
                 .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
@@ -5930,15 +5930,15 @@ mod tests {
 
         assert!(matches!(
             frames[0],
-            contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
+            cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
         ));
         assert!(matches!(
             &frames[1],
-            contrix_sdk::EventsSubscribeFrameBody::Frontier { .. }
+            cokret_sdk::EventsSubscribeFrameBody::Frontier { .. }
         ));
         assert!(matches!(
             &frames[2],
-            contrix_sdk::EventsSubscribeFrameBody::CatchupComplete
+            cokret_sdk::EventsSubscribeFrameBody::CatchupComplete
         ));
     }
 
@@ -5956,7 +5956,7 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert!(matches!(
             frames[0],
-            contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
+            cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
         ));
 
         pending.extend_from_slice(
@@ -5972,13 +5972,13 @@ mod tests {
         assert!(pending.is_empty());
         assert!(matches!(
             &frames[1],
-            contrix_sdk::EventsSubscribeFrameBody::ResyncRequired { reason, .. } if reason == "server restart"
+            cokret_sdk::EventsSubscribeFrameBody::ResyncRequired { reason, .. } if reason == "server restart"
         ));
     }
 
     #[test]
-    fn decodes_wrapped_contrix_error_envelope() {
-        let decoded = decode_contrix_error(
+    fn decodes_wrapped_cokret_error_envelope() {
+        let decoded = decode_cokret_error(
             StatusCode::CONFLICT,
             br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}}}"#,
         );
@@ -5990,7 +5990,7 @@ mod tests {
 
     #[test]
     fn decodes_plain_error_envelope_and_falls_back() {
-        let decoded = decode_contrix_error(
+        let decoded = decode_cokret_error(
             StatusCode::BAD_REQUEST,
             br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"}}"#,
         );
@@ -5999,14 +5999,14 @@ mod tests {
         // The SDK's ErrorEnvelope::new strips the `cx.error.` prefix in
         // `canonical_error_code` and we depend on that canonicalization so
         // downstream comparisons against the registry shape match.
-        let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
+        let fallback = decode_cokret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
         assert_eq!(fallback.code(), "http_status");
         assert!(fallback.message().contains("503 Service Unavailable"));
     }
 
     #[test]
     fn decodes_canonical_error_envelope_with_request_id() {
-        let decoded = decode_contrix_error(
+        let decoded = decode_cokret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
         );
@@ -6024,7 +6024,7 @@ mod tests {
 
     #[test]
     fn decodes_wrapped_error_envelope_without_inner_request_id() {
-        let decoded = decode_contrix_error(
+        let decoded = decode_cokret_error(
             StatusCode::UNAUTHORIZED,
             br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ck:request:01964137-0000-7000-8000-000000000011"}"#,
         );
@@ -6041,7 +6041,7 @@ mod tests {
     fn recognizes_auth_expired_errors() {
         let error: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
             ),
@@ -6057,7 +6057,7 @@ mod tests {
         // the session and forcing a fresh sign-in.
         let bare: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
+            error: decode_cokret_error(StatusCode::UNAUTHORIZED, b""),
         }
         .into();
         assert!(!is_auth_expired_error(&bare));
@@ -6074,7 +6074,7 @@ mod tests {
                 format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
             let aliased: anyhow::Error = CokretApiError {
                 status: StatusCode::UNAUTHORIZED,
-                error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+                error: decode_cokret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
             }
             .into();
             assert!(is_auth_expired_error(&aliased), "code {code} should match");
@@ -6084,7 +6084,7 @@ mod tests {
         // wrapped in 401, etc.) must not be misclassified as session death.
         let unrelated: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
             ),
@@ -6094,7 +6094,7 @@ mod tests {
 
         let forbidden: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
             ),
@@ -6104,7 +6104,7 @@ mod tests {
 
         let revoked_session_grant: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
             ),
@@ -6115,7 +6115,7 @@ mod tests {
 
         let unrelated_capability_denied: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"}}"#,
             ),
@@ -6131,7 +6131,7 @@ mod tests {
     fn recognizes_plaintext_visibility_policy_errors() {
         let error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
             ),
@@ -6141,7 +6141,7 @@ mod tests {
 
         let capability_error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
             ),
@@ -6151,7 +6151,7 @@ mod tests {
 
         let other_policy: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"}}"#,
             ),
@@ -6164,7 +6164,7 @@ mod tests {
     fn recognizes_space_membership_denied_errors() {
         let error: anyhow::Error = CokretApiError {
             status: StatusCode::FORBIDDEN,
-            error: decode_contrix_error(
+            error: decode_cokret_error(
                 StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
             ),
@@ -6413,7 +6413,7 @@ mod tests {
         // bails before reading any field, but we still want the
         // argument well-formed so a future refactor that touches the
         // record before bailing surfaces here.
-        let record: contrix_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
+        let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
             "keypackage_id": "ck:mls:kp:01904100-0000-7000-8000-000000000001",
             "principal_id": "did:web:alice.example",
             "device_id": "ck:device:01904100-0000-7000-8000-000000000001",

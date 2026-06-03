@@ -1,6 +1,6 @@
 //! Default DID resolver chain for yougen.
 //!
-//! Wraps `contrix_sdk::identity::*` resolvers with a yougen-specific
+//! Wraps `cokret_sdk::identity::*` resolvers with a yougen-specific
 //! `ResolverPolicy` so login / coauth / Move-signing call sites can validate
 //! principal DIDs before relying on a server-asserted identity.
 //!
@@ -21,11 +21,11 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
-use contrix_sdk::identity::{
+use cokret_sdk::identity::{
     CompositeDidResolver, DidKeyResolver, DidResolver as _, DidWebResolver, DidWebvhResolver,
     ResolverFailMode, ResolverPolicy,
 };
-use contrix_sdk::{Did, DidDocument};
+use cokret_sdk::{Did, DidDocument};
 
 /// Deployment profile drives which DID methods are accepted as principal.
 ///

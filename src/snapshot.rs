@@ -5,12 +5,12 @@
 //! `/sync/snapshot-head` plus chunk URLs; the client MUST verify the manifest's
 //! Merkle root and each chunk's content hash before applying. This module is a
 //! thin orchestration layer that delegates verification to
-//! `contrix_sdk::verify_snapshot_chunks`.
+//! `cokret_sdk::verify_snapshot_chunks`.
 
-use contrix_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
+use cokret_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 
 /// Round 4 (spec a77b995) — outcome of consuming a
-/// [`contrix_sdk::SnapshotBootstrap`] envelope carried alongside a
+/// [`cokret_sdk::SnapshotBootstrap`] envelope carried alongside a
 /// `cx.events.query` response. The receiver validates the envelope's
 /// structural fields (`signature`, `state_digest`, `snapshot_frontier`,
 /// per-chunk digests) BEFORE applying any chunk bytes. Any failure
@@ -38,7 +38,7 @@ pub enum SnapshotBootstrapOutcome {
 }
 
 /// Round 4 — validate the structural fields of a
-/// [`contrix_sdk::SnapshotBootstrap`] envelope. Returns
+/// [`cokret_sdk::SnapshotBootstrap`] envelope. Returns
 /// [`SnapshotBootstrapOutcome::AcceptedHeader`] only when every
 /// required field is populated; any miss → fall back to full sync.
 ///
@@ -47,7 +47,7 @@ pub enum SnapshotBootstrapOutcome {
 /// reducer apply), call this helper from the import entry point and
 /// proceed to chunk fetching when accepted.
 pub fn consume_snapshot_bootstrap(
-    bootstrap: &contrix_sdk::SnapshotBootstrap,
+    bootstrap: &cokret_sdk::SnapshotBootstrap,
 ) -> SnapshotBootstrapOutcome {
     if bootstrap.signature.alg.trim().is_empty()
         || bootstrap.signature.verification_method.trim().is_empty()
@@ -141,8 +141,8 @@ pub fn verify_snapshot(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use contrix_sdk::identifiers::SpaceId;
-    use contrix_sdk::{
+    use cokret_sdk::identifiers::SpaceId;
+    use cokret_sdk::{
         EventId, Hash, SnapshotBootstrap, SnapshotBootstrapChunk, SnapshotBootstrapSignature,
         SnapshotChunkManifest, canonical,
     };
@@ -151,8 +151,8 @@ mod tests {
 
     fn empty_manifest() -> ReducerSnapshotManifest {
         ReducerSnapshotManifest {
-            schema: contrix_sdk::REDUCER_SNAPSHOT_SCHEMA.to_owned(),
-            reducer_profile: contrix_sdk::REDUCER_SNAPSHOT_PROFILE.to_owned(),
+            schema: cokret_sdk::REDUCER_SNAPSHOT_SCHEMA.to_owned(),
+            reducer_profile: cokret_sdk::REDUCER_SNAPSHOT_PROFILE.to_owned(),
             space_id: SpaceId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned())
                 .unwrap(),
             space_version: "0".to_owned(),

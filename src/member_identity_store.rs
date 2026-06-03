@@ -8,7 +8,7 @@
 //! events that already arrived via `state.events`), the renderer copies
 //! the raw envelopes into [`MemberIdentityStore`] keyed by
 //! `(realm_id, actor_id, segment)`. The effective set is computed via
-//! the SDK's [`contrix_sdk::effective_identity_events`] helper (MID-3).
+//! the SDK's [`cokret_sdk::effective_identity_events`] helper (MID-3).
 //!
 //! MID-4 (MLS decryption) + MID-5 (proof signature verification) are
 //! `TODO(R4)` — the typed wire surface + the effective-set + carrier
@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use contrix_sdk::{
+use cokret_sdk::{
     Did, EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentitySegment,
     MemberIdentityUpdatePayload, RealmId, effective_identity_events,
 };
@@ -224,7 +224,7 @@ impl MemberIdentityStore {
 
 #[cfg(test)]
 mod tests {
-    use contrix_sdk::{
+    use cokret_sdk::{
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
     use serde_json::json;
@@ -326,7 +326,7 @@ mod tests {
         // itself — it consumes ingested events — but a smoke test here
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
-            schema: contrix_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
             realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
@@ -339,7 +339,7 @@ mod tests {
             proof: MemberIdentityProof {
                 verification_method: "did:web:alice.example#key-1".to_owned(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
-                payload_digest: contrix_sdk::Hash::new(
+                payload_digest: cokret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 )
                 .unwrap(),

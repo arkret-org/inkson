@@ -7,7 +7,7 @@ use yougen::account_data::{
     space_remark_account_data_key,
 };
 use yougen::api::{
-    CokretApiError, decode_contrix_error, is_auth_expired_error, parse_directory_describe,
+    CokretApiError, decode_cokret_error, is_auth_expired_error, parse_directory_describe,
     parse_events_subscribe_ndjson_text, parse_resolve_realm, parse_server_description, parse_sync,
     parse_sync_describe,
 };
@@ -297,7 +297,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(report.status, "queued");
 
-    let error = decode_contrix_error(
+    let error = decode_cokret_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null}}"#,
     );
@@ -447,15 +447,15 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     .unwrap();
     assert!(matches!(
         frames[0],
-        contrix_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
+        cokret_sdk::EventsSubscribeFrameBody::Heartbeat { .. }
     ));
     assert!(matches!(
         &frames[1],
-        contrix_sdk::EventsSubscribeFrameBody::Frontier { .. }
+        cokret_sdk::EventsSubscribeFrameBody::Frontier { .. }
     ));
     assert!(matches!(
         &frames[2],
-        contrix_sdk::EventsSubscribeFrameBody::CatchupComplete
+        cokret_sdk::EventsSubscribeFrameBody::CatchupComplete
     ));
 }
 
@@ -614,7 +614,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     );
 
     let decrypted = bob.decrypt_or_preserve(encrypted).unwrap();
-    let contrix_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
+    let cokret_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
         panic!("joined device should decrypt protocol MLS payload");
     };
     assert_eq!(plaintext, br#"{"msgtype":"m.text","body":"hello via MLS"}"#);
@@ -633,7 +633,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 fn bare_401_does_not_count_as_session_loss() {
     let bare: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_contrix_error(StatusCode::UNAUTHORIZED, b""),
+        error: decode_cokret_error(StatusCode::UNAUTHORIZED, b""),
     }
     .into();
     assert!(!is_auth_expired_error(&bare));
@@ -655,7 +655,7 @@ fn bare_401_does_not_count_as_session_loss() {
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let envelope: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_contrix_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            error: decode_cokret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
         }
         .into();
         assert!(
@@ -666,7 +666,7 @@ fn bare_401_does_not_count_as_session_loss() {
 
     let unrelated: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_contrix_error(
+        error: decode_cokret_error(
             StatusCode::UNAUTHORIZED,
             br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
         ),
@@ -675,7 +675,7 @@ fn bare_401_does_not_count_as_session_loss() {
     assert!(!is_auth_expired_error(&unrelated));
 }
 
-/// Regression: `decode_contrix_error` MUST tolerate the current
+/// Regression: `decode_cokret_error` MUST tolerate the current
 /// on-the-wire shapes (canonical wrapped and plain envelope without
 /// `request_id`) and synthesise a stable `http_status` envelope when
 /// none match. A regression here silently degrades every error message
@@ -685,7 +685,7 @@ fn decoder_handles_all_envelope_shapes() {
     // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
     //    is reporting the conflict on) must flow through the `details` map so the conflict UI can
     //    surface them.
-    let wrapped = decode_contrix_error(
+    let wrapped = decode_cokret_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:cx.component.flow.position.v1:demo"}}}"#,
     );
@@ -697,14 +697,14 @@ fn decoder_handles_all_envelope_shapes() {
     );
 
     // 2. Plain envelope without `request_id`.
-    let plain = decode_contrix_error(
+    let plain = decode_cokret_error(
         StatusCode::BAD_REQUEST,
         br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"}}"#,
     );
     assert_eq!(plain.code(), "invalid_param");
 
     // 3. Garbage / non-JSON: synthesised fallback.
-    let fallback = decode_contrix_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
+    let fallback = decode_cokret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503"));
 }

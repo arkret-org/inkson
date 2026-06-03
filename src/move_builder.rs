@@ -1,4 +1,4 @@
-//! Client-side helpers to construct and sign `contrix_sdk::Move` values
+//! Client-side helpers to construct and sign `cokret_sdk::Move` values
 //! for the cell-driven write paths.
 //!
 //! # When to use a Move (vs a direct event)
@@ -36,8 +36,8 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 #[cfg(test)]
-use contrix_sdk::LatticeOpType;
-use contrix_sdk::{
+use cokret_sdk::LatticeOpType;
+use cokret_sdk::{
     AnchorId, CellRef, Did, Effect, Hash, Hlc, LatticeOp, Move, MoveId, MoveSignature, SpaceId,
     canonical,
 };
@@ -108,16 +108,16 @@ pub fn build_consent_revoke_move(
 /// list).
 ///
 /// `observed_dots` is the list of `(actor_id, actor_seq)` tuples per
-/// [`contrix_sdk::Dot`] that the local view has observed and is
+/// [`cokret_sdk::Dot`] that the local view has observed and is
 /// explicitly revoking. The wire field maps to
-/// [`contrix_sdk::ConsentRevokePayload::observed_dots`].
+/// [`cokret_sdk::ConsentRevokePayload::observed_dots`].
 pub fn build_consent_revoke_move_v1(
     issuer: &str,
     space_id: &str,
     consent_id: &str,
     tag: &str,
     reason: Option<&str>,
-    observed_dots: &[contrix_sdk::Dot],
+    observed_dots: &[cokret_sdk::Dot],
     anchor_ref: &str,
     hlc: &str,
 ) -> Result<UnsignedMove> {
@@ -137,7 +137,7 @@ pub fn build_consent_revoke_move_v1(
 }
 
 /// Structured constraint payloads attached to a capability grant. Mirrors
-/// `contrix_sdk::authz::ProtocolGrantConstraint` but kept JSON-shaped
+/// `cokret_sdk::authz::ProtocolGrantConstraint` but kept JSON-shaped
 /// because soland's reducer round-trips constraints as opaque values
 /// today - typing them up here would force every UI
 /// surface to re-typing the SDK enum and future additions.
@@ -838,28 +838,28 @@ fn build_move_inner_with_preconditions_and_refs(
     })
 }
 
-/// Re-parse the refs JSON array into typed [`contrix_sdk::SemanticRef`]
+/// Re-parse the refs JSON array into typed [`cokret_sdk::SemanticRef`]
 /// records. Refs carry auxiliary proof bindings (e.g. an MLS governance
 /// binding hash) that the reducer validates alongside preconditions /
 /// effects.
-fn parse_refs(refs: &[serde_json::Value]) -> Result<Vec<contrix_sdk::SemanticRef>> {
+fn parse_refs(refs: &[serde_json::Value]) -> Result<Vec<cokret_sdk::SemanticRef>> {
     refs.iter()
         .map(|r| {
-            serde_json::from_value::<contrix_sdk::SemanticRef>(r.clone())
+            serde_json::from_value::<cokret_sdk::SemanticRef>(r.clone())
                 .map_err(|e| anyhow::anyhow!("invalid ref: {e}"))
         })
         .collect()
 }
 
 /// Re-parse the preconditions JSON array into typed
-/// [`contrix_sdk::Precondition`] records. Mirrors [`parse_effects`].
+/// [`cokret_sdk::Precondition`] records. Mirrors [`parse_effects`].
 fn parse_preconditions(
     preconditions: &[serde_json::Value],
-) -> Result<Vec<contrix_sdk::Precondition>> {
+) -> Result<Vec<cokret_sdk::Precondition>> {
     preconditions
         .iter()
         .map(|p| {
-            serde_json::from_value::<contrix_sdk::Precondition>(p.clone())
+            serde_json::from_value::<cokret_sdk::Precondition>(p.clone())
                 .map_err(|e| anyhow::anyhow!("invalid precondition: {e}"))
         })
         .collect()
@@ -1340,7 +1340,7 @@ mod tests {
 
     #[test]
     fn mls_commit_move_with_binding_attaches_sdk_preconditions_and_effects() {
-        use contrix_sdk::{AnchorId, Hash, SpaceId};
+        use cokret_sdk::{AnchorId, Hash, SpaceId};
 
         use crate::mls::governance::GovernanceBindingPayload;
 

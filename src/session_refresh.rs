@@ -507,7 +507,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
         let error: anyhow::Error = crate::api::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api::decode_contrix_error(
+            error: crate::api::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
@@ -526,7 +526,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_session_expiry(30, 86400)));
         let error: anyhow::Error = crate::api::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api::decode_contrix_error(
+            error: crate::api::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),

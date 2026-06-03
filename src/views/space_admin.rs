@@ -269,7 +269,7 @@ pub fn SpaceAdminPanel(
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
     let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
-    // Read-only anchorer cell value fetched from /admin/spaces/{id}/anchorer.
+    // Read-only anchorer cell value fetched from /_soland/admin/spaces/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
     let mut anchorer_cell_value = use_signal(String::new);
@@ -930,7 +930,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 // Anchorer cell (read-only, P0 M4) — fetches from
-                // /admin/spaces/{id}/anchorer; surfaces the
+                // /_soland/admin/spaces/{id}/anchorer; surfaces the
                 // recovery-anchorer mode (single_did / threshold / open_set /
                 // mixed) on this admin page. A separate agent is implementing
                 // the endpoint on soland; on 404 we fall back to a clear
@@ -975,7 +975,7 @@ pub fn SpaceAdminPanel(
                                                 // data.
                                                 anchorer_cell_status.set(format!(
                                                     "anchorer endpoint unavailable ({}); \
-                                                     expected /admin/spaces/{{id}}/anchorer \
+                                                     expected /_soland/admin/spaces/{{id}}/anchorer \
                                                      (separate agent shipping)",
                                                     err.display()
                                                 ));
@@ -2840,14 +2840,14 @@ async fn run_device_revoke_from_snapshot(
             return;
         }
     };
-    let typed_target = match contrix_sdk::Did::new(target_did.clone()) {
+    let typed_target = match cokret_sdk::Did::new(target_did.clone()) {
         Ok(d) => d,
         Err(err) => {
             status.set(format!("invalid target DID: {err}"));
             return;
         }
     };
-    let typed_realm = match contrix_sdk::RealmId::new(space_id.clone()) {
+    let typed_realm = match cokret_sdk::RealmId::new(space_id.clone()) {
         Ok(s) => s,
         Err(err) => {
             status.set(format!("invalid realm id: {err}"));
@@ -2855,7 +2855,7 @@ async fn run_device_revoke_from_snapshot(
         }
     };
     let op_id_str = format!("ck:operation:{}", crate::operation::uuid_v7());
-    let typed_op_id = match contrix_sdk::OperationId::new(op_id_str) {
+    let typed_op_id = match cokret_sdk::OperationId::new(op_id_str) {
         Ok(o) => o,
         Err(err) => {
             status.set(format!("internal: operation id minting failed: {err}"));

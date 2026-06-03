@@ -25,7 +25,7 @@ use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
 use chrono::Utc;
-use contrix_sdk::{
+use cokret_sdk::{
     CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
     SignedCrossSigningKey, TypedTrustDomainId,
 };

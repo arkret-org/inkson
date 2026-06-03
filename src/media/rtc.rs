@@ -5,7 +5,7 @@
 //!
 //! - **CALL-1** — `cx.call.media.token_exchange`: obtain a backend token and `participant_binding`
 //!   from soland's `POST /rtc/token` endpoint via the SDK helper
-//!   [`contrix_sdk::media::call_media_token_exchange`].
+//!   [`cokret_sdk::media::call_media_token_exchange`].
 //! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
 //!   options. No silent fallback to a different focus.
 //! - **MEDIA-1** — SFrame key provider derives keys from the MLS Exporter with label
@@ -231,7 +231,7 @@ pub fn validate_recording_destination(
 
 /// CALL-1 — placeholder integration point for the SDK token-exchange
 /// helper. Builds the request the SDK exposes via
-/// [`contrix_sdk::media::call_media_token_exchange`] and documents the
+/// [`cokret_sdk::media::call_media_token_exchange`] and documents the
 /// fail-closed contract the renderer will eventually enforce.
 ///
 /// The actual HTTP POST + signature verification is deferred (the SDK
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_destination_only_accepts_contrix_blob() {
+    fn recording_destination_only_accepts_cokret_blob() {
         assert!(validate_recording_destination(EgressDestination::CokretBlob).is_ok());
         assert_eq!(
             validate_recording_destination(EgressDestination::DirectCloudStorage),

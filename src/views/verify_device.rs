@@ -173,7 +173,7 @@ pub fn VerifyDevicePanel(
         .read()
         .load_private_data(&account_did, "cross_signing.publish.latest")
         .and_then(|json| {
-            serde_json::from_str::<contrix_sdk::CrossSigningPublishContent>(&json).ok()
+            serde_json::from_str::<cokret_sdk::CrossSigningPublishContent>(&json).ok()
         })
         .map(|p| {
             format!(
@@ -200,7 +200,7 @@ pub fn VerifyDevicePanel(
     // instead of the `target_device_did + sas_code` placeholder
     // info.
     let mut ephemeral_keypair = use_signal(|| {
-        Option::<std::sync::Arc<contrix_sdk::key_verification::EphemeralX25519Keypair>>::None
+        Option::<std::sync::Arc<cokret_sdk::key_verification::EphemeralX25519Keypair>>::None
     });
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
@@ -457,7 +457,7 @@ pub fn VerifyDevicePanel(
                                     "data-testid": "sas-generate-keypair-button",
                                     onclick: move |_| {
                                         let pair = std::sync::Arc::new(
-                                            contrix_sdk::key_verification::EphemeralX25519Keypair::generate(),
+                                            cokret_sdk::key_verification::EphemeralX25519Keypair::generate(),
                                         );
                                         ephemeral_keypair.set(Some(pair));
                                         sas_send_status.set(
@@ -594,14 +594,14 @@ pub fn VerifyDevicePanel(
                                     (Some(pair), Some(peer_pub)) => {
                                         match pair.compute_shared_secret(&peer_pub) {
                                             Ok(shared) => (
-                                                contrix_sdk::key_verification::derive_sas_bytes(
+                                                cokret_sdk::key_verification::derive_sas_bytes(
                                                     &shared,
                                                     info.as_bytes(),
                                                 ),
                                                 "real X25519 shared secret",
                                             ),
                                             Err(_) => (
-                                                contrix_sdk::key_verification::derive_sas_bytes(
+                                                cokret_sdk::key_verification::derive_sas_bytes(
                                                     target.as_bytes(),
                                                     info.as_bytes(),
                                                 ),
@@ -610,7 +610,7 @@ pub fn VerifyDevicePanel(
                                         }
                                     }
                                     _ => (
-                                        contrix_sdk::key_verification::derive_sas_bytes(
+                                        cokret_sdk::key_verification::derive_sas_bytes(
                                             target.as_bytes(),
                                             info.as_bytes(),
                                         ),
@@ -1072,7 +1072,7 @@ pub fn VerifyDevicePanel(
                                     // build_initial caller had no actor
                                     // context; the executor uses this
                                     // canonical DID instead.
-                                    let principal = match contrix_sdk::Did::new(actor.clone()) {
+                                    let principal = match cokret_sdk::Did::new(actor.clone()) {
                                         Ok(d) => d,
                                         Err(err) => {
                                             cross_signing_state.set(format!(
@@ -1107,9 +1107,9 @@ pub fn VerifyDevicePanel(
                                             .load()
                                             .server_trust_domain
                                             .clone()
-                                            .and_then(|s| contrix_sdk::TypedTrustDomainId::new(s).ok())
+                                            .and_then(|s| cokret_sdk::TypedTrustDomainId::new(s).ok())
                                             .unwrap_or_else(|| {
-                                                contrix_sdk::TypedTrustDomainId::new(
+                                                cokret_sdk::TypedTrustDomainId::new(
                                                     "ck:trust_domain:unknown.local",
                                                 )
                                                 .expect("sentinel trust domain")
@@ -1156,7 +1156,7 @@ pub fn VerifyDevicePanel(
                                         //    it so the server-side pinning
                                         //    check accepts the write.
                                         let control_space =
-                                            contrix_sdk::auth::principal_control_space_id(
+                                            cokret_sdk::auth::principal_control_space_id(
                                                 &principal,
                                             );
                                         let envelope = match output

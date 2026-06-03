@@ -210,7 +210,7 @@ pub fn verify_witness_chain(
 
 #[cfg(test)]
 mod tests {
-    use contrix_sdk::TrustAnchor;
+    use cokret_sdk::TrustAnchor;
 
     use super::*;
 

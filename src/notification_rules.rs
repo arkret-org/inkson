@@ -8,8 +8,8 @@
 //! the client must not show a user-visible banner until it has decrypted and
 //! evaluated the rule locally.
 
-pub use contrix_sdk::push_rule_core::WatchLevel;
-use contrix_sdk::push_rule_core::{
+pub use cokret_sdk::push_rule_core::WatchLevel;
+use cokret_sdk::push_rule_core::{
     self, EventContext as PushRuleEventContext, ShouldNotify as PushRuleDecision,
 };
 use serde::{Deserialize, Serialize};

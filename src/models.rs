@@ -1,4 +1,4 @@
-pub use contrix_sdk::{
+pub use cokret_sdk::{
     ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
@@ -252,7 +252,7 @@ pub struct IdentityDescribeResBody {
     pub profiles: Vec<String>,
 }
 
-pub use contrix_sdk::model::IdentityResolveResBody;
+pub use cokret_sdk::model::IdentityResolveResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncDescribeResBody {
@@ -266,13 +266,13 @@ pub struct SyncDescribeResBody {
 }
 
 /// Wire-shape sync response — re-exports the SDK's canonical
-/// [`contrix_sdk::model::SyncResBody`] so client + server can never
+/// [`cokret_sdk::model::SyncResBody`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
 /// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
 /// own a custom `ClientSyncResponse` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
-pub use contrix_sdk::model::SyncResBody as ClientSyncResponse;
+pub use cokret_sdk::model::SyncResBody as ClientSyncResponse;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SearchSpacesResponse {
@@ -552,7 +552,7 @@ pub struct SnapshotHeadResponse {
     pub signature: Value,
 }
 
-pub use contrix_sdk::model::AuthzCheckResBody;
+pub use cokret_sdk::model::AuthzCheckResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectiveGrantsResBody {
@@ -582,13 +582,13 @@ pub struct OkResBody {
     pub ok: bool,
 }
 
-pub use contrix_sdk::model::KeysUploadResBody;
+pub use cokret_sdk::model::KeysUploadResBody;
 
-pub use contrix_sdk::model::KeysQueryResBody;
+pub use cokret_sdk::model::KeysQueryResBody;
 
-pub use contrix_sdk::model::KeysClaimResBody;
+pub use cokret_sdk::model::KeysClaimResBody;
 
-pub use contrix_sdk::model::DeviceMessagesSendResBody;
+pub use cokret_sdk::model::DeviceMessagesSendResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceMessagesReceiveResBody {
@@ -599,7 +599,7 @@ pub struct DeviceMessagesReceiveResBody {
     pub limited: bool,
 }
 
-pub use contrix_sdk::model::BlobUploadResBody;
+pub use cokret_sdk::model::BlobUploadResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModerationReportResBody {
@@ -1004,7 +1004,7 @@ pub struct MimiSubmitMessageResBody {
     pub ok: bool,
     pub mimi_message_id: Option<String>,
     pub mapped_operation_id: Option<String>,
-    pub contrix_event_id: Option<String>,
+    pub cokret_event_id: Option<String>,
     #[serde(default)]
     pub receipt: Value,
 }

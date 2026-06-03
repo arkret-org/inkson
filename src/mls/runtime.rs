@@ -285,11 +285,11 @@ pub fn ensure_creator_mls_snapshot(
 
     let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = contrix_sdk::Did::new(actor_did.to_owned())
+    let principal_did = cokret_sdk::Did::new(actor_did.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = contrix_sdk::DeviceId::new(device_id.to_owned())
+    let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let identity = contrix_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
+    let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group = identity
         .create_group(space.as_bytes())
@@ -298,7 +298,7 @@ pub fn ensure_creator_mls_snapshot(
         .ratchet_tree()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
     let schedule_hash = group.schedule_hash().to_string();
-    let cipher_suite = format!("{:?}", contrix_sdk::CONTRIX_MLS_CIPHERSUITE);
+    let cipher_suite = format!("{:?}", cokret_sdk::COKRET_MLS_CIPHERSUITE);
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export state: {err}")))?;
@@ -346,7 +346,7 @@ pub fn build_mls_genesis_payload(
     summary: &InitialMlsSnapshotSummary,
     actor_did: &str,
     device_id: &str,
-    governance_binding: &contrix_sdk::MlsGovernanceBindingPayload,
+    governance_binding: &cokret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<Value, MlsRuntimeError> {
     let binding_value = serde_json::to_value(governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("serialize governance binding: {err}")))?;
@@ -750,16 +750,16 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // error (the readiness status machinery keys off these).
     let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = contrix_sdk::Did::new(actor_did.to_owned())
+    let principal_did = cokret_sdk::Did::new(actor_did.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = contrix_sdk::DeviceId::new(device_id.to_owned())
+    let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     // Per-welcome failures no longer abort the loop or get swallowed: each is
     // counted and the first reason retained so callers can report partial
     // success without failing the whole boot.
     let mut outcome = WelcomeApplyOutcome::default();
     for welcome_value in welcome_entries {
-        let welcome = match serde_json::from_value::<contrix_sdk::MlsWelcomeEnvelope>(welcome_value)
+        let welcome = match serde_json::from_value::<cokret_sdk::MlsWelcomeEnvelope>(welcome_value)
         {
             Ok(welcome) => welcome,
             Err(err) => {
@@ -767,7 +767,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let identity = match contrix_sdk::CokretMlsIdentity::new_basic(
+        let identity = match cokret_sdk::CokretMlsIdentity::new_basic(
             principal_did.clone(),
             device_id_typed.clone(),
         ) {
@@ -777,7 +777,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let group = match contrix_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
+        let group = match cokret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
             Err(err) => {
                 outcome.record_failure(format!("join welcome: {err}"));
@@ -828,10 +828,10 @@ pub fn encrypt_values_with_device_snapshot(
     plaintext_values: &[Vec<u8>],
 ) -> Result<
     (
-        contrix_sdk::Hash,
-        Vec<contrix_sdk::Did>,
+        cokret_sdk::Hash,
+        Vec<cokret_sdk::Did>,
         Vec<serde_json::Value>,
-        contrix_sdk::MlsCommitEnvelope,
+        cokret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -897,10 +897,10 @@ pub fn encrypt_values_with_device_snapshot(
 
 /// Encrypt a single message plaintext under the Space MLS group, binding
 /// `aad` into the payload digest, and return the structured
-/// [`contrix_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
+/// [`cokret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
 /// The caller assembles the spec-canonical `cx.schema.encrypted_envelope.v1`
-/// wire shape via [`contrix_sdk::EncryptedEnvelopeV1::from_payload`] once it
+/// wire shape via [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it
 /// knows the `cx.mls.commit` event id that bounds this epoch (used as the
 /// envelope `key_ref.group_state_ref`). `aad` MUST be the canonical
 /// `EncryptedEnvelopeAadV1` value, so the digest verification round-trips.
@@ -915,10 +915,10 @@ pub fn encrypt_message_with_device_snapshot(
     plaintext: &[u8],
 ) -> Result<
     (
-        contrix_sdk::Hash,
-        Vec<contrix_sdk::Did>,
-        contrix_sdk::EncryptedPayload,
-        contrix_sdk::MlsCommitEnvelope,
+        cokret_sdk::Hash,
+        Vec<cokret_sdk::Did>,
+        cokret_sdk::EncryptedPayload,
+        cokret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -984,7 +984,7 @@ pub struct EncryptedReaction {
     /// `sha256:<hex>` keyed-HMAC routing tag for `reaction_payload.key`.
     pub routing_tag: String,
     /// MLS application-message payload carrying the real emoji JSON.
-    pub encrypted_payload: contrix_sdk::EncryptedPayload,
+    pub encrypted_payload: cokret_sdk::EncryptedPayload,
 }
 
 /// Pure derivation of the §2.9 v1 routing tag from an MLS exporter secret.
@@ -1087,7 +1087,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // a JSON object whose `key` is the real emoji / short tag.
     let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-    let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.reaction.add");
+    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.reaction.add");
     let aad_value =
         serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let encrypted_payload = group
@@ -1371,18 +1371,18 @@ mod tests {
         assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
     }
 
-    fn genesis_governance_binding(group_id: &str) -> contrix_sdk::MlsGovernanceBindingPayload {
+    fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindingPayload {
         let realm_id =
-            contrix_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap();
+            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap();
         let frontier = vec![
-            contrix_sdk::EventId::new("ck:event:01904100-0000-7000-8000-0000000000aa").unwrap(),
+            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-0000000000aa").unwrap(),
         ];
-        let policy_root = contrix_sdk::Hash::new(
+        let policy_root = cokret_sdk::Hash::new(
             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         )
         .unwrap();
         // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
-        contrix_sdk::MlsGovernanceBindingPayload::realm(
+        cokret_sdk::MlsGovernanceBindingPayload::realm(
             realm_id,
             group_id,
             0,
@@ -1443,7 +1443,7 @@ mod tests {
 
         // Validate against the registered canonical `mls_genesis_payload`
         // schema so the full payload passes strict client/server validation.
-        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
         if catalog
             .missing_payload_validators_for(std::iter::once("cx.mls.genesis"))
             .is_empty()
@@ -1610,7 +1610,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn encrypted_write_uses_device_key_snapshot_when_ready() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
@@ -1711,7 +1711,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
@@ -1754,7 +1754,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_mls_history_backup_rejects_epoch_rollback() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
@@ -1806,7 +1806,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn cross_device_recovery_restores_history_without_local_secret() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         use crate::mls::account_recovery::{
             build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,

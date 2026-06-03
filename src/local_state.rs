@@ -8,7 +8,7 @@ use std::{
 
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
-use contrix_sdk::EncryptedPayload;
+use cokret_sdk::EncryptedPayload;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1579,7 +1579,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// R3.1 MID-3 — return the resolved [`contrix_sdk::MemberIdentity`]
+    /// R3.1 MID-3 — return the resolved [`cokret_sdk::MemberIdentity`]
     /// for `(realm_id, actor_id)`, or `None` when no plaintext identity
     /// has been observed (decryption pending or no events ingested
     /// yet). UI surfaces SHOULD fall back to a muted placeholder when
@@ -1589,7 +1589,7 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> Option<contrix_sdk::MemberIdentity> {
+    ) -> Option<cokret_sdk::MemberIdentity> {
         let envelopes = self.member_identity_envelopes(realm_id, actor_id);
         if envelopes.is_empty() {
             return None;
@@ -2457,7 +2457,7 @@ impl LocalStateStore {
 
     /// Resolve effective send preference per spec (server policy → flow →
     /// space → default). Mirror of
-    /// `contrix_sdk::ReadReceiptPreferences::effective_send` extended with
+    /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
     /// `cx.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced

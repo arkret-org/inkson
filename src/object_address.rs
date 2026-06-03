@@ -3,7 +3,7 @@
 //!
 //! A user can share a Realm / Flow / Message as a link. This module is the
 //! yougen-side glue on top of the SDK's client-agnostic addressing grammar
-//! ([`contrix_sdk::model::parse_address`] / [`build_address`] /
+//! ([`cokret_sdk::model::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / flow / message) plus routing hints.
@@ -21,7 +21,7 @@
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
 //! * Reference links carry no authorization. Invite and preview links bind the [`TargetDescriptor`]
 //!   digest so a token minted for object A cannot be replayed onto object B (scope-confusion
-//!   defence lives in the SDK's [`contrix_sdk::model::verify_token_target`]).
+//!   defence lives in the SDK's [`cokret_sdk::model::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! yougen deliberately ships the **HTTPS-fragment-only** landing path and does
@@ -40,7 +40,7 @@
 //! Windows `HKCR\web+cokret` registry) is out of scope here.
 // TODO(R3.3.1): native OS deep-link registration for the `web+cokret:` scheme.
 
-use contrix_sdk::model::{
+use cokret_sdk::model::{
     AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, TargetKind, build_address,
     build_https_landing, parse_address, target_digest,
 };
@@ -156,7 +156,7 @@ impl ShareTarget {
         let parsed = self.to_parsed_address(via, action, link_type, token);
         ShareLinks {
             https_landing: build_https_landing(landing, &parsed),
-            web_contrix: build_address(&parsed),
+            web_cokret: build_address(&parsed),
             link_type,
         }
     }
@@ -224,7 +224,7 @@ pub struct ShareLinks {
     /// token live in the `#` fragment and never reach the landing server.
     pub https_landing: String,
     /// `web+cokret:` URI — the "open in app" form for OS / browser handlers.
-    pub web_contrix: String,
+    pub web_cokret: String,
     /// The link type both forms encode.
     pub link_type: LinkType,
 }
@@ -391,7 +391,7 @@ mod tests {
         );
         assert!(links.https_landing.contains(R));
         // The web+cokret: form is the canonical scheme.
-        assert_eq!(links.web_contrix, format!("web+cokret:realm/{R}"));
+        assert_eq!(links.web_cokret, format!("web+cokret:realm/{R}"));
         assert_eq!(links.link_type, LinkType::Reference);
     }
 
@@ -399,11 +399,11 @@ mod tests {
     fn flow_links_ignore_via_and_roundtrip() {
         let target = ShareTarget::flow(&format!("ck:realm:{R}"), &format!("ck:flow:{F}"));
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
-        assert!(links.web_contrix.contains(&format!("realm/{R}/flow/{F}")));
-        assert!(!links.web_contrix.contains("via="));
+        assert!(links.web_cokret.contains(&format!("realm/{R}/flow/{F}")));
+        assert!(!links.web_cokret.contains("via="));
         // Both forms reparse to the same address.
         let from_https = OpenedLink::parse(&links.https_landing).unwrap();
-        let from_web = OpenedLink::parse(&links.web_contrix).unwrap();
+        let from_web = OpenedLink::parse(&links.web_cokret).unwrap();
         assert_eq!(from_https.address, from_web.address);
         assert!(from_web.address.is_flow());
     }
@@ -422,7 +422,7 @@ mod tests {
             LinkType::Reference,
             None,
         );
-        let opened = OpenedLink::parse(&links.web_contrix).unwrap();
+        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
             Route::TimelineMessage {
@@ -461,9 +461,9 @@ mod tests {
             LinkType::Invite,
             Some("opaque-tok-123".to_owned()),
         );
-        assert!(links.web_contrix.contains("lt=invite"));
-        assert!(links.web_contrix.contains("tok=opaque-tok-123"));
-        let opened = OpenedLink::parse(&links.web_contrix).unwrap();
+        assert!(links.web_cokret.contains("lt=invite"));
+        assert!(links.web_cokret.contains("tok=opaque-tok-123"));
+        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
         assert_eq!(opened.token.as_deref(), Some("opaque-tok-123"));
         // The digest is stable and prefixed.
         let digest = target.invite_target_digest().unwrap();
@@ -479,9 +479,9 @@ mod tests {
             AddressAction::View,
             "preview-token-123".to_owned(),
         );
-        assert!(links.web_contrix.contains("lt=preview"));
-        assert!(links.web_contrix.contains("tok=preview-token-123"));
-        let opened = OpenedLink::parse(&links.web_contrix).unwrap();
+        assert!(links.web_cokret.contains("lt=preview"));
+        assert!(links.web_cokret.contains("tok=preview-token-123"));
+        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
         assert_eq!(opened.address.link_type, LinkType::Preview);
         assert_eq!(opened.token.as_deref(), Some("preview-token-123"));
 
@@ -509,8 +509,8 @@ mod tests {
             LinkType::Reference,
             Some("should-be-dropped".to_owned()),
         );
-        assert!(!links.web_contrix.contains("tok="));
-        assert!(!links.web_contrix.contains("should-be-dropped"));
+        assert!(!links.web_cokret.contains("tok="));
+        assert!(!links.web_cokret.contains("should-be-dropped"));
     }
 
     #[test]

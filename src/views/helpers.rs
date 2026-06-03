@@ -405,7 +405,7 @@ pub fn parse_structured_mentions(input: &str) -> Vec<StructuredMention> {
 
 /// R3.2 §3.8.2 — resolved render of an actor mention plus the visual
 /// degradation tier the UI MUST surface. Wraps the SDK
-/// [`contrix_sdk::MentionRender`] so the chat view can drive a distinct
+/// [`cokret_sdk::MentionRender`] so the chat view can drive a distinct
 /// CSS class / badge per fallback level.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedMention {
@@ -424,7 +424,7 @@ pub struct RenderedMention {
 /// R3.2 §3.8.2 mention render path (YG-MENT-2).
 ///
 /// Resolves the *current* display value for an actor mention by running
-/// the shared SDK [`contrix_sdk::render_mention`] helper off the
+/// the shared SDK [`cokret_sdk::render_mention`] helper off the
 /// authoritative `subject_id` — it MUST NOT use the audit-only
 /// `handle_at_time` / `display_name_at_time` as the current value (those
 /// are passed only as the degraded fallback inputs the SDK ladder steps
@@ -445,14 +445,14 @@ pub struct RenderedMention {
 /// → `display_name_at_time` → truncated DID.
 pub fn render_actor_mention(
     subject_id: &str,
-    claim_set_snapshot: &[contrix_sdk::model::HandleClaim],
+    claim_set_snapshot: &[cokret_sdk::model::HandleClaim],
     accepted_issuers: &[String],
     context: Option<&str>,
-    cached_handle: Option<&contrix_sdk::Handle>,
+    cached_handle: Option<&cokret_sdk::Handle>,
     display_name_at_time: Option<&str>,
 ) -> RenderedMention {
-    use contrix_sdk::Did;
-    use contrix_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
+    use cokret_sdk::Did;
+    use cokret_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
 
     // A malformed subject_id can't be resolved; fall straight to the
     // unresolved tier with a truncated form of the raw string.
@@ -518,7 +518,7 @@ pub struct HandleClaimRow {
 /// rows (YG-DIR-2). The primary handle (per §3.2.1, computed server-side
 /// and echoed in `primary_handle`) is flagged so the UI can mark it.
 pub fn handle_claim_rows(
-    res: &contrix_sdk::model::DirectoryListHandlesForSubjectResBody,
+    res: &cokret_sdk::model::DirectoryListHandlesForSubjectResBody,
 ) -> Vec<HandleClaimRow> {
     let primary = res
         .primary_handle
@@ -532,7 +532,7 @@ pub fn handle_claim_rows(
                 .as_ref()
                 .map(|h| h.canonical().to_owned())
                 .unwrap_or_default();
-            let digest = contrix_sdk::identity::claim_digest(claim).unwrap_or_default();
+            let digest = cokret_sdk::identity::claim_digest(claim).unwrap_or_default();
             HandleClaimRow {
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
@@ -712,13 +712,13 @@ mod tests {
 
     #[test]
     fn render_actor_mention_runs_3_2_1_for_verified_handle() {
-        use contrix_sdk::Handle;
-        use contrix_sdk::model::{HandleBindingState, HandleClaim};
+        use cokret_sdk::Handle;
+        use cokret_sdk::model::{HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(
-                contrix_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
+                cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
             ),
             issuer: Some("did:web:issuer.acme.example".to_owned()),
             binding_state: Some(HandleBindingState::Verified),
@@ -772,13 +772,13 @@ mod tests {
 
     #[test]
     fn handle_claim_rows_flags_primary_and_projects_fields() {
-        use contrix_sdk::Handle;
-        use contrix_sdk::model::{
+        use cokret_sdk::Handle;
+        use cokret_sdk::model::{
             DirectoryListHandlesForSubjectResBody, HandleBindingState, HandleClaim,
         };
         let now = chrono::Utc::now();
         let subject =
-            contrix_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();
+            cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(subject.clone()),
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn render_actor_mention_uses_local_cache_before_name() {
-        use contrix_sdk::Handle;
+        use cokret_sdk::Handle;
         let cached = Handle::parse("bob:acme.example").unwrap();
         let rendered = render_actor_mention(
             "did:web:acme.example:principals:bob",

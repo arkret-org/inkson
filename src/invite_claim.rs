@@ -14,7 +14,7 @@
 //! UI: `claimed`, `send_failed`, `revoked_by_capability_loss`,
 //! `revoked_by_inviter_left`, `invalidated_by_rate_limit`. The
 //! [`InviteTerminalState`] enum mirrors
-//! [`contrix_sdk::ThirdPartyInviteTerminalState`] and carries the i18n
+//! [`cokret_sdk::ThirdPartyInviteTerminalState`] and carries the i18n
 //! key + user-facing label so the UI can render any terminal state
 //! consistently without re-discovering the labels.
 //!
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Round 4 — terminal states for an invite, matching
-/// [`contrix_sdk::ThirdPartyInviteTerminalState`] one-for-one.
+/// [`cokret_sdk::ThirdPartyInviteTerminalState`] one-for-one.
 ///
 /// The UI surfaces every variant via [`label`] / [`i18n_key`] so a
 /// receiver-side reducer can advance the invite to any terminal state
@@ -46,8 +46,8 @@ pub enum InviteTerminalState {
 impl InviteTerminalState {
     /// Map back to the SDK's canonical enum so callers can serialise
     /// directly to the wire without re-defining the JSON shape.
-    pub fn as_sdk(self) -> contrix_sdk::ThirdPartyInviteTerminalState {
-        use contrix_sdk::ThirdPartyInviteTerminalState as S;
+    pub fn as_sdk(self) -> cokret_sdk::ThirdPartyInviteTerminalState {
+        use cokret_sdk::ThirdPartyInviteTerminalState as S;
         match self {
             Self::Claimed => S::Claimed,
             Self::SendFailed => S::SendFailed,
@@ -145,7 +145,7 @@ pub struct InviteSubjectProofBody {
 impl InviteSubjectProofBody {
     pub fn canonical_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let value = serde_json::to_value(self)?;
-        contrix_sdk::canonical::canonical_json_bytes(&value)
+        cokret_sdk::canonical::canonical_json_bytes(&value)
             .map_err(|err| anyhow::anyhow!("invite subject_proof canonical_json failed: {err}"))
     }
 }
@@ -177,7 +177,7 @@ pub struct InviteBindingTranscript {
 impl InviteBindingTranscript {
     pub fn canonical_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let value = serde_json::to_value(self)?;
-        contrix_sdk::canonical::canonical_json_bytes(&value)
+        cokret_sdk::canonical::canonical_json_bytes(&value)
             .map_err(|err| anyhow::anyhow!("invite binding_proof canonical_json failed: {err}"))
     }
 }

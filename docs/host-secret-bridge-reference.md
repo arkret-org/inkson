@@ -236,7 +236,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
 }
 
 /// Call this from the JNI `JNI_OnLoad` or from
-/// `MainActivity.onCreate` via a `Java_com_contrix_yougen_RustBridge_init`
+/// `MainActivity.onCreate` via a `Java_com_cokret_yougen_RustBridge_init`
 /// `extern "C"` shim. Receives the `JavaVM` reference that lives for
 /// the process lifetime.
 pub fn register_android_keystore_bridge(jvm: JavaVM) {

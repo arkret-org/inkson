@@ -25,7 +25,7 @@
 //!
 //! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
 //! Yougen's [`crate::operation::EventEnvelope`] is **not** the same
-//! struct as `contrix_core::Event` — yougen's wire shape evolved
+//! struct as `cokret_core::Event` — yougen's wire shape evolved
 //! independently before the SDK pipeline landed. To keep the SDK as the
 //! single canonical-bytes source, this module re-serializes the
 //! envelope into a `serde_json::Value` with `proofs` + `unsigned`
@@ -57,7 +57,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
-use contrix_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
+use cokret_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
 use serde_json::Value;
 
 use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
@@ -301,7 +301,7 @@ impl YougenEventSigner {
 /// will reference. The verification-method id becomes
 /// `<signer_did>#device`.
 pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> YougenEventSigner {
-    use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+    use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
     let signer_did = signer_did.into();
     let verification_method = format!("{signer_did}#device");
     let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, verification_method.clone());
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn sign_envelope_round_trips_through_sdk_verifier() {
-        use contrix_sdk::signatures::proof::{
+        use cokret_sdk::signatures::proof::{
             Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
         };
         let _g = reset();

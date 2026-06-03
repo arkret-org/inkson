@@ -561,7 +561,7 @@ export async function mockCokretApi(page: Page) {
         ok: true,
         mimi_message_id: "mimi-msg-e2e",
         mapped_operation_id: "ck:operation:mimi-submit-e2e",
-        contrix_event_id: "ck:event:mimi-submit-e2e",
+        cokret_event_id: "ck:event:mimi-submit-e2e",
         receipt: {
           kind: "cx.mimi.mapping_receipt",
           profile: "cx.profile.mimi_interop.v1",

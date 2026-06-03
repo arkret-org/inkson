@@ -66,14 +66,14 @@ pub fn build_call_state(
 
 /// Round 4 — outcome of feeding an incoming `cx.call.signal` envelope
 /// through the receiver. Carries the canonical
-/// [`contrix_sdk::CallSignalPayload`] when accepted; on a seq rollback
+/// [`cokret_sdk::CallSignalPayload`] when accepted; on a seq rollback
 /// the renderer SHOULD emit a local `hangup` for the offending call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallSignalIngestOutcome {
     /// Envelope passed v2 validation, the proof was present, and the
     /// per-`(realm, call, actor, device)` seq advanced strictly forward.
     Accepted {
-        payload: contrix_sdk::CallSignalPayload,
+        payload: cokret_sdk::CallSignalPayload,
     },
     /// `payload.seq` rolled back or repeated — the receiver drops the
     /// signal and SHOULD emit a local `hangup` for `call_id`. The
@@ -87,25 +87,25 @@ pub enum CallSignalIngestOutcome {
 
 /// Round 4 — typed receiver for incoming `cx.call.signal` envelopes.
 ///
-/// Wraps [`contrix_sdk::CallSignalState`] so the renderer can plug a
+/// Wraps [`cokret_sdk::CallSignalState`] so the renderer can plug a
 /// single state into the signal stream and get back a typed outcome
 /// without touching the SDK's mutable `observe` method directly.
 pub struct CallSignalReceiver {
-    state: contrix_sdk::CallSignalState,
+    state: cokret_sdk::CallSignalState,
 }
 
 impl CallSignalReceiver {
     pub fn new() -> Self {
         Self {
-            state: contrix_sdk::CallSignalState::new(),
+            state: cokret_sdk::CallSignalState::new(),
         }
     }
 
     /// Run the v2 envelope validator + per-key monotonicity guard. The
     /// caller is responsible for the proof-verification step BEFORE
     /// invoking this (the SDK only asserts `proof.is_some()`).
-    pub fn ingest(&mut self, envelope: &contrix_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
-        let payload = match contrix_sdk::validate_call_signal_envelope(envelope) {
+    pub fn ingest(&mut self, envelope: &cokret_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
+        let payload = match cokret_sdk::validate_call_signal_envelope(envelope) {
             Ok(p) => p,
             Err(err) => {
                 return CallSignalIngestOutcome::Rejected {
@@ -121,7 +121,7 @@ impl CallSignalReceiver {
                 };
             }
         };
-        let key = contrix_sdk::CallSignalSeqKey::new(
+        let key = cokret_sdk::CallSignalSeqKey::new(
             envelope.realm_id.clone(),
             payload.call_id.clone(),
             envelope.actor_id.clone(),
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(op.payload["consent_actors"][1], "did:web:bob");
     }
 
-    fn make_v1_envelope(seq: u64, signal_type: &str) -> contrix_sdk::EphemeralEnvelope {
+    fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {
         let mut env = crate::api::build_call_signal_envelope_v1(
             "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn v1_builder_accepts_canonical_signal_types() {
-        for st in contrix_sdk::CALL_SIGNAL_TYPES {
+        for st in cokret_sdk::CALL_SIGNAL_TYPES {
             let env = make_v1_envelope(1, st);
             assert_eq!(env.kind, "cx.call.signal");
             assert!(env.device_id.is_some());
@@ -278,12 +278,12 @@ mod tests {
     fn receiver_rejects_envelope_without_device_id_or_proof() {
         // Hand-build an envelope without proof to verify the receiver
         // rejects it (the v2 schema requires proof).
-        let env = contrix_sdk::EphemeralEnvelope::new(
+        let env = cokret_sdk::EphemeralEnvelope::new(
             "cx.call.signal",
-            contrix_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
-            contrix_sdk::Did::new("did:web:alice.example").unwrap(),
+            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            cokret_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(
-                contrix_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000002")
+                cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000002")
                     .unwrap(),
             ),
             chrono::Utc::now(),

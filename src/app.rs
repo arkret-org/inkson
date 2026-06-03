@@ -7772,7 +7772,7 @@ pub fn RouterView() -> Element {
             // so any 403 with a policy-shaped envelope is surfaced
             // without each call site wiring its own error UI. The
             // banner is pulled from a process-wide queue populated by
-            // `api::decode_contrix_error`'s `maybe_dispatch_policy_deny`.
+            // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`.
             crate::components::PolicyDenyBanner {}
             // CXP-0007 P3B.3 — global Circle-error toast, fed by the
             // HTTP layer's `maybe_dispatch_circle_error` next to the

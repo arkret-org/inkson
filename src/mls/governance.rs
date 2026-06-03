@@ -11,20 +11,20 @@
 //! 2. set `key_schedule_cell` to the new schedule's content hash.
 //! 3. add the attested governance anchor to `covered_frontier_cell`.
 //!
-//! This module wraps `contrix_sdk::mls_move::*` so yougen can produce the
+//! This module wraps `cokret_sdk::mls_move::*` so yougen can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
 //! It is not the `cx.mls.commit` event payload type; event payloads must use
-//! `contrix_sdk::MlsCommitPayload` and `contrix_sdk::MlsGovernanceBindingPayload`.
+//! `cokret_sdk::MlsCommitPayload` and `cokret_sdk::MlsGovernanceBindingPayload`.
 
-use contrix_sdk::mls_move::{
+use cokret_sdk::mls_move::{
     covered_frontier_cell_id, governance_frontier_tag, mls_commit_effects, mls_commit_preconditions,
 };
-use contrix_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
+use cokret_sdk::{AnchorId, Effect, Hash, Precondition, SpaceId};
 use serde::{Deserialize, Serialize};
 
 /// Serializable view of the MLS Governance Binding Move tuple set. Keeps
 /// Move-builder call sites typed without forcing every module to depend on
-/// `contrix_sdk::Precondition` / `Effect`.
+/// `cokret_sdk::Precondition` / `Effect`.
 ///
 /// Both the human-readable summary fields (epoch / schedule / anchor /
 /// frontier cell) and the **full SDK Precondition + Effect tuples** are
@@ -112,7 +112,7 @@ impl GovernanceBindingPayload {
     /// Render the binding as the legacy/internal Move tuple JSON shape.
     ///
     /// Do not use this as a `cx.mls.commit` event payload. That wire surface
-    /// is sealed by `contrix_sdk::MlsCommitPayload`.
+    /// is sealed by `cokret_sdk::MlsCommitPayload`.
     pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
             "group_id": &self.group_id,
@@ -135,7 +135,7 @@ pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "cx.profile.mls_governance
 
 #[cfg(test)]
 mod tests {
-    use contrix_sdk::{AnchorId, Hash, SpaceId};
+    use cokret_sdk::{AnchorId, Hash, SpaceId};
 
     use super::*;
 

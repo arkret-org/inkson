@@ -12,7 +12,7 @@
 //! This component is shared between `views/directory.rs`, `views/space_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
-pub use contrix_sdk::{Discoverability, HistoryVisibility, JoinRule};
+pub use cokret_sdk::{Discoverability, HistoryVisibility, JoinRule};
 use dioxus::prelude::*;
 
 pub trait DiscoverabilityUi {

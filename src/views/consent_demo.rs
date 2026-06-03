@@ -221,7 +221,7 @@ pub fn ConsentGrantDemoCard(
 /// after the last `:` does not parse as a `u64` are skipped. Returns
 /// an empty Vec when the input has no parseable lines — the caller
 /// MUST refuse to submit a cascade revoke in that case.
-pub fn parse_observed_dots(raw: &str) -> Vec<contrix_sdk::Dot> {
+pub fn parse_observed_dots(raw: &str) -> Vec<cokret_sdk::Dot> {
     let mut out = Vec::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -235,10 +235,10 @@ pub fn parse_observed_dots(raw: &str) -> Vec<contrix_sdk::Dot> {
         let Ok(actor_seq) = seq_part.trim().parse::<u64>() else {
             continue;
         };
-        let Ok(actor_id) = contrix_sdk::Did::new(did_part.trim()) else {
+        let Ok(actor_id) = cokret_sdk::Did::new(did_part.trim()) else {
             continue;
         };
-        out.push(contrix_sdk::Dot {
+        out.push(cokret_sdk::Dot {
             actor_id,
             actor_seq,
         });

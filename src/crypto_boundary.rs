@@ -157,7 +157,7 @@ pub trait CryptoBoundary {
 ///
 /// The boundary holds the device signing seed because sign/verify
 /// against arbitrary canonical bytes is process-local. Callers who
-/// already hold a [`contrix_sdk::Ed25519MoveSigner`] should use that
+/// already hold a [`cokret_sdk::Ed25519MoveSigner`] should use that
 /// directly; this struct is for code paths that want to drive the
 /// trait surface uniformly across native + WASM.
 pub struct RustSdkBoundary {

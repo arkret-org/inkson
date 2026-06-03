@@ -218,12 +218,12 @@ impl TimelineEvent {
     }
 }
 
-fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
     result.unwrap_or_else(|err| panic!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
-    contrix_sdk::FlowId::new(value.to_owned())
+fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+    cokret_sdk::FlowId::new(value.to_owned())
         .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
 }
 
@@ -237,7 +237,7 @@ fn text_content(body: &str) -> Value {
     // pattern (`text` has no dot) and the `body` requirement, so it is
     // dropped here; downstream renderers should read `body` directly.
     sdk_payload_value(
-        contrix_sdk::ContentBlock::text(body).to_value(),
+        cokret_sdk::ContentBlock::text(body).to_value(),
         "timeline text content serialize",
     )
 }
@@ -279,7 +279,7 @@ pub(crate) fn message_create_operation(
     // for a Realm/Space is `ck:flow:<uuid>` (typed-id re-tag, matching
     // soland's `flow_id_from_space_id`); the default track is "discussion".
     let flow_id = default_flow_id_for_scope(space_id);
-    let mut content = contrix_sdk::ContentBlock::text(body);
+    let mut content = cokret_sdk::ContentBlock::text(body);
     if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
         content = content.with_field("priority", json!(priority)).with_field(
             "notification",
@@ -289,7 +289,7 @@ pub(crate) fn message_create_operation(
             }),
         );
     }
-    let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+    let mut payload = cokret_sdk::MessageCreatePayload::with_content(
         flow_id_value(&flow_id),
         "discussion",
         sdk_payload_value(content.to_value(), "timeline message content serialize"),
@@ -2310,7 +2310,7 @@ pub(crate) fn try_local_mls_decrypt_core(
     )
     .ok()?;
     let mut group = crate::mls::persistence::restore_envelope(&envelope, &secret, 0).ok()?;
-    let payload: contrix_sdk::EncryptedPayload =
+    let payload: cokret_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     group.decrypt_payload(&payload).ok()
 }
@@ -2337,7 +2337,7 @@ mod tests {
         assert_eq!(op.payload["content"]["kind"], "cx.content.text");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("encrypted").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -2364,7 +2364,7 @@ mod tests {
             op.payload["content"]["notification"]["priority"],
             "critical"
         );
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -2396,7 +2396,7 @@ mod tests {
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("target_event_id").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -2417,7 +2417,7 @@ mod tests {
         assert_eq!(op.payload["key"], "+1");
         assert!(op.payload.get("event_id").is_none());
         assert!(op.payload.get("actor").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }

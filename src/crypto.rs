@@ -1,6 +1,6 @@
-use contrix_sdk::EncryptedPayload;
+use cokret_sdk::EncryptedPayload;
 #[cfg(target_arch = "wasm32")]
-use contrix_sdk::{EncryptedPayloadScheme, Hash, KeyRefObject};
+use cokret_sdk::{EncryptedPayloadScheme, Hash, KeyRefObject};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientEncryptedMessage {
@@ -10,7 +10,7 @@ pub struct ClientEncryptedMessage {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use contrix_sdk::{
+    use cokret_sdk::{
         CokretMlsGroup, CokretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsRemoveMemberResult, MlsWelcomeEnvelope,
@@ -243,7 +243,7 @@ fn wasm_placeholder_ciphertext_fallback_allowed() -> bool {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use contrix_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
+    use cokret_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
 
     use super::*;
 

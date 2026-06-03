@@ -8,13 +8,13 @@
 //!
 //! Yougen previously called the federation HTTP endpoints (`api.rs:1458-1521`)
 //! as opaque pass-throughs. This module adds a client-side trust bundle that
-//! collects [`contrix_sdk::TrustAnchor`] entries, verifies the well-known
+//! collects [`cokret_sdk::TrustAnchor`] entries, verifies the well-known
 //! discovery record against the active anchor set, and gates inbound
 //! `FederationTransaction` payloads on bundle membership.
 
 use std::collections::BTreeMap;
 
-use contrix_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownCokretServer};
+use cokret_sdk::{FederationManager, FederationTransaction, TrustAnchor, WellKnownCokretServer};
 use serde::{Deserialize, Serialize};
 
 /// Outcome of trust bundle verification.
@@ -232,7 +232,7 @@ impl TrustBundle {
     }
 }
 
-/// F-WELLKNOWN-1: errors surfaced by [`fetch_well_known_contrix_server`].
+/// F-WELLKNOWN-1: errors surfaced by [`fetch_well_known_cokret_server`].
 #[derive(Debug)]
 pub enum WellKnownFetchError {
     /// `base_url` couldn't be turned into a URL (bad scheme, missing
@@ -269,7 +269,7 @@ impl std::error::Error for WellKnownFetchError {}
 /// — not under the service's `/api/v1` namespace. This helper trims a
 /// trailing slash and concatenates the well-known path, returning an
 /// error when `base_url` is empty or doesn't carry a scheme.
-pub fn well_known_contrix_server_url(base_url: &str) -> Result<String, WellKnownFetchError> {
+pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownFetchError> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(WellKnownFetchError::BadBaseUrl(
@@ -314,10 +314,10 @@ pub fn well_known_contrix_server_url(base_url: &str) -> Result<String, WellKnown
 /// the result through [`TrustBundle::verify_well_known`] and decides
 /// what to persist (typically into the trust bundle alongside the
 /// pinned anchor). Caching is a follow-up.
-pub async fn fetch_well_known_contrix_server(
+pub async fn fetch_well_known_cokret_server(
     base_url: &str,
 ) -> Result<WellKnownCokretServer, WellKnownFetchError> {
-    let url = well_known_contrix_server_url(base_url)?;
+    let url = well_known_cokret_server_url(base_url)?;
     let response = reqwest::Client::new()
         .get(&url)
         .send()
@@ -452,7 +452,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
         let record = WellKnownCokretServer {
-            service_did: contrix_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
+            service_did: cokret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             base_url: "https://bob.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
@@ -470,7 +470,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(anchor("bob.example", "did:web:bob.example"));
         let record = WellKnownCokretServer {
-            service_did: contrix_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
+            service_did: cokret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
             base_url: "https://eve.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
@@ -489,23 +489,23 @@ mod tests {
     fn well_known_url_derives_origin_from_base_url() {
         // Plain origin.
         assert_eq!(
-            well_known_contrix_server_url("https://bob.example").unwrap(),
+            well_known_cokret_server_url("https://bob.example").unwrap(),
             "https://bob.example/.well-known/cokret/server"
         );
         // Origin + trailing slash.
         assert_eq!(
-            well_known_contrix_server_url("https://bob.example/").unwrap(),
+            well_known_cokret_server_url("https://bob.example/").unwrap(),
             "https://bob.example/.well-known/cokret/server"
         );
         // Origin + API prefix gets stripped — well-known lives at the
         // top of the host, not nested under /api/v1.
         assert_eq!(
-            well_known_contrix_server_url("https://bob.example/api/v1").unwrap(),
+            well_known_cokret_server_url("https://bob.example/api/v1").unwrap(),
             "https://bob.example/.well-known/cokret/server"
         );
         // Loopback dev URLs are allowed.
         assert_eq!(
-            well_known_contrix_server_url("http://127.0.0.1:8080").unwrap(),
+            well_known_cokret_server_url("http://127.0.0.1:8080").unwrap(),
             "http://127.0.0.1:8080/.well-known/cokret/server"
         );
     }
@@ -602,21 +602,21 @@ mod tests {
     #[test]
     fn well_known_url_rejects_malformed_base_url() {
         assert!(matches!(
-            well_known_contrix_server_url(""),
+            well_known_cokret_server_url(""),
             Err(WellKnownFetchError::BadBaseUrl(_))
         ));
         assert!(matches!(
-            well_known_contrix_server_url("   "),
+            well_known_cokret_server_url("   "),
             Err(WellKnownFetchError::BadBaseUrl(_))
         ));
         // Missing scheme.
         assert!(matches!(
-            well_known_contrix_server_url("bob.example"),
+            well_known_cokret_server_url("bob.example"),
             Err(WellKnownFetchError::BadBaseUrl(_))
         ));
         // Scheme only.
         assert!(matches!(
-            well_known_contrix_server_url("https://"),
+            well_known_cokret_server_url("https://"),
             Err(WellKnownFetchError::BadBaseUrl(_))
         ));
     }

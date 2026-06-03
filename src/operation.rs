@@ -427,7 +427,7 @@ impl EventEnvelope {
         // soland, and yougen.
         use std::sync::Arc;
 
-        use contrix_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+        use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
 
         let signer_did = signer_did.into();
         let key_id = key_id.into();
@@ -471,7 +471,7 @@ fn typed_operation_id(operation_id: &str) -> String {
 /// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
 /// same-millisecond monotonic guarantee.
 pub fn uuid_v7() -> String {
-    contrix_sdk::identifiers::new_prefixed_uuid7("")
+    cokret_sdk::identifiers::new_prefixed_uuid7("")
 }
 
 /// Canonical helper constructors used by the current UI.
@@ -483,74 +483,74 @@ pub mod cx_ops {
         scope_id_as_realm_id, uuid_v7,
     };
 
-    fn did_id(value: &str) -> contrix_sdk::Did {
-        contrix_sdk::Did::new(value.to_owned())
+    fn did_id(value: &str) -> cokret_sdk::Did {
+        cokret_sdk::Did::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid DID {value:?}: {err:?}"))
     }
 
-    fn realm_id_value(value: &str) -> contrix_sdk::RealmId {
-        contrix_sdk::RealmId::new(value.to_owned())
+    fn realm_id_value(value: &str) -> cokret_sdk::RealmId {
+        cokret_sdk::RealmId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid realm id {value:?}: {err:?}"))
     }
 
-    fn space_id_value(value: &str) -> contrix_sdk::SpaceId {
-        contrix_sdk::SpaceId::new(value.to_owned())
+    fn space_id_value(value: &str) -> cokret_sdk::SpaceId {
+        cokret_sdk::SpaceId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid space id {value:?}: {err:?}"))
     }
 
-    fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
-        contrix_sdk::FlowId::new(value.to_owned())
+    fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+        cokret_sdk::FlowId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
     }
 
-    fn morph_id_value(value: &str) -> contrix_sdk::MorphId {
-        contrix_sdk::MorphId::new(value.to_owned())
+    fn morph_id_value(value: &str) -> cokret_sdk::MorphId {
+        cokret_sdk::MorphId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid morph id {value:?}: {err:?}"))
     }
 
-    fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+    fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
         result.unwrap_or_else(|err| panic!("{context}: {err}"))
     }
 
     fn object_create_payload_value<T: serde::Serialize>(object: T, context: &str) -> Value {
         sdk_payload_value(
-            contrix_sdk::ObjectCreatePayload::new(object).to_value(),
+            cokret_sdk::ObjectCreatePayload::new(object).to_value(),
             context,
         )
     }
 
-    fn object_patch_payload_value(object_ref: &str, patch: contrix_sdk::Patch) -> Value {
-        contrix_sdk::ObjectPatchPayload::for_target(object_ref, patch)
+    fn object_patch_payload_value(object_ref: &str, patch: cokret_sdk::Patch) -> Value {
+        cokret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
             .and_then(|payload| payload.to_value())
             .unwrap_or_else(|err| {
                 panic!("invalid object_patch_payload for {object_ref}: {err}");
             })
     }
 
-    fn flow_object_patch_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
+    fn flow_object_patch_payload_value(flow_id: &str, patch: cokret_sdk::Patch) -> Value {
         object_patch_payload_value(flow_id, patch)
     }
 
-    fn flow_tracks_update_payload_value(flow_id: &str, patch: contrix_sdk::Patch) -> Value {
-        contrix_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id), patch)
+    fn flow_tracks_update_payload_value(flow_id: &str, patch: cokret_sdk::Patch) -> Value {
+        cokret_sdk::FlowPatchPayload::for_flow(flow_id_value(flow_id), patch)
             .and_then(|payload| payload.to_value())
             .unwrap_or_else(|err| {
                 panic!("invalid cx.flow.tracks.update payload for {flow_id}: {err}");
             })
     }
 
-    fn patch_set(path: &str, value: Value) -> contrix_sdk::Patch {
-        let mut patch = contrix_sdk::Patch::new();
+    fn patch_set(path: &str, value: Value) -> cokret_sdk::Patch {
+        let mut patch = cokret_sdk::Patch::new();
         patch
-            .insert_op(path, contrix_sdk::PatchOp::set(value))
+            .insert_op(path, cokret_sdk::PatchOp::set(value))
             .unwrap_or_else(|err| {
                 panic!("invalid cx.patch.v1 path {path:?}: {err}");
             });
         patch
     }
 
-    fn patch_from_value(patch: Value) -> contrix_sdk::Patch {
-        let patch: contrix_sdk::Patch = serde_json::from_value(patch).unwrap_or_else(|err| {
+    fn patch_from_value(patch: Value) -> cokret_sdk::Patch {
+        let patch: cokret_sdk::Patch = serde_json::from_value(patch).unwrap_or_else(|err| {
             panic!("cx.flow.update patch must match cx.patch.v1: {err}");
         });
         patch.validate().unwrap_or_else(|err| {
@@ -572,19 +572,19 @@ pub mod cx_ops {
         flow_id: &str,
         title: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        let realm_id = contrix_sdk::RealmId::new(scope_id_as_realm_id(space_id))
+        let realm_id = cokret_sdk::RealmId::new(scope_id_as_realm_id(space_id))
             .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-        let did = contrix_sdk::Did::new(actor.to_owned())
+        let did = cokret_sdk::Did::new(actor.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-        let typed_flow_id = contrix_sdk::FlowId::new(flow_id.to_owned())
+        let typed_flow_id = cokret_sdk::FlowId::new(flow_id.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid flow_id: {e:?}"))?;
-        let flow = contrix_sdk::FlowCreateObject::new(typed_flow_id, realm_id, did)
+        let flow = cokret_sdk::FlowCreateObject::new(typed_flow_id, realm_id, did)
             .with_metadata_title(title)
             .with_track(
                 "discussion",
-                contrix_sdk::FlowTrackConfig::discussion_primary(),
+                cokret_sdk::FlowTrackConfig::discussion_primary(),
             );
-        let payload = contrix_sdk::ObjectCreatePayload::new(flow)
+        let payload = cokret_sdk::ObjectCreatePayload::new(flow)
             .to_value()
             .map_err(|e| anyhow::anyhow!("cx.flow.create payload serialize: {e}"))?;
         Ok(OperationBuilder::new(space_id, actor, "cx.flow.create")
@@ -716,7 +716,7 @@ pub mod cx_ops {
         parent_space_id: Option<&str>,
         rank: Option<&str>,
     ) -> OperationBuilder {
-        let mut object = contrix_sdk::SpaceCreateObject::new(
+        let mut object = cokret_sdk::SpaceCreateObject::new(
             space_id_value(container_space_id),
             realm_id_value(&scope_id_as_realm_id(realm_id)),
             kind,
@@ -766,7 +766,7 @@ pub mod cx_ops {
         document_body: serde_json::Value,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let object = contrix_sdk::MorphCreateObject::new(
+        let object = cokret_sdk::MorphCreateObject::new(
             morph_id_value(morph_id),
             realm_id_value(&realm_id),
             "document",
@@ -796,7 +796,7 @@ pub mod cx_ops {
         priority: &str,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let object = contrix_sdk::FlowCreateObject::new(
+        let object = cokret_sdk::FlowCreateObject::new(
             flow_id_value(flow_id),
             realm_id_value(&realm_id),
             did_id(actor),
@@ -807,13 +807,13 @@ pub mod cx_ops {
         .with_metadata_field("incident_priority", json!(priority))
         .with_track(
             "synthesis",
-            contrix_sdk::FlowTrackConfig::new()
+            cokret_sdk::FlowTrackConfig::new()
                 .primary()
                 .with_profile("incident_response"),
         )
         .with_track(
             "discussion",
-            contrix_sdk::FlowTrackConfig::new().with_profile("war_room"),
+            cokret_sdk::FlowTrackConfig::new().with_profile("war_room"),
         );
         OperationBuilder::new(space_id, actor, "cx.flow.create")
             .target_ref(flow_id)
@@ -850,7 +850,7 @@ pub mod cx_ops {
         rank: &str,
     ) -> OperationBuilder {
         let realm_id = scope_id_as_realm_id(space_id);
-        let object = contrix_sdk::FlowCreateObject::new(
+        let object = cokret_sdk::FlowCreateObject::new(
             flow_id_value(flow_id),
             realm_id_value(&realm_id),
             did_id(actor),
@@ -862,7 +862,7 @@ pub mod cx_ops {
         .with_metadata_field("rank", json!(rank))
         .with_track(
             "synthesis",
-            contrix_sdk::FlowTrackConfig::new()
+            cokret_sdk::FlowTrackConfig::new()
                 .primary()
                 .with_profile("kanban_card"),
         );
@@ -911,7 +911,7 @@ pub mod cx_ops {
             .strip_prefix("ck:realm:")
             .map(|suffix| format!("ck:flow:{suffix}"))
             .unwrap_or_else(|| morph_id.to_owned());
-        let content = contrix_sdk::ContentBlock::text(body)
+        let content = cokret_sdk::ContentBlock::text(body)
             .with_field(
                 "anchor_range",
                 json!({
@@ -921,7 +921,7 @@ pub mod cx_ops {
                 }),
             )
             .with_field("morph_id", json!(morph_id));
-        let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+        let mut payload = cokret_sdk::MessageCreatePayload::with_content(
             flow_id_value(&discussion_flow_id),
             "discussion",
             sdk_payload_value(content.to_value(), "document comment content serialize"),
@@ -1247,7 +1247,7 @@ pub mod cx_ops {
         consent_id: &str,
         tag: &str,
         reason: Option<&str>,
-        observed_dots: &[contrix_sdk::Dot],
+        observed_dots: &[cokret_sdk::Dot],
     ) -> OperationBuilder {
         let mut body = json!({
             "consent_id": consent_id,
@@ -1348,7 +1348,7 @@ pub mod cx_ops {
     pub fn mls_commit_with_governance(
         realm_id: &str,
         actor: &str,
-        payload: &contrix_sdk::MlsCommitPayload,
+        payload: &cokret_sdk::MlsCommitPayload,
     ) -> OperationBuilder {
         let group_id = payload.mls_group_id().to_owned();
         OperationBuilder::new(realm_id, actor, "cx.mls.commit")
@@ -1612,20 +1612,20 @@ pub mod cx_ops {
     }
 
     /// Round 4 (spec a77b995) — validate an `applet_id` against the
-    /// canonical [`contrix_sdk::AppletIdentifier`] shape (DID *or*
+    /// canonical [`cokret_sdk::AppletIdentifier`] shape (DID *or*
     /// `ck:applet:<uuidv7>`). Returns the typed identifier so callers
     /// can stash it without re-parsing. Wire-breaking: plain strings
     /// outside these two forms are rejected.
     pub fn parse_applet_identifier(
         applet_id: &str,
-    ) -> Result<contrix_sdk::AppletIdentifier, String> {
+    ) -> Result<cokret_sdk::AppletIdentifier, String> {
         if applet_id.starts_with("did:") {
-            contrix_sdk::Did::new(applet_id)
-                .map(contrix_sdk::AppletIdentifier::Did)
+            cokret_sdk::Did::new(applet_id)
+                .map(cokret_sdk::AppletIdentifier::Did)
                 .map_err(|e| format!("invalid applet DID: {e}"))
         } else if applet_id.starts_with("ck:applet:") {
-            contrix_sdk::AppletId::new(applet_id)
-                .map(contrix_sdk::AppletIdentifier::Cx)
+            cokret_sdk::AppletId::new(applet_id)
+                .map(cokret_sdk::AppletIdentifier::Cx)
                 .map_err(|e| format!("invalid ck:applet:<uuidv7>: {e}"))
         } else {
             Err(format!(
@@ -1636,10 +1636,10 @@ pub mod cx_ops {
     }
 
     /// Round 4 — validate an `agent_id` against the canonical
-    /// [`contrix_sdk::AgentId`] shape (strict DID). Wire-breaking: the
+    /// [`cokret_sdk::AgentId`] shape (strict DID). Wire-breaking: the
     /// pre-round-4 permissive plain-string form is rejected.
-    pub fn parse_agent_identifier(agent_id: &str) -> Result<contrix_sdk::AgentId, String> {
-        contrix_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
+    pub fn parse_agent_identifier(agent_id: &str) -> Result<cokret_sdk::AgentId, String> {
+        cokret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
     }
 
     /// `cx.applet.protocol_session.start` — open a per-session channel
@@ -1805,7 +1805,7 @@ mod tests {
     }
 
     fn assert_registered_payload_valid(event: &EventEnvelope) {
-        let catalog = contrix_sdk::schema::event_payload_validator_catalog();
+        let catalog = cokret_sdk::schema::event_payload_validator_catalog();
         catalog
             .validate_payload(&event.kind, &event.payload)
             .unwrap_or_else(|err| {
@@ -1999,31 +1999,31 @@ mod tests {
     fn mls_commit_builder_matches_registered_payload_schema() {
         let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let group_id = "ck:mls_group:kanban-test";
-        let governance_binding = contrix_sdk::MlsGovernanceBindingPayload::realm(
-            contrix_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+        let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
+            cokret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             group_id,
             0,
             1,
             vec![
-                contrix_sdk::EventId::new(
+                cokret_sdk::EventId::new(
                     "ck:event:0196419b-0000-7000-8000-000000000002".to_owned(),
                 )
                 .unwrap(),
             ],
-            contrix_sdk::Hash::new(
+            cokret_sdk::Hash::new(
                 "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                     .to_owned(),
             )
             .unwrap(),
         )
         .unwrap();
-        let payload = contrix_sdk::MlsCommitPayload::new(
+        let payload = cokret_sdk::MlsCommitPayload::new(
             group_id,
             0,
             "ck:event:0196419b-0000-7000-8000-000000000001",
             Vec::new(),
             1,
-            contrix_sdk::Hash::new(
+            cokret_sdk::Hash::new(
                 "sha256:7777777777777777777777777777777777777777777777777777777777777777"
                     .to_owned(),
             )

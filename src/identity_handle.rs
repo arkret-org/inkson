@@ -168,7 +168,7 @@ fn valid_domain_label(label: &str) -> bool {
 ///
 /// TODO(R3.1): replace the ad-hoc script classifier below with a real
 /// UTS#39 skeleton-fold implementation once the SDK ships
-/// `contrix_sdk::identity::handle_canonical_form`. Until then this
+/// `cokret_sdk::identity::handle_canonical_form`. Until then this
 /// client-side check is best-effort — the server is the source of
 /// truth and will return `handle_homograph_forbidden` if the form is
 /// rejected.

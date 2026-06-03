@@ -12,7 +12,7 @@
 //!
 //! Incoming `cx.agent.protocol_session.result` events fetched from
 //! soland are decoded + verified via
-//! `contrix_sdk::agent_binding::verify_audit_binding_by_kind`. The
+//! `cokret_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
 //! whether the signature matches.
 //!
@@ -231,11 +231,11 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         .get("payload")
         .cloned()
         .unwrap_or_else(|| events.last().unwrap().clone());
-    match contrix_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
+    match cokret_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
             AuditChainVerifyOutcome::Valid
         }
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => {
             AuditChainVerifyOutcome::ChainBreak
         }
         _ => AuditChainVerifyOutcome::SignatureInvalid,
@@ -292,21 +292,21 @@ impl AuditVerifyStatus {
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
 fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
-    match contrix_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
+    match cokret_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
             AuditVerifyStatus::SubjectMismatch
         }
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
             AuditVerifyStatus::SignatureMismatch
         }
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
             AuditVerifyStatus::Malformed
         }
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
             AuditVerifyStatus::Unsupported
         }
-        contrix_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
+        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
     }
 }
 
@@ -2074,7 +2074,7 @@ mod tests {
         actor: &str,
         seed: &[u8; 32],
     ) -> serde_json::Value {
-        let signed = contrix_sdk::agent_binding::sign_ed25519_audit_binding(
+        let signed = cokret_sdk::agent_binding::sign_ed25519_audit_binding(
             seed, session_id, agent_id, &echo, actor,
         );
         json!({
@@ -2315,7 +2315,7 @@ mod tests {
         let agent_id = "did:web:agent.example";
         let echo = json!({"op": "ping"});
         let actor = "did:web:alice.example";
-        let signed = contrix_sdk::agent_binding::sign_ed25519_audit_binding(
+        let signed = cokret_sdk::agent_binding::sign_ed25519_audit_binding(
             &seed, session_id, agent_id, &echo, actor,
         );
         let result_payload = json!({

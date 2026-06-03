@@ -74,7 +74,7 @@ impl AppealState {
 
 /// Construct the canonical `cx.moderation.appeal.submit` event payload as
 /// an [`OperationBuilder`]. The wire shape matches
-/// [`contrix_sdk::AppealSubmitPayload`] / `cx.schema.moderation_appeal.v1`.
+/// [`cokret_sdk::AppealSubmitPayload`] / `cx.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
 /// - `decision_event_id` — the `ck:event:` id of the original moderation decision being appealed
@@ -94,17 +94,17 @@ pub fn build_appeal_submit_op(
     // Round R2/R3: typed appeal id binding. Validate the input rather than
     // forwarding free-form strings to the wire — the SDK's TypedAppealId
     // enforces the `ck:appeal:<uuidv7>` shape.
-    let typed_appeal_id = contrix_sdk::TypedAppealId::new(appeal_id)
+    let typed_appeal_id = cokret_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
     let realm_id = scope_id_as_realm_id(realm_id);
-    let payload = contrix_sdk::AppealSubmitPayload {
+    let payload = cokret_sdk::AppealSubmitPayload {
         appeal_id: typed_appeal_id.clone(),
-        realm_id: contrix_sdk::RealmId::new(realm_id.clone())
+        realm_id: cokret_sdk::RealmId::new(realm_id.clone())
             .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
-        decision_ref: contrix_sdk::EventId::new(decision_event_id)
+        decision_ref: cokret_sdk::EventId::new(decision_event_id)
             .map_err(|err| anyhow::anyhow!("invalid decision_event_id: {err}"))?,
         target_ref: target_ref.to_owned(),
-        appellant: contrix_sdk::Did::new(appellant)
+        appellant: cokret_sdk::Did::new(appellant)
             .map_err(|err| anyhow::anyhow!("invalid appellant did: {err}"))?,
         reason_text_ref: reason_text_ref.to_owned(),
         evidence_refs: Vec::new(),
@@ -114,7 +114,7 @@ pub fn build_appeal_submit_op(
     // Validate via the SDK's oneOf-aware checker before serialization so a
     // future evolution of the payload (Decision::Modify needs a
     // modify_decision_ref, etc.) can't slip past.
-    contrix_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
+    cokret_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
 
     let body = serde_json::to_value(&payload)?;
     Ok(
@@ -305,7 +305,7 @@ mod tests {
         );
         assert!(op.payload["appeal_id"].is_string());
         assert!(op.payload.get("schema").is_none());
-        let registry = contrix_sdk::schema::schema_registry_from_default_spec_artifacts()
+        let registry = cokret_sdk::schema::schema_registry_from_default_spec_artifacts()
             .unwrap()
             .unwrap();
         registry

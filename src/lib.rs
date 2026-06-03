@@ -23,7 +23,7 @@ pub mod card_comments;
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in
-/// `contrix_sdk::contrix_core::model::circle`.
+/// `cokret_sdk::cokret_core::model::circle`.
 pub mod circle;
 pub mod coauth;
 pub mod components;
@@ -57,7 +57,7 @@ pub mod media;
 /// R3.1 (cokret-spec @ 7157ee8) — Realm-scoped
 /// `cx.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
-/// effective [`contrix_sdk::MemberIdentity`] via the SDK's
+/// effective [`cokret_sdk::MemberIdentity`] via the SDK's
 /// replacement-edge filter helper. MLS decryption (MID-4) + proof
 /// signature verification (MID-5) are gated on `TODO(R4)`.
 pub mod member_identity_store;

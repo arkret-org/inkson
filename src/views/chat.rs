@@ -1,4 +1,4 @@
-use contrix_sdk::push_rule_core::WatchLevel;
+use cokret_sdk::push_rule_core::WatchLevel;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
@@ -203,21 +203,21 @@ struct SpaceParticipant {
 /// Encrypt a discussion message under the Space MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. The caller
 /// wraps these into a spec-conforming `cx.schema.encrypted_envelope.v1` via
-/// [`contrix_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
+/// [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
 /// `cx.mls.commit` event id for `key_ref.group_state_ref`.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
 type LocalEncryptedMessage = (
-    contrix_sdk::EncryptedPayload,
-    contrix_sdk::EncryptedEnvelopeAadV1,
+    cokret_sdk::EncryptedPayload,
+    cokret_sdk::EncryptedEnvelopeAadV1,
 );
 
 type LocalMlsEncryptResult = (
-    Option<contrix_sdk::Hash>,
-    Vec<contrix_sdk::Did>,
+    Option<cokret_sdk::Hash>,
+    Vec<cokret_sdk::Did>,
     Option<LocalEncryptedMessage>,
-    Option<contrix_sdk::MlsCommitEnvelope>,
+    Option<cokret_sdk::MlsCommitEnvelope>,
     // X14 — post-commit snapshot, persisted by the caller ONLY after the
     // server accepts the `cx.mls.commit` (persist-on-accept).
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -233,7 +233,7 @@ fn run_local_mls_encrypt(
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-    let aad = contrix_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
+    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "cx.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };
@@ -284,7 +284,7 @@ fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> Str
         .chain(anchor_view.leaves.iter())
         .chain(anchor_view.state_root.iter())
         .find_map(|value| {
-            if value.starts_with("ck:event:") && contrix_sdk::EventId::new(value.clone()).is_ok() {
+            if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.clone()).is_ok() {
                 Some(value.clone())
             } else {
                 chat_sha256_hash_from_ref(value)
@@ -304,13 +304,13 @@ fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> Str
 
 fn chat_mls_membership_frontier(
     anchor_view: &LocalAnchorView,
-    fallback_event_id: &contrix_sdk::EventId,
-) -> Vec<contrix_sdk::EventId> {
+    fallback_event_id: &cokret_sdk::EventId,
+) -> Vec<cokret_sdk::EventId> {
     let mut frontier = anchor_view
         .frontier
         .iter()
         .chain(anchor_view.leaves.iter())
-        .filter_map(|value| contrix_sdk::EventId::new(value.clone()).ok())
+        .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
         .collect::<Vec<_>>();
     if frontier.is_empty() {
         frontier.push(fallback_event_id.clone());
@@ -323,8 +323,8 @@ fn chat_mls_membership_frontier(
 fn chat_mls_policy_root(
     anchor_view: &LocalAnchorView,
     space_id: &str,
-    schedule_hash: &contrix_sdk::Hash,
-) -> Result<contrix_sdk::Hash, String> {
+    schedule_hash: &cokret_sdk::Hash,
+) -> Result<cokret_sdk::Hash, String> {
     let hash = anchor_view
         .state_root
         .as_deref()
@@ -341,7 +341,7 @@ fn chat_mls_policy_root(
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
             })
         });
-    contrix_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
+    cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 fn chat_message_revise_operation(
@@ -401,7 +401,7 @@ fn chat_reaction_add_operation_encrypted(
     actor: &str,
     event_id: &str,
     routing_tag: &str,
-    encrypted_payload: &contrix_sdk::EncryptedPayload,
+    encrypted_payload: &cokret_sdk::EncryptedPayload,
 ) -> crate::operation::EventEnvelope {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
@@ -1331,12 +1331,12 @@ fn schema_message_id_or_new(value: &str) -> String {
     }
 }
 
-fn sdk_payload_value(result: contrix_sdk::Result<Value>, context: &str) -> Value {
+fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> Value {
     result.unwrap_or_else(|err| panic!("{context}: {err}"))
 }
 
-fn flow_id_value(value: &str) -> contrix_sdk::FlowId {
-    contrix_sdk::FlowId::new(value.to_owned())
+fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
+    cokret_sdk::FlowId::new(value.to_owned())
         .unwrap_or_else(|err| panic!("invalid flow id {value:?}: {err:?}"))
 }
 
@@ -1351,14 +1351,14 @@ fn chat_message_create_operation(
     reply_to: Option<&str>,
 ) -> crate::operation::EventEnvelope {
     let audience_mention_values = audience_mentions_to_json(mentions);
-    let mut content = contrix_sdk::ContentBlock::text(body);
+    let mut content = cokret_sdk::ContentBlock::text(body);
     if !audience_mention_values.is_empty() {
         content = content.with_field("audience_mentions", Value::Array(audience_mention_values));
     }
     // T2.3: the legacy `branch` top-level field is forbidden on the wire
     // (artifacts/registry/forbidden-wire-fields.json, hard_reject). v1 uses
     // `track_name` — a display-only timeline segment identifier — instead.
-    let mut payload = contrix_sdk::MessageCreatePayload::with_content(
+    let mut payload = cokret_sdk::MessageCreatePayload::with_content(
         flow_id_value(flow_id),
         "discussion",
         sdk_payload_value(content.to_value(), "chat message content serialize"),
@@ -1603,7 +1603,7 @@ fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage>
 /// envelope into a plaintext chat body.
 ///
 /// Prefers the canonical `cx.schema.encrypted_envelope.v1` shape — parse the
-/// envelope and unwrap it to the typed [`contrix_sdk::EncryptedPayload`] before
+/// envelope and unwrap it to the typed [`cokret_sdk::EncryptedPayload`] before
 /// handing it to the shared MLS decrypt core — and falls back to a raw
 /// `EncryptedPayload` for legacy messages written before the envelope wrap. The
 /// decrypted bytes are the canonical Content Block JSON (see the secure send
@@ -1620,7 +1620,7 @@ fn decrypt_chat_encrypted_content(
     encrypted_content: &Value,
 ) -> Option<String> {
     let payload_value =
-        match serde_json::from_value::<contrix_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
+        match serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
         {
             Ok(envelope) => serde_json::to_value(envelope.to_payload().ok()?).ok()?,
             Err(_) => encrypted_content.clone(),
@@ -6010,7 +6010,7 @@ pub fn ChatPanel(
                                 // as `application/vnd.cokret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
                                 let secure_content_value = sdk_payload_value(
-                                    contrix_sdk::ContentBlock::text(&body).to_value(),
+                                    cokret_sdk::ContentBlock::text(&body).to_value(),
                                     "chat encrypted content block serialize",
                                 );
                                 let secure_content_bytes = match serde_json::to_vec(
@@ -6112,7 +6112,7 @@ pub fn ChatPanel(
                                 let prev_epoch = mls_commit_epoch.saturating_sub(1);
                                 let commit_event_id = format!("ck:event:{}", uuid_v7());
                                 let commit_event_id_typed =
-                                    match contrix_sdk::EventId::new(commit_event_id.clone()) {
+                                    match cokret_sdk::EventId::new(commit_event_id.clone()) {
                                         Ok(value) => value,
                                         Err(err) => {
                                             fail_optimistic_chat_send(
@@ -6131,10 +6131,10 @@ pub fn ChatPanel(
                                 // binding key_ref.group_state_ref to the
                                 // cx.mls.commit event that carries this epoch.
                                 let encrypted_envelope =
-                                    match contrix_sdk::EncryptedEnvelopeV1::from_payload(
+                                    match cokret_sdk::EncryptedEnvelopeV1::from_payload(
                                         &encrypted_payload,
                                         envelope_aad,
-                                        contrix_sdk::AadVisibility::Hidden,
+                                        cokret_sdk::AadVisibility::Hidden,
                                         &commit_event_id,
                                     ) {
                                         Ok(value) => value,
@@ -6169,7 +6169,7 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                let realm_id = match contrix_sdk::RealmId::new(scope_id_as_realm_id(&space)) {
+                                let realm_id = match cokret_sdk::RealmId::new(scope_id_as_realm_id(&space)) {
                                     Ok(value) => value,
                                     Err(err) => {
                                         fail_optimistic_chat_send(
@@ -6202,7 +6202,7 @@ pub fn ChatPanel(
                                     }
                                 };
                                 let governance_binding =
-                                    match contrix_sdk::MlsGovernanceBindingPayload::realm(
+                                    match cokret_sdk::MlsGovernanceBindingPayload::realm(
                                         realm_id,
                                         real_commit_envelope.group_id.clone(),
                                         prev_epoch,
@@ -6229,7 +6229,7 @@ pub fn ChatPanel(
                                         }
                                     };
                                 let mls_commit_payload =
-                                    match contrix_sdk::MlsCommitPayload::new(
+                                    match cokret_sdk::MlsCommitPayload::new(
                                         real_commit_envelope.group_id.clone(),
                                         prev_epoch,
                                         chat_mls_base_epoch_ref(&anchor_view, &space),
@@ -6261,7 +6261,7 @@ pub fn ChatPanel(
                                     .build("yougen");
                                 commit_envelope.event_id = commit_event_id;
                                 let mut message_payload =
-                                    contrix_sdk::MessageCreatePayload::with_encrypted_content(
+                                    cokret_sdk::MessageCreatePayload::with_encrypted_content(
                                         flow_id_value(&flow_id),
                                         "discussion",
                                         encrypted_payload_json,
@@ -6811,7 +6811,7 @@ mod tests {
         assert!(op.payload.get("mention_relations").is_none());
         assert!(op.payload.get("reply_to").is_none());
         assert!(op.payload.get("thread_id").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -6837,7 +6837,7 @@ mod tests {
         assert!(op.payload.get("audience_mentions").is_none());
         assert!(op.payload.get("mentions").is_none());
         assert!(op.payload.get("mention_relations").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -6860,7 +6860,7 @@ mod tests {
             Some("ck:message:01904100-0000-7000-8000-000000000004")
         );
         assert!(op.payload.get("thread_id").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -7412,7 +7412,7 @@ mod tests {
         // back out via `text_body_from_value`. This locks that symmetry without
         // standing up a full MLS group.
         let body = "secret hello with spaces";
-        let content_value = contrix_sdk::ContentBlock::text(body)
+        let content_value = cokret_sdk::ContentBlock::text(body)
             .to_value()
             .expect("content block serializes");
         let bytes = serde_json::to_vec(&content_value).expect("content block bytes");
@@ -7509,7 +7509,7 @@ mod tests {
         assert_eq!(op.payload["content"]["body"], "edited");
         assert!(op.payload.get("body").is_none());
         assert!(op.payload.get("target_event_id").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }
@@ -7530,7 +7530,7 @@ mod tests {
         assert_eq!(op.payload["key"], "+1");
         assert!(op.payload.get("event_id").is_none());
         assert!(op.payload.get("actor").is_none());
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&op.kind, &op.payload)
             .unwrap();
     }

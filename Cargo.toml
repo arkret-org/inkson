@@ -124,7 +124,7 @@ pulldown-cmark = { version = "0.10", default-features = false, features = ["html
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
-# in `contrix_sdk::signatures::Ed25519DetachedJwsSigner` for the
+# in `cokret_sdk::signatures::Ed25519DetachedJwsSigner` for the
 # `RealEd25519` proof-mode path. Without it the SDK signatures module is
 # canonical-bytes-only and the active-write signing path has nothing to
 # call into.

@@ -1433,7 +1433,7 @@ mod tests {
         // (empty secure store) recovers WITHOUT the passphrase, using only the
         // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
         // on host (real OpenMLS group), no live soland.
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
         let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
@@ -1522,7 +1522,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_replaces_stale_local_secret_before_history_replay() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
         let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
@@ -1787,7 +1787,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn restore_brings_back_the_sidecar_into_the_store() {
-        use contrix_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         // Build a real, decryptable account-secret + history backup so Step 1/2
         // succeed and the account secret is local for the sidecar KEK source.

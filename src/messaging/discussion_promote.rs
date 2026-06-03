@@ -138,16 +138,16 @@ pub fn build_flow_discussion_ref_op(
     flow_id: &str,
     child_space_id: &str,
 ) -> EventEnvelope {
-    let mut patch = contrix_sdk::Patch::new();
+    let mut patch = cokret_sdk::Patch::new();
     patch
         .insert_op(
             "discussion_space_ref",
-            contrix_sdk::PatchOp::set(child_space_id),
+            cokret_sdk::PatchOp::set(child_space_id),
         )
         .unwrap_or_else(|err| {
             panic!("invalid cx.patch.v1 discussion_space_ref patch: {err}");
         });
-    let payload = contrix_sdk::ObjectPatchPayload::for_target(flow_id, patch)
+    let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
         .and_then(|payload| payload.to_value())
         .unwrap_or_else(|err| {
             panic!("invalid cx.flow.update object_patch_payload: {err}");
@@ -256,7 +256,7 @@ mod tests {
             event.payload["patch"]["discussion_space_ref"]["value"],
             "ck:space:0196419b-0000-7000-8000-000000000003"
         );
-        contrix_sdk::schema::event_payload_validator_catalog()
+        cokret_sdk::schema::event_payload_validator_catalog()
             .validate_payload(&event.kind, &event.payload)
             .unwrap_or_else(|err| {
                 panic!(

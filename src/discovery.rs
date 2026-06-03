@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use contrix_sdk::Discoverability;
+use cokret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 
 use crate::hlc::Hlc;

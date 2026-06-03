@@ -21,7 +21,7 @@
 //! Round 4 (spec a77b995) — the banner is now sourced from the
 //! `cx.audit.policy_access` event whose `access_kind ==
 //! e2ee_late_recovery` carries
-//! [`late_recovery_original_event_id`](contrix_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
+//! [`late_recovery_original_event_id`](cokret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
 //! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
 //! construction path; the renderer prefers this entry point so the
 //! banner is bound to the audited recovery event id (and therefore
@@ -77,7 +77,7 @@ impl LateRecoveredEvent {
 impl LateRecoveredEvent {
     /// Round 4 — construct from a `cx.audit.policy_access` payload
     /// whose `access_kind` is
-    /// [`AccessKind::E2EELateRecovery`](contrix_sdk::AccessKind::E2EELateRecovery).
+    /// [`AccessKind::E2EELateRecovery`](cokret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or
     /// the required `late_recovery_original_event_id` is missing — the
     /// SDK validator already rejects malformed payloads so callers
@@ -89,13 +89,13 @@ impl LateRecoveredEvent {
     /// it from the local ingest cache because the SDK payload carries
     /// only the recovery timestamp.
     pub fn from_audit_policy_access(
-        payload: &contrix_sdk::AuditPolicyAccessPayload,
+        payload: &cokret_sdk::AuditPolicyAccessPayload,
         original_received_at: DateTime<Utc>,
         actor_revoked_at_recovery: bool,
     ) -> Option<Self> {
         if !matches!(
             payload.access_kind,
-            contrix_sdk::AccessKind::E2EELateRecovery
+            cokret_sdk::AccessKind::E2EELateRecovery
         ) {
             return None;
         }
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_carries_late_recovery_original_event_id() {
-        use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
+        use cokret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_rejects_wrong_access_kind() {
-        use contrix_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
+        use cokret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
