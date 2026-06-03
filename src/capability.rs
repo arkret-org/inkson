@@ -2,8 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::hlc::Hlc;
-
 /// Action groups as defined by the spec.
 /// Each group contains a set of action verbs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,8 +69,11 @@ impl ActionGroup {
                 "ck.message.redact",
                 "ck.reaction.add",
                 "ck.reaction.remove",
-                "cx.typing.send",
-                "cx.read_cursor.update",
+                "ck.typing.broadcast",
+                "ck.read_cursor.advance",
+                // R14: `cx.comment.*` are not in capability-action-registry.json
+                // (the registry has no comment action family). These remain
+                // yougen-local UI grouping placeholders only.
                 "cx.comment.create",
                 "cx.comment.update",
                 "cx.comment.redact",
@@ -83,6 +84,9 @@ impl ActionGroup {
                 "ck.morph.update",
                 "ck.morph.archive",
                 "ck.morph.restore",
+                // R14: `cx.morph.tombstone` is not in
+                // capability-action-registry.json; yougen-local UI grouping
+                // placeholder only.
                 "cx.morph.tombstone",
             ],
             Self::Administrative => &[
@@ -92,6 +96,11 @@ impl ActionGroup {
                 "ck.policy.set",
                 "ck.schema.define",
                 "ck.schema.update",
+                // R14: `cx.member.{invite,remove,role_change}` are not in
+                // capability-action-registry.json. Member lifecycle is driven
+                // by the `ck.circle.member.*` / `ck.invite.*` registry actions
+                // and the `ck.member.state` FSM; these three remain
+                // yougen-local UI grouping placeholders only.
                 "cx.member.invite",
                 "cx.member.remove",
                 "cx.member.role_change",
@@ -415,13 +424,21 @@ pub struct ResourceRef {
     pub view_id: Option<String>,
 }
 
-/// A capability grant as defined by the spec.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A capability grant, reduced to the fields the UI pre-gate engine
+/// actually reads.
+///
+/// R22 (2026-06-03): the original struct carried a full wire-construction
+/// surface (issuer / proofs / issued_at / delegation depth / parent /
+/// revocable) plus a `GrantBuilder`, `cx_capability` op factory,
+/// `GrantProof` and `CapabilityRevocation`. None of that was ever wired
+/// into yougen's production paths — the only consumers are the UI pre-gate
+/// helpers in `kanban.rs`, which need `subject` / `actions` /
+/// `resource_selectors` / `constraints` to answer "should this button be
+/// enabled". Everything else was dead write-side scaffolding and has been
+/// removed. The authoritative grant lifecycle (issuance, proofs,
+/// delegation, revocation) lives on the server.
+#[derive(Clone, Debug, PartialEq)]
 pub struct CapabilityGrant {
-    /// Unique grant ID.
-    pub grant_id: String,
-    /// The issuer (who grants the capability).
-    pub issuer: String,
     /// The subject (who receives the capability).
     pub subject: String,
     /// Resources this grant applies to.
@@ -430,44 +447,6 @@ pub struct CapabilityGrant {
     pub actions: Vec<String>,
     /// Constraints on this grant.
     pub constraints: Vec<Constraint>,
-    /// Proof of issuance (signature).
-    pub proofs: Vec<GrantProof>,
-    /// When this grant was issued.
-    pub issued_at: Hlc,
-    /// Maximum delegation depth.
-    pub max_delegation_depth: u32,
-    /// Parent grant ID (for delegated grants).
-    pub parent_grant_id: Option<String>,
-    /// Whether this grant is revocable.
-    pub revocable: bool,
-}
-
-/// Proof of grant issuance.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GrantProof {
-    /// Proof type (e.g., "signature", "witness").
-    pub proof_type: String,
-    /// The creator of the proof.
-    pub creator: String,
-    /// The proof value.
-    pub value: String,
-    /// When the proof was created.
-    pub created: Hlc,
-}
-
-/// A capability revocation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CapabilityRevocation {
-    /// The grant being revoked.
-    pub grant_id: String,
-    /// Who is revoking.
-    pub revoker: String,
-    /// When the revocation occurred.
-    pub revoked_at: Hlc,
-    /// Reason for revocation.
-    pub reason: Option<String>,
-    /// Whether to cascade revoke delegated grants.
-    pub cascade: bool,
 }
 
 /// Authorization decision.
@@ -480,14 +459,17 @@ pub enum AuthzDecision {
 }
 
 /// The capability authorization engine.
+///
+/// **UI pre-gate only.** This engine exists purely to pre-disable controls
+/// in yougen's UI so users get immediate feedback before hitting the
+/// server. It is **not** a security boundary: the authoritative
+/// authorization decision — including grant signature/proof verification,
+/// delegation-chain validation, and revocation — is made by the server.
+/// yougen never trusts a local Allow.
 #[derive(Clone, Debug, Default)]
 pub struct CapabilityEngine {
-    /// Active grants indexed by grant_id.
-    grants: HashMap<String, CapabilityGrant>,
-    /// Revocations indexed by grant_id.
-    revocations: HashMap<String, CapabilityRevocation>,
-    /// Delegation chain index: parent_grant_id -> child_grant_ids.
-    delegation_index: HashMap<String, Vec<String>>,
+    /// Grants the UI has hydrated for pre-gating, indexed by subject.
+    grants: Vec<CapabilityGrant>,
 }
 
 impl CapabilityEngine {
@@ -495,29 +477,24 @@ impl CapabilityEngine {
         Self::default()
     }
 
-    /// Add a grant to the engine.
+    /// Seed a grant into the UI pre-gate index.
+    ///
+    /// **Security note:** this is a UI hydrate hook only. It deliberately
+    /// does **not** verify any proof/signature — the server is the sole
+    /// authority for grant validity (R5). When the `ck.capability.grant`
+    /// projection path is wired up, grants arrive already
+    /// server-validated; yougen simply mirrors them to pre-gate buttons.
+    /// Do not treat a grant present here as proof of authorization.
     pub fn add_grant(&mut self, grant: CapabilityGrant) {
-        // Index delegation chain
-        if let Some(ref parent_id) = grant.parent_grant_id {
-            self.delegation_index
-                .entry(parent_id.clone())
-                .or_default()
-                .push(grant.grant_id.clone());
-        }
-        self.grants.insert(grant.grant_id.clone(), grant);
+        self.grants.push(grant);
     }
 
-    /// Revoke a grant.
-    pub fn revoke(&mut self, revocation: CapabilityRevocation) {
-        let grant_id = revocation.grant_id.clone();
-        if revocation.cascade {
-            // Cascade revoke all delegated grants
-            self.cascade_revoke(&grant_id, &revocation.revoker, &revocation.revoked_at);
-        }
-        self.revocations.insert(grant_id, revocation);
-    }
-
-    /// Check if a subject can perform an action on a resource.
+    /// Check whether a subject can perform an action on a resource.
+    ///
+    /// **Fail-closed (R5):** absent an explicit, constraint-satisfied
+    /// Allow this returns `Deny`. yougen never derives an Allow from the
+    /// lack of a matching deny. This decision is advisory for the UI only;
+    /// the server makes the authoritative call.
     pub fn check(
         &self,
         subject: &str,
@@ -528,9 +505,8 @@ impl CapabilityEngine {
         // Find all grants for this subject
         let applicable_grants: Vec<&CapabilityGrant> = self
             .grants
-            .values()
+            .iter()
             .filter(|g| g.subject == subject)
-            .filter(|g| !self.revocations.contains_key(&g.grant_id))
             .filter(|g| {
                 g.actions.iter().any(|a| a == action || a == "*")
                     && g.resource_selectors.iter().any(|s| s.matches(resource))
@@ -547,6 +523,11 @@ impl CapabilityEngine {
         let mut review_reason = None;
 
         for grant in &applicable_grants {
+            // A grant with no constraints is unconditionally permissive for
+            // the actions/resources it covers.
+            if grant.constraints.is_empty() {
+                has_allow = true;
+            }
             for constraint in &grant.constraints {
                 match constraint.evaluate(ctx) {
                     ConstraintResult::Allow => has_allow = true,
@@ -563,7 +544,9 @@ impl CapabilityEngine {
             }
         }
 
-        // Priority: deny > quarantine > allow > require_review
+        // Priority: deny > quarantine > allow > require_review. R5: any path
+        // that does not produce an explicit Allow falls through to Deny
+        // (fail-closed) rather than the previous fail-open default.
         if let Some(reason) = quarantine_reason {
             AuthzDecision::Quarantine(reason)
         } else if has_allow {
@@ -571,139 +554,8 @@ impl CapabilityEngine {
         } else if let Some(reason) = review_reason {
             AuthzDecision::RequireReview(reason)
         } else {
-            AuthzDecision::Allow
+            AuthzDecision::Deny(format!("no constraint admitted {subject} to {action}"))
         }
-    }
-
-    /// Check if a subject can delegate an action.
-    pub fn can_delegate(
-        &self,
-        subject: &str,
-        action: &str,
-        resource: &ResourceRef,
-        ctx: &EvalContext,
-    ) -> AuthzDecision {
-        // Check if subject has the ck.capability.grant or ck.capability.delegate action
-        let grant_check = self.check(subject, "ck.capability.grant", resource, ctx);
-        let delegate_check = self.check(subject, "ck.capability.delegate", resource, ctx);
-
-        match (grant_check, delegate_check) {
-            (AuthzDecision::Allow, _) | (_, AuthzDecision::Allow) => {
-                // Also check that the subject has the action they want to delegate
-                self.check(subject, action, resource, ctx)
-            }
-            (AuthzDecision::Deny(r1), AuthzDecision::Deny(r2)) => {
-                AuthzDecision::Deny(format!("cannot delegate: {r1} / {r2}"))
-            }
-            (AuthzDecision::Quarantine(r), _) | (_, AuthzDecision::Quarantine(r)) => {
-                AuthzDecision::Quarantine(r)
-            }
-            (AuthzDecision::RequireReview(r), _) | (_, AuthzDecision::RequireReview(r)) => {
-                AuthzDecision::RequireReview(r)
-            }
-        }
-    }
-
-    /// Get all effective grants for a subject.
-    pub fn effective_grants(&self, subject: &str) -> Vec<&CapabilityGrant> {
-        self.grants
-            .values()
-            .filter(|g| g.subject == subject)
-            .filter(|g| !self.revocations.contains_key(&g.grant_id))
-            .collect()
-    }
-
-    /// Get the delegation chain for a grant.
-    pub fn delegation_chain(&self, grant_id: &str) -> Vec<&CapabilityGrant> {
-        let mut chain = Vec::new();
-        let mut current = grant_id;
-
-        while let Some(grant) = self.grants.get(current) {
-            chain.push(grant);
-            match &grant.parent_grant_id {
-                Some(parent_id) => current = parent_id,
-                None => break,
-            }
-        }
-
-        chain
-    }
-
-    /// Validate a delegation chain.
-    pub fn validate_delegation_chain(&self, grant_id: &str) -> Result<(), String> {
-        let chain = self.delegation_chain(grant_id);
-
-        if chain.is_empty() {
-            return Err("grant not found".to_owned());
-        }
-
-        // Check each link in the chain
-        for window in chain.windows(2) {
-            let child = window[0];
-            let parent = window[1];
-
-            // Child must reference parent
-            if child.parent_grant_id.as_ref() != Some(&parent.grant_id) {
-                return Err("broken delegation chain".to_owned());
-            }
-
-            // Child must not exceed parent's max delegation depth
-            if child.max_delegation_depth > parent.max_delegation_depth {
-                return Err("delegation depth exceeded".to_owned());
-            }
-
-            // Child's actions must be a subset of parent's actions
-            for action in &child.actions {
-                if !parent.actions.contains(action) && !parent.actions.contains(&"*".to_owned()) {
-                    return Err(format!("action {action} not in parent grant"));
-                }
-            }
-
-            // Child's resource selectors must be within parent's scope
-            // (simplified check - full EBNF matching would be more complex)
-        }
-
-        // Check revocations
-        for grant in &chain {
-            if self.revocations.contains_key(&grant.grant_id) {
-                return Err(format!("grant {} is revoked", grant.grant_id));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Cascade revoke all delegated grants.
-    fn cascade_revoke(&mut self, parent_id: &str, revoker: &str, time: &Hlc) {
-        if let Some(children) = self.delegation_index.get(parent_id).cloned() {
-            for child_id in children {
-                self.revocations.insert(
-                    child_id.clone(),
-                    CapabilityRevocation {
-                        grant_id: child_id.clone(),
-                        revoker: revoker.to_owned(),
-                        revoked_at: time.clone(),
-                        reason: Some("cascaded from parent revocation".to_owned()),
-                        cascade: true,
-                    },
-                );
-                // Recursively cascade
-                self.cascade_revoke(&child_id, revoker, time);
-            }
-        }
-    }
-
-    /// Get all active grants.
-    pub fn active_grants(&self) -> Vec<&CapabilityGrant> {
-        self.grants
-            .values()
-            .filter(|g| !self.revocations.contains_key(&g.grant_id))
-            .collect()
-    }
-
-    /// Get all revocations.
-    pub fn get_revocations(&self) -> Vec<&CapabilityRevocation> {
-        self.revocations.values().collect()
     }
 
     /// UI-side pre-gate for a button / control.
@@ -724,7 +576,7 @@ impl CapabilityEngine {
         resource: &ResourceRef,
         ctx: &EvalContext,
     ) -> CapabilityGate {
-        let has_any_grant_for_subject = self.grants.values().any(|g| g.subject == subject);
+        let has_any_grant_for_subject = self.grants.iter().any(|g| g.subject == subject);
         if !has_any_grant_for_subject {
             return CapabilityGate::open();
         }
@@ -769,153 +621,28 @@ impl CapabilityGate {
     }
 }
 
-/// Builder for creating CapabilityGrant objects.
-pub struct GrantBuilder {
-    grant: CapabilityGrant,
-}
-
-impl GrantBuilder {
-    pub fn new(issuer: &str, subject: &str) -> Self {
-        Self {
-            grant: CapabilityGrant {
-                grant_id: format!("grant-{}", crate::operation::uuid_v7()),
-                issuer: issuer.to_owned(),
-                subject: subject.to_owned(),
-                resource_selectors: Vec::new(),
-                actions: Vec::new(),
-                constraints: Vec::new(),
-                proofs: Vec::new(),
-                issued_at: Hlc::now("yougen"),
-                max_delegation_depth: 0,
-                parent_grant_id: None,
-                revocable: true,
-            },
-        }
-    }
-
-    pub fn with_id(mut self, id: &str) -> Self {
-        self.grant.grant_id = id.to_owned();
-        self
-    }
-
-    pub fn with_action(mut self, action: &str) -> Self {
-        self.grant.actions.push(action.to_owned());
-        self
-    }
-
-    pub fn with_actions(mut self, actions: &[&str]) -> Self {
-        self.grant
-            .actions
-            .extend(actions.iter().map(|s| (*s).to_owned()));
-        self
-    }
-
-    pub fn with_resource(mut self, selector: ResourceSelector) -> Self {
-        self.grant.resource_selectors.push(selector);
-        self
-    }
-
-    pub fn with_constraint(mut self, constraint: Constraint) -> Self {
-        self.grant.constraints.push(constraint);
-        self
-    }
-
-    pub fn with_delegation_depth(mut self, depth: u32) -> Self {
-        self.grant.max_delegation_depth = depth;
-        self
-    }
-
-    pub fn with_parent(mut self, parent_id: &str) -> Self {
-        self.grant.parent_grant_id = Some(parent_id.to_owned());
-        self
-    }
-
-    pub fn irrevocable(mut self) -> Self {
-        self.grant.revocable = false;
-        self
-    }
-
-    pub fn build(self) -> CapabilityGrant {
-        self.grant
-    }
-}
-
-/// Create capability grant operations.
-pub mod cx_capability {
-    use super::*;
-
-    /// Create a capability grant operation payload.
-    ///
-    /// The operation kind (`ck.capability.grant`) is the envelope's top-level
-    /// `kind` and MUST NOT be duplicated as a `"type"` field inside the
-    /// payload body, per the v1 envelope rules.
-    pub fn grant_op(grant: &CapabilityGrant) -> serde_json::Value {
-        serde_json::json!({
-            "grant_id": grant.grant_id,
-            "issuer": grant.issuer,
-            "subject": grant.subject,
-            "resource_selectors": grant.resource_selectors,
-            "actions": grant.actions,
-            "constraints": grant.constraints,
-            "max_delegation_depth": grant.max_delegation_depth,
-            "parent_grant_id": grant.parent_grant_id,
-            "revocable": grant.revocable,
-            "issued_at": grant.issued_at.encode(),
-        })
-    }
-
-    /// Create a capability delegation operation.
-    pub fn delegate_op(grant: &CapabilityGrant) -> serde_json::Value {
-        serde_json::json!({
-            "grant_id": grant.grant_id,
-            "issuer": grant.issuer,
-            "subject": grant.subject,
-            "resource_selectors": grant.resource_selectors,
-            "actions": grant.actions,
-            "constraints": grant.constraints,
-            "max_delegation_depth": grant.max_delegation_depth,
-            "parent_grant_id": grant.parent_grant_id,
-            "issued_at": grant.issued_at.encode(),
-        })
-    }
-
-    /// Create a capability revocation operation.
-    pub fn revoke_op(revocation: &CapabilityRevocation) -> serde_json::Value {
-        serde_json::json!({
-            "grant_id": revocation.grant_id,
-            "revoker": revocation.revoker,
-            "revoked_at": revocation.revoked_at.encode(),
-            "reason": revocation.reason,
-            "cascade": revocation.cascade,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_grant() -> CapabilityGrant {
-        GrantBuilder::new("did:web:alice", "did:web:bob")
-            .with_action("ck.flow.read")
-            .with_action("ck.flow.update")
-            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
-            .with_constraint(Constraint::Temporal {
-                not_before: None,
-                expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
-            })
-            .with_delegation_depth(2)
-            .build()
+    fn grant(subject: &str, actions: &[&str], constraints: Vec<Constraint>) -> CapabilityGrant {
+        CapabilityGrant {
+            subject: subject.to_owned(),
+            resource_selectors: vec![ResourceSelector::Space("ck:space:test".to_owned())],
+            actions: actions.iter().map(|s| (*s).to_owned()).collect(),
+            constraints,
+        }
     }
 
-    #[test]
-    fn test_grant_builder() {
-        let grant = test_grant();
-        assert_eq!(grant.issuer, "did:web:alice");
-        assert_eq!(grant.subject, "did:web:bob");
-        assert_eq!(grant.actions.len(), 2);
-        assert_eq!(grant.max_delegation_depth, 2);
-        assert!(grant.revocable);
+    fn test_grant() -> CapabilityGrant {
+        grant(
+            "did:web:bob",
+            &["ck.flow.read", "ck.flow.update"],
+            vec![Constraint::Temporal {
+                not_before: None,
+                expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
+            }],
+        )
     }
 
     #[test]
@@ -970,12 +697,12 @@ mod tests {
         // now active and denies space.archive because the grant only
         // covers realm.read.
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(
-            GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_action("cx.realm.read")
-                .with_resource(ResourceSelector::Wildcard)
-                .build(),
-        );
+        engine.add_grant(CapabilityGrant {
+            subject: "did:web:alice.example".to_owned(),
+            resource_selectors: vec![ResourceSelector::Wildcard],
+            actions: vec!["cx.realm.read".to_owned()],
+            constraints: Vec::new(),
+        });
         let resource = ResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
@@ -989,12 +716,12 @@ mod tests {
     #[test]
     fn test_ui_gate_allows_when_grant_covers_action() {
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(
-            GrantBuilder::new("did:web:owner.example", "did:web:alice.example")
-                .with_actions(&["ck.space.archive", "ck.space.restore"])
-                .with_resource(ResourceSelector::Wildcard)
-                .build(),
-        );
+        engine.add_grant(CapabilityGrant {
+            subject: "did:web:alice.example".to_owned(),
+            resource_selectors: vec![ResourceSelector::Wildcard],
+            actions: vec!["ck.space.archive".to_owned(), "ck.space.restore".to_owned()],
+            constraints: Vec::new(),
+        });
         let resource = ResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
@@ -1124,106 +851,42 @@ mod tests {
     }
 
     #[test]
-    fn test_capability_engine_revoke() {
+    fn test_capability_engine_check_unconstrained_grant_allows() {
+        // R5: an unconstrained grant covering the action/resource yields a
+        // positive Allow (not a fail-open fallthrough).
         let mut engine = CapabilityEngine::new();
-        let grant = test_grant();
-        let grant_id = grant.grant_id.clone();
-        engine.add_grant(grant);
-
-        engine.revoke(CapabilityRevocation {
-            grant_id: grant_id.clone(),
-            revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("yougen"),
-            reason: Some("test revocation".to_owned()),
-            cascade: false,
-        });
+        engine.add_grant(grant("did:web:bob", &["ck.flow.read"], Vec::new()));
 
         let resource = ResourceRef {
             space_id: Some("ck:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = EvalContext::default();
-
         let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
-        assert!(matches!(decision, AuthzDecision::Deny(_)));
+        assert_eq!(decision, AuthzDecision::Allow);
     }
 
     #[test]
-    fn test_delegation_chain() {
+    fn test_capability_engine_check_require_review_not_allow() {
+        // R5 fail-closed: a grant whose only constraint resolves to
+        // RequireReview must NOT silently become Allow.
         let mut engine = CapabilityEngine::new();
-        let parent = test_grant();
-        let parent_id = parent.grant_id.clone();
-        engine.add_grant(parent);
+        engine.add_grant(grant(
+            "did:web:bob",
+            &["ck.flow.read"],
+            vec![Constraint::ApprovalWorkflow {
+                approvers: vec!["did:web:alice".to_owned()],
+                min_approvals: 1,
+            }],
+        ));
 
-        let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("ck.flow.read")
-            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
-            .with_parent(&parent_id)
-            .with_delegation_depth(1)
-            .build();
-        let child_id = child.grant_id.clone();
-        engine.add_grant(child);
-
-        let chain = engine.delegation_chain(&child_id);
-        assert_eq!(chain.len(), 2);
-        assert_eq!(chain[0].subject, "did:web:charlie");
-        assert_eq!(chain[1].subject, "did:web:bob");
-    }
-
-    #[test]
-    fn test_delegation_validation() {
-        let mut engine = CapabilityEngine::new();
-        let parent = test_grant();
-        let parent_id = parent.grant_id.clone();
-        engine.add_grant(parent);
-
-        let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("ck.flow.read")
-            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
-            .with_parent(&parent_id)
-            .with_delegation_depth(1)
-            .build();
-        let child_id = child.grant_id.clone();
-        engine.add_grant(child);
-
-        assert!(engine.validate_delegation_chain(&child_id).is_ok());
-    }
-
-    #[test]
-    fn test_cascade_revoke() {
-        let mut engine = CapabilityEngine::new();
-        let parent = test_grant();
-        let parent_id = parent.grant_id.clone();
-        engine.add_grant(parent);
-
-        let child = GrantBuilder::new("did:web:bob", "did:web:charlie")
-            .with_action("ck.flow.read")
-            .with_resource(ResourceSelector::Space("ck:space:test".to_owned()))
-            .with_parent(&parent_id)
-            .with_delegation_depth(1)
-            .build();
-        let child_id = child.grant_id.clone();
-        engine.add_grant(child);
-
-        engine.revoke(CapabilityRevocation {
-            grant_id: parent_id.clone(),
-            revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("yougen"),
-            reason: Some("test cascade".to_owned()),
-            cascade: true,
-        });
-
-        assert!(engine.revocations.contains_key(&child_id));
-    }
-
-    #[test]
-    fn test_effective_grants() {
-        let mut engine = CapabilityEngine::new();
-        engine.add_grant(test_grant());
-
-        let grants = engine.effective_grants("did:web:bob");
-        assert_eq!(grants.len(), 1);
-        assert_eq!(grants[0].issuer, "did:web:alice");
+        let resource = ResourceRef {
+            space_id: Some("ck:space:test".to_owned()),
+            ..Default::default()
+        };
+        let ctx = EvalContext::default();
+        let decision = engine.check("did:web:bob", "ck.flow.read", &resource, &ctx);
+        assert!(matches!(decision, AuthzDecision::RequireReview(_)));
     }
 
     #[test]
@@ -1324,25 +987,5 @@ mod tests {
             constraint.evaluate(&ctx_over),
             ConstraintResult::Deny(_)
         ));
-    }
-
-    #[test]
-    fn test_cx_capability_ops() {
-        let grant = test_grant();
-        let op = cx_capability::grant_op(&grant);
-        // The operation kind lives on the envelope, not the payload body.
-        assert!(op.get("type").is_none());
-        assert_eq!(op["issuer"], "did:web:alice");
-
-        let revocation = CapabilityRevocation {
-            grant_id: grant.grant_id.clone(),
-            revoker: "did:web:alice".to_owned(),
-            revoked_at: Hlc::now("yougen"),
-            reason: Some("test".to_owned()),
-            cascade: false,
-        };
-        let op = cx_capability::revoke_op(&revocation);
-        assert!(op.get("type").is_none());
-        assert_eq!(op["grant_id"], serde_json::Value::String(grant.grant_id.clone()));
     }
 }

@@ -259,12 +259,12 @@ pub fn SpaceAdminPanel(
     // Structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
     // `scope_limitation` / `none`); the temporal MVP exposes `not_before`
-    // / `not_after` RFC 3339 timestamps. Quota / scope_limitation are
-    // surfaced in the dropdown but show a "coming soon" hint until
-    // matching widgets land.
+    // / `expires_at` RFC 3339 timestamps (`not_after` is a forbidden wire
+    // field name). Quota / scope_limitation are surfaced in the dropdown
+    // but show a "coming soon" hint until matching widgets land.
     let mut cap_constraint_kind = use_signal(|| "none".to_owned());
     let mut cap_temporal_not_before = use_signal(String::new);
-    let mut cap_temporal_not_after = use_signal(String::new);
+    let mut cap_temporal_expires_at = use_signal(String::new);
     // Covered_frontier alert threshold. Default 5 (mirrors sodmin's
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
@@ -2137,7 +2137,7 @@ pub fn SpaceAdminPanel(
                     value: "{cap_constraint_kind}",
                     onchange: move |evt| cap_constraint_kind.set(evt.value()),
                     option { value: "none", "none" }
-                    option { value: "temporal", "temporal (not_before / not_after)" }
+                    option { value: "temporal", "temporal (not_before / expires_at)" }
                     option { value: "quota", "quota (coming soon)" }
                     option { value: "scope_limitation", "scope_limitation (coming soon)" }
                 }
@@ -2152,13 +2152,13 @@ pub fn SpaceAdminPanel(
                                 cap_temporal_not_before.set(evt.value());
                             },
                         }
-                        label { "not_after (RFC 3339, optional)" }
+                        label { "expires_at (RFC 3339, optional)" }
                         input {
-                            "data-testid": "cap-constraint-not-after-input",
+                            "data-testid": "cap-constraint-expires-at-input",
                             r#type: "datetime-local",
-                            value: "{cap_temporal_not_after}",
+                            value: "{cap_temporal_expires_at}",
                             oninput: move |evt| {
-                                cap_temporal_not_after.set(evt.value());
+                                cap_temporal_expires_at.set(evt.value());
                             },
                         }
                     }
@@ -2208,10 +2208,10 @@ pub fn SpaceAdminPanel(
                                 let constraint_json: serde_json::Value =
                                     if kind == "temporal" {
                                         let nb = cap_temporal_not_before();
-                                        let na = cap_temporal_not_after();
+                                        let ea = cap_temporal_expires_at();
                                         let nb_trim = nb.trim();
-                                        let na_trim = na.trim();
-                                        if nb_trim.is_empty() && na_trim.is_empty() {
+                                        let ea_trim = ea.trim();
+                                        if nb_trim.is_empty() && ea_trim.is_empty() {
                                             serde_json::Value::Null
                                         } else {
                                             let mut window = serde_json::Map::new();
@@ -2221,10 +2221,12 @@ pub fn SpaceAdminPanel(
                                                     serde_json::Value::String(nb_trim.to_owned()),
                                                 );
                                             }
-                                            if !na_trim.is_empty() {
+                                            if !ea_trim.is_empty() {
+                                                // Validity upper bound is `expires_at`
+                                                // (not_after is a forbidden wire field).
                                                 window.insert(
-                                                    "not_after".into(),
-                                                    serde_json::Value::String(na_trim.to_owned()),
+                                                    "expires_at".into(),
+                                                    serde_json::Value::String(ea_trim.to_owned()),
                                                 );
                                             }
                                             json!([
@@ -2428,7 +2430,7 @@ pub fn SpaceAdminPanel(
                     span { "Trusted organization / service DIDs" }
                 }
                 div { class: "muted",
-                    "Federation, cross-organization, and Controlled Collaboration Spaces must publish an explicit trust_bundle that enumerates eligible organization DIDs, service DIDs, and trusted issuers. Validate method evidence, the trust root, and service delegation before importing."
+                    "Federation, cross-organization, and External Collaboration Realms must publish an explicit trust_bundle that enumerates eligible organization DIDs, service DIDs, and trusted issuers. Validate method evidence, the trust root, and service delegation before importing."
                 }
                 div { class: "metric-grid", "data-testid": "trust-bundle-rows",
                     div { class: "metric",

@@ -10,8 +10,8 @@
 //!   `cx.realm.{create,update,destroy,...}`, `cx.space.{create,update,archive,restore,...}`
 //!   (container Spaces), `cx.flow.position`, `cx.anchorer.*`, `ck.mls.epoch`
 //! - **No**: `cx.message.*`, `cx.reaction.*`, `ck.read_cursor.advance`, `cx.relation.*`,
-//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/_cokret/self/events`) per
-//!   spec.
+//!   `cx.redaction` — these stay on the durable Event Envelope endpoint (`/_cokret/self/events`)
+//!   per spec.
 //!
 //! # Signing model
 //!
@@ -136,25 +136,31 @@ pub fn build_consent_revoke_move_v1(
     build_move_inner(issuer, space_id, vec![effect], anchor_ref, hlc)
 }
 
-/// Structured constraint payloads attached to a capability grant. Mirrors
-/// `cokret_sdk::authz::ProtocolGrantConstraint` but kept JSON-shaped
-/// because soland's reducer round-trips constraints as opaque values
-/// today - typing them up here would force every UI
-/// surface to re-typing the SDK enum and future additions.
+/// Structured constraint payloads attached to a capability grant. Kept
+/// JSON-shaped rather than reusing `cokret_sdk::authz::ProtocolGrantConstraint`
+/// because soland's reducer round-trips constraints as opaque values today,
+/// and the SDK type models timestamps as `DateTime<Utc>` whereas the UI form
+/// binds raw `Option<String>` RFC 3339 text. Reusing the SDK enum here would
+/// force chrono parsing + error handling on every UI surface for no wire
+/// benefit; the hand-written JSON below is the canonical
+/// `grant-constraint.schema.json` shape (`constraint_type` + `effect`
+/// required, `expires_at` for the upper bound, `additionalProperties:false`).
 ///
 /// Use [`Self::temporal`] for the most common flavour (`not_before` /
-/// `not_after` window). The wire shape lands in the OrSet `add` op as a
+/// `expires_at` window). The wire shape lands in the OrSet `add` op as a
 /// `constraints` array; soland's authz engine reads that into the typed
 /// representation when evaluating future Moves.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CapabilityConstraintInput {
-    /// `temporal.window` constraint with optional `not_before` /
-    /// `not_after` RFC 3339 timestamps. The UI's MVP form binds to this
-    /// variant; quota / scope_limitation / etc. are scaffolded as
+    /// `temporal` (subtype `window`) constraint with optional `not_before` /
+    /// `expires_at` RFC 3339 timestamps. The spec validity upper bound is
+    /// `expires_at`; `not_after` is a forbidden wire field name
+    /// (forbidden-wire-fields.json, hard_reject). The UI's MVP form binds to
+    /// this variant; quota / scope_limitation / etc. are scaffolded as
     /// [`Self::Other`] until matching form widgets land.
     Temporal {
         not_before: Option<String>,
-        not_after: Option<String>,
+        expires_at: Option<String>,
     },
     /// Free-form constraint payload — the UI hands a JSON object to the
     /// builder and the wire shape forwards it as-is. Use for constraint
@@ -165,10 +171,10 @@ pub enum CapabilityConstraintInput {
 
 impl CapabilityConstraintInput {
     /// Convenience constructor for a temporal-window constraint.
-    pub fn temporal(not_before: Option<String>, not_after: Option<String>) -> Self {
+    pub fn temporal(not_before: Option<String>, expires_at: Option<String>) -> Self {
         Self::Temporal {
             not_before,
-            not_after,
+            expires_at,
         }
     }
 
@@ -178,10 +184,10 @@ impl CapabilityConstraintInput {
         match self {
             Self::Temporal {
                 not_before,
-                not_after,
+                expires_at,
             } => {
                 not_before.as_deref().is_some_and(|s| !s.trim().is_empty())
-                    || not_after.as_deref().is_some_and(|s| !s.trim().is_empty())
+                    || expires_at.as_deref().is_some_and(|s| !s.trim().is_empty())
             }
             Self::Other(value) => {
                 !value.is_null()
@@ -196,16 +202,26 @@ impl CapabilityConstraintInput {
         match self {
             Self::Temporal {
                 not_before,
-                not_after,
+                expires_at,
             } => {
                 let mut obj = serde_json::Map::new();
                 obj.insert(
                     "constraint_type".to_owned(),
                     serde_json::Value::String("temporal".to_owned()),
                 );
+                // grant-constraint.schema.json requires `effect`; the UI's
+                // temporal MVP only models permissive validity windows, so
+                // default to "allow".
+                obj.insert(
+                    "effect".to_owned(),
+                    serde_json::Value::String("allow".to_owned()),
+                );
+                // schema `subtype` enum carries bare values (e.g. "window"),
+                // not the dotted "temporal.window" path; `additionalProperties`
+                // is false so the dotted form would hard-reject.
                 obj.insert(
                     "subtype".to_owned(),
-                    serde_json::Value::String("temporal.window".to_owned()),
+                    serde_json::Value::String("window".to_owned()),
                 );
                 if let Some(value) = not_before
                     .as_deref()
@@ -217,13 +233,15 @@ impl CapabilityConstraintInput {
                         serde_json::Value::String(value.to_owned()),
                     );
                 }
-                if let Some(value) = not_after
+                // Validity upper bound is `expires_at` (forbidden-wire-fields:
+                // not_after → expires_at, hard_reject).
+                if let Some(value) = expires_at
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
                     obj.insert(
-                        "not_after".to_owned(),
+                        "expires_at".to_owned(),
                         serde_json::Value::String(value.to_owned()),
                     );
                 }
@@ -1084,18 +1102,18 @@ mod tests {
             v.get("constraint_type").and_then(|x| x.as_str()),
             Some("temporal")
         );
-        assert_eq!(
-            v.get("subtype").and_then(|x| x.as_str()),
-            Some("temporal.window")
-        );
+        assert_eq!(v.get("subtype").and_then(|x| x.as_str()), Some("window"));
+        assert_eq!(v.get("effect").and_then(|x| x.as_str()), Some("allow"));
         assert_eq!(
             v.get("not_before").and_then(|x| x.as_str()),
             Some("2026-05-09T00:00:00Z")
         );
         assert_eq!(
-            v.get("not_after").and_then(|x| x.as_str()),
+            v.get("expires_at").and_then(|x| x.as_str()),
             Some("2026-08-09T00:00:00Z")
         );
+        // `not_after` is a forbidden wire field — must never be emitted.
+        assert!(v.get("not_after").is_none());
     }
 
     #[test]
@@ -1104,6 +1122,7 @@ mod tests {
         assert!(!c.is_effective());
         let v = c.to_constraint_value();
         assert!(v.get("not_before").is_none());
+        assert!(v.get("expires_at").is_none());
         assert!(v.get("not_after").is_none());
     }
 
