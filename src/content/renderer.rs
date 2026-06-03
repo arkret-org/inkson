@@ -4,7 +4,7 @@
 //! and the boundaries set by task A3.
 
 use dioxus::prelude::*;
-use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, html as md_html};
+use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, html as md_html};
 
 use crate::api::CokretApi;
 use crate::config::LocalConfigStore;
@@ -325,6 +325,59 @@ fn looks_like_markdown(prose: &str) -> bool {
 /// arbitrary `<script>` / `<iframe>` / event-handler attributes
 /// through — so we map those events into their text-escaped form
 /// before `push_html` writes them out.
+/// Returns a URL that is safe to place in an `href`, neutralising
+/// dangerous schemes by rewriting them to `#`.
+///
+/// Stored content can smuggle a scripting payload through a markdown
+/// link like `[click](javascript:alert(1))`. Since the rendered HTML is
+/// handed to `dangerous_inner_html` (markdown path) or used directly in
+/// an `href` (link-preview path), an unfiltered `javascript:` /
+/// `data:` / `vbscript:` scheme would execute on click — a stored XSS.
+///
+/// Policy:
+/// - allow `http:` / `https:` / `mailto:` (case-insensitive),
+/// - allow relative links (no scheme at all — e.g. `/foo`, `./bar`, `#anchor`, `foo/baz`),
+/// - reject anything else by returning `#`.
+///
+/// Leading ASCII whitespace and control characters are stripped before
+/// the scheme is examined, matching the browser's own lenient URL
+/// parsing (a payload like `\tjava\nscript:…` must not slip through).
+fn sanitize_link_url(url: &str) -> CowStr<'static> {
+    if is_safe_link_url(url) {
+        CowStr::from(url.to_owned())
+    } else {
+        CowStr::from("#")
+    }
+}
+
+/// Core scheme allow-list check shared by the markdown and link-preview
+/// paths. See [`sanitize_link_url`] for the policy.
+fn is_safe_link_url(url: &str) -> bool {
+    // Mirror the browser's tolerance: ignore leading ASCII whitespace
+    // and C0 control characters (tab/newline/etc.) that an attacker can
+    // sprinkle inside the scheme to dodge a naive prefix check.
+    let trimmed: String = url
+        .chars()
+        .filter(|c| !(c.is_ascii_whitespace() || c.is_control()))
+        .collect();
+
+    // Find the scheme delimiter. A URL has a scheme only when a `:`
+    // appears before the first `/`, `?` or `#` — otherwise the `:` is
+    // part of a relative path (e.g. `foo:bar` is a scheme, but
+    // `./a:b` is not because `/` comes first).
+    let scheme_end = trimmed.find(':');
+    let path_start = trimmed.find(['/', '?', '#']).unwrap_or(usize::MAX);
+
+    match scheme_end {
+        Some(idx) if idx < path_start => {
+            let scheme = trimmed[..idx].to_ascii_lowercase();
+            matches!(scheme.as_str(), "http" | "https" | "mailto")
+        }
+        // No scheme (relative link) — safe.
+        _ => true,
+    }
+}
+
 fn markdown_to_safe_html(src: &str) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -340,6 +393,19 @@ fn markdown_to_safe_html(src: &str) -> String {
         // characters instead of executing.
         Event::Html(raw) => Event::Text(CowStr::from(raw.into_string())),
         Event::InlineHtml(raw) => Event::Text(CowStr::from(raw.into_string())),
+        // Scrub the destination scheme so a `[x](javascript:…)` link
+        // cannot smuggle a stored-XSS payload into the `href`.
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: sanitize_link_url(&dest_url),
+            title,
+            id,
+        }),
         other => other,
     });
 
@@ -463,12 +529,15 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
         } => {
             let title_text = title.unwrap_or_else(|| url.clone());
             let description_text = description.unwrap_or_default();
+            // Neutralise dangerous schemes before they reach the `href`
+            // (e.g. a `javascript:` link-preview would be stored XSS).
+            let safe_href = sanitize_link_url(&url);
             rsx! {
                 a {
                     key: "{key}",
                     class: "content-block-link-preview",
                     "data-testid": "content-block-link-preview",
-                    href: "{url}",
+                    href: "{safe_href}",
                     target: "_blank",
                     rel: "noopener noreferrer",
                     div { class: "content-block-link-preview-title", "{title_text}" }
@@ -895,6 +964,80 @@ mod tests {
                 ContentBlock::LinkPreview { url, .. } if url == "https://corp.example/onboarding"
             )),
             "preview URL should drop the closing parenthesis: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn sanitize_link_url_allows_safe_schemes_and_relative_links() {
+        assert_eq!(
+            sanitize_link_url("https://example.com/x").as_ref(),
+            "https://example.com/x"
+        );
+        assert_eq!(
+            sanitize_link_url("http://example.com").as_ref(),
+            "http://example.com"
+        );
+        assert_eq!(
+            sanitize_link_url("mailto:a@example.com").as_ref(),
+            "mailto:a@example.com"
+        );
+        // Relative links (no scheme) must pass through unchanged.
+        assert_eq!(sanitize_link_url("/foo/bar").as_ref(), "/foo/bar");
+        assert_eq!(sanitize_link_url("./rel").as_ref(), "./rel");
+        assert_eq!(sanitize_link_url("#anchor").as_ref(), "#anchor");
+        assert_eq!(sanitize_link_url("foo/baz").as_ref(), "foo/baz");
+    }
+
+    #[test]
+    fn sanitize_link_url_neutralises_dangerous_schemes() {
+        assert_eq!(sanitize_link_url("javascript:alert(1)").as_ref(), "#");
+        // Case-insensitive.
+        assert_eq!(sanitize_link_url("JavaScript:alert(1)").as_ref(), "#");
+        assert_eq!(sanitize_link_url("data:text/html,<script>").as_ref(), "#");
+        assert_eq!(sanitize_link_url("vbscript:msgbox(1)").as_ref(), "#");
+        // Leading whitespace / control chars must not let it slip past.
+        assert_eq!(sanitize_link_url("  javascript:alert(1)").as_ref(), "#");
+        assert_eq!(sanitize_link_url("java\tscript:alert(1)").as_ref(), "#");
+        assert_eq!(sanitize_link_url("java\nscript:alert(1)").as_ref(), "#");
+    }
+
+    #[test]
+    fn markdown_to_safe_html_neutralises_javascript_link() {
+        let html = markdown_to_safe_html("[click](javascript:alert(1))");
+        assert!(
+            !html.to_ascii_lowercase().contains("javascript:"),
+            "javascript: scheme leaked into href: {html}"
+        );
+        assert!(
+            html.contains("href=\"#\""),
+            "expected neutralised href: {html}"
+        );
+    }
+
+    #[test]
+    fn markdown_to_safe_html_neutralises_data_link() {
+        let html = markdown_to_safe_html("[x](data:text/html,<script>alert(1)</script>)");
+        assert!(
+            !html.contains("href=\"data:"),
+            "data: scheme leaked into href: {html}"
+        );
+        assert!(
+            html.contains("href=\"#\""),
+            "expected neutralised href: {html}"
+        );
+    }
+
+    #[test]
+    fn markdown_to_safe_html_preserves_http_and_relative_links() {
+        let http = markdown_to_safe_html("[x](https://example.com/p)");
+        assert!(
+            http.contains("href=\"https://example.com/p\""),
+            "http link mangled: {http}"
+        );
+        let rel = markdown_to_safe_html("[x](/local/path)");
+        assert!(
+            rel.contains("href=\"/local/path\""),
+            "relative link mangled: {rel}"
         );
     }
 
