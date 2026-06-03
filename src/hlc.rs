@@ -17,6 +17,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
+use cokret_sdk::Hlc as SdkHlc;
 use cokret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
 
@@ -33,12 +34,22 @@ pub struct Hlc {
 
 impl Hlc {
     /// Create a new HLC with the current wall-clock time.
+    ///
+    /// Delegates to the SDK's `HlcGenerator`, which owns the canonical
+    /// wall-clock source and node-id derivation. We mint a generator for
+    /// `node_id`, read its current HLC and decode it back into this struct's
+    /// three fields. This keeps the physical-time source and node-id hashing
+    /// byte-identical to anything the SDK produces for the same DID, instead
+    /// of yougen reading the clock and hashing the node id on its own.
     pub fn now(node_id: &str) -> Self {
-        let physical_ms = Utc::now().timestamp_millis().max(0) as u64;
+        let hlc = HlcGenerator::new(node_id).current();
+        let parts = parse_hlc(hlc.as_str())
+            .expect("HlcGenerator emits a spec-valid HLC string parseable by parse_hlc");
         Self {
-            physical_ms,
-            logical: 0,
-            node_id: hash_node_id(node_id),
+            physical_ms: parts.physical_ms,
+            logical: parts.logical,
+            node_id: u32::from_str_radix(&parts.node_id, 16)
+                .expect("SDK node-id segment is 8 lowercase hex chars"),
         }
     }
 
@@ -71,74 +82,40 @@ impl Hlc {
         })
     }
 
-    /// Tick the clock: advance physical or logical based on wall clock.
-    /// Returns a new HLC that is causally after `self`.
-    pub fn tick(&self, node_id: &str) -> Self {
-        let wall = Utc::now().timestamp_millis().max(0) as u64;
-        let node = hash_node_id(node_id);
-        if wall > self.physical_ms {
-            Self {
-                physical_ms: wall,
-                logical: 0,
-                node_id: node,
-            }
-        } else if wall == self.physical_ms {
-            Self {
-                physical_ms: self.physical_ms,
-                logical: self.logical.wrapping_add(1),
-                node_id: node,
-            }
-        } else {
-            // Wall clock went backwards; keep physical, bump logical.
-            Self {
-                physical_ms: self.physical_ms,
-                logical: self.logical.wrapping_add(1),
-                node_id: node,
-            }
-        }
-    }
-
-    /// Merge with a received HLC: take the max physical, advance logical.
-    pub fn merge(&self, remote: &Self, node_id: &str) -> Self {
-        let wall = Utc::now().timestamp_millis().max(0) as u64;
-        let node = hash_node_id(node_id);
-        let max_physical = wall.max(self.physical_ms.max(remote.physical_ms));
-        if max_physical == self.physical_ms && max_physical == remote.physical_ms {
-            let logical = self.logical.max(remote.logical).wrapping_add(1);
-            Self {
-                physical_ms: max_physical,
-                logical,
-                node_id: node,
-            }
-        } else if max_physical == self.physical_ms {
-            Self {
-                physical_ms: max_physical,
-                logical: self.logical.wrapping_add(1),
-                node_id: node,
-            }
-        } else if max_physical == remote.physical_ms {
-            Self {
-                physical_ms: max_physical,
-                logical: remote.logical.wrapping_add(1),
-                node_id: node,
-            }
-        } else {
-            Self {
-                physical_ms: max_physical,
-                logical: 0,
-                node_id: node,
-            }
-        }
-    }
-
     /// Encode to canonical hex string format.
+    ///
+    /// Format and overflow semantics are delegated to the SDK's `Hlc` newtype
+    /// via [`Self::try_encode`]: the candidate string is validated by
+    /// `cokret_sdk::Hlc::new`, which rejects out-of-range components (e.g. a
+    /// logical counter that does not fit the 4-hex field) instead of silently
+    /// truncating it the way yougen's old hand-rolled `format!` did.
+    ///
+    /// Every `Hlc` minted through [`Self::now`] / [`Self::from_parts`] /
+    /// [`Self::parse`] in this crate carries spec-valid components, so this
+    /// path does not panic on any value yougen actually produces. The panic
+    /// guards a programmer error (hand-built out-of-spec components) rather
+    /// than masking it with a truncated wire value.
     pub fn encode(&self) -> String {
-        format!(
+        self.try_encode()
+            .expect("Hlc components fit the canonical v1 wire format")
+    }
+
+    /// Fallible encode: returns the canonical hex string, or an error if the
+    /// components do not fit the SDK's strict v1 wire format (e.g. a logical
+    /// counter wider than 4 hex digits). This is the SDK's overflow behaviour,
+    /// replacing yougen's old silent `logical.min(0xffff)` truncation.
+    pub fn try_encode(&self) -> Result<String, HlcError> {
+        let candidate = format!(
             "{:012x}-{:04x}-{:08x}",
-            self.physical_ms,
-            self.logical.min(0xffff),
-            self.node_id
-        )
+            self.physical_ms, self.logical, self.node_id
+        );
+        let hlc = SdkHlc::new(candidate).map_err(|_| {
+            HlcError::InvalidFormat(format!(
+                "{:012x}-{:04x}-{:08x}",
+                self.physical_ms, self.logical, self.node_id
+            ))
+        })?;
+        Ok(hlc.into_string())
     }
 }
 
@@ -198,11 +175,13 @@ pub fn observe_seq(seq: u64) {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HlcError {
+    /// The string is not a valid canonical v1 HLC. Format validation is
+    /// delegated to the SDK (`validate_hlc_format` / `cokret_sdk::Hlc::new`),
+    /// which enforces the strict `^[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{8}$` form;
+    /// this variant carries the offending input.
     InvalidFormat(String),
-    InvalidPhysical(String),
-    InvalidPhysicalLength(usize),
-    InvalidLogical(String),
-    InvalidLogicalLength(usize),
+    /// The node segment is well-formed hex per the SDK but does not fit the
+    /// `u32` this struct stores.
     InvalidNode(String),
 }
 
@@ -210,14 +189,6 @@ impl fmt::Display for HlcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormat(s) => write!(f, "invalid HLC format: {s}"),
-            Self::InvalidPhysical(s) => write!(f, "invalid physical component: {s}"),
-            Self::InvalidPhysicalLength(n) => {
-                write!(f, "physical component must be 12 hex chars, got {n}")
-            }
-            Self::InvalidLogical(s) => write!(f, "invalid logical component: {s}"),
-            Self::InvalidLogicalLength(n) => {
-                write!(f, "logical component must be 4 hex chars, got {n}")
-            }
             Self::InvalidNode(s) => write!(f, "invalid node component: {s}"),
         }
     }
@@ -245,19 +216,20 @@ mod tests {
     }
 
     #[test]
-    fn tick_advances_logical_when_wall_same() {
-        let hlc = Hlc::now("test");
-        let ticked = hlc.tick("test");
-        // At minimum logical should differ or physical should advance
-        assert!(ticked >= hlc);
-    }
+    fn encode_rejects_logical_overflow_instead_of_truncating() {
+        // The old hand-rolled `encode` did `logical.min(0xffff)`, silently
+        // truncating any logical counter that overflowed the 4-hex field.
+        // The SDK-backed encoder reports the overflow instead.
+        let overflowing = Hlc::from_parts(0x0001_8ef0_1234, 0x0001_0000, 0xdead_beef);
+        assert!(
+            overflowing.try_encode().is_err(),
+            "logical counter wider than 4 hex digits must not encode"
+        );
 
-    #[test]
-    fn merge_takes_max_physical() {
-        let a = Hlc::from_parts(100, 0, 1);
-        let b = Hlc::from_parts(200, 5, 2);
-        let merged = a.merge(&b, "node");
-        assert!(merged.physical_ms >= a.physical_ms.max(b.physical_ms));
+        // A logical counter that fits still round-trips.
+        let ok = Hlc::from_parts(0x0001_8ef0_1234, 0x0000_ffff, 0xdead_beef);
+        assert!(ok.try_encode().is_ok());
+        assert_eq!(Hlc::parse(&ok.encode()).unwrap(), ok);
     }
 
     #[test]
