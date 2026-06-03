@@ -39,6 +39,8 @@ use serde::{Deserialize, Serialize};
 use crate::components::HelpTip;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::estimate_passphrase_strength;
+use crate::recovery_flow::ActiveRecoveryPolicy;
+use crate::views::helpers::with_authed_api;
 
 const RECOVERY_PASSPHRASE_STATE_KEY: &str = "recovery.passphrase.v1";
 const WORD_COUNT: usize = 12;
@@ -163,6 +165,8 @@ fn fingerprint_passphrase(words: &[String]) -> String {
 
 #[component]
 pub fn SettingsRecoveryPanel(
+    base_url: Signal<String>,
+    token: Signal<String>,
     account_did: Signal<String>,
     mut state_store: Signal<LocalStateStore>,
 ) -> Element {
@@ -174,6 +178,43 @@ pub fn SettingsRecoveryPanel(
     let mut status_text = use_signal(|| initial.status_label().to_owned());
     let mut stored_fingerprint = use_signal(|| initial.fingerprint.clone());
     let mut last_updated = use_signal(|| initial.updated_at.clone());
+
+    // 6.1 — active recovery policy (fetched from soland on mount).
+    let mut policy = use_signal(|| Option::<ActiveRecoveryPolicy>::None);
+    let mut policy_status = use_signal(String::new);
+    let mut policy_loaded = use_signal(|| false);
+    {
+        let base = base_url();
+        let api_token = token();
+        use_effect(move || {
+            if api_token.trim().is_empty() || policy_loaded() {
+                return;
+            }
+            policy_loaded.set(true);
+            policy_status.set("Loading…".to_owned());
+            let base = base.clone();
+            let api_token = api_token.clone();
+            spawn(async move {
+                match with_authed_api(&base, api_token, |api| async move {
+                    crate::recovery_flow::fetch_active_recovery_policy(&api).await
+                })
+                .await
+                {
+                    Ok(Some(p)) => {
+                        policy_status.set("active".to_owned());
+                        policy.set(Some(p));
+                    }
+                    Ok(None) => policy_status.set("none configured".to_owned()),
+                    Err(err) => policy_status.set(format!("load failed: {}", err.display())),
+                }
+            });
+        });
+    }
+    let active_policy = policy();
+    let proof_kinds_str = active_policy
+        .as_ref()
+        .map(|p| p.allowed_proof_kinds.join(", "))
+        .unwrap_or_default();
 
     let strength = estimate_passphrase_strength(&confirm_input());
     let strength_label = match strength {
@@ -196,6 +237,38 @@ pub fn SettingsRecoveryPanel(
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "Recovery passphrase" }
                             HelpTip { text: "Generate a 12-word recovery passphrase. This is the E2E recovery trust root for encrypted backups and MLS history; write it down because losing it means history cannot be restored on a fresh device.".to_owned() }
+                        }
+                    }
+
+                    // 6.1 — active recovery policy display.
+                    div { class: "event", "data-testid": "recovery-policy-section",
+                        div { class: "event-head",
+                            span { "Active recovery policy" }
+                            span { "data-testid": "recovery-policy-status", "{policy_status}" }
+                        }
+                        if let Some(p) = active_policy.as_ref() {
+                            div { class: "metric-grid",
+                                div { class: "metric",
+                                    strong { "Policy ID" }
+                                    span { "data-testid": "recovery-policy-id", "{p.policy_id}" }
+                                }
+                                div { class: "metric",
+                                    strong { "Version" }
+                                    span { "data-testid": "recovery-policy-version", "{p.policy_version}" }
+                                }
+                                div { class: "metric",
+                                    strong { "Trust domain" }
+                                    span { "data-testid": "recovery-policy-trust-domain", "{p.trust_domain}" }
+                                }
+                                div { class: "metric",
+                                    strong { "Allowed proof kinds" }
+                                    span { "data-testid": "recovery-policy-proof-kinds", "{proof_kinds_str}" }
+                                }
+                            }
+                        } else {
+                            p { class: "muted",
+                                "No active recovery policy loaded. Publishing a recovery policy is done from a trusted device or admin tooling."
+                            }
                         }
                     }
 

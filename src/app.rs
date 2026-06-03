@@ -9079,6 +9079,8 @@ pub fn RouterView() -> Element {
                     },
                     Route::SettingsRecovery => rsx! {
                         crate::views::settings::recovery::SettingsRecoveryPanel {
+                            base_url,
+                            token,
                             account_did,
                             state_store,
                         }
