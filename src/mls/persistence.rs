@@ -59,7 +59,6 @@
 //!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Anchor view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};

@@ -690,10 +690,7 @@ pub enum ValidationError {
     #[error("missing required field: {0}")]
     MissingField(String),
     #[error("invalid value for {field}, expected: {expected}")]
-    InvalidValue {
-        field: String,
-        expected: String,
-    },
+    InvalidValue { field: String, expected: String },
     /// F-PROFILE-1: the event's `type` is not in the conformance profile
     /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
     /// rejection at event ingest so a profile-drift attack / spec bump
