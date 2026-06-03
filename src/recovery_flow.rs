@@ -118,25 +118,32 @@ pub async fn submit_principal_signing_proof(
         .await
 }
 
-/// 6.3 — complete a verified session with client-supplied, SSK-signed
-/// `cx.device.authorize` material. `device_authorize` MUST satisfy
-/// `recovery-session.schema.json` `$defs/device_authorize_material`.
+/// 6.3 — complete a verified session by REFERENCING the durable control events
+/// the client already submitted to `POST /events`: an accepted `cx.device.authorize`
+/// and `cx.device.list_update` (recovery-session.schema.json `complete_request`).
+/// The server resolves + verifies each by id; it does not author control events.
 pub async fn complete_recovery_session(
     api: &ContrixApi,
     recovery_session_id: &str,
-    device_authorize: Value,
+    authorization_event_id: &str,
+    device_list_update_event_id: &str,
 ) -> anyhow::Result<Value> {
     api.complete_recovery_session(
         recovery_session_id,
-        json!({ "device_authorize": device_authorize }),
+        json!({
+            "authorization_event_id": authorization_event_id,
+            "device_list_update_event_id": device_list_update_event_id,
+        }),
     )
     .await
 }
 
-/// 6.3 — end-to-end `principal_signing` recovery driver: open session → sign +
-/// submit proof → complete. `device_authorize` is the client's SSK-signed
-/// device-authorization material (built from the SSK unlocked during the
-/// fresh-device restore). Returns the `complete_response`.
+/// 6.3 — `principal_signing` recovery driver: open session → sign + submit proof
+/// → complete by referencing the already-submitted authorize + list_update event
+/// ids. (Submitting those two control events to `POST /events` — the
+/// SSK-signed `cx.device.authorize` + `cx.device.list_update` with the next
+/// principal-control-stream actor_seq — is the caller's step; this returns the
+/// `complete_response`.)
 #[allow(clippy::too_many_arguments)]
 pub async fn run_principal_signing_recovery(
     api: &ContrixApi,
@@ -146,7 +153,8 @@ pub async fn run_principal_signing_recovery(
     ssk_generation: u64,
     verification_method: &str,
     principal_signing_key: &SigningKey,
-    device_authorize: Value,
+    authorization_event_id: &str,
+    device_list_update_event_id: &str,
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let session = open_recovery_session(
@@ -164,7 +172,13 @@ pub async fn run_principal_signing_recovery(
         .get("recovery_session_id")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("session missing recovery_session_id"))?;
-    complete_recovery_session(api, session_id, device_authorize).await
+    complete_recovery_session(
+        api,
+        session_id,
+        authorization_event_id,
+        device_list_update_event_id,
+    )
+    .await
 }
 
 #[cfg(test)]

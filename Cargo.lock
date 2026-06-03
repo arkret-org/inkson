@@ -1058,6 +1058,7 @@ dependencies = [
 name = "contrix"
 version = "1.0.0"
 dependencies = [
+ "argon2",
  "base64",
  "chacha20poly1305",
  "chrono",
@@ -1069,21 +1070,22 @@ dependencies = [
  "contrix-html",
  "contrix-http-client",
  "contrix-signatures",
- "contrix-testing",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hkdf 0.12.4",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",
+ "parking_lot",
  "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "thiserror 2.0.18",
  "tls_codec",
  "tokio",
- "ulid",
  "uuid",
  "x25519-dalek",
 ]
@@ -1189,22 +1191,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "contrix-testing"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "contrix-contracts",
- "contrix-core",
- "contrix-crypto",
- "contrix-ffi",
- "contrix-html",
- "contrix-signatures",
- "serde",
- "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5160,7 +5146,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "openmls"
 version = "0.8.1"
-source = "git+https://github.com/openmls/openmls.git?branch=main#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
+source = "git+https://github.com/openmls/openmls.git?rev=d5a3aa7b595cb445614aa04b38f3d3aa42cf4911#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
 dependencies = [
  "getrandom 0.3.4",
  "log",
@@ -5177,7 +5163,7 @@ dependencies = [
 [[package]]
 name = "openmls_basic_credential"
 version = "0.5.0"
-source = "git+https://github.com/openmls/openmls.git?branch=main#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
+source = "git+https://github.com/openmls/openmls.git?rev=d5a3aa7b595cb445614aa04b38f3d3aa42cf4911#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
 dependencies = [
  "ed25519-dalek",
  "openmls_traits",
@@ -5191,7 +5177,7 @@ dependencies = [
 [[package]]
 name = "openmls_memory_storage"
 version = "0.5.0"
-source = "git+https://github.com/openmls/openmls.git?branch=main#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
+source = "git+https://github.com/openmls/openmls.git?rev=d5a3aa7b595cb445614aa04b38f3d3aa42cf4911#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
 dependencies = [
  "log",
  "openmls_traits",
@@ -5203,7 +5189,7 @@ dependencies = [
 [[package]]
 name = "openmls_rust_crypto"
 version = "0.5.1"
-source = "git+https://github.com/openmls/openmls.git?branch=main#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
+source = "git+https://github.com/openmls/openmls.git?rev=d5a3aa7b595cb445614aa04b38f3d3aa42cf4911#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
 dependencies = [
  "aes-gcm",
  "chacha20poly1305",
@@ -5227,7 +5213,7 @@ dependencies = [
 [[package]]
 name = "openmls_traits"
 version = "0.5.0"
-source = "git+https://github.com/openmls/openmls.git?branch=main#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
+source = "git+https://github.com/openmls/openmls.git?rev=d5a3aa7b595cb445614aa04b38f3d3aa42cf4911#d5a3aa7b595cb445614aa04b38f3d3aa42cf4911"
 dependencies = [
  "serde",
  "tls_codec",
@@ -7805,16 +7791,6 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ulid"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
-dependencies = [
- "rand 0.9.4",
- "web-time",
 ]
 
 [[package]]
