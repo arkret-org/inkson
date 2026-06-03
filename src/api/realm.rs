@@ -1,0 +1,645 @@
+use super::*;
+
+impl CokretApi {
+    /// Build + submit the spec-canonical `ck.realm.create` event bundle
+    /// (and its facet follow-ups) via `ck.events.submit`
+    /// (`POST /_cokret/self/events`).
+    ///
+    /// Per spec realm-and-space.md §2.6 the create event itself is the
+    /// genesis-member declaration for `created_by`. The
+    /// server reducer bootstraps the member set atomically with the
+    /// metadata, so the same actor's per-facet follow-ups
+    /// (`ck.realm.join_rule` / `ck.realm.history_visibility` /
+    /// `ck.realm.discovery` / `ck.realm.plaintext_visible_services` /
+    /// invitee `ck.member.state` invites) all pass the regular
+    /// `space_has_member` authz check naturally.
+    ///
+    /// All five create-locked fields per spec §2.3 (`encryption_profile`,
+    /// `security_class`, `federation_policy`, `anchor_profile`,
+    /// `digest_algorithm`) are sent inline on the create event payload —
+    /// no field is dropped at the wire, unlike a REST wrapper that
+    /// might only accept a subset.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_realm(
+        &self,
+        actor_id: &str,
+        title: &str,
+        summary: Option<&str>,
+        discoverability: &str,
+        join_rule: &str,
+        history_visibility: &str,
+        encryption_profile: &str,
+        security_class: &str,
+        federation_policy: &str,
+        anchor_profile: &str,
+        digest_algorithm: &str,
+        trust_domain: &str,
+        invitees: Vec<String>,
+        plaintext_visible_services: Vec<String>,
+    ) -> anyhow::Result<RealmCreateResponse> {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for canonical ck.realm.create"
+            ));
+        }
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("title is required for ck.realm.create"));
+        }
+
+        // R1.7: the security boundary (formerly Space) is now Realm.
+        let space_id = format!("ck:realm:{}", uuid_v7());
+        let join_rule = canonical_space_join_rule_v1(join_rule);
+        let mut envelopes = build_realm_bootstrap_events(
+            &space_id,
+            actor_id,
+            title,
+            summary,
+            discoverability,
+            join_rule,
+            history_visibility,
+            encryption_profile,
+            security_class,
+            federation_policy,
+            anchor_profile,
+            digest_algorithm,
+            trust_domain,
+            &invitees,
+            &plaintext_visible_services,
+        )?;
+        // Genesis Realm bootstrap has no prior snapshot head. The
+        // `ck.realm.create` precondition asserts `head_eq null`; follow-up
+        // facet events in the same batch are admitted after soland
+        // materialises the creator membership from the create event.
+        // Sign every envelope before they reach the wire; the batch
+        // submitter takes pre-signed typed envelopes.
+        for envelope in envelopes.iter_mut() {
+            crate::event_signer::sign_with_active(envelope).map_err(|err| {
+                anyhow::anyhow!(
+                    "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
+                )
+            })?;
+        }
+        let idempotency_key = format!("ck:operation:{}", uuid_v7());
+        self.submit_events_batch(&envelopes, Some(&idempotency_key))
+            .await?;
+
+        let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
+        let mut members = Vec::new();
+        members.push(actor_id.to_owned());
+        for invitee in resolved_invitees {
+            if !members.iter().any(|member| member == &invitee.actor_id) {
+                members.push(invitee.actor_id);
+            }
+        }
+
+        Ok(RealmCreateResponse {
+            ok: true,
+            realm_id: space_id,
+            owner: actor_id.to_owned(),
+            members,
+            state: "active".to_owned(),
+        })
+    }
+
+    /// Create a Space (product-structure container) inside an existing
+    /// Realm. Emits `ck.space.create` per spec realm-and-space.md §3.
+    /// Unlike `create_realm`, this does NOT bootstrap MLS / membership
+    /// / federation — those live on the Realm and Space inherits them.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_space_under_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        title: &str,
+        summary: Option<&str>,
+        kind: &str,
+        parent_space_id: Option<&str>,
+        default_realm_id: Option<&str>,
+    ) -> anyhow::Result<SpaceCreateResponse> {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
+        }
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("title is required for ck.space.create"));
+        }
+        let realm_id = realm_id.trim();
+        if realm_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "realm_id is required for ck.space.create — Space must live inside a Realm"
+            ));
+        }
+        let space_id = format!("ck:space:{}", uuid_v7());
+        let event = build_space_create_event(
+            &space_id,
+            realm_id,
+            actor_id,
+            title,
+            summary,
+            kind,
+            parent_space_id,
+            default_realm_id,
+        )?;
+        self.submit_event_envelope(&event).await?;
+
+        Ok(SpaceCreateResponse {
+            ok: true,
+            space_id,
+            owner: actor_id.to_owned(),
+            members: vec![actor_id.to_owned()],
+            state: "active".to_owned(),
+        })
+    }
+
+    /// CXP-0007 P3B.2.6 — POST a new Circle to soland's
+    /// `/_cokret/self/circles` administrative surface. The strict-subset
+    /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
+    /// reducer; this client also runs
+    /// [`crate::components::validate_strict_subset`] before sending so
+    /// the user sees a `circle_member_must_be_realm_member` failure
+    /// inline rather than as a round-tripped reducer rejection.
+    ///
+    /// The wire body is built from the SDK's typed
+    /// [`cokret_sdk::model::circle::CircleDisplay`] struct so the
+    /// enum values (`color_token`, glyph names) stay in sync with
+    /// `spec/v1/artifacts/schemas/circle.schema.json` instead of being
+    /// hand-rolled JSON strings.
+    pub async fn create_circle(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        title: &str,
+        short_name: &str,
+        color_token: &str,
+        symbol_glyph: &str,
+        directory_visibility: &str,
+        initial_members: &[String],
+    ) -> anyhow::Result<serde_json::Value> {
+        use cokret_sdk::model::{
+            CircleColorToken, CircleDirectoryVisibility, CircleDisplay, CircleGlyph, CircleSymbol,
+        };
+
+        let realm_id = realm_id.trim();
+        let actor_id = actor_id.trim();
+        let title = title.trim();
+        if realm_id.is_empty() || actor_id.is_empty() || title.is_empty() {
+            return Err(anyhow::anyhow!(
+                "realm_id / actor_id / title are all required for ck.circle.create"
+            ));
+        }
+
+        let color: CircleColorToken =
+            serde_json::from_value(serde_json::Value::String(color_token.trim().to_owned()))
+                .map_err(|err| {
+                    anyhow::anyhow!("invalid Circle color_token `{color_token}`: {err}")
+                })?;
+        let glyph: CircleGlyph =
+            serde_json::from_value(serde_json::Value::String(symbol_glyph.trim().to_owned()))
+                .map_err(|err| {
+                    anyhow::anyhow!("invalid Circle symbol glyph `{symbol_glyph}`: {err}")
+                })?;
+        let visibility: CircleDirectoryVisibility = serde_json::from_value(
+            serde_json::Value::String(directory_visibility.trim().to_owned()),
+        )
+        .map_err(|err| {
+            anyhow::anyhow!("invalid Circle directory_visibility `{directory_visibility}`: {err}")
+        })?;
+
+        let display = CircleDisplay {
+            short_name: short_name.trim().to_owned(),
+            color_token: color,
+            symbol: CircleSymbol::Glyph { glyph },
+        };
+
+        let body = serde_json::json!({
+            "realm_id": realm_id,
+            "actor_id": actor_id,
+            "title": title,
+            "display": serde_json::to_value(&display)?,
+            "directory_visibility": serde_json::to_value(visibility)?,
+            "initial_members": initial_members,
+        });
+        self.post_json("/_cokret/self/circles", body).await
+    }
+
+    /// CXP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
+    /// projection is filtered server-side by the caller's
+    /// `directory_visibility` (members-only Circles only return when
+    /// the caller is a Circle member). Returns the raw JSON shape; the
+    /// caller decodes into [`crate::circle::CircleSummary`].
+    pub async fn list_circles(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
+        let realm_id = realm_id.trim();
+        if realm_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "realm_id is required for /_cokret/self/circles"
+            ));
+        }
+        let path = format!("/_cokret/self/circles?realm_id={}", realm_id);
+        self.get_json(&path).await
+    }
+
+    /// Send a Space lifecycle action (`archive` / `restore` /
+    /// `tombstone`) per spec realm-and-space.md §3.4. Caller MUST
+    /// pass the home Realm id — the event is authorized + written
+    /// inside that Realm. Server validates the state-machine
+    /// (active → archived → active, any → tombstoned) and rejects
+    /// invalid transitions with `space_not_active` /
+    /// `space_not_archived` / `space_already_terminal`.
+    pub async fn change_space_lifecycle(
+        &self,
+        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
+        kind: &str,
+    ) -> anyhow::Result<()> {
+        let actor_id = actor_id.trim();
+        let space_id = space_id.trim();
+        let realm_id = realm_id.trim();
+        if actor_id.is_empty() || space_id.is_empty() || realm_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id, space_id and realm_id are all required for {kind}"
+            ));
+        }
+        let event = build_space_lifecycle_event(space_id, realm_id, actor_id, kind)?;
+        self.submit_event_envelope(&event).await?;
+        Ok(())
+    }
+
+    /// Member-state FSM transition (kick / ban / unban / leave) on the
+    /// Realm's `ck.component.member.state.v1` cell. Submits a `ck.member.state`
+    /// event via `ck.events.submit`; deployment-local member REST shims are
+    /// intentionally not used.
+    pub async fn transition_member_state(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        member: &str,
+        from_state: Option<&str>,
+        to_state: &str,
+        reason: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let event = build_member_state_transition_event(
+            realm_id, actor_id, member, from_state, to_state, reason,
+        )?;
+        self.submit_event_envelope(&event).await
+    }
+
+    /// Read the current anchorer cell value for a Space (admin-only).
+    /// Returns the raw JSON shape the server publishes — typically
+    /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
+    ///    "principals": [...], ... }`. The endpoint is being implemented
+    /// in soland on a separate track (P0 M4); when it 404s the caller's
+    /// `Result::Err` arm should surface a clear "endpoint unavailable"
+    /// message rather than blocking the page.
+    pub async fn admin_anchorer_describe(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.get_json(&format!("_soland/admin/spaces/{space_id}/anchorer"))
+            .await
+    }
+
+    pub async fn authz_check(
+        &self,
+        actor: &str,
+        action: &str,
+        realm_id: &str,
+    ) -> anyhow::Result<AuthzCheckResBody> {
+        self.post_json(
+            "_cokret/self/authz/check",
+            json!({
+                "actor": actor,
+                "action": action,
+                "resource": {"kind": "realm", "realm_id": realm_id}
+            }),
+        )
+        .await
+    }
+
+    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<EffectiveGrantsResBody> {
+        self.get_json(&format!(
+            "_cokret/self/authz/effective-grants?subject={subject}"
+        ))
+        .await
+    }
+
+    // ── Space / Realm Management (all writes go through ck.events.submit) ─
+
+    /// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
+    /// `patch` carries the merge-shape body the server reducer applies to the
+    /// realm row.
+    pub async fn update_realm_metadata(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        if patch_touches_create_locked_encryption_profile(&patch) {
+            anyhow::bail!(
+                "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
+            );
+        }
+        let envelope =
+            crate::operation::cx_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)
+                .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Backward-compatible alias for callers that still pass a Realm scope
+    /// through the old "space" naming used during the Realm/Space inversion.
+    pub async fn update_space(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.update_realm_metadata(realm_id, actor_id, patch).await
+    }
+
+    /// Update a structural Space object's metadata via `ck.space.update`.
+    /// The event is submitted to the Space's home Realm (`realm_id`), while
+    /// `space_id` identifies the Space object being patched.
+    pub async fn update_space_metadata(
+        &self,
+        realm_id: &str,
+        space_id: &str,
+        actor_id: &str,
+        patch: Value,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            crate::operation::cx_ops::space_update_patch(realm_id, actor_id, space_id, patch)
+                .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Archive a Space via `ck.space.archive` event (spec-canonical).
+    pub async fn archive_space(
+        &self,
+        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<()> {
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.archive")
+            .await
+    }
+
+    /// Tombstone a Space via `ck.space.tombstone` event (spec-canonical).
+    /// Successor of the old deployment-local Space delete REST shim.
+    pub async fn delete_space(
+        &self,
+        space_id: &str,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<()> {
+        self.change_space_lifecycle(space_id, realm_id, actor_id, "ck.space.tombstone")
+            .await
+    }
+
+    /// Set Realm join_rule + history_visibility policy via two
+    /// `ck.realm.*` facet events.
+    pub async fn set_space_policy_events(
+        &self,
+        space_id: &str,
+        actor_id: &str,
+        join_rule: &str,
+        history_visibility: &str,
+    ) -> anyhow::Result<SpacePolicyResponse> {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "actor_id is required for canonical Realm policy events"
+            ));
+        }
+        if history_visibility.trim() == "restricted" {
+            return Err(anyhow::anyhow!(
+                "restricted history_visibility requires ck.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
+            ));
+        }
+        let join_rule = canonical_space_join_rule_v1(join_rule);
+        for event in [
+            build_space_state_event(space_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
+            build_space_state_event(
+                space_id,
+                actor_id,
+                "ck.realm.history_visibility",
+                json!(history_visibility),
+            )?,
+        ] {
+            self.submit_event_envelope(&event).await?;
+        }
+        Ok(SpacePolicyResponse {
+            ok: true,
+            space_id: space_id.to_owned(),
+            join_rule: join_rule.to_owned(),
+            history_visibility: history_visibility.to_owned(),
+        })
+    }
+
+    /// Create an invite via `ck.invite.create` event (spec-canonical). The
+    /// `invite_id` is generated client-side so the caller can correlate
+    /// optimistic UI rows with the eventual server projection.
+    pub async fn invite_to_space(
+        &self,
+        space_id: &str,
+        actor_id: &str,
+        invite_id: &str,
+        target: &str,
+        role: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let invitee_did = self
+            .resolve_invitee_did_for_invite(target, space_id, actor_id)
+            .await?;
+        let envelope = crate::operation::cx_ops::invite_create_structured(
+            space_id,
+            actor_id,
+            invite_id,
+            &invitee_did,
+            role,
+        )
+        .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Accept an invite via `ck.invite.accept` event (spec-canonical).
+    pub async fn accept_space_invite(
+        &self,
+        space_id: &str,
+        actor_id: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id).build("yougen");
+        let resolved = self.resolve_realm(&scope_id_as_realm_id(space_id)).await?;
+        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        self.submit_event_envelope_via_join_candidate(candidate, &envelope)
+            .await
+    }
+
+    /// Join a Realm through an outstanding invite. The invite projection
+    /// records are discovery state; the membership change itself is the
+    /// canonical `ck.member.state` invite -> join transition.
+    pub async fn join_realm_from_invite(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        invite_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
+        let resolved = self.resolve_realm(realm_id).await?;
+        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        self.submit_event_envelope_via_join_candidate(candidate, &envelope)
+            .await
+    }
+
+    async fn submit_event_envelope_via_join_candidate(
+        &self,
+        candidate: &RealmJoinCandidate,
+        event: &EventEnvelope,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let Some(endpoint) = candidate
+            .endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return self.submit_event_envelope(event).await;
+        };
+        let endpoint_url = validate_server_url(endpoint)?;
+        if endpoint_url == self.base_url {
+            return self.submit_event_envelope(event).await;
+        }
+
+        let mut routed = CokretApi::new(endpoint)?;
+        if let Some(token) = self.access_token.as_deref() {
+            routed = routed.with_bearer(token.to_owned());
+        }
+        if let Some(sync_token) = self.wait_for_sync_token.as_deref() {
+            routed = routed.with_wait_for(sync_token.to_owned());
+        }
+        routed.submit_event_envelope(event).await
+    }
+
+    /// Reject an invite via `ck.invite.cancel` event (spec-canonical).
+    pub async fn reject_space_invite(
+        &self,
+        space_id: &str,
+        actor_id: &str,
+        invite_id: &str,
+        reason: Option<&str>,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            crate::operation::cx_ops::invite_cancel(space_id, actor_id, invite_id, reason)
+                .build("yougen");
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Leave a Realm via `ck.member.state` event (`join → leave` FSM).
+    pub async fn leave_space(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.transition_member_state(
+            realm_id,
+            actor_id,
+            actor_id,
+            Some("join"),
+            "leave",
+            "self_leave",
+        )
+        .await
+    }
+
+    /// Ban a member via `ck.member.state` event (`join → ban` FSM).
+    pub async fn ban_member(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        member: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        self.transition_member_state(realm_id, actor_id, member, Some("join"), "ban", "admin_ban")
+            .await
+    }
+
+    // ── Views — collection projection (T20) ─────────────────────────
+    //
+    // Pairs with cokret-rust-sdk@9d02761 + soland@1cdab88.
+    // POST /_cokret/self/views/{view_id}/projection returns the typed
+    // CollectionProjectionResBody defined in cokret_core::model.
+    pub async fn collection_projection(
+        &self,
+        view_id: &str,
+    ) -> anyhow::Result<cokret_sdk::CollectionProjectionResBody> {
+        self.post_json(
+            &format!("_cokret/self/views/{view_id}/projection"),
+            json!({}),
+        )
+        .await
+    }
+
+    // Pull the canonical Space-container / Flow lifecycle state for a Realm so the
+    // kanban view can hydrate `column.state` / `card.lifecycle` after a
+    // refresh. Pairs with soland's `routing::events::projection_query`.
+    pub async fn list_space_container_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
+        // `ck:space:<uuid>` is RFC-3986-safe in query string position
+        // (colon + hyphen + alpha-digit), so no percent-encoding needed.
+        let realm_id = scope_id_as_realm_id(space_id);
+        let path = format!("_cokret/self/projection/spaces?realm_id={realm_id}");
+        self.get_json(&path).await
+    }
+
+    pub async fn list_flow_projections(
+        &self,
+        space_id: &str,
+    ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
+        let realm_id = scope_id_as_realm_id(space_id);
+        let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
+        self.get_json(&path).await
+    }
+
+    pub async fn document_projection(&self, morph_id: &str) -> anyhow::Result<Value> {
+        self.get_json(&format!("_cokret/self/projection/documents/{morph_id}"))
+            .await
+    }
+
+    // ── Policy (signed decisions) ───────────────────────────────────
+
+    pub async fn policy_check(
+        &self,
+        actor: &str,
+        action: &str,
+        resource: &str,
+    ) -> anyhow::Result<PolicyCheckResBody> {
+        self.post_json(
+            "_cokret/self/policy/check",
+            json!({"actor": actor, "action": action, "resource": resource}),
+        )
+        .await
+    }
+
+    /// Resolve the current anchor head for `realm_id` to be stamped onto
+    /// outgoing reducer-input events as `anchor_ref`. Wraps
+    /// `GET /_cokret/self/snapshot/head?realm_id=...` and returns the
+    /// `ck:anchor:sha256:<hex>` ref the server projects as the realm's
+    /// head.
+    pub async fn current_anchor_for(&self, realm_id: &str) -> anyhow::Result<String> {
+        let response = self.snapshot_head(realm_id).await?;
+        // Soland projects the head as a snapshot_ref in the form
+        // `ck:anchor:sha256:<hex>` (matches event-envelope.schema.json
+        // $defs/anchor_ref). Trust the server's wire shape and return
+        // it verbatim — fail closed if the field is empty so an
+        // upstream bug shows up locally before the wire round-trip.
+        if response.snapshot_ref.is_empty() {
+            anyhow::bail!(
+                "snapshot-head for {realm_id} returned an empty snapshot_ref \u{2014} cannot stamp anchor_ref"
+            );
+        }
+        Ok(response.snapshot_ref)
+    }
+}
