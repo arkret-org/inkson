@@ -109,10 +109,12 @@ impl ActionGroup {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "params")]
 pub enum Constraint {
-    /// Time-based validity window.
+    /// Time-based validity window. Spec uses the `not_before` / `expires_at`
+    /// pair; `not_after` is a forbidden field name on the capability
+    /// constraint wire form.
     Temporal {
         not_before: Option<String>,
-        not_after: Option<String>,
+        expires_at: Option<String>,
     },
     /// Restrict which fields the subject can access.
     FieldAccess {
@@ -166,7 +168,7 @@ impl Constraint {
         match self {
             Self::Temporal {
                 not_before,
-                not_after,
+                expires_at,
             } => {
                 let now = &ctx.current_time;
                 if let Some(before) = not_before
@@ -174,7 +176,7 @@ impl Constraint {
                 {
                     return ConstraintResult::Deny("before validity window".to_owned());
                 }
-                if let Some(after) = not_after
+                if let Some(after) = expires_at
                     && now > after
                 {
                     return ConstraintResult::Deny("after validity window".to_owned());
@@ -842,10 +844,13 @@ impl GrantBuilder {
 pub mod cx_capability {
     use super::*;
 
-    /// Create a capability grant operation.
+    /// Create a capability grant operation payload.
+    ///
+    /// The operation kind (`cx.capability.grant`) is the envelope's top-level
+    /// `kind` and MUST NOT be duplicated as a `"type"` field inside the
+    /// payload body, per the v1 envelope rules.
     pub fn grant_op(grant: &CapabilityGrant) -> serde_json::Value {
         serde_json::json!({
-            "type": "cx.capability.grant",
             "grant_id": grant.grant_id,
             "issuer": grant.issuer,
             "subject": grant.subject,
@@ -862,7 +867,6 @@ pub mod cx_capability {
     /// Create a capability delegation operation.
     pub fn delegate_op(grant: &CapabilityGrant) -> serde_json::Value {
         serde_json::json!({
-            "type": "cx.capability.delegate",
             "grant_id": grant.grant_id,
             "issuer": grant.issuer,
             "subject": grant.subject,
@@ -878,7 +882,6 @@ pub mod cx_capability {
     /// Create a capability revocation operation.
     pub fn revoke_op(revocation: &CapabilityRevocation) -> serde_json::Value {
         serde_json::json!({
-            "type": "cx.capability.revoke",
             "grant_id": revocation.grant_id,
             "revoker": revocation.revoker,
             "revoked_at": revocation.revoked_at.encode(),
@@ -899,7 +902,7 @@ mod tests {
             .with_resource(ResourceSelector::Space("cx:space:test".to_owned()))
             .with_constraint(Constraint::Temporal {
                 not_before: None,
-                not_after: Some("2027-01-01T00:00:00Z".to_owned()),
+                expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
             })
             .with_delegation_depth(2)
             .build()
@@ -1227,7 +1230,7 @@ mod tests {
     fn test_constraint_temporal_allow() {
         let constraint = Constraint::Temporal {
             not_before: Some("2025-01-01T00:00:00Z".to_owned()),
-            not_after: Some("2027-01-01T00:00:00Z".to_owned()),
+            expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
         };
         let ctx = EvalContext {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
@@ -1240,7 +1243,7 @@ mod tests {
     fn test_constraint_temporal_deny() {
         let constraint = Constraint::Temporal {
             not_before: None,
-            not_after: Some("2025-01-01T00:00:00Z".to_owned()),
+            expires_at: Some("2025-01-01T00:00:00Z".to_owned()),
         };
         let ctx = EvalContext {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
@@ -1327,7 +1330,8 @@ mod tests {
     fn test_cx_capability_ops() {
         let grant = test_grant();
         let op = cx_capability::grant_op(&grant);
-        assert_eq!(op["type"], "cx.capability.grant");
+        // The operation kind lives on the envelope, not the payload body.
+        assert!(op.get("type").is_none());
         assert_eq!(op["issuer"], "did:web:alice");
 
         let revocation = CapabilityRevocation {
@@ -1338,6 +1342,7 @@ mod tests {
             cascade: false,
         };
         let op = cx_capability::revoke_op(&revocation);
-        assert_eq!(op["type"], "cx.capability.revoke");
+        assert!(op.get("type").is_none());
+        assert_eq!(op["grant_id"], serde_json::Value::String(grant.grant_id.clone()));
     }
 }

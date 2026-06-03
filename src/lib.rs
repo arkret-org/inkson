@@ -28,7 +28,6 @@ pub mod circle;
 pub mod coauth;
 pub mod components;
 pub mod config;
-pub mod conflict;
 pub mod conformance;
 pub mod content;
 pub mod cross_signing;

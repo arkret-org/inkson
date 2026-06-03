@@ -17,8 +17,8 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
+use contrix_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// A Hybrid Logical Clock timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -52,26 +52,21 @@ impl Hlc {
     }
 
     /// Parse an HLC from its canonical string format.
+    ///
+    /// Format validation is delegated to the SDK's `validate_hlc_format` /
+    /// `parse_hlc`, which enforce the strict v1 wire form
+    /// (`^[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{8}$` — lowercase hex, fixed
+    /// widths). This replaces yougen's hand-rolled length checks, so a string
+    /// that is upper-case or wrong-width is rejected here exactly as the SDK
+    /// would reject it on the wire.
     pub fn parse(s: &str) -> Result<Self, HlcError> {
-        let parts: Vec<&str> = s.split('-').collect();
-        if parts.len() != 3 {
-            return Err(HlcError::InvalidFormat(s.to_owned()));
-        }
-        let physical_ms = u64::from_str_radix(parts[0], 16)
-            .map_err(|_| HlcError::InvalidPhysical(parts[0].to_owned()))?;
-        if parts[0].len() != 12 {
-            return Err(HlcError::InvalidPhysicalLength(parts[0].len()));
-        }
-        if parts[1].len() != 4 {
-            return Err(HlcError::InvalidLogicalLength(parts[1].len()));
-        }
-        let logical = u32::from_str_radix(parts[1], 16)
-            .map_err(|_| HlcError::InvalidLogical(parts[1].to_owned()))?;
-        let node_id = u32::from_str_radix(parts[2], 16)
-            .map_err(|_| HlcError::InvalidNode(parts[2].to_owned()))?;
+        validate_hlc_format(s).map_err(|_| HlcError::InvalidFormat(s.to_owned()))?;
+        let parts = parse_hlc(s).map_err(|_| HlcError::InvalidFormat(s.to_owned()))?;
+        let node_id = u32::from_str_radix(&parts.node_id, 16)
+            .map_err(|_| HlcError::InvalidNode(parts.node_id.clone()))?;
         Ok(Self {
-            physical_ms,
-            logical,
+            physical_ms: parts.physical_ms,
+            logical: parts.logical,
             node_id,
         })
     }
@@ -156,15 +151,19 @@ impl fmt::Display for Hlc {
 /// Hash a node identifier string to the 32-bit value used by [`Hlc`]'s
 /// `node_id` segment.
 ///
-/// Algorithm: SHA-256(`node_id`), interpret the first 4 bytes as a
-/// big-endian `u32`. When encoded via `{:08x}` this yields the same
-/// 8-hex-char string as `contrix_sdk::hlc::HlcGenerator::compute_node_id`
-/// for the same input — so HLCs minted by yougen and by the SDK for the
-/// same DID share identical node segments and can be merged/compared
-/// across the wire.
+/// Delegates to the SDK's `HlcGenerator`, which owns the canonical node-id
+/// derivation (SHA-256(`node_id`), first 4 bytes as 8 lowercase hex chars).
+/// We mint a generator for `node_id`, read its current HLC and parse out the
+/// node segment, then decode the 8 hex chars back to the `u32` this struct
+/// stores. This removes yougen's duplicate SHA-256 prefix implementation
+/// while staying byte-compatible with anything the SDK produced for the same
+/// DID (pinned by `hash_node_id_matches_sdk_compute_node_id`).
 pub fn hash_node_id(node_id: &str) -> u32 {
-    let digest = Sha256::digest(node_id.as_bytes());
-    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+    let hlc = HlcGenerator::new(node_id).current();
+    let parts = parse_hlc(hlc.as_str())
+        .expect("HlcGenerator emits a spec-valid HLC string parseable by parse_hlc");
+    u32::from_str_radix(&parts.node_id, 16)
+        .expect("SDK node-id segment is 8 lowercase hex chars")
 }
 
 /// A global monotonic sequence counter for operation ordering.

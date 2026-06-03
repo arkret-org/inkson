@@ -1761,17 +1761,23 @@ pub fn TimelinePanel(
                                 match api.upload_blob(ATTACHMENT_BYTES).await {
                                     Ok(blob) => {
                                         let local_hash = sha256_hex(ATTACHMENT_BYTES);
-                                        let hash_state = if blob.content_digest.trim_start_matches("sha256:") == local_hash {
+                                        // SDK `BlobUploadResBody` carries typed
+                                        // `Hash` / `BlobRef` / `Option<String>` fields;
+                                        // flatten them to the display-only `String`s
+                                        // the local `BlobAttachment` keeps.
+                                        let content_digest = blob.content_digest.as_str().to_owned();
+                                        let media_type = blob.media_type.clone().unwrap_or_default();
+                                        let hash_state = if content_digest.trim_start_matches("sha256:") == local_hash {
                                             "upload hash ok"
                                         } else {
                                             "upload hash mismatch"
                                         };
-                                        let policy = media_type_preview_policy(&blob.media_type);
+                                        let policy = media_type_preview_policy(&media_type);
                                         attached_blob.set(Some(BlobAttachment {
-                                            blob_ref: blob.blob_ref.clone(),
-                                            size_bytes: blob.size_bytes,
-                                            media_type: blob.media_type.clone(),
-                                            content_digest: blob.content_digest.clone(),
+                                            blob_ref: blob.blob_ref.to_string(),
+                                            size_bytes: blob.size_bytes as usize,
+                                            media_type,
+                                            content_digest,
                                         }));
                                         blob_status.set(format!(
                                             "attached {} ({hash_state}; {}; no token in media URL)",

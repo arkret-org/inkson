@@ -1754,11 +1754,18 @@ impl ContrixApi {
         device_id: &str,
     ) -> anyhow::Result<Option<contrix_sdk::MlsKeyPackageRecord>> {
         let resp = self.query_keys(actor, device_id).await?;
-        let device_keys = &resp.device_keys;
-        let packages = device_keys
-            .get(actor)
-            .and_then(|actor_map| actor_map.get(device_id))
-            .and_then(|device_value| device_value.get("mls_key_packages"));
+        // SDK `KeysQueryResBody::device_keys` is a typed
+        // `BTreeMap<Did, BTreeMap<DeviceId, Value>>`; the keys are newtype
+        // identifiers, so match them by their string form rather than a
+        // borrow-keyed `BTreeMap::get`.
+        let packages = resp
+            .device_keys
+            .iter()
+            .find(|(did, _)| did.as_str() == actor)
+            .and_then(|(_, actor_map)| {
+                actor_map.iter().find(|(dev, _)| dev.as_str() == device_id)
+            })
+            .and_then(|(_, device_value)| device_value.get("mls_key_packages"));
         let Some(packages) = packages else {
             return Ok(None);
         };

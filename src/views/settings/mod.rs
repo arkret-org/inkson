@@ -1230,7 +1230,7 @@ pub fn SettingsPanel(
                                                                         };
                                                                         match api.upload_blob_bytes(bytes, "image/jpeg").await {
                                                                             Ok(resp) => {
-                                                                                let blob_ref = resp.blob_ref.clone();
+                                                                                let blob_ref = resp.blob_ref.to_string();
                                                                                 let avatar_url = api.blob_download_url(&blob_ref);
                                                                                 // 1) Mirror locally + push actor-private
                                                                                 //    `client.ui.avatar_blob_ref` so other

@@ -464,45 +464,14 @@ fn typed_operation_id(operation_id: &str) -> String {
 }
 
 /// Generate a canonical UUIDv7 string for typed protocol identifiers.
+///
+/// Thin wrapper over the SDK's `new_prefixed_uuid7` (RFC 9562 UUIDv7 via the
+/// `uuid` crate, with same-millisecond monotonicity) called with an empty
+/// prefix. Callers add their own typed prefix (`cx:operation:`, `cx:device:`,
+/// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
+/// same-millisecond monotonic guarantee.
 pub fn uuid_v7() -> String {
-    let now_ms = chrono::Utc::now().timestamp_millis() as u64 & 0x0000_ffff_ffff_ffff;
-    let time_low = (now_ms >> 16) as u32;
-    let time_mid = (now_ms & 0xffff) as u16;
-    let time_hi_and_version = 0x7000 | (rand_u16() & 0x0fff);
-    let variant_and_rand = 0x8000_0000_0000_0000u64 | (rand_u64() & 0x3fff_ffff_ffff_ffff);
-    let clock_seq = (variant_and_rand >> 48) as u16;
-    let node = variant_and_rand & 0x0000_ffff_ffff_ffff;
-    format!("{time_low:08x}-{time_mid:04x}-{time_hi_and_version:04x}-{clock_seq:04x}-{node:012x}")
-}
-
-// CRITICAL: use a real CSPRNG (`getrandom`, which on wasm32 routes through the
-// browser's Web Crypto via the `wasm_js` feature), NOT `std::collections::
-// hash_map::RandomState`. On wasm32 `RandomState`'s seed is effectively fixed
-// (no OS entropy source), so the previous "hash a timestamp under RandomState"
-// approach degenerated into a near-deterministic function of the current
-// millisecond — two different browsers generating an id at a similar instant
-// produced the SAME uuid_v7. That surfaced as two browsers sharing one
-// `cx:device:<uuid>` device id (and risked collisions for every other id this
-// helper mints: event_id / operation_id / backup_id / series_id). getrandom
-// gives proper per-call entropy on every target.
-fn rand_u16() -> u16 {
-    let mut buf = [0u8; 2];
-    if getrandom::fill(&mut buf).is_err() {
-        // Extremely unlikely (Web Crypto unavailable); fall back to a
-        // time-derived value so id generation never panics.
-        let t = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-        buf.copy_from_slice(&(t as u16).to_le_bytes());
-    }
-    u16::from_le_bytes(buf)
-}
-
-fn rand_u64() -> u64 {
-    let mut buf = [0u8; 8];
-    if getrandom::fill(&mut buf).is_err() {
-        let t = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-        buf.copy_from_slice(&t.to_le_bytes());
-    }
-    u64::from_le_bytes(buf)
+    contrix_sdk::identifiers::new_prefixed_uuid7("")
 }
 
 /// Canonical helper constructors used by the current UI.

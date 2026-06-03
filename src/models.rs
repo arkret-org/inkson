@@ -248,16 +248,7 @@ pub struct IdentityDescribeResBody {
     pub profiles: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IdentityResolveResBody {
-    pub did_document: Value,
-    pub key_log_head: Option<String>,
-    pub seq: u64,
-    #[serde(default)]
-    pub receipts: Vec<Value>,
-    #[serde(default)]
-    pub method_evidence: Value,
-}
+pub use contrix_sdk::model::IdentityResolveResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncDescribeResBody {
@@ -557,15 +548,7 @@ pub struct SnapshotHeadResponse {
     pub signature: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AuthzCheckResBody {
-    pub allowed: bool,
-    pub reason_code: Option<String>,
-    #[serde(default)]
-    pub grants: Vec<Value>,
-    #[serde(default)]
-    pub obligations: Vec<Value>,
-}
+pub use contrix_sdk::model::AuthzCheckResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EffectiveGrantsResBody {
@@ -595,30 +578,13 @@ pub struct OkResBody {
     pub ok: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysUploadResBody {
-    pub one_time_key_counts: Value,
-    pub fallback_keys: Value,
-}
+pub use contrix_sdk::model::KeysUploadResBody;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysQueryResBody {
-    pub device_keys: Value,
-    pub failures: Value,
-}
+pub use contrix_sdk::model::KeysQueryResBody;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeysClaimResBody {
-    pub one_time_keys: Value,
-    pub failures: Value,
-}
+pub use contrix_sdk::model::KeysClaimResBody;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceMessagesSendResBody {
-    pub ok: bool,
-    pub delivered: Value,
-    pub unknown_devices: Value,
-}
+pub use contrix_sdk::model::DeviceMessagesSendResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceMessagesReceiveResBody {
@@ -629,17 +595,7 @@ pub struct DeviceMessagesReceiveResBody {
     pub limited: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BlobUploadResBody {
-    pub blob_ref: String,
-    /// Spec rename (head 37ce729 / SDK 4d5a1af): `size` → `size_bytes`
-    /// on blob/media metadata. No serde alias by design — aggressive
-    /// migration mode.
-    pub size_bytes: usize,
-    pub media_type: String,
-    pub content_digest: String,
-    pub upload_receipt: Value,
-}
+pub use contrix_sdk::model::BlobUploadResBody;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModerationReportResBody {
