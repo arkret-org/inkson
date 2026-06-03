@@ -2,76 +2,131 @@
 //! comment threads.
 //!
 //! Spec sources:
-//! - `flow-and-message.md §4.3` — discussion tracks attached to a Flow surface as
-//!   `ck.message.create` events keyed by `payload.thread_root = <card_flow_id>`.
+//! - `flow-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on the
+//!   card's Flow; comments are `ck.message.create` events carrying the card's `flow_id` and
+//!   `track_name = "discussion"`.
 //! - `space-and-place.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
 //!   is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
-//! that constructs the canonical `ck.message.create` op. The UI
-//! drawer + projection wiring are follow-ups; this revision is the
-//! data-layer half that can be unit-tested in isolation.
+//! that constructs the canonical `ck.message.create` op via the SDK's
+//! typed [`cokret_sdk::MessageCreatePayload`]. The UI drawer +
+//! projection wiring are follow-ups; this revision is the data-layer
+//! half that can be unit-tested in isolation.
+//!
+//! Schema notes (`event-payload.schema.json $defs.message_create_payload`,
+//! `additionalProperties:false`):
+//! - `flow_id` + `track_name` are required; the comment body rides in `content` (a
+//!   `content_block`), never a top-level `body`.
+//! - The author is NOT a payload field — the reducer derives `created_by` from the envelope
+//!   `actor_id`, so we deliberately do not carry an `author_did` here.
+//! - Threading uses `reply_to` (a `message_id`); the previous `thread_root` field was not part of
+//!   this payload.
 //!
 //! @-mention extraction is deliberately conservative — yougen
-//! recognizes the `did:web:` / `did:key:` / `did:plc:` forms when
-//! prefixed with `@`. Anything else falls through unchanged so a
-//! literal email / handle text isn't mistakenly notified.
+//! recognizes the `did:web:` / `did:key:` / `did:plc:` / `did:webvh:` forms
+//! when prefixed with `@`. Anything else falls through unchanged so a
+//! literal email / handle text isn't mistakenly notified. Recognized DIDs
+//! become structured [`crate::models::Mention`] nodes inside the content
+//! block.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// F-CARD-COMMENT-1: a single comment row attached to a kanban
-/// card. Mirrors the on-the-wire `ck.message.create` payload minus
-/// the protocol-level envelope fields (`event_id`, `hlc`, etc.) —
-/// callers turn this into a full envelope via the standard
-/// `OperationBuilder` path.
+use crate::models::Mention;
+
+/// Discussion track name comments are attached to on the card's Flow.
+const DISCUSSION_TRACK: &str = "discussion";
+
+/// F-CARD-COMMENT-1: a single comment composed for a kanban card.
+/// Carries only what the composer knows; the author is supplied by the
+/// envelope `actor_id` at sign time and resolved by the reducer into
+/// `created_by`, so it is intentionally absent here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardComment {
-    /// The card's own Flow id — used as `thread_root` so the
-    /// projection groups the comment under this card.
+    /// The card's own Flow id — becomes `payload.flow_id` so the
+    /// discussion track on this card receives the comment.
     pub card_flow_id: String,
-    /// Comment author DID.
-    pub author_did: String,
     /// Raw body text (Markdown allowed; soland renders it).
     pub body: String,
-    /// DIDs extracted from `@did:web:...` patterns in the body.
-    /// `ck.message.create.payload.mentions[]` per spec §3 — yougen
-    /// emits notifications only to these DIDs.
+    /// DIDs extracted from `@did:...` patterns in the body. These are
+    /// emitted as structured `Mention` nodes inside the content block.
     pub mentions: Vec<String>,
+    /// Optional parent message id for threaded replies. Maps to
+    /// `payload.reply_to`; `None` for a top-level comment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
 }
 
 impl CardComment {
-    pub fn new(
-        card_flow_id: impl Into<String>,
-        author_did: impl Into<String>,
-        body: impl Into<String>,
-    ) -> Self {
+    pub fn new(card_flow_id: impl Into<String>, body: impl Into<String>) -> Self {
         let body_str = body.into();
         let mentions = extract_mentions(&body_str);
         Self {
             card_flow_id: card_flow_id.into(),
-            author_did: author_did.into(),
             body: body_str,
             mentions,
+            reply_to: None,
         }
+    }
+
+    /// Mark this comment as a threaded reply to `parent_message_id`.
+    pub fn with_reply_to(mut self, parent_message_id: impl Into<String>) -> Self {
+        self.reply_to = Some(parent_message_id.into());
+        self
     }
 }
 
-/// F-CARD-COMMENT-1: build the `ck.message.create` payload that
-/// the reducer accepts as a comment row on `card_flow_id`. Mirrors
-/// the canonical envelope shape — caller wraps this in their
-/// `OperationBuilder` to produce a signed Move.
+/// F-CARD-COMMENT-1: build the `ck.message.create` payload for a card
+/// comment, reusing the SDK's typed [`cokret_sdk::MessageCreatePayload`]
+/// so the field set stays schema-compliant by construction.
 ///
-/// `thread_root` is the load-bearing field: soland's reducer keys
-/// the comment under it, so the kanban projection can later fetch
-/// all comments for a given card via `index.query(thread_root)`.
+/// The comment body rides in a `ck.content.text` content block; recognized
+/// `@did:...` mentions are attached to the block as structured `Mention`
+/// nodes (the block is `additionalProperties:true`). Threading is expressed
+/// via `reply_to`. The author is omitted on purpose — the reducer derives it
+/// from the envelope `actor_id`.
+///
+/// `flow_id` is the card's Flow id and is invalid as a typed `FlowId` only if
+/// the caller passes a malformed id; on that programmer error we panic
+/// (mirrors the `messaging/polls.rs` convention).
 pub fn build_card_comment_payload(comment: &CardComment) -> Value {
-    json!({
-        "thread_root": comment.card_flow_id,
-        "author_did": comment.author_did,
-        "body": comment.body,
-        "mentions": comment.mentions,
-    })
+    let mentions: Vec<Value> = comment
+        .mentions
+        .iter()
+        .map(|did| {
+            serde_json::to_value(Mention {
+                subject_id: did.clone(),
+                handle_at_time: None,
+                display_name_at_time: None,
+                mention_text_original: None,
+                resolved_at: None,
+            })
+            .expect("Mention serializes to JSON")
+        })
+        .collect();
+
+    let mut content = cokret_sdk::ContentBlock::new("ck.content.text", comment.body.clone())
+        .with_field("format", json!("markdown"));
+    if !mentions.is_empty() {
+        content = content.with_field("mentions", Value::Array(mentions));
+    }
+
+    let flow_id = cokret_sdk::FlowId::new(comment.card_flow_id.clone())
+        .unwrap_or_else(|err| panic!("invalid card flow id {:?}: {err:?}", comment.card_flow_id));
+
+    let mut payload = cokret_sdk::MessageCreatePayload::with_content(
+        flow_id,
+        DISCUSSION_TRACK,
+        content.to_value().expect("content block serializes"),
+    );
+    if let Some(reply_to) = &comment.reply_to {
+        payload = payload.with_reply_to(reply_to.clone());
+    }
+
+    payload
+        .to_value()
+        .expect("card comment message_create payload serializes")
 }
 
 /// F-CARD-COMMENT-1: extract `@did:<method>:<id>` mentions from a
@@ -127,11 +182,13 @@ pub fn extract_mentions(body: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// A syntactically valid Flow id for payloads that get schema-validated.
+    const CARD_FLOW_ID: &str = "ck:flow:01904100-0000-7000-8000-000000000001";
+
     #[test]
     fn new_comment_extracts_mentions_eagerly() {
         let comment = CardComment::new(
-            "ck:flow:card1",
-            "did:web:alice.example",
+            CARD_FLOW_ID,
             "ping @did:web:bob.example and @did:key:z6Mksample",
         );
         assert_eq!(
@@ -144,20 +201,45 @@ mod tests {
     }
 
     #[test]
-    fn build_payload_carries_thread_root_and_mentions() {
-        let comment = CardComment::new(
-            "ck:flow:card1",
-            "did:web:alice.example",
-            "hi @did:web:bob.example",
-        );
+    fn build_payload_uses_flow_track_and_content() {
+        let comment = CardComment::new(CARD_FLOW_ID, "hi @did:web:bob.example");
         let payload = build_card_comment_payload(&comment);
-        assert_eq!(payload["thread_root"], "ck:flow:card1");
-        assert_eq!(payload["author_did"], "did:web:alice.example");
-        assert_eq!(payload["body"], "hi @did:web:bob.example");
+        // Required schema fields.
+        assert_eq!(payload["flow_id"], CARD_FLOW_ID);
+        assert_eq!(payload["track_name"], "discussion");
+        // Body rides in the content block, not a top-level `body`.
+        assert!(payload.get("body").is_none());
+        assert_eq!(payload["content"]["kind"], "ck.content.text");
+        assert_eq!(payload["content"]["body"], "hi @did:web:bob.example");
+        // Mentions are structured nodes inside the content block.
         assert_eq!(
-            payload["mentions"],
-            serde_json::json!(["did:web:bob.example"])
+            payload["content"]["mentions"][0]["subject_id"],
+            "did:web:bob.example"
         );
+        // Author is reducer-derived from the envelope, never in the payload.
+        assert!(payload.get("author_did").is_none());
+        assert!(payload.get("thread_root").is_none());
+        assert!(payload.get("reply_to").is_none());
+    }
+
+    #[test]
+    fn build_payload_threads_via_reply_to() {
+        let comment = CardComment::new(CARD_FLOW_ID, "agreed")
+            .with_reply_to("ck:message:01904100-0000-7000-8000-000000000002");
+        let payload = build_card_comment_payload(&comment);
+        assert_eq!(
+            payload["reply_to"],
+            "ck:message:01904100-0000-7000-8000-000000000002"
+        );
+    }
+
+    #[test]
+    fn build_payload_validates_against_message_create_schema() {
+        let comment = CardComment::new(CARD_FLOW_ID, "ship it @did:web:bob.example");
+        let payload = build_card_comment_payload(&comment);
+        cokret_sdk::schema::event_payload_validator_catalog()
+            .validate_payload("ck.message.create", &payload)
+            .expect("card comment payload must satisfy message_create_payload schema");
     }
 
     #[test]
@@ -209,11 +291,7 @@ mod tests {
 
     #[test]
     fn comment_round_trips_through_serde() {
-        let comment = CardComment::new(
-            "ck:flow:card1",
-            "did:web:alice.example",
-            "@did:web:bob hello",
-        );
+        let comment = CardComment::new(CARD_FLOW_ID, "@did:web:bob hello");
         let bytes = serde_json::to_string(&comment).unwrap();
         let restored: CardComment = serde_json::from_str(&bytes).unwrap();
         assert_eq!(restored, comment);

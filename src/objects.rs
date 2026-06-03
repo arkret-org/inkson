@@ -26,6 +26,12 @@ pub fn build_morph_create(
 
 /// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
+///
+/// `ck.morph.update` falls onto the generic `object_patch_payload`
+/// (`required:["target_ref","patch"]`, `additionalProperties:false`): the
+/// target Morph is single-sourced by `target_ref`, so we do NOT emit a
+/// separate `morph_id` field — that would trip the reducer's
+/// `schema_violation` gate.
 pub fn build_morph_update(
     space_id: &str,
     actor: &str,
@@ -34,27 +40,33 @@ pub fn build_morph_update(
 ) -> OperationBuilder {
     OperationBuilder::new(space_id, actor, "ck.morph.update")
         .target_ref(morph_id)
-        .body(json!({"morph_id": morph_id, "patch": patch}))
+        .body(json!({"target_ref": morph_id, "patch": patch}))
 }
 
 /// Build a `ck.relation.create` operation. `kind` is a registered
-/// `relation_kind` (e.g. `ck.relation.parent_of`); `source` and `target` are
-/// typed-id strings.
+/// `relation_kind` (e.g. `ck.relation.parent_of`); `from_ref` and `to_ref` are
+/// the typed-id endpoints.
+///
+/// Body shape follows `relation_create_payload`
+/// (`additionalProperties:false`): the legal field set is `relation` |
+/// (`kind`,`from_ref`,`to_ref`) | `rank`. The relation id is NOT a payload
+/// field — it is routed via the operation's `target_ref`, so we no longer
+/// emit a top-level `relation_id`. The previous `source`/`target` names were
+/// not in the schema and would have been rejected with `schema_violation`.
 pub fn build_relation_create(
     space_id: &str,
     actor: &str,
     relation_id: &str,
     kind: &str,
-    source: &str,
-    target: &str,
+    from_ref: &str,
+    to_ref: &str,
 ) -> OperationBuilder {
     OperationBuilder::new(space_id, actor, "ck.relation.create")
         .target_ref(relation_id)
         .body(json!({
-            "relation_id": relation_id,
             "kind": kind,
-            "source": source,
-            "target": target,
+            "from_ref": from_ref,
+            "to_ref": to_ref,
         }))
 }
 
@@ -126,7 +138,11 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.morph.update");
-        assert_eq!(op.payload["morph_id"], "ck:morph:abc");
+        assert_eq!(op.payload["target_ref"], "ck:morph:abc");
+        assert!(
+            op.payload.get("morph_id").is_none(),
+            "morph_id is not an object_patch_payload field"
+        );
         assert_eq!(op.payload["patch"]["morph_type"], "task");
     }
 
@@ -142,9 +158,15 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.relation.create");
+        // relation id is routed via target_ref, not a payload field.
+        assert_eq!(op.local_target_ref(), Some("ck:relation:r1"));
+        assert!(
+            op.payload.get("relation_id").is_none(),
+            "relation_id is not a relation_create_payload field"
+        );
         assert_eq!(op.payload["kind"], "ck.relation.parent_of");
-        assert_eq!(op.payload["source"], "ck:flow:f1");
-        assert_eq!(op.payload["target"], "ck:flow:f2");
+        assert_eq!(op.payload["from_ref"], "ck:flow:f1");
+        assert_eq!(op.payload["to_ref"], "ck:flow:f2");
     }
 
     #[test]
