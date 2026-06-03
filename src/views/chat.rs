@@ -6270,13 +6270,26 @@ pub fn ChatPanel(
                                         }
                                     };
                                 // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
-                                let mut commit_envelope =
-                                    crate::operation::cx_ops::mls_commit_with_governance(
+                                let commit_builder =
+                                    match crate::operation::cx_ops::mls_commit_with_governance(
                                         &space,
                                         &actor,
                                         &mls_commit_payload,
-                                    )
-                                    .build("yougen");
+                                    ) {
+                                        Ok(builder) => builder,
+                                        Err(err) => {
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("MLS commit payload failed: {err}"),
+                                            );
+                                            return;
+                                        }
+                                    };
+                                let mut commit_envelope = commit_builder.build("yougen");
                                 commit_envelope.event_id = commit_event_id;
                                 let mut message_payload =
                                     cokret_sdk::MessageCreatePayload::with_encrypted_content(

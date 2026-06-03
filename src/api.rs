@@ -181,8 +181,8 @@ pub struct SpaceContainerProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct FlowProjectionView {
     pub flow_id: String,
-    #[serde(alias = "realm_id")]
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -197,16 +197,16 @@ pub struct FlowProjectionView {
     pub rank: Option<String>,
     #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
+    /// `active` / `archived` / `redacted` per spec
+    /// `common-fields.md §5.1`. `redacted` is the only irreversible
+    /// terminal state; the reducer no longer accepts `deleted`.
+    pub state: String,
     #[serde(default)]
     pub created_by: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
-    /// `active` / `archived` / `deleted` / `redacted` per spec
-    /// `common-fields.md §5.1`. yougen folds the two terminal states
-    /// into `FlowLifecycleState::Tombstoned`.
-    pub state: String,
 }
 
 /// Server-side Morph row from
@@ -214,8 +214,8 @@ pub struct FlowProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
-    #[serde(alias = "realm_id")]
-    pub space_id: String,
+    #[serde(alias = "space_id")]
+    pub realm_id: String,
     #[serde(default)]
     pub morph_type: String,
     #[serde(default)]
@@ -5453,7 +5453,7 @@ mod tests {
                 }]
             }))
             .unwrap();
-        assert_eq!(flows.items[0].space_id, flows.realm_id);
+        assert_eq!(flows.items[0].realm_id, flows.realm_id);
         assert_eq!(flows.items[0].state, "archived");
         assert_eq!(
             flows.items[0].board_space_id.as_deref(),

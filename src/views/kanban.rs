@@ -7486,6 +7486,7 @@ fn kanban_mls_commit_event_from_store(
     .map_err(|err| format!("MLS commit payload failed: {err}"))?;
     let mut event =
         crate::operation::cx_ops::mls_commit_with_governance(space_id, actor_did, &payload)
+            .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build("yougen");
     event.event_id = event_id;
     Ok(event)
@@ -10256,7 +10257,7 @@ mod tests {
         };
         let flow_view = crate::api::FlowProjectionView {
             flow_id: flow.to_owned(),
-            space_id: space.to_owned(),
+            realm_id: space.to_owned(),
             title: "Encrypted card".to_owned(),
             summary: Some("public summary".to_owned()),
             body: Some(json!({
@@ -10659,7 +10660,7 @@ mod tests {
         ];
         let flows = vec![crate::api::FlowProjectionView {
             flow_id: "ck:flow:0196419b-0000-7000-8000-000000000003".to_owned(),
-            space_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             title: "Persisted card".to_owned(),
             summary: Some("Loaded from projection".to_owned()),
             body: Some(json!({

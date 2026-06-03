@@ -220,7 +220,6 @@ pub struct EventEnvelope {
     pub prev_refs: Vec<String>,
     #[serde(default)]
     pub refs: Vec<SemanticRef>,
-    pub payload: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -228,13 +227,14 @@ pub struct EventEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirements: Option<EventRequirements>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redacts: Option<String>,
+    pub payload: Value,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unsigned: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proofs: Vec<EventProof>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<EventRequirements>,
 }
 
 /// Detached proof entry on an [`EventEnvelope`].
@@ -1349,11 +1349,12 @@ pub mod cx_ops {
         realm_id: &str,
         actor: &str,
         payload: &cokret_sdk::MlsCommitPayload,
-    ) -> OperationBuilder {
+    ) -> anyhow::Result<OperationBuilder> {
         let group_id = payload.mls_group_id().to_owned();
-        OperationBuilder::new(realm_id, actor, "ck.mls.commit")
+        let body = serde_json::to_value(payload)?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.mls.commit")
             .target_ref(group_id)
-            .body(serde_json::to_value(payload).expect("MLS commit payload serializes"))
+            .body(body))
     }
 
     /// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
@@ -2032,6 +2033,7 @@ mod tests {
         )
         .unwrap();
         let op = cx_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
+            .unwrap()
             .build("node");
 
         assert_eq!(op.kind, "ck.mls.commit");
