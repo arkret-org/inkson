@@ -119,7 +119,12 @@ pub fn CreateCircleModal(
                                 let value = evt.value();
                                 form.with_mut(|f| f.symbol_glyph = value);
                             },
-                            for glyph in ["shield", "lock", "eye", "key", "moon", "spark"] {
+                            for glyph in [
+                                "lock", "shield", "eye", "eye_off", "user_shield", "fingerprint",
+                                "key", "diamond", "flame", "leaf", "anchor", "compass", "atom",
+                                "bolt", "moon", "sun", "star", "globe", "satellite", "ring", "chain",
+                                "tag", "flag", "scroll", "scale", "hourglass", "spark",
+                            ] {
                                 option { value: "{glyph}", "{glyph}" }
                             }
                         }
