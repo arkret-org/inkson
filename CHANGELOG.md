@@ -12,7 +12,7 @@ Android / web).
 
 ## R3.3 — Spec sync 2026-05-28 (cokret-spec @ cced4b8)
 
-- CXP-0011: client-side shareable object links. New `src/object_address.rs`
+- CKP-0011: client-side shareable object links. New `src/object_address.rs`
   wraps the SDK addressing grammar (`parse_address` / `build_address` /
   `build_https_landing` / `target_digest`) into a typed `ShareTarget`
   (Realm / Flow / Message) that builds both link forms — the default
@@ -61,7 +61,7 @@ Android / web).
 
 ## [Unreleased]
 
-### Circle rollout (CXP-0007 + cross-stack P3B)
+### Circle rollout (CKP-0007 + cross-stack P3B)
 
 - **Added** Circle UX surface: Space-sidebar Circle list, Flow/Space scope
   picker, composer banner labelling Circle-scoped writes, timeline accent
@@ -72,7 +72,7 @@ Android / web).
   group from each event's `effective_scope`. Chime push subscriptions now
   pass the active Circle id so `PushNotification.circle_id` filtering and
   per-Circle mute prefs flow through end-to-end.
-- **Added** CXP-0007 error-code UI surface: 5 reason codes
+- **Added** CKP-0007 error-code UI surface: 5 reason codes
   (`circle_realm_mismatch`, `circle_not_active`,
   `circle_member_must_be_realm_member`, `scope_rebind_forbidden`,
   `metadata_encryption_floor_violation`) + the top-level

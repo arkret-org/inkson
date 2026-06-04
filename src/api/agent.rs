@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     // ────────────────────────────────────────────────────────────────
-    // CXP-0008 / CXP-0009 — Personal Agent HTTP surface (11 endpoints
+    // CKP-0008 / CKP-0009 — Personal Agent HTTP surface (11 endpoints
     // landed in soland P2 aa76b91). Each method here verifies the
     // cross-project HTTP contract so the wire shape is exercised end
     // to end even while deeper UI form layouts remain
@@ -112,7 +112,7 @@ impl CokretApi {
 
     /// `POST /_cokret/self/agents/{id}/grants` — `ck.agent.grant.attach`.
     /// Attaches a capability grant scoped to the agent. `grant_kind`
-    /// SHOULD be one of the 14 CXP-0008 capability actions.
+    /// SHOULD be one of the 14 CKP-0008 capability actions.
     pub async fn agent_grant_attach(
         &self,
         agent_principal_id: &str,
@@ -145,7 +145,7 @@ impl CokretApi {
     /// `ck.agent.sidecar_thread.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
     /// between the controller and the native agent. Defaults
-    /// `home_policy = "context_realm_preferred"` per CXP-0009 §3 / B-F.
+    /// `home_policy = "context_realm_preferred"` per CKP-0009 §3 / B-F.
     pub async fn agent_sidecar_thread_ensure(
         &self,
         agent_principal_id: &str,

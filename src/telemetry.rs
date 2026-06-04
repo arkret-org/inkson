@@ -36,7 +36,7 @@ use tracing::info;
 
 use crate::local_state::{LocalStateStore, UserActionLogEntry};
 
-/// CXP-0007 P3B.8.1 — initialise the opt-in Sentry client.
+/// CKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
 ///
 /// The init is gated on TWO conditions:
 ///   1. `prefs.enabled == true` — the user explicitly opted in via

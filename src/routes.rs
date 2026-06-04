@@ -113,7 +113,7 @@ pub enum Route {
     #[route("/kanban/:space_id", KanbanSpacePage)]
     KanbanSpace { space_id: String },
 
-    /// CXP board-persistence — the selected Board id is part of the URL
+    /// CKP board-persistence — the selected Board id is part of the URL
     /// so a page refresh (or a deep link) restores the exact board the
     /// user was looking at instead of falling back to
     /// `board_options.first()`. `space_id` is the Realm id; `board_id`
@@ -388,7 +388,7 @@ impl From<View> for Route {
             View::Quarantine => Route::Quarantine,
             View::Agents => Route::Agents,
             View::Search => Route::Search,
-            // CXP-0007 P3B.2.5: Circle detail view. Default URL points
+            // CKP-0007 P3B.2.5: Circle detail view. Default URL points
             // at the dashboard because the canonical `/circles/:id`
             // route carries a Circle id that is not addressable from
             // the View enum alone. The deep-link entry point is the

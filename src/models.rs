@@ -1093,7 +1093,7 @@ pub struct MimiProxyDownloadResBody {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CXP-0008 / CXP-0009 — Personal Agent HTTP wire types (spec head
+// CKP-0008 / CKP-0009 — Personal Agent HTTP wire types (spec head
 // 37ce729 / SDK 4d5a1af / soland P2 aa76b91).
 //
 // These mirror soland's `AgentProvisionReqBody` / `AgentResBody` /
@@ -1230,7 +1230,7 @@ pub struct AgentGrantDetachResBody {
     pub todos: Vec<String>,
 }
 
-/// CXP-0008 / CXP-0009 §6 + B-F: `ck.agent.sidecar_thread.ensure` MUST
+/// CKP-0008 / CKP-0009 §6 + B-F: `ck.agent.sidecar_thread.ensure` MUST
 /// default `home_policy = "context_realm_preferred"`. This is encoded
 /// in the request body's optional `context_realm_id` plus the
 /// `home_policy` discriminator.
@@ -1239,7 +1239,7 @@ pub struct AgentSidecarThreadEnsureReqBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_realm_id: Option<String>,
     /// Default value emitted by yougen: `"context_realm_preferred"`
-    /// (B-F / CXP-0009 §3 sidecar home policy).
+    /// (B-F / CKP-0009 §3 sidecar home policy).
     #[serde(default)]
     pub home_policy: String,
 }

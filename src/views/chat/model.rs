@@ -20,7 +20,7 @@ pub(super) struct ChannelEntity {
     /// Explicit Flow security state from Flow metadata. `None` inherits
     /// the current Realm / Space security posture.
     pub(super) security_encrypted: Option<bool>,
-    /// CXP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Flow was
+    /// CKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Flow was
     /// created under, when the Flow projection carries a
     /// `scope_circle_id`. The composer banner and the per-message
     /// accent rail read from this field; `None` means the Flow
@@ -1657,7 +1657,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
         .filter(|value| value.starts_with("ck:flow:"))
         .unwrap_or("ck:flow:general")
         .to_owned();
-    // CXP-0007 P3B.2.7 — compare the envelope's `effective_scope`
+    // CKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we
     // route the message into `NeedsVerification` so the UI badge
     // surfaces the mismatch rather than presenting a body decrypted

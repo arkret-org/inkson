@@ -1,4 +1,4 @@
-//! R3.3 (CXP-0011, cokret-spec @ cced4b8) — client-side shareable object
+//! R3.3 (CKP-0011, cokret-spec @ cced4b8) — client-side shareable object
 //! links.
 //!
 //! A user can share a Realm / Flow / Message as a link. This module is the

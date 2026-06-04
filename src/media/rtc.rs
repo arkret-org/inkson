@@ -1,4 +1,4 @@
-//! RTC client integration scaffolding (CXP-0010, spec head b47ff6ec).
+//! RTC client integration scaffolding (CKP-0010, spec head b47ff6ec).
 //!
 //! This module captures the client-side wire contract for the new media
 //! binding profile that landed in cokret-spec round R3:
@@ -110,7 +110,7 @@ impl RtcClientError {
     }
 
     /// Parses a soland error `code` string into a typed [`RtcClientError`].
-    /// Returns `None` for codes outside the CXP-0010 media binding set —
+    /// Returns `None` for codes outside the CKP-0010 media binding set —
     /// callers should fall back to the generic error path.
     pub fn from_wire(code: &str) -> Option<Self> {
         Some(match code {

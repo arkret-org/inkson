@@ -38,7 +38,7 @@ use crate::models::{
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 // ─────────────────────────────────────────────────────────────────────
-// CXP-0008 / CXP-0009 — Envelope `actor_kind` reducer-stamped
+// CKP-0008 / CKP-0009 — Envelope `actor_kind` reducer-stamped
 // projection. SDK 4d5a1af exposes `EnvelopeActorKind { Native, Ghost,
 // Service, Agent }`. The UI labels below MUST stay user-facing
 // readable: actor lists, sidecar disclosure cards, and the personal-
@@ -946,7 +946,7 @@ pub fn AgentsPanel(
                 }
             }
 
-            // CXP-0008 / CXP-0009 — Personal Agent admin (B-A / P3-A).
+            // CKP-0008 / CKP-0009 — Personal Agent admin (B-A / P3-A).
             // The 11 soland HTTP operations + actor_kind badges + sidecar
             // exposure disclosure live in their own panel below.
             PersonalAgentAdminPanel {
@@ -959,7 +959,7 @@ pub fn AgentsPanel(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// CXP-0008 / CXP-0009 — Personal Agent admin panel (B-A · P3-A).
+// CKP-0008 / CKP-0009 — Personal Agent admin panel (B-A · P3-A).
 //
 // Surfaces the 11 soland personal-agent HTTP operations as a single
 // admin view. Each soland endpoint has a matching reqwest call below
@@ -1002,7 +1002,7 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
 }
 
 /// Sidecar Thread guard: a sidecar thread is a `controller × native
-/// agent` 1:1 channel. CXP-0008 §4.5 and CXP-0009 §3 invariant 10
+/// agent` 1:1 channel. CKP-0008 §4.5 and CKP-0009 §3 invariant 10
 /// require the renderer to refuse to expose it as a group chat. The
 /// component renders the inner children only when the participant
 /// list contains exactly the controller DID and one native agent
@@ -1042,7 +1042,7 @@ pub fn SidecarThreadGuard(
                     span { class: "badge amber", "1:1 invariant violated" }
                 }
                 div { class: "muted",
-                    "CXP-0008 §4.5 / CXP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
+                    "CKP-0008 §4.5 / CKP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
                 }
                 div { class: "muted",
                     "Expected controller: {controller_did}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
@@ -1089,7 +1089,7 @@ impl ActionApproveDialogState {
 
 /// Returns true when the per-request expiry timestamp has already
 /// passed. The dialog must refuse to submit an approve event once
-/// expiry elapses (CXP-0008 §4 action_request invariants).
+/// expiry elapses (CKP-0008 §4 action_request invariants).
 pub fn is_action_request_expired(expires_at: &str, now: &str) -> bool {
     // Both arguments are RFC3339 timestamps emitted by the SDK
     // event-canonicalizer; do a lexicographic compare on UTC ISO-8601
@@ -1159,7 +1159,7 @@ pub fn PersonalAgentAdminPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { "Personal Agent admin" }
-                    span { class: "badge", "CXP-0008 / CXP-0009" }
+                    span { class: "badge", "CKP-0008 / CKP-0009" }
                 }
                 div { class: "muted",
                     "Provision and operate native personal agents. Each button below maps 1:1 to a soland P2 endpoint; deeper form layouts are TODO(P3-impl) stubs while the reducer projection lands."
@@ -1578,7 +1578,7 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.agent.grant.attach / detach" }
                 }
                 div { class: "muted",
-                    "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CXP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
+                    "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CKP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
                 }
                 div { class: "workflow-form",
                     input {
@@ -1699,7 +1699,7 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.agent.sidecar_thread.ensure" }
                 }
                 div { class: "muted",
-                    "Default home policy: context_realm_preferred (CXP-0009 §3 / B-F). Pass a context realm_id to bind the sidecar Circle to a specific Realm; leave blank for the active Realm."
+                    "Default home policy: context_realm_preferred (CKP-0009 §3 / B-F). Pass a context realm_id to bind the sidecar Circle to a specific Realm; leave blank for the active Realm."
                 }
                 div { class: "workflow-form",
                     input {
@@ -1761,8 +1761,8 @@ pub fn PersonalAgentAdminPanel(
             }
 
             // ───────────────────────────────────────────────────────
-            // Sidecar exposure disclosure (CXP-0009 §3 invariant 10 +
-            // CXP-0008 §4.5). UI scaffold only — backend projection
+            // Sidecar exposure disclosure (CKP-0009 §3 invariant 10 +
+            // CKP-0008 §4.5). UI scaffold only — backend projection
             // is TODO(P3-impl).
             // ───────────────────────────────────────────────────────
             SidecarExposureDisclosure {
@@ -1772,7 +1772,7 @@ pub fn PersonalAgentAdminPanel(
     }
 }
 
-/// CXP-0009 §3 invariant 10 / CXP-0008 §4.5 — sidecar exposure
+/// CKP-0009 §3 invariant 10 / CKP-0008 §4.5 — sidecar exposure
 /// disclosure panel. Surfaces the controller's device list, the
 /// currently active agent runtime endpoint, and the most recent
 /// `action_approve` nonce status so the controller can see what their
@@ -1785,14 +1785,14 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
         div { class: "event", "data-testid": "sidecar-exposure-disclosure",
             div { class: "event-head",
                 span { "Sidecar exposure disclosure" }
-                span { class: "badge", "CXP-0009 §3 inv. 10" }
+                span { class: "badge", "CKP-0009 §3 inv. 10" }
             }
             div { class: "muted",
                 "Controller: {controller_did}. Devices, agent runtime endpoint, and the most recent action_approve nonce status are shown here so you can audit what your agent can act on and from where."
             }
             // TODO(P3-impl): replace these placeholders with live
             // data once soland's exposure projection lands. The wire
-            // shape is documented in CXP-0009 §3 and the related
+            // shape is documented in CKP-0009 §3 and the related
             // account-data type `ck.agent.sidecar_projection.v1`.
             div { class: "metric-grid",
                 div { class: "metric",

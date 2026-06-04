@@ -82,7 +82,7 @@ pub struct SyncEngineContext {
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
     pub selected_space: Signal<String>,
-    /// CXP-0007 P3B.4.3 — the active multi-profile configuration. The
+    /// CKP-0007 P3B.4.3 — the active multi-profile configuration. The
     /// engine reads `active_profile_id` at the top of every iteration
     /// and exits early when it differs from the profile id captured
     /// at spawn time; the lifecycle bumps `generation` so the next

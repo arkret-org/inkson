@@ -40,7 +40,7 @@ pub mod applets;
 pub mod audit;
 pub mod call;
 pub mod chat;
-/// CXP-0007 P3B.2.5 — Circle detail panel (member list + leave /
+/// CKP-0007 P3B.2.5 — Circle detail panel (member list + leave /
 /// archive / scope-rotate controls). Rendered at `/circles/:circle_id`
 /// (route added by the follow-up commit that wires it into the router).
 pub mod circle;
@@ -145,7 +145,7 @@ pub enum View {
     SettingsSecurity,
     /// G3.Y1 — fresh-device restore-from-backup surface at `/recover`.
     Recover,
-    /// CXP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
+    /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
     Circle,
 }
 

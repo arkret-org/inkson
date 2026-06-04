@@ -85,7 +85,7 @@ pub fn AccountSwitcher(
                                             role: "menuitem",
                                             disabled: is_active,
                                             onclick: move |_| {
-                                                // CXP-0007 P3B.4.3 — emit the typed
+                                                // CKP-0007 P3B.4.3 — emit the typed
                                                 // event when a handler is wired,
                                                 // then fall through to the legacy
                                                 // string handler so existing

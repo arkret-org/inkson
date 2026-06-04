@@ -679,7 +679,7 @@ pub fn RouterView() -> Element {
     // itself is spawned by the `use_effect` further down.
     let mut sync_generation = use_signal(|| 0u64);
 
-    // CXP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
+    // CKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
     // and exit cleanly. The shell is currently single-profile; the
     // signal stays default-empty until the account switcher writes to
@@ -1558,7 +1558,7 @@ pub fn RouterView() -> Element {
             // banner is pulled from a process-wide queue populated by
             // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`.
             crate::components::PolicyDenyBanner {}
-            // CXP-0007 P3B.3 — global Circle-error toast, fed by the
+            // CKP-0007 P3B.3 — global Circle-error toast, fed by the
             // HTTP layer's `maybe_dispatch_circle_error` next to the
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.

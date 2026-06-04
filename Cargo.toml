@@ -153,7 +153,7 @@ keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "li
 # directly through Dioxus / `web-sys`.
 notify-rust = "4.11"
 reqwest = { version = "0.12.24", features = ["json", "rustls-tls", "stream"], default-features = false }
-# CXP-0007 P3B.8.1 — opt-in crash telemetry. The Sentry client is
+# CKP-0007 P3B.8.1 — opt-in crash telemetry. The Sentry client is
 # initialised only when both the user-facing CrashTelemetryPrefs
 # toggle is on AND a build-time `SENTRY_DSN` env var is set; an
 # empty DSN logs a debug message and skips init silently per

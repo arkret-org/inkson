@@ -55,7 +55,7 @@ pub fn DirectoryPanel(
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
     let mut pagination = use_signal(PaginationState::default);
-    // R3.3 (CXP-0011) — "Open shared link" scratch state.
+    // R3.3 (CKP-0011) — "Open shared link" scratch state.
     let mut open_link_input = use_signal(String::new);
     let navigator = use_navigator();
     let base_url_key = base_url.clone();
@@ -509,7 +509,7 @@ pub fn DirectoryPanel(
                 }
             }
 
-            // R3.3 (CXP-0011) — "Open shared link" entry point. Accepts a
+            // R3.3 (CKP-0011) — "Open shared link" entry point. Accepts a
             // pasted `web+cokret:` or HTTPS-fragment link, resolves it via
             // `directory_resolve_target`, and routes to the local UI by
             // `target_kind`. Failures collapse to one friendly message

@@ -154,7 +154,7 @@ impl CokretApi {
         })
     }
 
-    /// CXP-0007 P3B.2.6 — POST a new Circle to soland's
+    /// CKP-0007 P3B.2.6 — POST a new Circle to soland's
     /// `/_cokret/self/circles` administrative surface. The strict-subset
     /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
     /// reducer; this client also runs
@@ -225,7 +225,7 @@ impl CokretApi {
         self.post_json("/_cokret/self/circles", body).await
     }
 
-    /// CXP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
+    /// CKP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
     /// projection is filtered server-side by the caller's
     /// `directory_visibility` (members-only Circles only return when
     /// the caller is a Circle member). Returns the raw JSON shape; the

@@ -122,7 +122,7 @@ use crate::operation::{
     scope_id_as_realm_id, uuid_v7,
 };
 
-/// B-F / CXP-0009 §3 — default home-policy discriminator passed on
+/// B-F / CKP-0009 §3 — default home-policy discriminator passed on
 /// `ck.agent.sidecar_thread.ensure`. The spec rolled the default from
 /// "default home realm" to "context realm preferred"; yougen MUST emit
 /// this token unless the caller explicitly overrides it.
@@ -2202,10 +2202,10 @@ pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     };
 
     maybe_dispatch_policy_deny(status, &envelope);
-    // CXP-0007 P3B.3 — also surface any of the 6 Circle reason codes
+    // CKP-0007 P3B.3 — also surface any of the 6 Circle reason codes
     // as a global toast. The two dispatchers are independent: the
     // policy deny banner targets 403 + policy code, the circle toast
-    // targets the CXP-0007 reason / error code family on any status.
+    // targets the CKP-0007 reason / error code family on any status.
     let reason = envelope
         .details()
         .get("reason")

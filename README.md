@@ -191,4 +191,4 @@ Unauthenticated users see only the login or registration entry screen. After a r
 <!-- circle-rollout milestone pointer -->
 > **Active milestone tracking** (local-only, gitignored): see
 > `_yougen_todos.md` in the parent `cokret/` directory for the
-> circle-rollout (CXP-0007) work item list and per-stage checkpoints.
+> circle-rollout (CKP-0007) work item list and per-stage checkpoints.

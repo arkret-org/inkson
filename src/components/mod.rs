@@ -1,18 +1,18 @@
 use dioxus::prelude::*;
 
-/// CXP-0007 P3B.4 — multi-account avatar dropdown switcher.
+/// CKP-0007 P3B.4 — multi-account avatar dropdown switcher.
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires `on_switch` / `on_add_account` handlers.
 pub mod account_switcher;
-/// CXP-0007 P3B.2 — Circle error toast surfaced from the app shell.
+/// CKP-0007 P3B.2 — Circle error toast surfaced from the app shell.
 /// Consumes [`crate::circle::CircleErrorKind`] and renders the
 /// localized user-facing string.
 pub mod circle_error_toast;
-/// CXP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
+/// CKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
 /// discussion-of cross-link banner. Shared between the new-Flow form,
 /// the composer header, and the Flow detail view.
 pub mod circle_scope_picker;
-/// CXP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
+/// CKP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
 /// page. Strict-subset validation runs client-side before submit.
 pub mod create_circle_modal;
 pub mod empty_state;

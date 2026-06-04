@@ -74,7 +74,7 @@ impl ClientConfig {
     }
 }
 
-/// CXP-0007 P3B.4 — multi-account profile primitive. A profile is the
+/// CKP-0007 P3B.4 — multi-account profile primitive. A profile is the
 /// (server_url, account_did, device_id, session_token) tuple that the
 /// existing single-profile `ClientConfig` already carries, plus a
 /// stable `profile_id` so the switcher UI can address profiles by a
@@ -275,7 +275,7 @@ impl MultiProfileConfig {
 
 /// Typed payload published when the active profile rotates.
 ///
-/// CXP-0007 P3B.4.3 — the sync engine, push registration, offline
+/// CKP-0007 P3B.4.3 — the sync engine, push registration, offline
 /// drain worker, and chat subscription paths each subscribe to this
 /// event so they can rotate per-profile cursors / bearer tokens /
 /// gateway registrations atomically. The previous "each subsystem

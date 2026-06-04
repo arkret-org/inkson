@@ -177,7 +177,7 @@ impl CokretApi {
         .await
     }
 
-    /// CXP B-C / spec head 37ce729 — `LIST?series_id=` query path the
+    /// CKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery flow uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_class` is `None`, this falls
     /// back to the legacy plain `GET /_cokret/self/keys/backups` shape.
@@ -185,7 +185,7 @@ impl CokretApi {
     /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
     /// query parameters; the chain reconstruction MUST decrypt only
     /// from the tail and surface `backup_frontier_stale` /
-    /// `backup_post_reset_stale` errors per CXP B-C §3.3.
+    /// `backup_post_reset_stale` errors per CKP B-C §3.3.
     ///
     /// TODO(P3-impl): the deep series-chain decryption / frontier
     /// validation lives in `key_backup` / `recovery_crypto` and is out

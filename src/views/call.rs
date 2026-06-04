@@ -5,7 +5,7 @@
 //! `call-panel` / `call-signal-count` handles and summarizes signal state
 //! without implying the default production UI can place media calls.
 //!
-//! R3 spec sync (b47ff6ec) — also surfaces CXP-0010 media-binding wire
+//! R3 spec sync (b47ff6ec) — also surfaces CKP-0010 media-binding wire
 //! contract status: token-exchange integration, focus_unavailable_for_client
 //! handling, MLS-exporter SFrame key derivation, participant identity
 //! cross-check, and Cokret-blob recording pipeline. See
@@ -67,13 +67,13 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                 }
             }
 
-            // R3 spec sync (CXP-0010) — media binding wire contract status.
+            // R3 spec sync (CKP-0010) — media binding wire contract status.
             // The actual integration is stubbed (`TODO(R3.1)`) but the wire
             // contract surface stays visible so QA can verify which guards
             // are landed.
             div { class: "event", "data-testid": "call-media-binding-status",
                 div { class: "event-head",
-                    span { "Media binding (CXP-0010)" }
+                    span { "Media binding (CKP-0010)" }
                     span { class: "badge", "spec b47ff6ec" }
                 }
                 div { class: "muted",

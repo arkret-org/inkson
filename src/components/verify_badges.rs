@@ -16,7 +16,7 @@
 use dioxus::prelude::*;
 
 // TRUST-CACHE: `NeedsVerificationBadge` and `RealmClassBadge` are
-// cache-allowed surfaces per CXP B-E §1 / identity-handles §6. They
+// cache-allowed surfaces per CKP B-E §1 / identity-handles §6. They
 // render the locally-cached binding state but MUST downgrade to the
 // "needs verification" tint on a cache miss or any §6.1.2 trigger.
 // Authority surfaces (wallet disclosure / accept invite / audit-trail

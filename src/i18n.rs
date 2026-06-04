@@ -295,7 +295,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.audit", "Audit");
     dict.set("nav.devices", "Devices");
 
-    // CXP-0007 Circle error keys (P3B.3.2)
+    // CKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
 
     // Login
@@ -1157,7 +1157,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("consent.revoke.cascade_button", "Revoke all observed dots");
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
-    // cokret-spec error code expansion (CXP-0010 media binding,
+    // cokret-spec error code expansion (CKP-0010 media binding,
     // agent FSM, handle homograph wire-level enforce, recovery
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
@@ -1197,7 +1197,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "This approval nonce was already consumed. Request a fresh approval.",
     );
 
-    // Media binding (CXP-0010).
+    // Media binding (CKP-0010).
     dict.set(
         "error.call.focus_unavailable_for_client",
         "The selected media focus is unavailable for this client. Retry or leave the call.",
@@ -1354,7 +1354,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "Recovery 挑战证明验证失败。请重新采集证明后再试。",
     );
 
-    // R3.3 (CXP-0011) — shareable object links (English dict). Error copy in
+    // R3.3 (CKP-0011) — shareable object links (English dict). Error copy in
     // this dict follows the existing Chinese-first convention for `error.*`;
     // the dedicated zh dict carries the Chinese UI strings.
     dict.set("object_link.share", "Share link");
@@ -2012,7 +2012,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict
 }
 
-/// English i18n strings for the 6 CXP-0007 reason / error codes
+/// English i18n strings for the 6 CKP-0007 reason / error codes
 /// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
 /// translations follow in a later milestone; the toast falls back to
 /// the English string when the locale doesn't carry the key.
@@ -2050,7 +2050,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
     );
 
-    // R3.3 (CXP-0011) — shareable object links (Chinese-first).
+    // R3.3 (CKP-0011) — shareable object links (Chinese-first).
     dict.set("object_link.share", "分享链接");
     dict.set("object_link.share_realm", "分享此领域");
     dict.set("object_link.share_flow", "分享此流程");

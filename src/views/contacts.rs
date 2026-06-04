@@ -1,4 +1,4 @@
-// TRUST-CACHE: contact card / contact list per CXP B-E §1 — these
+// TRUST-CACHE: contact card / contact list per CKP B-E §1 — these
 // surfaces MAY consult the locally cached `binding_state` (verified
 // badge, mention autocomplete fields). On cache miss or any
 // identity-handles.md §6.1.2 trigger the UI MUST downgrade to an

@@ -1,6 +1,6 @@
-//! Circle-error toast (CXP-0007 / P3B.3).
+//! Circle-error toast (CKP-0007 / P3B.3).
 //!
-//! Surfaces CXP-0007 reason / error codes as user-facing toasts.
+//! Surfaces CKP-0007 reason / error codes as user-facing toasts.
 //! Uses the same process-wide queue pattern as
 //! [`crate::components::policy_deny_banner`]: API call sites push a
 //! [`CircleErrorKind`] via [`push_circle_error`]; the [`CircleErrorToast`]
@@ -18,7 +18,7 @@ use crate::i18n::{I18nSignal, t};
 /// a deny storm should not stack ten toasts.
 static CIRCLE_ERROR_QUEUE: Mutex<Option<CircleErrorKind>> = Mutex::new(None);
 
-/// API-layer / sync-engine entry point — record the latest CXP-0007
+/// API-layer / sync-engine entry point — record the latest CKP-0007
 /// error so the toast can pick it up.
 pub fn push_circle_error(kind: CircleErrorKind) {
     if let Ok(mut slot) = CIRCLE_ERROR_QUEUE.lock() {
@@ -33,7 +33,7 @@ pub fn take_circle_error() -> Option<CircleErrorKind> {
 
 /// Helper that classifies a server-side error envelope and pushes a
 /// [`CircleErrorKind`] onto the queue if it matches one of the
-/// CXP-0007 codes. Returns `true` when a circle error was recognised.
+/// CKP-0007 codes. Returns `true` when a circle error was recognised.
 ///
 /// The HTTP layer can call this opportunistically next to
 /// `maybe_dispatch_policy_deny` — the two queues are independent.

@@ -1,4 +1,4 @@
-//! Create-Circle modal (CXP-0007 / P3B.2.6).
+//! Create-Circle modal (CKP-0007 / P3B.2.6).
 //!
 //! Surfaced from the Realm-detail page header. Collects the minimum
 //! Circle fields (title, short_name, color, symbol, directory
@@ -6,7 +6,7 @@
 //! `ck.circle.create` envelope shape via the parent's `on_submit`
 //! handler.
 //!
-//! Member-set validation enforces the CXP-0007 strict-subset invariant
+//! Member-set validation enforces the CKP-0007 strict-subset invariant
 //! client-side: every entered DID must also appear in `realm_members`.
 //! Strict-subset failures render inline before the user can submit; the
 //! reducer also enforces the same rule (reason

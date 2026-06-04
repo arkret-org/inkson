@@ -441,8 +441,8 @@ pub fn OnboardingPanel(
                         }
                     }
 
-                    // CXP B-C first-backup gate (spec head 37ce729 /
-                    // CXP-0008 §4 / device-lifecycle §10-§13).
+                    // CKP B-C first-backup gate (spec head 37ce729 /
+                    // CKP-0008 §4 / device-lifecycle §10-§13).
                     //
                     // The inception key (the very first device key
                     // authorized at account bootstrap) MUST NOT be
@@ -558,7 +558,7 @@ pub fn OnboardingPanel(
     }
 }
 
-/// CXP B-C — first-backup gate. The inception key cannot retire
+/// CKP B-C — first-backup gate. The inception key cannot retire
 /// until a `backup_class=did_recovery` envelope has been published.
 /// This component polls `GET /_cokret/self/keys/backups?backup_class=did_recovery`
 /// and renders a hard-blocked panel until at least one such envelope
@@ -576,7 +576,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             let api_token = token();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
-                    // CXP B-C / §3.3: recovery flow calls
+                    // CKP B-C / §3.3: recovery flow calls
                     // `LIST?series_id=` (or the bare `LIST` with
                     // `backup_class=did_recovery` filter). For the
                     // first-backup gate we only need at least one
@@ -650,7 +650,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             "aria-labelledby": "first-backup-gate-heading",
             "aria-describedby": "first-backup-gate-help",
             div { class: "event-head",
-                span { id: "first-backup-gate-heading", "First-backup gate (CXP B-C)" }
+                span { id: "first-backup-gate-heading", "First-backup gate (CKP B-C)" }
                 if gate_satisfied() {
                     span { class: "badge green", "aria-label": "First backup envelope satisfied", "satisfied" }
                 } else {
@@ -658,7 +658,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CXP B-C / device-lifecycle §10-§13) — without it the Cokret principal control state could become permanently unrecoverable."
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CKP B-C / device-lifecycle §10-§13) — without it the Cokret principal control state could become permanently unrecoverable."
             }
             div {
                 class: "muted",

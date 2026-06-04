@@ -23,7 +23,7 @@ pub mod blob;
 pub mod canonical;
 pub mod capability;
 pub mod card_comments;
-/// CXP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
+/// CKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in

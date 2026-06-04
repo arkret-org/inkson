@@ -2,7 +2,7 @@
 //! composer-banner family that lets the user pick between Realm scope
 //! (default) and any Circle the active account belongs to.
 //!
-//! Spec: CXP-0007 / `_yougen_todos.md` §P3B.2.2-§P3B.2.3.
+//! Spec: CKP-0007 / `_yougen_todos.md` §P3B.2.2-§P3B.2.3.
 
 use dioxus::prelude::*;
 
@@ -110,7 +110,7 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// when its `Relation::ConfidentialDiscussionOf` points at a parent
 /// Flow.
 ///
-/// CXP-0007 P3B.2.8 — the link routes through the dioxus router via
+/// CKP-0007 P3B.2.8 — the link routes through the dioxus router via
 /// the optional `target_space_id`. When the relation projection
 /// carries the parent Flow's home Space id the link is built as a
 /// `Route::TimelineSpace { space_id }` navigation; when it doesn't,

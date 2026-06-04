@@ -321,7 +321,7 @@ pub fn ChatPanel(
         })
         .cloned()
         .collect::<Vec<_>>();
-    // CXP-0007 P3B.2.4 — per-flow Circle-scope lookup used by the
+    // CKP-0007 P3B.2.4 — per-flow Circle-scope lookup used by the
     // timeline accent rail. We index by `flow_id` once instead of
     // searching the `channels` Vec for every rendered message.
     let flow_scope_lookup: std::collections::BTreeMap<String, FlowScopeCircle> = all_channels
@@ -1262,7 +1262,7 @@ pub fn ChatPanel(
                                     message_context_menu.set(next);
                                 }
                             },
-                            // CXP-0007 P3B.2.4 — Circle scope accent
+                            // CKP-0007 P3B.2.4 — Circle scope accent
                             // rail. Renders a left-edge coloured ribbon
                             // with the Circle title as a tooltip when
                             // the message's enclosing Flow has a
@@ -2558,7 +2558,7 @@ pub fn ChatPanel(
 
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
-                // CXP-0007 P3B.2.3 — Circle composer banner. Rendered
+                // CKP-0007 P3B.2.3 — Circle composer banner. Rendered
                 // at the top of the composer surface when the active
                 // Flow carries a `scope_circle_id`. The component is
                 // pure: `CircleScope::Realm` renders nothing, so the

@@ -11,7 +11,7 @@
 //! TRUST-AUTHORITY: this module is the single authority-grade DID
 //! resolution path. Trust-decision surfaces — wallet disclosure,
 //! accept-invite, join-official-Realm, cross-org federation, audit
-//! trail review — MUST go through here (CXP B-E §1 /
+//! trail review — MUST go through here (CKP B-E §1 /
 //! identity-handles §6.1). They MUST NOT accept the server-attested
 //! `binding_state=verified` projection as authoritative; that field
 //! is a cache hint only. Cache-allowed surfaces (verified badge,

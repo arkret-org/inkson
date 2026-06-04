@@ -19,7 +19,7 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError, unwrap_secret
 
 const APP_ID: &str = "yougen";
 const DISPLAY_NAME: &str = "yougen";
-/// P4 (CXP-0007 hygiene): the previous hard-coded
+/// P4 (CKP-0007 hygiene): the previous hard-coded
 /// `https://push.example/_cokret/edge/push/notify` placeholder is gone.
 /// We now read `YOUGEN_FLORIA_URL` at the call site (see
 /// [`floria_gateway_url`]); when it's unset in dev we point at

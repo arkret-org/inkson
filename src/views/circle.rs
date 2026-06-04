@@ -1,7 +1,7 @@
-//! Circle detail view (CXP-0007 / P3B.2.5).
+//! Circle detail view (CKP-0007 / P3B.2.5).
 //!
 //! Shows the member list (filtered to those the active viewer can see —
-//! invisible members stay hidden per CXP-0007 directory_visibility
+//! invisible members stay hidden per CKP-0007 directory_visibility
 //! rules) and the leave / archive / scope-rotate controls the viewer
 //! has permission to execute.
 //!
@@ -22,7 +22,7 @@ use crate::circle::CircleSummary;
 pub struct CirclePanelProps {
     pub summary: CircleSummary,
     /// Members the viewer is allowed to see. Already filtered by the
-    /// CXP-0007 directory_visibility rule.
+    /// CKP-0007 directory_visibility rule.
     #[props(default)]
     pub visible_members: Vec<CircleMemberRow>,
     /// `true` when the viewer has the `ck.circle.archive` capability.

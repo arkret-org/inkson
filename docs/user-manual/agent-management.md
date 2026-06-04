@@ -84,7 +84,7 @@ When an agent requests a capability action you'll see an
 
 - **Payload digest** — sha256 of the requested operation.
 - **Expiry** — single-use nonce window.
-- **Sidecar exposure disclosure** — `CXP-0009 §3 invariant 10`. Read it.
+- **Sidecar exposure disclosure** — `CKP-0009 §3 invariant 10`. Read it.
 
 <!-- TODO(screenshot): action-approve-dialog.png -->
 

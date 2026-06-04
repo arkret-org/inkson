@@ -1,4 +1,4 @@
-//! Circle UX scaffolding (CXP-0007, P3B.2).
+//! Circle UX scaffolding (CKP-0007, P3B.2).
 //!
 //! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
 //! own MLS group and a strict-subset of the parent Realm's membership. The
@@ -10,7 +10,7 @@
 //!   set on the canonical envelope.
 //! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list, the
 //!   scope picker, and the Realm-detail modal.
-//! - [`CircleErrorKind`] is the typed mapping from the CXP-0007 reason codes that surface in
+//! - [`CircleErrorKind`] is the typed mapping from the CKP-0007 reason codes that surface in
 //!   soland's error envelopes. The UI Toast layer (see [`crate::components::circle_error_toast`])
 //!   consumes this to produce localized user-facing strings.
 //!
@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 /// The scope a composer / Flow-create form is actively writing into.
 ///
-/// Realm scope is the legacy default; Circle scope flags a CXP-0007
+/// Realm scope is the legacy default; Circle scope flags a CKP-0007
 /// write that MUST end up with `scope_circle_id` populated on the
 /// envelope object.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,13 +108,13 @@ impl CircleSummary {
     }
 }
 
-/// CXP-0007 reason / error codes surfaced to the user via the Toast
+/// CKP-0007 reason / error codes surfaced to the user via the Toast
 /// layer. Maps from the wire `reason_code` (a `failed_precondition` /
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 ///
 /// One Circle-adjacent code is the top-level
 /// [`cokret_sdk::error_codes::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER`]
-/// already registered in CXP-0006; we surface it through the same
+/// already registered in CKP-0006; we surface it through the same
 /// pipeline so a single Toast component handles all Circle-adjacent
 /// failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

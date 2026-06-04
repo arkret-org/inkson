@@ -48,7 +48,7 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
     "ciphertext_digest",
 ];
 
-/// Phase 2 (key-management.md §7.4.1, CXP-0013): sign a key-backup envelope with
+/// Phase 2 (key-management.md §7.4.1, CKP-0013): sign a key-backup envelope with
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
 /// `auth_data` (verification_method / signed_fields / x_ssk_generation) is bound
