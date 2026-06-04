@@ -1369,6 +1369,41 @@ fn space_projection_value_is_mls_encrypted(body: &Value) -> bool {
     false
 }
 
+/// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached Space/Realm
+/// projection declare the `ck.profile.mls.minimal_metadata_realm.v1` profile?
+///
+/// Mirrors soland's server-side `payload_declares_minimal_metadata_realm`
+/// (`profiles[]` / `active_profiles[]` arrays) but scans the same nested
+/// containers ([summary]/[object]/[realm]/[metadata]) the encryption-state
+/// reader walks, since the local projection nests the realm body. The profile
+/// id is the SDK constant so the client and server agree on the exact string.
+fn space_projection_value_is_minimal_metadata(body: &Value) -> bool {
+    fn declares_in(container: &Value) -> bool {
+        ["profiles", "active_profiles"].iter().any(|field| {
+            container
+                .get(*field)
+                .and_then(Value::as_array)
+                .is_some_and(|profiles| {
+                    profiles.iter().any(|profile| {
+                        profile.as_str() == Some(cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
+                    })
+                })
+        })
+    }
+
+    let null = Value::Null;
+    let summary = body.get("summary").unwrap_or(&null);
+    [
+        body,
+        summary,
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ]
+    .into_iter()
+    .any(declares_in)
+}
+
 impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
@@ -2726,6 +2761,19 @@ impl LocalStateStore {
             .is_some_and(space_projection_value_is_mls_encrypted)
     }
 
+    /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
+    /// Space/Realm projection declare the
+    /// `ck.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
+    /// this to decide whether the ≤1h epoch-lifetime cap and the
+    /// `aad_visibility=hidden` MUST apply to a given space. Unknown / absent
+    /// projection ⇒ `false` (the realm is treated as a normal realm).
+    pub fn space_projection_is_minimal_metadata(&self, space_id: &str) -> bool {
+        self.load()
+            .space_projections
+            .get(space_id)
+            .is_some_and(space_projection_value_is_minimal_metadata)
+    }
+
     /// Drop a tracked Move (after it terminates and the user
     /// dismisses the row). Idempotent.
     pub fn drop_move_submission(&mut self, move_id: &str) {
@@ -3972,6 +4020,50 @@ mod tests {
             }),
         );
         assert!(!store.space_projection_is_mls_encrypted(plain));
+    }
+
+    #[test]
+    fn minimal_metadata_projection_detected_from_profiles_arrays() {
+        // SEC-08 — the committer reads minimal-metadata status off the cached
+        // projection. Recognised under `profiles[]` / `active_profiles[]` at the
+        // top level and inside the nested realm body; absent / unknown ⇒ false.
+        let path = temp_state_path("minimal-metadata-projection");
+        let mut store = LocalStateStore::with_path(path);
+
+        let top = "ck:realm:0196419b-0000-7000-8000-0000000000a1";
+        store.save_space_projection(
+            top.to_owned(),
+            json!({ "profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        );
+        assert!(store.space_projection_is_minimal_metadata(top));
+
+        let nested = "ck:realm:0196419b-0000-7000-8000-0000000000a2";
+        store.save_space_projection(
+            nested.to_owned(),
+            json!({
+                "summary": {
+                    "active_profiles": [
+                        "ck.profile.core.v1",
+                        cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE
+                    ]
+                }
+            }),
+        );
+        assert!(store.space_projection_is_minimal_metadata(nested));
+
+        let plain = "ck:realm:0196419b-0000-7000-8000-0000000000a3";
+        store.save_space_projection(
+            plain.to_owned(),
+            json!({ "profiles": ["ck.profile.core.v1"] }),
+        );
+        assert!(!store.space_projection_is_minimal_metadata(plain));
+
+        // Unknown space (no projection) ⇒ treated as non-minimal.
+        assert!(
+            !store.space_projection_is_minimal_metadata(
+                "ck:realm:0196419b-0000-7000-8000-0000000000a9"
+            )
+        );
     }
 
     #[test]

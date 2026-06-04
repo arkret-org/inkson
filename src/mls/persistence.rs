@@ -119,9 +119,29 @@ pub struct MlsSnapshotEnvelope {
     /// is also bound into the AEAD AAD so a tampered envelope cannot
     /// fake a fresh recording time.
     pub recorded_at: DateTime<Utc>,
+    /// SEC-08 (`encryption-and-audit.md` §2.9) — wall-clock time at which
+    /// the device first held *this* MLS epoch. Unlike [`Self::recorded_at`]
+    /// (refreshed on every re-snapshot, including epoch-preserving reaction
+    /// sends), this advances ONLY when the epoch number changes, so it is a
+    /// faithful epoch-age clock for the `minimal_metadata_realm` 1h cap.
+    /// Not bound into the AEAD AAD: it is a local scheduling hint, never a
+    /// confidentiality boundary. Legacy envelopes without the field
+    /// deserialize to the Unix epoch, which reads as "indefinitely old" and
+    /// therefore forces a commit on the next minimal-metadata send — the
+    /// fail-safe direction (more commits, never fewer).
+    #[serde(default = "epoch_started_at_default")]
+    pub epoch_started_at: DateTime<Utc>,
     /// AEAD scheme tag. New envelopes always serialize with
     /// [`AEAD_VERSION_CHACHA20_POLY1305`].
     pub aead_version: u8,
+}
+
+/// Legacy-envelope default for [`MlsSnapshotEnvelope::epoch_started_at`]: the
+/// Unix epoch. A `minimal_metadata_realm` send treats this as overdue and
+/// forces a fresh commit (fail-safe), so a pre-SEC-08 persisted snapshot can
+/// never silently keep an unbounded epoch alive.
+fn epoch_started_at_default() -> DateTime<Utc> {
+    DateTime::<Utc>::UNIX_EPOCH
 }
 
 /// Errors produced while encrypting / decrypting / verifying an MLS
@@ -217,6 +237,12 @@ pub fn encrypt_state(
         ciphertext_hex: hex_encode(&ciphertext),
         mac_hex: hex_encode(nonce.as_slice()),
         recorded_at,
+        // New-epoch baseline: a freshly minted envelope is assumed to start a
+        // new epoch on this device, so the epoch clock starts now. The reaction
+        // path (which re-snapshots WITHOUT advancing the epoch) overrides this
+        // via [`MlsSnapshotEnvelope::carry_epoch_started_at`] so the §2.9 1h cap
+        // measures true epoch age, not last-write time.
+        epoch_started_at: recorded_at,
         aead_version: AEAD_VERSION_CHACHA20_POLY1305,
     }
 }
@@ -377,6 +403,23 @@ impl MlsSnapshotEnvelope {
             tracing::warn!(?error, "mls_history backup auth_data signing failed");
         }
         body
+    }
+
+    /// SEC-08 — carry the epoch-start clock forward from a prior snapshot when
+    /// this re-snapshot did NOT advance the epoch.
+    ///
+    /// [`encrypt_state`] optimistically stamps `epoch_started_at = recorded_at`
+    /// (correct for any commit that bumps the epoch). The reaction send path and
+    /// the account-secret rotation path re-encrypt the *same* epoch, so they
+    /// must inherit the previous epoch's start time instead of resetting the 1h
+    /// `minimal_metadata_realm` clock on every reaction. When the epoch genuinely
+    /// changed, the freshly stamped `recorded_at` baseline is kept.
+    #[must_use]
+    pub fn carry_epoch_started_at(mut self, previous: &MlsSnapshotEnvelope) -> Self {
+        if self.epoch == previous.epoch {
+            self.epoch_started_at = previous.epoch_started_at;
+        }
+        self
     }
 
     /// Round-trip the inner `MlsGroupStateRecord` (after
@@ -634,6 +677,44 @@ mod tests {
         let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.space_id, "ck:space:demo");
         assert_eq!(parsed.epoch, 42);
+    }
+
+    #[test]
+    fn epoch_started_at_defaults_to_recorded_at_on_fresh_envelope() {
+        // SEC-08 — a freshly minted envelope assumes a new epoch baseline:
+        // the epoch clock starts at recording time.
+        let envelope = encrypt_state("s", "g", 5, b"x", "p", &fixed_salt());
+        assert_eq!(envelope.epoch_started_at, envelope.recorded_at);
+    }
+
+    #[test]
+    fn carry_epoch_started_at_preserves_clock_only_when_epoch_unchanged() {
+        // SEC-08 — re-snapshotting the SAME epoch (reaction / rotation) must
+        // inherit the prior epoch-start time so the 1h cap measures true epoch
+        // age, not last-write time.
+        let prev = encrypt_state("s", "g", 7, b"a", "p", &fixed_salt());
+        let same_epoch = encrypt_state("s", "g", 7, b"b", "p", &fixed_salt());
+        assert_ne!(same_epoch.epoch_started_at, prev.epoch_started_at);
+        let carried = same_epoch.carry_epoch_started_at(&prev);
+        assert_eq!(carried.epoch_started_at, prev.epoch_started_at);
+
+        // An epoch advance keeps the fresh baseline (clock resets on commit).
+        let next_epoch = encrypt_state("s", "g", 8, b"c", "p", &fixed_salt());
+        let baseline = next_epoch.epoch_started_at;
+        let kept = next_epoch.carry_epoch_started_at(&prev);
+        assert_eq!(kept.epoch_started_at, baseline);
+    }
+
+    #[test]
+    fn legacy_envelope_without_epoch_started_at_reads_as_unix_epoch() {
+        // SEC-08 — a pre-field persisted envelope deserializes with
+        // epoch_started_at = Unix epoch (fail-safe "indefinitely old" ⇒ forces
+        // a commit on the next minimal-metadata send).
+        let mut value =
+            serde_json::to_value(encrypt_state("s", "g", 1, b"x", "p", &fixed_salt())).unwrap();
+        value.as_object_mut().unwrap().remove("epoch_started_at");
+        let parsed: MlsSnapshotEnvelope = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.epoch_started_at, DateTime::<Utc>::UNIX_EPOCH);
     }
 
     #[test]

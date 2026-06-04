@@ -30,8 +30,8 @@
 use std::collections::BTreeSet;
 
 /// Stable label registered on the `ck.profile.media_service_binding.v1`
-/// profile for the SFrame frame key derivation (`webrtc-signaling.md
-/// §10.5 / §11`). The MLS exporter MUST be invoked with exactly this
+/// profile for the SFrame frame key derivation (`media-service-binding.md
+/// §8.1`). The MLS exporter MUST be invoked with exactly this
 /// label, length=19, and empty Context. KDF.Nh=32 is enforced by the
 /// MLS ciphersuite (HKDF-SHA256).
 pub const SFRAME_FRAME_KEY_LABEL: &str = "cx-rtc-frame-key/v1";
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn frame_key_label_matches_spec() {
-        // Pinned per `webrtc-signaling.md §11`.
+        // Pinned per `media-service-binding.md §8.1`.
         assert_eq!(SFRAME_FRAME_KEY_LABEL, "cx-rtc-frame-key/v1");
         assert_eq!(SFRAME_FRAME_KEY_LENGTH, 19);
         assert!(SFRAME_FRAME_KEY_CONTEXT.is_empty());

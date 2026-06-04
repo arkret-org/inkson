@@ -62,6 +62,11 @@ pub enum MlsRuntimeError {
     Serialize(String),
     Export(String),
     Salt(String),
+    /// SEC-08 — a `minimal_metadata_realm` send tried to use a non-hidden
+    /// `aad_visibility`, which `enforce_minimal_metadata_aad` rejects
+    /// (`encryption-and-audit.md` §2.9). Fail-closed: the message/reaction is
+    /// never emitted with a wider visibility than the profile permits.
+    AadPolicy(String),
 }
 
 impl MlsRuntimeError {
@@ -83,7 +88,8 @@ impl MlsRuntimeError {
             | Self::BackupDecode(_)
             | Self::Serialize(_)
             | Self::Export(_)
-            | Self::Salt(_) => MlsRuntimeStatus::Ready,
+            | Self::Salt(_)
+            | Self::AadPolicy(_) => MlsRuntimeStatus::Ready,
         }
     }
 
@@ -105,6 +111,9 @@ impl MlsRuntimeError {
             }
             Self::Export(reason) => format!("MLS state export failed: {reason}"),
             Self::Salt(reason) => format!("MLS snapshot salt generation failed: {reason}"),
+            Self::AadPolicy(reason) => {
+                format!("MLS minimal-metadata AAD policy violation: {reason}")
+            }
         }
     }
 }
@@ -676,6 +685,8 @@ pub fn prepare_account_mls_secret_rotation(
         })?;
         let mut salt = [0u8; 16];
         getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+        // Re-wrapping does not advance the epoch — carry the epoch-start clock
+        // so a secret rotation never resets the §2.9 minimal-metadata 1h cap.
         let rotated = crate::mls::persistence::encrypt_state(
             &snapshot.space_id,
             &snapshot.group_id,
@@ -683,7 +694,8 @@ pub fn prepare_account_mls_secret_rotation(
             &plaintext,
             &new_secret,
             &salt,
-        );
+        )
+        .carry_epoch_started_at(snapshot);
         rewrapped_snapshots.insert(space_id.clone(), rotated);
     }
     Ok(AccountMlsSecretRotation {
@@ -925,6 +937,14 @@ pub fn encrypt_message_with_device_snapshot(
     let snapshot = state_store
         .mls_snapshot_for(space_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
+    // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
+    // `aad_visibility=hidden`. Enforce before any commit/encrypt so a non-hidden
+    // AAD never advances the epoch nor produces ciphertext (mirrors soland's
+    // server-side reject). The 1h epoch cap needs no separate force here: every
+    // message self-update-commits below, so each message already opens a fresh
+    // epoch — the within-epoch frequency window for messages is one message.
+    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(space_id);
+    assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
@@ -966,6 +986,63 @@ pub fn encrypt_message_with_device_snapshot(
     ))
 }
 
+/// SEC-08 (`encryption-and-audit.md` §2.9) — pure committer decision: should a
+/// send force-advance the MLS epoch *before* riding the current epoch?
+///
+/// For a `minimal_metadata_realm` Realm the §2.9 epoch-lifetime SHOULD is a MUST
+/// of ≤1h. Within-epoch reaction frequency is the observable this bounds, so a
+/// send (especially a reaction, which otherwise reuses the current epoch's
+/// application key without committing) MUST roll the epoch once the current one
+/// has outlived the cap. Non-minimal Realms never force a commit here
+/// (`false`), preserving their existing behaviour. Clock skew (`now` earlier
+/// than `epoch_started_at`) is never reported as overdue — delegated to the
+/// SDK's [`cokret_sdk::minimal_metadata_epoch_overdue`].
+pub fn should_force_epoch_advance(
+    is_minimal_metadata: bool,
+    epoch_started_at: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    is_minimal_metadata && cokret_sdk::minimal_metadata_epoch_overdue(epoch_started_at, now)
+}
+
+/// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`
+/// send uses `aad_visibility=hidden` (`encryption-and-audit.md` §2.9).
+///
+/// Thin wrapper over the SDK's [`cokret_sdk::enforce_minimal_metadata_aad`]
+/// that maps the SDK protocol error into [`MlsRuntimeError::AadPolicy`] so the
+/// runtime's typed error surface stays uniform. This mirrors soland's
+/// server-side reject, giving client + server defence in depth: a minimal Realm
+/// can never emit a non-hidden AAD, and the server would reject it if it
+/// somehow did.
+pub fn assert_minimal_metadata_aad(
+    visibility: &cokret_sdk::AadVisibility,
+    is_minimal_metadata: bool,
+) -> Result<(), MlsRuntimeError> {
+    cokret_sdk::enforce_minimal_metadata_aad(visibility, is_minimal_metadata)
+        .map_err(|err| MlsRuntimeError::AadPolicy(err.to_string()))
+}
+
+/// SEC-08 — infer the [`cokret_sdk::AadVisibility`] discriminator from a
+/// canonical `ck.schema.encrypted_envelope.v1` AAD value.
+///
+/// The schema discriminator is structural (`encryption-and-audit.md` §2.9): a
+/// `hidden` envelope omits both `event_id` and `event_ref_digest`; an
+/// `opaque_id` envelope carries `event_id`; a `routing_digest` envelope carries
+/// `event_ref_digest`. Used by [`assert_minimal_metadata_aad`] on the message
+/// path so a minimal Realm cannot ship a non-hidden AAD even if a caller
+/// constructed one. `event_id` is checked first so a malformed value carrying
+/// both fields resolves to the *less* private (and therefore rejected) form.
+fn aad_visibility_of(aad: &serde_json::Value) -> cokret_sdk::AadVisibility {
+    let has = |key: &str| aad.get(key).is_some_and(|v| !v.is_null());
+    if has("event_id") {
+        cokret_sdk::AadVisibility::OpaqueId
+    } else if has("event_ref_digest") {
+        cokret_sdk::AadVisibility::RoutingDigest
+    } else {
+        cokret_sdk::AadVisibility::Hidden
+    }
+}
+
 /// MLS exporter label for the v1 reaction routing tag
 /// (`encryption-and-audit.md` §2.9). Bound, together with `context =
 /// realm_id` and the current group epoch's exporter secret, into the
@@ -984,6 +1061,17 @@ pub struct EncryptedReaction {
     pub routing_tag: String,
     /// MLS application-message payload carrying the real emoji JSON.
     pub encrypted_payload: cokret_sdk::EncryptedPayload,
+    /// SEC-08 (`encryption-and-audit.md` §2.9) — present ONLY when this
+    /// reaction force-advanced the MLS epoch because the
+    /// `minimal_metadata_realm` 1h cap was exceeded. The caller MUST submit
+    /// this `ck.mls.commit` and, on server-accept, persist
+    /// [`Self::forced_commit_snapshot`] (X14 persist-on-accept). When `None`
+    /// the reaction rode the current epoch and its snapshot was already
+    /// persisted internally (epoch unchanged ⇒ no epoch-skew risk).
+    pub forced_commit: Option<cokret_sdk::MlsCommitEnvelope>,
+    /// Post-forced-commit snapshot the caller persists on server-accept. Set
+    /// iff [`Self::forced_commit`] is `Some`.
+    pub forced_commit_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 }
 
 /// Pure derivation of the §2.9 v1 routing tag from an MLS exporter secret.
@@ -1073,8 +1161,33 @@ pub fn encrypt_reaction_with_device_snapshot(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
 
-    // Routing tag is derived from the same (pre-application-message) epoch
-    // exporter secret; the application message below does not change the epoch.
+    // SEC-08 (§2.9) — fail-closed AAD policy: this path always builds a
+    // `hidden` AAD below, but for a `minimal_metadata_realm` Realm the hidden
+    // requirement is a MUST. Assert it up front (with the same SDK helper
+    // soland rejects with) so any future edit that widens visibility on a
+    // minimal Realm fails loudly here instead of leaking message-id metadata.
+    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(space_id);
+    assert_minimal_metadata_aad(&cokret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
+
+    // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
+    // reuses the current epoch (no commit), so on a minimal Realm we MUST roll
+    // the epoch once it has outlived the cap, bounding within-epoch reaction
+    // frequency to a ≤1h window. The forced `ck.mls.commit` is surfaced to the
+    // caller (X14 persist-on-accept) rather than persisted optimistically.
+    let now = chrono::Utc::now();
+    let forced_commit =
+        if should_force_epoch_advance(is_minimal_metadata, snapshot.epoch_started_at, now) {
+            Some(
+                group
+                    .self_update_commit()
+                    .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
+            )
+        } else {
+            None
+        };
+
+    // Routing tag is derived from the post-(optional-commit) epoch exporter
+    // secret; the application message below does not change the epoch further.
     let exporter = group
         .export_secret(
             REACTION_ROUTING_LABEL_V1,
@@ -1096,9 +1209,6 @@ pub fn encrypt_reaction_with_device_snapshot(
         .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad_value), &plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
 
-    // Persist the advanced application ratchet immediately (no epoch change →
-    // no epoch-skew, so persist-on-accept is unnecessary and persisting now
-    // prevents nonce reuse on the next reaction encrypt).
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -1114,12 +1224,32 @@ pub fn encrypt_reaction_with_device_snapshot(
         &secret,
         &salt,
     );
-    state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
 
-    Ok(EncryptedReaction {
-        routing_tag,
-        encrypted_payload,
-    })
+    if forced_commit.is_some() {
+        // X14 — a forced epoch advance must NOT be persisted before the server
+        // accepts the `ck.mls.commit`, or the local epoch races ahead and every
+        // later write is rejected with `mls_epoch_skew`. Hand the snapshot back
+        // for the caller to persist on accept.
+        Ok(EncryptedReaction {
+            routing_tag,
+            encrypted_payload,
+            forced_commit,
+            forced_commit_snapshot: Some(new_envelope),
+        })
+    } else {
+        // No epoch change → persist the advanced application ratchet now (no
+        // epoch-skew risk, and persisting prevents nonce reuse on the next
+        // reaction). Carry the epoch-start clock forward so a stream of
+        // reactions can never reset the §2.9 1h cap.
+        let new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+        state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
+        Ok(EncryptedReaction {
+            routing_tag,
+            encrypted_payload,
+            forced_commit: None,
+            forced_commit_snapshot: None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1182,6 +1312,98 @@ mod tests {
         assert_eq!(
             reaction_routing_tag_from_exporter(&exporter, precomposed),
             reaction_routing_tag_from_exporter(&exporter, decomposed),
+        );
+    }
+
+    #[test]
+    fn force_epoch_advance_only_for_overdue_minimal_metadata_realm() {
+        use chrono::{Duration, Utc};
+        let started = Utc::now();
+        // Non-minimal Realm: never forced, regardless of age.
+        assert!(!should_force_epoch_advance(
+            false,
+            started,
+            started + Duration::hours(5)
+        ));
+        // Minimal Realm under the 1h cap: not forced.
+        assert!(!should_force_epoch_advance(
+            true,
+            started,
+            started + Duration::minutes(59)
+        ));
+        // Exactly 1h is the inclusive cap (overdue is strictly >1h).
+        assert!(!should_force_epoch_advance(
+            true,
+            started,
+            started + Duration::hours(1)
+        ));
+        // Minimal Realm past 1h: forced.
+        assert!(should_force_epoch_advance(
+            true,
+            started,
+            started + Duration::hours(1) + Duration::seconds(1)
+        ));
+        // Clock skew (now < started) is never overdue.
+        assert!(!should_force_epoch_advance(
+            true,
+            started,
+            started - Duration::minutes(10)
+        ));
+    }
+
+    #[test]
+    fn minimal_metadata_aad_enforcement_is_fail_closed() {
+        use cokret_sdk::AadVisibility;
+        // Hidden is always accepted.
+        assert_minimal_metadata_aad(&AadVisibility::Hidden, true).unwrap();
+        assert_minimal_metadata_aad(&AadVisibility::Hidden, false).unwrap();
+        // Non-hidden on a minimal Realm is rejected with the typed policy error.
+        for v in [AadVisibility::RoutingDigest, AadVisibility::OpaqueId] {
+            let err = assert_minimal_metadata_aad(&v, true).unwrap_err();
+            assert!(matches!(err, MlsRuntimeError::AadPolicy(_)));
+        }
+        // Non-minimal Realm is unaffected by any visibility.
+        assert_minimal_metadata_aad(&AadVisibility::RoutingDigest, false).unwrap();
+        assert_minimal_metadata_aad(&AadVisibility::OpaqueId, false).unwrap();
+    }
+
+    #[test]
+    fn aad_visibility_inferred_from_canonical_aad_shape() {
+        use cokret_sdk::AadVisibility;
+        // hidden() omits both event-id fields ⇒ Hidden.
+        let hidden = serde_json::to_value(cokret_sdk::EncryptedEnvelopeAadV1::hidden(
+            "ck:realm:r",
+            "ck.message.create",
+        ))
+        .unwrap();
+        assert_eq!(aad_visibility_of(&hidden), AadVisibility::Hidden);
+        // event_ref_digest present ⇒ RoutingDigest.
+        assert_eq!(
+            aad_visibility_of(&json!({
+                "realm_id": "ck:realm:r",
+                "event_kind": "ck.message.create",
+                "event_ref_digest": "sha256:aa"
+            })),
+            AadVisibility::RoutingDigest
+        );
+        // event_id present ⇒ OpaqueId (checked first / least private).
+        assert_eq!(
+            aad_visibility_of(&json!({
+                "realm_id": "ck:realm:r",
+                "event_kind": "ck.message.create",
+                "event_id": "ck:event:1"
+            })),
+            AadVisibility::OpaqueId
+        );
+        // Null event-id fields are treated as absent ⇒ Hidden.
+        assert_eq!(
+            aad_visibility_of(&json!({
+                "realm_id": "ck:realm:r",
+                "event_kind": "ck.message.create",
+                "event_id": null,
+                "event_ref_digest": null
+            })),
+            AadVisibility::Hidden
         );
     }
 
@@ -1377,6 +1599,78 @@ mod tests {
         assert_eq!(encrypted_again.2.len(), 1);
         state.save_mls_snapshot(space, encrypted_again.4.clone());
         assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
+        // SEC-08 end-to-end (native): a minimal-metadata Realm whose epoch is
+        // older than 1h must force a `ck.mls.commit` (epoch advance) on the next
+        // reaction, and MUST NOT persist the advanced snapshot internally
+        // (X14 persist-on-accept) — the snapshot is handed back instead.
+        let mut state = temp_state_store("minimal-reaction-force");
+        let secure = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000002";
+
+        // Declare the minimal-metadata profile on the cached projection.
+        state.save_space_projection(
+            space,
+            json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        );
+        assert!(state.space_projection_is_minimal_metadata(space));
+
+        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
+        let base_epoch = state.mls_snapshot_for(space).unwrap().epoch;
+
+        // Backdate the persisted snapshot's epoch clock past the 1h cap.
+        let mut overdue = state.mls_snapshot_for(space).unwrap();
+        overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        state.save_mls_snapshot(space, overdue);
+
+        let sealed = encrypt_reaction_with_device_snapshot(
+            &mut state, &secure, space, space, actor, device, "👍",
+        )
+        .unwrap();
+
+        // A commit was forced and surfaced for persist-on-accept; the stored
+        // snapshot epoch did NOT advance yet (caller persists on accept).
+        assert!(sealed.forced_commit.is_some());
+        let returned = sealed
+            .forced_commit_snapshot
+            .expect("forced commit returns its snapshot");
+        assert!(returned.epoch > base_epoch);
+        assert_eq!(state.mls_snapshot_for(space).unwrap().epoch, base_epoch);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
+        // Control: a non-minimal Realm with an equally-old epoch never forces a
+        // commit; the reaction rides the current epoch and persists immediately.
+        let mut state = temp_state_store("non-minimal-reaction");
+        let secure = MemorySecureKeyStore::new();
+        let actor = "did:web:alice.example";
+        let device = "ck:device:01904100-0000-7000-8000-000000000001";
+        let space = "ck:realm:01904100-0000-7000-8000-000000000003";
+
+        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
+        let base_epoch = state.mls_snapshot_for(space).unwrap().epoch;
+        let mut overdue = state.mls_snapshot_for(space).unwrap();
+        overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        state.save_mls_snapshot(space, overdue);
+
+        assert!(!state.space_projection_is_minimal_metadata(space));
+        let sealed = encrypt_reaction_with_device_snapshot(
+            &mut state, &secure, space, space, actor, device, "👍",
+        )
+        .unwrap();
+        assert!(sealed.forced_commit.is_none());
+        assert!(sealed.forced_commit_snapshot.is_none());
+        // Same epoch persisted in place (no skew), epoch clock carried forward.
+        let after = state.mls_snapshot_for(space).unwrap();
+        assert_eq!(after.epoch, base_epoch);
     }
 
     fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindingPayload {
