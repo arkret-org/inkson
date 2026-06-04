@@ -5,6 +5,21 @@ struct PrincipalSpaceLookupResponse {
     space_id: String,
 }
 
+/// Canonical, protocol-namespace location of the auth-bridge describe
+/// document. Per `service-http-binding.md` the auth bridge lives under the
+/// versionless `/_cokret/gate/...` trust surface; coauth already serves the
+/// bridge describe here (see `coauth.rs`), so this is the single bootstrap
+/// anchor both adapters share.
+const AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/auth/bridge/describe";
+
+/// Legacy product-namespace fallback for servers that have not yet aliased
+/// their auth bridge into the protocol namespace. Probed only when the
+/// canonical path returns `404 unrecognized_endpoint`.
+///
+/// TODO: drop once soland serves the bridge describe under `/_cokret/gate/...`
+/// (or advertises its location via `/_cokret/describe.auth_metadata`).
+const AUTH_BRIDGE_DESCRIBE_PATH_LEGACY: &str = "_soland/gate/auth/bridge/describe";
+
 impl CokretApi {
     pub async fn health(&self) -> anyhow::Result<HealthResponse> {
         self.get_json("health").await
@@ -14,10 +29,25 @@ impl CokretApi {
         self.get_json("_cokret/describe").await
     }
 
+    /// Resolve the principal server's auth-bridge describe document from a
+    /// single bootstrap anchor. Prefers the canonical protocol-namespace path
+    /// (`/_cokret/gate/auth/bridge/describe`) so the soland and coauth adapters
+    /// share one discovery entry point, and falls back to the legacy vendor
+    /// path (`/_soland/gate/...`) only when the canonical alias is absent
+    /// (`404 unrecognized_endpoint`). All other errors propagate unchanged.
     pub async fn auth_bridge_describe(
         &self,
     ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
-        self.get_json("_soland/gate/auth/bridge/describe").await
+        match self
+            .get_json::<PrincipalAuthBridgeDescribeResponse>(AUTH_BRIDGE_DESCRIBE_PATH)
+            .await
+        {
+            Ok(describe) => Ok(describe),
+            Err(error) if is_endpoint_absent(&error) => {
+                self.get_json(AUTH_BRIDGE_DESCRIBE_PATH_LEGACY).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn dev_login(

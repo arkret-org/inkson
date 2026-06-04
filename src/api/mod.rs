@@ -337,6 +337,18 @@ pub struct CokretApiError {
 
 const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
 
+/// True when a discovery probe failed because the endpoint does not exist on
+/// this server — i.e. the routing layer returned `404 unrecognized_endpoint`
+/// (see `service-http-binding.md` routing rules) rather than a transport,
+/// auth, or server error. Used during bootstrap to fall back from a canonical
+/// protocol-namespace path (`/_cokret/gate/...`) to a legacy vendor path
+/// (`/_soland/gate/...`) only when the canonical alias is genuinely absent.
+pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CokretApiError>()
+        .is_some_and(|api_error| api_error.status == StatusCode::NOT_FOUND)
+}
+
 #[derive(Clone, Debug)]
 pub enum AccountSubscribeSnapshotOutcome {
     Delta(ClientSyncResponse),
@@ -2660,6 +2672,30 @@ mod tests {
             api.endpoint("/_cokret/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/_cokret/describe"
         );
+    }
+
+    #[test]
+    fn endpoint_absent_only_triggers_on_404() {
+        // 404 unrecognized_endpoint → the canonical bridge path is missing,
+        // so `auth_bridge_describe` should fall back to the legacy vendor path.
+        let not_found: anyhow::Error = CokretApiError {
+            status: StatusCode::NOT_FOUND,
+            error: decode_cokret_error(StatusCode::NOT_FOUND, b"{}"),
+        }
+        .into();
+        assert!(is_endpoint_absent(&not_found));
+
+        // A 5xx is a real server failure, not an absent endpoint — must propagate.
+        let server_error: anyhow::Error = CokretApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: decode_cokret_error(StatusCode::INTERNAL_SERVER_ERROR, b"{}"),
+        }
+        .into();
+        assert!(!is_endpoint_absent(&server_error));
+
+        // A non-API transport error must not be mistaken for an absent endpoint.
+        let transport: anyhow::Error = anyhow::anyhow!("connection refused");
+        assert!(!is_endpoint_absent(&transport));
     }
 
     #[test]
