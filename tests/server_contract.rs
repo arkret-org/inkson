@@ -86,7 +86,10 @@ fn yougen_accepts_server_contract_payloads() {
     assert_eq!(identity.registry_mode, "development_local");
 
     let resolved_identity: yougen::models::IdentityResolveResBody = serde_json::from_value(json!({
-        "did_document": {"id": "did:web:alice.example"},
+        "did_document": {
+            "did": "did:web:alice.example",
+            "document": {"id": "did:web:alice.example"}
+        },
         "key_log_head": null,
         "seq": 0,
         "receipts": [],
@@ -94,7 +97,7 @@ fn yougen_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(
-        resolved_identity.did_document["id"],
+        resolved_identity.did_document.document["id"],
         "did:web:alice.example"
     );
 
@@ -148,7 +151,7 @@ fn yougen_accepts_server_contract_payloads() {
     assert_eq!(directory.discovery_profiles[0], "ck.profile.directory.v1");
 
     let resolved = parse_resolve_realm(json!({
-        "space_preview": {
+        "realm_preview": {
             "space_id": "ck:space:0196419b-0000-7000-8000-000000000000",
             "name": "Cokret Demo Space",
             "description": "Shared demo Space served by server",
@@ -211,13 +214,13 @@ fn yougen_accepts_server_contract_payloads() {
     assert_eq!(login.token_type, "Bearer");
 
     let authz: yougen::models::AuthzCheckResBody = serde_json::from_value(json!({
-        "allowed": true,
+        "decision": "allow",
         "reason_code": null,
         "grants": [{"actor": "did:web:alice.example"}],
         "obligations": []
     }))
     .unwrap();
-    assert!(authz.allowed);
+    assert_eq!(authz.decision, cokret_sdk::model::AuthzDecision::Allow);
 
     let grants: yougen::models::EffectiveGrantsResBody = serde_json::from_value(json!({
         "grants": [{"subject": "did:web:alice.example"}],
@@ -242,11 +245,11 @@ fn yougen_accepts_server_contract_payloads() {
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
     let claimed: yougen::models::KeysClaimResBody = serde_json::from_value(json!({
-        "one_time_keys": {"did:web:alice.example": {"dev_alice": {"key_id": "alice-otk-1"}}},
+        "one_time_keys": {"did:web:alice.example": {"ck:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
         "failures": {}
     }))
     .unwrap();
-    assert!(claimed.one_time_keys.is_object());
+    assert!(!claimed.one_time_keys.is_empty());
 
     let device_send: yougen::models::DeviceMessagesSendResBody = serde_json::from_value(json!({
         "ok": true,
@@ -278,16 +281,17 @@ fn yougen_accepts_server_contract_payloads() {
 
     // Spec rename: blob upload response uses `size_bytes` and
     // `content_digest`; no serde aliases in aggressive migration mode.
+    let blob_digest = format!("sha256:{}", "ab".repeat(32));
     let blob: yougen::models::BlobUploadResBody = serde_json::from_value(json!({
-        "blob_ref": "ck:blob:sha256:abc",
+        "blob_ref": format!("ck:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
-        "content_digest": "sha256:abc",
+        "content_digest": blob_digest,
         "upload_receipt": {"service_did": "did:web:server.local"}
     }))
     .unwrap();
     assert_eq!(blob.size_bytes, 23);
-    assert_eq!(blob.content_digest, "sha256:abc");
+    assert_eq!(blob.content_digest.as_str(), format!("sha256:{}", "ab".repeat(32)));
 
     let report: yougen::models::ModerationReportResBody = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
@@ -506,7 +510,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         "body": "hello",
         "mentions": [{
             "kind": "actor",
-            "target": contact_remark.actor_did,
+            "target": contact_remark.actor_id,
             "token": "@alice"
         }]
     }))
@@ -551,7 +555,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let directory = yougen::models::SearchSpacesResponse {
         results: vec![yougen::models::SpacePreview {
             space_id: space_remark.space_id,
-            name: "Contract Space".to_owned(),
+            title: "Contract Space".to_owned(),
             description: Some("Public description".to_owned()),
             tags: BTreeSet::from(["contract".to_owned()]),
             public: true,
