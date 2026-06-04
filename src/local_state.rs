@@ -2283,7 +2283,7 @@ impl LocalStateStore {
     /// [`SpaceRemark::is_empty`] returns true tombstones the entry
     /// (equivalent to `remove_space_remark`). Persists synchronously to
     /// disk; the caller is responsible for pushing the same payload to
-    /// soland via `PUT /_cokret/self/account_data/{key}`.
+    /// soland via `ck.account_data.set`.
     pub fn set_space_remark(
         &mut self,
         space_id: impl Into<String>,
@@ -4660,7 +4660,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
             grant_expires_at: None,
             session_expires_at: None,
             stored_at: chrono::Utc::now(),

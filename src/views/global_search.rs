@@ -3,7 +3,7 @@
 //! Spec: yougen UX backlog (see `_claude_todos.md` lane A). Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
 //! navigating directly to `/search` opens this panel. The query
-//! round-trips through soland's `POST /_cokret/self/index/search` substring
+//! round-trips through soland's `POST /_soland/self/index/search` substring
 //! scan (the only cross-space message search endpoint we have for v1);
 //! cross-space coverage will improve once the durable projection
 //! lands.

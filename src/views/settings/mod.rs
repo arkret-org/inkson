@@ -124,12 +124,15 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for client.ui returned {status}; \
+                    "soland ck.account_data.set for client.ui returned {status}; \
                      local state still authoritative"
                 );
             }
             Err(err) => {
-                tracing::warn!("account_data PUT for client.ui failed: {}", err.display());
+                tracing::warn!(
+                    "ck.account_data.set for client.ui failed: {}",
+                    err.display()
+                );
             }
         }
     });
@@ -151,8 +154,8 @@ pub(crate) fn build_read_receipt_preferences_body(
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
-/// preferences to soland's `ck.account_data.set` PUT
-/// endpoint. Read latest values from the local state store at call time —
+/// preferences to soland through `ck.account_data.set`. Read latest values
+/// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 /// Swallows 404/501/405 via [`AccountDataSetOutcome::Unsupported`] so older
 /// soland deployments don't surface as user-visible errors.
@@ -176,12 +179,12 @@ fn push_read_receipt_account_data(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT returned {status}; local state still authoritative"
+                    "soland ck.account_data.set returned {status}; local state still authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "account_data PUT for read-receipt prefs failed: {}",
+                    "ck.account_data.set for read-receipt prefs failed: {}",
                     err.display()
                 );
             }
@@ -211,13 +214,13 @@ pub(crate) fn push_blocklist_account_data(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for ck.account.blocklist returned {status}; \
+                    "soland ck.account_data.set for ck.account.blocklist returned {status}; \
                      local blocklist remains authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "account_data PUT for ck.account.blocklist failed: {}",
+                    "ck.account_data.set for ck.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -272,12 +275,12 @@ fn push_notification_rules_account_data(
             Ok(AccountDataSetOutcome::Stored { .. }) => {}
             Ok(AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for ck.push_rules returned {status}; local notification rules remain authoritative"
+                    "soland ck.account_data.set for ck.push_rules returned {status}; local notification rules remain authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "account_data PUT for ck.push_rules failed: {}",
+                    "ck.account_data.set for ck.push_rules failed: {}",
                     err.display()
                 );
             }
@@ -417,12 +420,12 @@ fn push_space_remark_account_data(
             Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
             Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for {key_for_log} returned {status}; local state still authoritative"
+                    "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "account_data PUT for {key_for_log} failed: {}",
+                    "ck.account_data.set for {key_for_log} failed: {}",
                     err.display()
                 );
             }
@@ -470,12 +473,12 @@ fn push_contact_remark_account_data(
             Ok(crate::models::AccountDataSetOutcome::Stored { .. }) => {}
             Ok(crate::models::AccountDataSetOutcome::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland account_data PUT for {key_for_log} returned {status}; local state still authoritative"
+                    "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "account_data PUT for {key_for_log} failed: {}",
+                    "ck.account_data.set for {key_for_log} failed: {}",
                     err.display()
                 );
             }
@@ -747,7 +750,7 @@ pub fn SettingsPanel(
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is
     // *also* published publicly to soland's
-    // `POST /_cokret/self/account/profile { avatar_url }` so the directory
+    // `POST /_soland/self/account/profile { avatar_url }` so the directory
     // can index it. `avatar_upload_status` carries the inline
     // progress / error message.
     let initial_avatar_blob_ref = state_store

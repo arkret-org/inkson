@@ -31,7 +31,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Development account bootstrap",
             stage: WorkflowStage::Supported,
             client_surface: "Settings + Connect",
-            server_dependency: "POST /_cokret/gate/auth/dev-login",
+            server_dependency: "POST /_soland/gate/auth/dev-login",
         },
         ClientWorkflow {
             id: "account.registration",

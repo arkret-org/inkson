@@ -308,7 +308,7 @@ export async function mockCokretApi(page: Page) {
         },
         cokret: {
           login_path: "/_cokret/gate/auth/login",
-          logout_path: "/_cokret/gate/auth/logout",
+          logout_path: "/_soland/gate/auth/logout",
           providers_path: "/_cokret/gate/auth/providers",
           session_grants_path: "/_cokret/gate/session-grants",
           session_grants_introspect_path: "/_cokret/gate/session-grants/introspect",
@@ -639,7 +639,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/_cokret/gate/auth/dev-login") {
+    if (url.pathname === "/_soland/gate/auth/dev-login") {
       const body = await route.request().postDataJSON();
       return json(route, {
         access_token: "sx_playwright_token",
@@ -675,7 +675,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/_cokret/self/account/register") {
+    if (url.pathname === "/_soland/self/account/register") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did: body.did,
@@ -685,7 +685,7 @@ export async function mockCokretApi(page: Page) {
       }, 201);
     }
 
-    if (url.pathname === "/_cokret/self/account/me") {
+    if (url.pathname === "/_soland/self/account/me") {
       return json(route, {
         did: "did:web:alice.example",
         handle: "alice.example",
@@ -694,7 +694,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/_cokret/self/account/profile") {
+    if (url.pathname === "/_soland/self/account/profile") {
       const body = await route.request().postDataJSON();
       return json(route, {
         did: "did:web:alice.example",
@@ -705,7 +705,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/_cokret/gate/auth/logout") {
+    if (url.pathname === "/_soland/gate/auth/logout") {
       return json(route, { ok: true });
     }
 
@@ -998,10 +998,6 @@ export async function mockCokretApi(page: Page) {
 
     if (url.pathname === "/_cokret/self/authz/invites") {
       return json(route, { invites: [], next_cursor: null });
-    }
-
-    if (url.pathname === "/_cokret/self/profile/presence") {
-      return json(route, { actor: url.searchParams.get("did"), presence: "online" });
     }
 
     if (url.pathname === "/_cokret/self/keys/upload") {

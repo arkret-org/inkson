@@ -993,7 +993,7 @@ pub mod cx_ops {
     /// Build a `ck.policy.update` patch operation. The reducer-side
     /// integration for ck.policy.* events is not yet wired in soland;
     /// in the meantime clients can apply policy patches via the
-    /// `PATCH /_cokret/self/policies/{policy_id}` admin endpoint (`patch`
+    /// `PATCH /_soland/self/policies/{policy_id}` admin endpoint (`patch`
     /// body field). This builder is the future-proof event-stream
     /// form so clients don't have to wait for that wiring.
     pub fn policy_update_patch(

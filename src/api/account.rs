@@ -1,5 +1,10 @@
 use super::*;
 
+#[derive(Debug, serde::Deserialize)]
+struct PrincipalSpaceLookupResponse {
+    space_id: String,
+}
+
 impl CokretApi {
     pub async fn health(&self) -> anyhow::Result<HealthResponse> {
         self.get_json("health").await
@@ -12,7 +17,7 @@ impl CokretApi {
     pub async fn auth_bridge_describe(
         &self,
     ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
-        self.get_json("_cokret/gate/auth/bridge/describe").await
+        self.get_json("_soland/gate/auth/bridge/describe").await
     }
 
     pub async fn dev_login(
@@ -21,7 +26,7 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
         self.post_json(
-            "_cokret/gate/auth/dev-login",
+            "_soland/gate/auth/dev-login",
             json!({
                 "actor": actor,
                 "device_id": device_id,
@@ -69,7 +74,7 @@ impl CokretApi {
         device_id: &str,
     ) -> anyhow::Result<DevLoginResponse> {
         self.exchange_session_grant_at(
-            "_cokret/gate/auth/session-grant/exchange",
+            "_cokret/gate/account/session-grants",
             grant_jwt,
             principal_id,
             device_id,
@@ -85,7 +90,7 @@ impl CokretApi {
         device_id: Option<&str>,
     ) -> anyhow::Result<AccountResponse> {
         self.post_json(
-            "_cokret/self/account/register",
+            "_soland/self/account/register",
             json!({
                 "did": did,
                 "handle": handle,
@@ -97,7 +102,7 @@ impl CokretApi {
     }
 
     pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
-        self.get_json("_cokret/self/account/me").await
+        self.get_json("_soland/self/account/me").await
     }
 
     /// A4b — update the authenticated principal's public profile
@@ -119,7 +124,7 @@ impl CokretApi {
         avatar_url: Option<&str>,
     ) -> anyhow::Result<UpdateProfileResponse> {
         self.post_json(
-            "_cokret/self/account/profile",
+            "_soland/self/account/profile",
             json!({
                 "display_name": display_name,
                 "bio": bio,
@@ -130,7 +135,7 @@ impl CokretApi {
     }
 
     pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
-        self.post_json("_cokret/self/contacts/request", json!({"target": target}))
+        self.post_json("_soland/self/contacts/request", json!({"target": target}))
             .await
     }
 
@@ -140,7 +145,7 @@ impl CokretApi {
         scope: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "_cokret/self/contacts/request",
+            "_soland/self/contacts/request",
             json!({"target": target, "scope": scope}),
         )
         .await
@@ -152,18 +157,18 @@ impl CokretApi {
         action: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "_cokret/self/contacts/respond",
+            "_soland/self/contacts/respond",
             json!({"requester": requester, "action": action}),
         )
         .await
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
-        self.get_json("_cokret/self/contacts").await
+        self.get_json("_soland/self/contacts").await
     }
 
     pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsResponse> {
-        self.get_json("_cokret/self/consent/cells").await
+        self.get_json("_soland/self/consent/cells").await
     }
 
     pub async fn grant_consent_cell(
@@ -175,7 +180,7 @@ impl CokretApi {
     ) -> anyhow::Result<ConsentCellResponse> {
         self.post_json(
             &format!(
-                "_cokret/self/consent/cells/{}/grant",
+                "_soland/self/consent/cells/{}/grant",
                 url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
             ),
             json!({
@@ -196,7 +201,7 @@ impl CokretApi {
     ) -> anyhow::Result<ConsentCellResponse> {
         self.post_json(
             &format!(
-                "_cokret/self/consent/cells/{}/revoke",
+                "_soland/self/consent/cells/{}/revoke",
                 url::form_urlencoded::byte_serialize(holder.as_bytes()).collect::<String>()
             ),
             json!({
@@ -208,73 +213,75 @@ impl CokretApi {
     }
 
     pub async fn logout(&self) -> anyhow::Result<LogoutResponse> {
-        self.post_json("_cokret/gate/auth/logout", json!({})).await
+        self.post_json("_soland/gate/auth/logout", json!({})).await
     }
 
-    /// PUT a per-account `ck.account_data.set` entry. Thin wrapper around
-    /// `PUT /_cokret/self/account_data/{type}` so settings UIs can push preferences
-    /// (e.g. `ck.read_receipt.preferences`) up to soland for cross-device
-    /// sync. When the endpoint returns 404 / 501 / 405 we treat the outcome
-    /// as `Unsupported` and let the caller swallow it (local state stays
-    /// authoritative). Anything else surfaces as `Err`.
-    ///
-    /// Structural: the body is `{ "content": <value> }` — soland's existing
-    /// `ck.account_data.set` pipeline treats the path's `{type}` segment as
-    /// the canonical account-data key.
+    /// Submit a per-account `ck.account_data.set` event so settings UIs can
+    /// push preferences (for example `ck.read_receipt.preferences`) to soland
+    /// for cross-device sync. If the current server cannot resolve the
+    /// principal control Space yet, 404 / 501 / 405 still degrade to
+    /// `Unsupported` and local state remains authoritative.
     pub async fn set_account_data(
         &self,
         type_key: &str,
         content: Value,
     ) -> anyhow::Result<AccountDataSetOutcome> {
-        let body = json!({ "content": content });
-        let result: anyhow::Result<Value> = self
-            .put_json(&format!("_cokret/self/account_data/{type_key}"), body)
-            .await;
-        match result {
-            Ok(value) => Ok(AccountDataSetOutcome::Stored { response: value }),
+        let (actor, principal_space_id) = match self.account_data_actor_scope().await {
+            Ok(scope) => scope,
             Err(error) => {
-                // Detect the "endpoint not yet implemented" shape. We accept
-                // 404 (route absent), 501 (NotImplemented), and 405 (route
-                // exists for another method but PUT not wired) as graceful
-                // degradation — anything else propagates.
-                if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
-                    let status = api_error.status;
-                    if matches!(
-                        status,
-                        StatusCode::NOT_FOUND
-                            | StatusCode::NOT_IMPLEMENTED
-                            | StatusCode::METHOD_NOT_ALLOWED
-                    ) {
-                        tracing::warn!(
-                            "account_data PUT for {type_key} returned {status}; \
-                             keeping local state authoritative until soland wires it"
-                        );
-                        return Ok(AccountDataSetOutcome::Unsupported { status });
-                    }
+                if let Some(status) = unsupported_status(&error) {
+                    tracing::warn!(
+                        "principal-space lookup for account_data returned {status}; \
+                         keeping local state authoritative"
+                    );
+                    return Ok(AccountDataSetOutcome::Unsupported { status });
+                }
+                return Err(error);
+            }
+        };
+        let key = crate::account_data::AccountDataKey::from_wire(type_key);
+        let event =
+            crate::account_data::build_account_data_set(&principal_space_id, &actor, &key, content)
+                .build("yougen-account-data");
+        let result = self.submit_event_envelope(&event).await;
+        match result {
+            Ok(value) => Ok(AccountDataSetOutcome::Stored {
+                response: serde_json::to_value(value)?,
+            }),
+            Err(error) => {
+                if let Some(status) = unsupported_status(&error) {
+                    tracing::warn!(
+                        "ck.account_data.set submit for {type_key} returned {status}; \
+                         keeping local state authoritative"
+                    );
+                    return Ok(AccountDataSetOutcome::Unsupported { status });
                 }
                 Err(error)
             }
         }
     }
 
-    /// DELETE an account_data entry. Same graceful-degradation contract as
-    /// [`Self::set_account_data`] — 404 means the row was already absent
-    /// (treated as success) and is logged at debug level; other errors
-    /// propagate.
+    /// Tombstone an account_data entry by submitting `ck.account_data.set` with
+    /// `tombstone: true`. Same graceful-degradation contract as
+    /// [`Self::set_account_data`].
     pub async fn delete_account_data(&self, type_key: &str) -> anyhow::Result<()> {
-        let path = format!("_cokret/self/account_data/{type_key}");
-        let result: anyhow::Result<Value> = self.delete_json(&path).await;
-        match result {
+        let (actor, principal_space_id) = match self.account_data_actor_scope().await {
+            Ok(scope) => scope,
+            Err(error) => {
+                if unsupported_status(&error).is_some() {
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        };
+        let key = crate::account_data::AccountDataKey::from_wire(type_key);
+        let event =
+            crate::account_data::build_account_data_tombstone(&principal_space_id, &actor, &key)
+                .build("yougen-account-data");
+        match self.submit_event_envelope(&event).await {
             Ok(_) => Ok(()),
             Err(error) => {
-                if let Some(api_error) = error.downcast_ref::<CokretApiError>()
-                    && matches!(
-                        api_error.status,
-                        StatusCode::NOT_FOUND
-                            | StatusCode::NOT_IMPLEMENTED
-                            | StatusCode::METHOD_NOT_ALLOWED
-                    )
-                {
+                if unsupported_status(&error).is_some() {
                     return Ok(());
                 }
                 Err(error)
@@ -295,11 +302,45 @@ impl CokretApi {
     }
 
     pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
-        self.get_json(&format!(
-            "_cokret/self/profile/presence?did={}",
-            query_component(did)
-        ))
-        .await
+        let sync = self.account_subscribe_snapshot(None).await?;
+        let presence = sync
+            .presence
+            .iter()
+            .find(|event| {
+                event
+                    .get("actor_id")
+                    .or_else(|| event.get("user_id"))
+                    .or_else(|| event.get("actor"))
+                    .and_then(Value::as_str)
+                    == Some(did)
+            })
+            .cloned()
+            .unwrap_or_else(
+                || json!({"actor_id": did, "status": "offline", "presence": "offline"}),
+            );
+        let status = presence
+            .get("status")
+            .and_then(Value::as_str)
+            .or_else(|| presence.get("presence").and_then(Value::as_str))
+            .unwrap_or("offline");
+        Ok(json!({
+            "actor": did,
+            "display_name": did,
+            "presence": {
+                "status": status,
+            },
+        }))
+    }
+
+    async fn account_data_actor_scope(&self) -> anyhow::Result<(String, String)> {
+        let account = self.account_me().await?;
+        let lookup: PrincipalSpaceLookupResponse = self
+            .get_json(&format!(
+                "_soland/self/account/{}/principal-space",
+                path_component(&account.did)
+            ))
+            .await?;
+        Ok((account.did, lookup.space_id))
     }
 
     pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {
@@ -363,15 +404,29 @@ impl CokretApi {
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
-        self.get_json("_cokret/self/notifications").await
+        self.get_json("_soland/self/notifications").await
     }
 
     pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
-        self.post_json("_cokret/self/notifications/mark-all-read", json!({}))
+        self.post_json("_soland/self/notifications/mark-all-read", json!({}))
             .await
     }
 
     pub async fn invites(&self) -> anyhow::Result<InvitesResponse> {
         self.get_json("_cokret/self/authz/invites").await
     }
+}
+
+fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
+    error
+        .downcast_ref::<CokretApiError>()
+        .map(|api_error| api_error.status)
+        .filter(|status| {
+            matches!(
+                *status,
+                StatusCode::NOT_FOUND
+                    | StatusCode::NOT_IMPLEMENTED
+                    | StatusCode::METHOD_NOT_ALLOWED
+            )
+        })
 }

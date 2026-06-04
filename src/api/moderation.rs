@@ -36,7 +36,7 @@ impl CokretApi {
         let request = self
             .http
             .post(
-                self.endpoint("_cokret/self/audit/user-action")
+                self.endpoint("_soland/self/audit/user-action")
                     .map_err(|err| AuditPostError::Other(err.to_string()))?,
             )
             .json(&payload);

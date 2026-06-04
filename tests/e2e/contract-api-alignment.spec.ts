@@ -40,7 +40,7 @@ const PROBES: Probe[] = [
     },
   },
   { label: "events_list", method: "GET", path: "/_cokret/self/events/query" },
-  { label: "account_me", method: "GET", path: "/_cokret/self/account/me" },
+  { label: "account_me", method: "GET", path: "/_soland/self/account/me" },
   { label: "directory_describe", method: "GET", path: "/_cokret/find/directory/describe" },
   {
     label: "directory_search_realms",

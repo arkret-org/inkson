@@ -103,7 +103,7 @@ impl CokretApi {
     }
 
     /// A6.1 — global cross-space message search backed by soland's
-    /// `POST /_cokret/self/index/search`. The server accepts `space_ids` to
+    /// `POST /_soland/self/index/search`. The server accepts `space_ids` to
     /// scope the search; pass an empty slice for "search everywhere I
     /// have access to". `object_kinds` defaults to `["message"]` when
     /// `None`, mirroring the panel's primary affordance.
@@ -128,7 +128,7 @@ impl CokretApi {
             "object_kinds": kinds,
             "space_ids": space_ids,
         });
-        self.post_json("_cokret/self/index/search", body).await
+        self.post_json("_soland/self/index/search", body).await
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {

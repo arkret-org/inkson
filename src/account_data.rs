@@ -280,9 +280,8 @@ pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<
 /// Wire-key for an actor-private Space remark per
 /// `discovery/client-preferences.md` §3.7: `ck.contacts.space.<space_id>`.
 ///
-/// The same string is the path segment passed to soland's
-/// `PUT /_cokret/self/account_data/{type}` endpoint. Callers should already have
-/// validated `space_id` shape (`ck:space:<uuid>`).
+/// The same string is the `key` used in `ck.account_data.set`. Callers should
+/// already have validated `space_id` shape (`ck:space:<uuid>`).
 pub fn space_remark_account_data_key(space_id: &str) -> String {
     format!("ck.contacts.space.{space_id}")
 }
@@ -704,7 +703,22 @@ pub fn build_account_data_set(
 ) -> OperationBuilder {
     OperationBuilder::new(space_id, actor, "ck.account_data.set").body(serde_json::json!({
         "key": key.as_wire(),
-        "value": value,
+        "owner": actor,
+        "body": value,
+        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    }))
+}
+
+pub fn build_account_data_tombstone(
+    space_id: &str,
+    actor: &str,
+    key: &AccountDataKey,
+) -> OperationBuilder {
+    OperationBuilder::new(space_id, actor, "ck.account_data.set").body(serde_json::json!({
+        "key": key.as_wire(),
+        "owner": actor,
+        "tombstone": true,
+        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     }))
 }
 
@@ -1168,6 +1182,23 @@ mod tests {
         .build("node");
         assert_eq!(op.kind, "ck.account_data.set");
         assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
-        assert_eq!(op.payload["value"]["send"], false);
+        assert_eq!(op.payload["owner"], "did:web:alice");
+        assert_eq!(op.payload["body"]["send"], false);
+        assert!(op.payload["updated_at"].is_string());
+    }
+
+    #[test]
+    fn build_account_data_tombstone_emits_canonical_payload() {
+        let op = build_account_data_tombstone(
+            "ck:space:s1",
+            "did:web:alice",
+            &AccountDataKey::ClientReadReceipts,
+        )
+        .build("node");
+        assert_eq!(op.kind, "ck.account_data.set");
+        assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
+        assert_eq!(op.payload["owner"], "did:web:alice");
+        assert_eq!(op.payload["tombstone"], true);
+        assert!(op.payload["updated_at"].is_string());
     }
 }

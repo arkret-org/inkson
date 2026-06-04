@@ -54,7 +54,7 @@ export function mockCokretContract(req) {
     return json({ events: [], next_cursor: null });
   }
 
-  if (method === "GET" && path === "/_cokret/self/account/me") {
+  if (method === "GET" && path === "/_soland/self/account/me") {
     return json({
       did: "did:web:alice.example",
       handle: "alice.example",
@@ -126,7 +126,7 @@ export function canonicalPath(path) {
     "/server/describe": "/_cokret/describe",
     "/events/submit": "/_cokret/self/events",
     "/events/list": "/_cokret/self/events/query",
-    "/account/me": "/_cokret/self/account/me",
+    "/account/me": "/_soland/self/account/me",
     "/directory/search-realms": "/_cokret/find/directory/search-realms",
     "/keys/backups": "/_cokret/self/keys/backups",
     "/devices/pairing-challenge": "/_cokret/self/devices/pairing-challenge",

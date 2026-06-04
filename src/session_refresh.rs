@@ -431,7 +431,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(grant_secs)),
             session_expires_at: Some(now + chrono::Duration::seconds(session_secs)),
             stored_at: now,

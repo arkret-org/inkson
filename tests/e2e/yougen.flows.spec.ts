@@ -355,7 +355,7 @@ test("settings avatar upload crops local image before publishing profile URL", a
   });
 
   const uploadRequest = page.waitForRequest("**/_cokret/self/blob/upload");
-  const profileRequest = page.waitForRequest("**/_cokret/self/account/profile");
+  const profileRequest = page.waitForRequest("**/_soland/self/account/profile");
   await page.getByTestId("settings-avatar-upload-cropped").click();
 
   const upload = await uploadRequest;

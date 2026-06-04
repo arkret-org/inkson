@@ -442,7 +442,7 @@ mod tests {
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
             principal_server_url: "https://principal.example/".to_owned(),
-            session_grant_exchange_path: "_cokret/gate/auth/session-grant/exchange".to_owned(),
+            session_grant_exchange_path: "_cokret/gate/account/session-grants".to_owned(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
             session_expires_at: None,
             stored_at: Utc::now(),

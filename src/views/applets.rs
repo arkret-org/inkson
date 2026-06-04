@@ -690,7 +690,7 @@ mod tests {
                     .to_owned(),
             )
         );
-        let json = "{\"manifest_id\":\"applet:demo\",\"namespace\":\"bridge.demo\"}";
+        let json = "{\"package_id\":\"package:demo\",\"namespace\":\"bridge.demo\"}";
         assert_eq!(
             classify_manifest_input(json),
             ManifestInputKind::Json(json.to_owned())
