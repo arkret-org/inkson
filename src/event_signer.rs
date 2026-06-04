@@ -70,8 +70,8 @@ pub enum EventSignerError {
     /// guard surfaces this so the UI can prompt the user.
     #[error(
         "no event signer installed (active proof mode = {mode}). \
-        Boot must call event_signer::install_active_signer or downgrade \
-        to ProofMode::PlaceholderDev for dev fixtures."
+        Boot must call event_signer::install_active_signer with a real \
+        signer; ProofMode::Production stays fail-closed until it does."
     )]
     MissingSigner { mode: &'static str },
     /// The underlying SDK backend refused to sign.
@@ -418,8 +418,7 @@ pub fn signer_status() -> Option<SignerStatus> {
 ///    to the real-signer path.
 ///
 /// Returns the installed signer for the caller to thread into the UI.
-/// On error the caller is expected to fall back to either
-/// [`ProofMode::PlaceholderDev`] (dev only) or [`ProofMode::Production`]
+/// On error the caller is expected to stay in [`ProofMode::Production`]
 /// (fail-closed) and surface the error to the user.
 pub fn bootstrap_default_signer(
     service_name: &str,

@@ -79,12 +79,12 @@ current branch:
 
 ### Dev token guard (`tests/dev_token_guard.rs`)
 
-The integration test asserts that no committed source file under
-`src/` references the dev-only placeholder tokens
-(`yougen-dev-placeholder-token`, `desktop:yougen-dev-placeholder-token`,
-or the `a..b` JWS marker) outside the `dev_proof` cfg-gated paths.
-Production binaries built with `--no-default-features` never attach
-the placeholder to an envelope.
+The integration test asserts that the dev-only placeholder push tokens
+(`yougen-dev-…`, `placeholder`) are always recognised by the production
+guard so they can never reach a real push gateway. Event envelopes carry
+NO placeholder proof: `OperationBuilder::build()` always emits
+`proofs: Vec::new()` and the submit guard stays fail-closed in
+`ProofMode::Production` until a real signer is installed.
 
 ### Push token redaction
 

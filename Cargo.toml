@@ -14,20 +14,13 @@ debug = 0
 strip = "debuginfo"
 
 [features]
-# Default: include the dev-proof placeholder so `OperationBuilder::build()`
-# attaches the `jws == "a..b"` placeholder. Compatible with
-# `SOLAND_DEVELOPMENT_MODE=true` soland instances and the existing dev
-# fixtures. NB: `demo-crypto` is NOT in the default set — the
-# `device_signature` / opaque-ciphertext placeholders only ship when
-# explicitly opted in.
-default = ["dev_proof"]
-# T1.3 — gates [`operation::OperationBuilder::build`] attaching a
-# placeholder proof on the envelope. Production binaries must build
-# with `--no-default-features` (or any feature set that excludes
-# `dev_proof`) so the runtime proof-mode default starts in
-# [`operation::ProofMode::Production`] and the submit guard refuses to
-# ship envelopes that were never signed by a real signer.
-dev_proof = []
+# No default features. `OperationBuilder::build()` always emits
+# `proofs: Vec::new()` (there is NO placeholder proof), and the runtime
+# proof-mode default starts in [`operation::ProofMode::Production`] so
+# the submit guard refuses to ship envelopes that were never signed by a
+# real signer. NB: `demo-crypto` is opt-in — the `device_signature` /
+# opaque-ciphertext placeholders only ship when explicitly enabled.
+default = []
 # I4 — gates the `device_signature` / `ciphertext` placeholders shipped by
 # `upload_keys`, `publish_mls_key_package`, and `send_to_device`. Without
 # this feature, those entry points return an error before any wire byte
@@ -82,10 +75,11 @@ sha2 = "0.10"
 # same major as the workspace SDK (`thiserror = "2.0.17"`).
 thiserror = "2"
 url = "2.5.7"
-# Move signing. ed25519-dalek for signatures; bs58 to encode public keys
-# as did:key multibase (`z<base58btc(0xed01 || pubkey32)>`). Production
-# deploys integrate OS keychain / WebAuthn / HSM via separate paths and
-# only call `move_builder::sign_move_*` for the canonical-bytes-to-JWS step.
+# Event-proof signing. ed25519-dalek for the Ed25519 detached-JWS
+# signatures produced by `event_signer`; bs58 to encode public keys as
+# did:key multibase (`z<base58btc(0xed01 || pubkey32)>`) in
+# `move_builder::encode_ed25519_did_key_multibase`. Production deploys
+# integrate OS keychain / WebAuthn / HSM via the `secure_key_store` path.
 ed25519-dalek = { version = "2.1.1", features = ["pem", "pkcs8"] }
 bs58 = "0.5.1"
 tracing = "0.1"

@@ -2168,8 +2168,8 @@ pub fn SpaceAdminPanel(
                     div {
                         class: "muted",
                         "data-testid": "cap-constraint-coming-soon",
-                        "{cap_constraint_kind()} editor not yet implemented; the wire shape "
-                        "passes through `move_builder::CapabilityConstraintInput::Other` once a UI lands."
+                        "{cap_constraint_kind()} editor not yet implemented; the constraint "
+                        "is forwarded as a free-form JSON object on the grant once a UI lands."
                     }
                 }
                 div { class: "actions",

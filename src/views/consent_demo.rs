@@ -1,16 +1,16 @@
-//! First end-to-end UI Move-flow PoC.
+//! First end-to-end UI consent-flow PoC.
 //!
 //! Wires a single user-facing button — "Grant consent" — to the
-//! `move_builder` + `api::submit_move` infrastructure.
+//! Event Envelope write path (`operation::cx_ops` + `ck.events.submit`).
 //! The flow is:
 //!
 //! 1. user types `consent_id` + `tag` in the form;
-//! 2. on click, build a `ck.consent.grant` Move via
-//!    [`crate::move_builder::build_consent_grant_move`];
-//! 3. sign with a deterministic placeholder ed25519 key (yougen does not yet have OS keychain /
-//!    WebAuthn / HSM key management — see `TODO(real-key-management)` below);
-//! 4. POST to soland via [`crate::api::CokretApi::submit_move`];
-//! 5. render the response (`pending` / `rejected` + reason) in the UI.
+//! 2. on click, build a `ck.consent.grant` event envelope via
+//!    [`crate::operation::cx_ops::consent_grant`];
+//! 3. sign with the per-device ed25519 key persisted in `local_state` (yougen does not yet have OS
+//!    keychain / WebAuthn / HSM key management — see `TODO(secure-key-store-handoff)` below);
+//! 4. POST to soland via [`crate::api::CokretApi::submit_event_envelope`];
+//! 5. render the response (`accepted` / error + reason) in the UI.
 //!
 //! This view intentionally does NOT replace yougen's direct-event
 //! endpoints for messages / reactions / read markers / entities /

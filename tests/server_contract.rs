@@ -604,7 +604,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let encrypted = alice
         .encrypt_message(
             "ck:message:contract-1",
-            br#"{"msgtype":"m.text","body":"hello via MLS"}"#,
+            br#"{"content":{"kind":"ck.content.text","body":"hello via MLS"}}"#,
         )
         .unwrap();
     assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
@@ -617,7 +617,10 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let cokret_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
         panic!("joined device should decrypt protocol MLS payload");
     };
-    assert_eq!(plaintext, br#"{"msgtype":"m.text","body":"hello via MLS"}"#);
+    assert_eq!(
+        plaintext,
+        br#"{"content":{"kind":"ck.content.text","body":"hello via MLS"}}"#
+    );
 }
 
 // (Move/Anchor pipeline tests removed — all writes now go through

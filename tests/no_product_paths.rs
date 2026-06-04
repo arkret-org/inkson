@@ -112,7 +112,9 @@ fn baseline_has_no_stale_overcount() {
     for (rel, allowed) in BASELINE {
         let count = actual.get(*rel).copied().unwrap_or(0);
         if count < *allowed {
-            stale.push(format!("  {rel}: 基线 {allowed},实际仅 {count} —— 可把基线下调到 {count}"));
+            stale.push(format!(
+                "  {rel}: 基线 {allowed},实际仅 {count} —— 可把基线下调到 {count}"
+            ));
         }
     }
 

@@ -192,9 +192,16 @@ fn compose_local_encrypted_message_inner(
 ) -> anyhow::Result<ClientEncryptedMessage> {
     let mut device = LocalMlsDevice::new(principal_id, device_id)?;
     device.create_group(space_id.as_bytes())?;
+    // Cokret canonical content shape (models/content-types.md §2.2 / §4.1):
+    // the E2EE plaintext is the same `payload.content` Content Block the
+    // active-write path emits, so a decrypting client parses it with the
+    // identical `ck.content.text` schema. (Matrix `msgtype`/`m.text` is
+    // informative-only, per guides/migrating-from-matrix.md.)
     let plaintext = serde_json::to_vec(&serde_json::json!({
-        "msgtype": "m.text",
-        "body": body
+        "content": {
+            "kind": "ck.content.text",
+            "body": body,
+        }
     }))?;
     device.encrypt_message(message_id, &plaintext)
 }
