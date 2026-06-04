@@ -882,15 +882,15 @@ pub fn DirectoryPanel(
                                 rsx! {
                                     if !avatar_url.trim().is_empty() {
                                         img {
+                                            class: "avatar-img sm",
                                             "data-testid": "directory-actor-avatar",
                                             src: "{avatar_url}",
                                             alt: "Avatar",
-                                            style: "width: 36px; height: 36px; border-radius: 50%; object-fit: cover;",
                                         }
                                     } else {
                                         div {
+                                            class: "avatar-img sm placeholder",
                                             "data-testid": "directory-actor-avatar",
-                                            style: "width: 36px; height: 36px; border-radius: 50%; background: var(--bg-elevated, #1a1d22); border: 1px dashed var(--border-default, #333);",
                                             "aria-hidden": "true",
                                         }
                                     }

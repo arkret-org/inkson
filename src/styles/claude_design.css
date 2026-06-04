@@ -1055,6 +1055,27 @@ button:disabled:hover,
 .avatar.org   { background: linear-gradient(135deg, #b67a1f, #8a5a17); border-radius: 6px; }
 .avatar.ghost { background: linear-gradient(135deg, #94a3b8, #475569); }
 .avatar.agent { background: linear-gradient(135deg, #2b6b4f, #4b946a); border-radius: 6px; }
+
+/* Image-backed avatars (uploaded blob / remote URL), distinct from the
+   text-initial `.avatar` above. `.sm`/`.lg` size them; `.placeholder`
+   renders the empty dashed-circle fallback. Replaces the repeated long
+   inline avatar styles in directory.rs / settings/mod.rs. */
+.avatar-img {
+  border-radius: 50%;
+  overflow: hidden;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.avatar-img.sm { width: 36px; height: 36px; }
+.avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border-default, #333); }
+.avatar-img.placeholder {
+  border: 1px dashed var(--border-default, #333);
+  background: var(--bg-elevated, #1a1d22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #888);
+}
 .avatar.applet{ background: linear-gradient(135deg, #f59e0b, #d946ef); border-radius: 6px; }
 
 .avatar-stack { display: inline-flex; }
@@ -1070,6 +1091,13 @@ button:disabled:hover,
 }
 .surface.pad   { padding: 14px 16px; }
 .surface.pad-lg { padding: 20px 24px; }
+/* Card/section header row inside a `.surface`: padded with a divider under
+   it. Replaces the repeated inline
+   `padding: 14px 16px; border-bottom: 1px solid var(--border);`. */
+.surface-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
 .surface-2 {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1169,6 +1197,7 @@ button:disabled:hover,
 .mb-8  { margin-bottom: 8px; }
 .mb-16 { margin-bottom: 16px; }
 .mb-24 { margin-bottom: 24px; }
+.ml-auto { margin-left: auto; }
 .divider { border-top: 1px solid var(--border); margin: 12px 0; }
 
 /* ===== 8. AUTH SHELL (login / onboarding / recovery / verify) ===== */

@@ -197,13 +197,12 @@ pub fn DashboardPanel(
             div { class: "dashboard-two-col",
                 div { class: "stack",
                     div { class: "surface", "data-testid": "spaces-summary",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
+                        div { class: "row surface-head",
                             strong { "{recent_projection_label}" }
                             Link {
-                                class: "btn icon sm ghost",
+                                class: "btn icon sm ghost ml-auto",
                                 to: Route::Directory,
                                 onclick: move |_| view.set(super::View::Directory),
-                                style: "margin-left: auto;",
                                 title: "{projection_browse_label}",
                                 "aria-label": "{projection_browse_label}",
                                 UiIcon { name: "search" }
@@ -283,7 +282,7 @@ pub fn DashboardPanel(
                     }
 
                     div { class: "surface", "data-testid": "recent-boards",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
+                        div { class: "row surface-head",
                             strong { "Recent Flows" }
                         }
                         table { class: "tbl compact",
@@ -306,6 +305,7 @@ pub fn DashboardPanel(
                                 } else {
                                     for flow in visible_recent_flows.iter() {
                                         tr {
+                                            key: "{flow.flow_id}",
                                             td { class: "dim", "" }
                                             td { "{flow.title}" }
                                             td { "Current Board" }
@@ -343,14 +343,13 @@ pub fn DashboardPanel(
 
                 div { class: "stack",
                     div { class: "surface", "data-testid": "pinned-notifications",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
+                        div { class: "row surface-head",
                             strong { "Notifications" }
                             Link {
-                                class: "btn icon sm ghost",
+                                class: "btn icon sm ghost ml-auto",
                                 "data-testid": "pinned-notifications-open",
                                 to: Route::Notifications,
                                 onclick: move |_| view.set(super::View::Notifications),
-                                style: "margin-left: auto;",
                                 title: "Open notifications",
                                 "aria-label": "Open notifications",
                                 UiIcon { name: "inbox" }
@@ -388,9 +387,9 @@ pub fn DashboardPanel(
                     }
 
                     div { class: "surface", "data-testid": "operations-surface",
-                        div { class: "row", style: "padding: 14px 16px; border-bottom: 1px solid var(--border);",
+                        div { class: "row surface-head",
                             strong { "Client Status" }
-                            span { style: "margin-left: auto;",
+                            span { class: "ml-auto",
                                 HelpTip { text: "Operational status stays visible, but separate tool pages are no longer promoted in the main navigation." }
                             }
                         }
@@ -424,9 +423,8 @@ pub fn DashboardPanel(
                                 "Advanced Diagnostics"
                             }
                             button {
-                                class: "btn icon sm ghost",
+                                class: "btn icon sm ghost ml-auto",
                                 "data-testid": "check-health-button",
-                                style: "margin-left: auto;",
                                 title: if health_loading() { "Checking health" } else { "Run health checks" },
                                 "aria-label": if health_loading() { "Checking health" } else { "Run health checks" },
                                 disabled: health_loading(),

@@ -957,6 +957,7 @@ dependencies = [
  "tokio",
  "uuid",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

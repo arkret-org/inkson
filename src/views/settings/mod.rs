@@ -1022,8 +1022,8 @@ pub fn SettingsPanel(
                                         rsx! {
                                             if !blob_ref.trim().is_empty() {
                                                 div {
+                                                    class: "avatar-img lg",
                                                     "data-testid": "settings-avatar-preview",
-                                                    style: "width: 64px; height: 64px; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333);",
                                                     crate::content::renderer::AuthenticatedBlobImage {
                                                         blob_ref: blob_ref.trim().to_owned(),
                                                         alt_text: "Avatar".to_owned(),
@@ -1031,8 +1031,8 @@ pub fn SettingsPanel(
                                                 }
                                             } else {
                                                 div {
+                                                    class: "avatar-img lg placeholder",
                                                     "data-testid": "settings-avatar-preview",
-                                                    style: "width: 64px; height: 64px; border-radius: 50%; background: var(--bg-elevated, #1a1d22); border: 1px dashed var(--border-default, #333); display: flex; align-items: center; justify-content: center; color: var(--muted, #888);",
                                                     "—"
                                                 }
                                             }

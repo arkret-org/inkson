@@ -362,8 +362,11 @@ pub fn ChatPanel(
             .await;
         });
     }
-    let messages_for_reply_lookup = all_messages_snapshot.clone();
-    let messages_for_composer_lookup = all_messages_snapshot.clone();
+    // Both lookups are read-only `.iter().find()` scans, so they borrow the
+    // single `all_messages_snapshot` clone instead of cloning the whole Vec
+    // twice more per render.
+    let messages_for_reply_lookup = &all_messages_snapshot;
+    let messages_for_composer_lookup = &all_messages_snapshot;
     let left_open = !embedded && left_panel_open();
     let active_right_panel = if embedded { None } else { right_panel() };
     let right_open = active_right_panel.is_some();
@@ -628,7 +631,16 @@ pub fn ChatPanel(
             // Only mutate when we'd actually move someone from Decrypting
             // into KeyMissing — Decrypting → Plaintext requires a real
             // decrypt attempt that this view doesn't yet run.
-            if snapshot_missing {
+            // Peek first so we only take a (re-render-triggering) write lock
+            // when at least one row would actually transition. Without this
+            // guard every `state_store` change re-marked `messages` dirty even
+            // when nothing changed, forcing a redundant repaint.
+            let has_decrypting = snapshot_missing
+                && messages_sig
+                    .peek()
+                    .iter()
+                    .any(|msg| matches!(msg.crypto_state, MessageCryptoState::Decrypting));
+            if has_decrypting {
                 let mut current = messages_sig.write();
                 for msg in current.iter_mut() {
                     if matches!(msg.crypto_state, MessageCryptoState::Decrypting) {
@@ -642,10 +654,19 @@ pub fn ChatPanel(
     {
         let messages_for_scroll = messages;
         let selected_channel_for_scroll = selected_channel;
+        // Only scroll to the latest message when the visible count or the
+        // active channel actually changes. Tracking the last-scrolled
+        // (count, channel) pair keeps unrelated message mutations (e.g. a
+        // crypto_state flip on an existing row) from yanking the feed.
+        let mut last_scroll_key = use_signal(|| (0_usize, String::new()));
         use_effect(move || {
-            let _message_count = { messages_for_scroll.read().len() };
-            let _channel = { selected_channel_for_scroll.read().clone() };
-            scroll_chat_feed_to_latest();
+            let message_count = messages_for_scroll.read().len();
+            let channel = selected_channel_for_scroll.read().clone();
+            let key = (message_count, channel);
+            if last_scroll_key.peek().clone() != key {
+                last_scroll_key.set(key);
+                scroll_chat_feed_to_latest();
+            }
         });
     }
 
@@ -1197,6 +1218,7 @@ pub fn ChatPanel(
                                 .unwrap_or_default();
                             rsx! {
                         div {
+                            key: "{msg.id}",
                             class: {
                                 let mut base = if is_own_message_sender(&msg.sender, &account_did) {
                                     if msg.failed { "discussion-message is-own is-failed".to_owned() } else { "discussion-message is-own".to_owned() }
@@ -1383,7 +1405,7 @@ pub fn ChatPanel(
                                 }
                                 if let Some(reply_id) = msg.reply_to.as_ref() {
                                     if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
-                                        &messages_for_reply_lookup,
+                                        messages_for_reply_lookup,
                                         reply_id,
                                         &account_did,
                                         &account_display_label,
@@ -2559,7 +2581,7 @@ pub fn ChatPanel(
                 if let Some(reply_id) = reply_to_message() {
                     div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
                         if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
-                            &messages_for_composer_lookup,
+                            messages_for_composer_lookup,
                             &reply_id,
                             &account_did,
                             &account_display_label,
@@ -2863,9 +2885,13 @@ pub fn ChatPanel(
                                             })
                                         })
                                         .collect();
-                                let state_snapshot = mention_picker_state.read().clone();
+                                // `filter` borrows from `candidates`, not from the
+                                // picker state, so we run it under the read guard and
+                                // only clone the matched candidates we actually render
+                                // instead of cloning the whole picker state first.
                                 let matches: Vec<crate::messaging::mentions::MentionCandidate> =
-                                    state_snapshot
+                                    mention_picker_state
+                                        .read()
                                         .filter(&candidates)
                                         .into_iter()
                                         .cloned()
@@ -2879,6 +2905,7 @@ pub fn ChatPanel(
                                                 {
                                                     rsx! {
                                                         button {
+                                                            key: "{candidate.did}",
                                                             r#type: "button",
                                                             class: "mention-suggestion",
                                                             "data-testid": "mention-suggestion",

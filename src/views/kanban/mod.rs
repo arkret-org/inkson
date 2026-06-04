@@ -1881,10 +1881,11 @@ pub fn KanbanPanel(
                 } else {
                 for column in visible_columns.iter() {
                     {
-                    let column_id_for_drop = column.id.clone();
-                    let column_id_for_drag = column.id.clone();
-                    let column_title_for_drop = column.title.clone();
-                    let column_title_for_drag = column.title.clone();
+                    // One id clone shared by both drop/drag closures (each takes its
+                    // own clone at the `move ||` boundary). The title is read-only in
+                    // the aria/title attributes, so we format `column.title` directly
+                    // instead of cloning it twice.
+                    let column_id = column.id.clone();
                     rsx! {
                     div {
                         class: "{board_column_class}",
@@ -1936,11 +1937,11 @@ pub fn KanbanPanel(
                         div {
                             class: "column-drop-target-before",
                             "data-testid": "column-drop-target-before",
-                            "aria-label": "Drop column before {column_title_for_drop}",
-                            title: "Drop column before {column_title_for_drop}",
+                            "aria-label": "Drop column before {column.title}",
+                            title: "Drop column before {column.title}",
                             ondragover: move |event| event.prevent_default(),
                             ondrop: {
-                                let target_column_id = column_id_for_drop.clone();
+                                let target_column_id = column_id.clone();
                                 let base = base_url.clone();
                                 let space = selected_space.clone();
                                 let actor = account_did.clone();
@@ -1983,10 +1984,10 @@ pub fn KanbanPanel(
                                     class: "column-drag-handle",
                                     "data-testid": "column-drag-handle",
                                     draggable: "true",
-                                    title: "Drag column {column_title_for_drag}",
-                                    "aria-label": "Drag column {column_title_for_drag}",
+                                    title: "Drag column {column.title}",
+                                    "aria-label": "Drag column {column.title}",
                                     ondragstart: {
-                                        let column_id = column_id_for_drag.clone();
+                                        let column_id = column_id.clone();
                                         move |_| {
                                             dragging_column.set(Some(DraggedColumn {
                                                 column_id: column_id.clone(),
@@ -2024,6 +2025,7 @@ pub fn KanbanPanel(
                     .filter(|(_, c)| c.lifecycle == FlowLifecycleState::Active)
                 {
                             div {
+                                key: "{card.id}",
                                 class: {
                                     let mut classes = String::from("event board-card");
                                     if !dragged_card_id_for_match.is_empty()
@@ -2211,6 +2213,7 @@ pub fn KanbanPanel(
                             .filter(|c| c.lifecycle == FlowLifecycleState::Redacted)
                         {
                             div {
+                                key: "{redacted_card.id}",
                                 class: "event board-card board-card-redacted",
                                 "data-testid": "kanban-card-redacted",
                                 "data-flow-id": "{redacted_card.id}",

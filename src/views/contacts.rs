@@ -128,7 +128,7 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                             div { class: "muted", "No contacts" }
                         } else {
                             ul { class: "settings-list",
-                                for contact in contacts.read().iter().cloned() {
+                                for contact in contacts.read().iter() {
                                     li {
                                         class: "event",
                                         "data-testid": "contact-row",

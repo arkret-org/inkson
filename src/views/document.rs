@@ -935,10 +935,10 @@ pub fn DocumentPanel(
                                 },
                                 style: "cursor: text; padding: 8px 0;",
                                 match block.kind {
-                                    BlockKind::Heading => rsx! { h2 { style: "margin: 0;", "{block.content}" } },
+                                    BlockKind::Heading => rsx! { h2 { class: "document-block-text", "{block.content}" } },
                                     BlockKind::BulletList => rsx! { ul { li { "{block.content}" } } },
                                     BlockKind::CodeBlock => rsx! { pre { code { "{block.content}" } } },
-                                    BlockKind::Paragraph => rsx! { p { style: "margin: 0;", "{block.content}" } },
+                                    BlockKind::Paragraph => rsx! { p { class: "document-block-text", "{block.content}" } },
                                 }
                             }
                         }
@@ -1069,7 +1069,6 @@ pub fn DocumentPanel(
                     "data-testid": "document-cursor-self",
                     "data-position-line": "{self_cursor_line()}",
                     "data-position-col": "{self_cursor_col()}",
-                    style: "display: inline-block; width: 1px; height: 1em; background: var(--accent, #4c8bf5); margin: 0 2px;",
                     ""
                 }
                 for cursor in remote_cursors().iter() {
@@ -1080,7 +1079,6 @@ pub fn DocumentPanel(
                         "data-position-line": "{cursor.line}",
                         "data-position-col": "{cursor.col}",
                         title: "{cursor.display_name}",
-                        style: "display: inline-block; width: 1px; height: 1em; background: var(--warning, #f5a623); margin: 0 2px;",
                         ""
                     }
                 }
