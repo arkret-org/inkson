@@ -43,6 +43,11 @@ pub fn RecoverPanel(
     let mut decrypted_payload = use_signal(String::new);
 
     let has_session = !token().trim().is_empty();
+    let has_account_device = !account_did.trim().is_empty() && !device_id.trim().is_empty();
+    let account_did_for_vault = account_did.clone();
+    let device_id_for_vault = device_id.clone();
+    let account_did_for_mls = account_did.clone();
+    let device_id_for_mls = device_id.clone();
 
     rsx! {
         div { class: "settings", "data-testid": "recovery-restore-panel",
@@ -93,6 +98,8 @@ pub fn RecoverPanel(
                                 onclick: move |_| {
                                     let base = base_url();
                                     let api_token = token();
+                                    let actor = account_did_for_vault.clone();
+                                    let device = device_id_for_vault.clone();
                                     let pass = passphrase();
                                     let bid_input = backup_id();
                                     restore_status.set(
@@ -100,54 +107,89 @@ pub fn RecoverPanel(
                                     );
                                     decrypted_payload.set(String::new());
                                     spawn(async move {
-                                        let backup_value = if bid_input.trim().is_empty() {
-                                            // Fall back to the latest entry in
-                                            // the list. Failure here is fatal —
-                                            // we can't decrypt without an
-                                            // envelope.
-                                            match with_authed_api(
-                                                &base,
-                                                api_token.clone(),
-                                                |api| async move { api.list_key_backups().await },
-                                            )
-                                            .await
-                                            {
-                                                Ok(value) => match latest_backup(&value) {
-                                                    Some(v) => v,
-                                                    None => {
-                                                        restore_status.set(
-                                                            "No backups available. Trigger one from /settings/security first or paste a backup_id.".to_owned(),
-                                                        );
-                                                        return;
-                                                    }
-                                                },
-                                                Err(err) => {
-                                                    restore_status.set(format!(
-                                                        "Backup list failed: {}",
-                                                        err.display()
-                                                    ));
+                                        if actor.trim().is_empty() || device.trim().is_empty() {
+                                            restore_status.set(
+                                                "Account and current device are required before reading backup ciphertext.".to_owned(),
+                                            );
+                                            return;
+                                        }
+                                        let list_value = match with_authed_api(
+                                            &base,
+                                            api_token.clone(),
+                                            |api| async move { api.list_key_backups().await },
+                                        )
+                                        .await
+                                        {
+                                            Ok(value) => value,
+                                            Err(err) => {
+                                                restore_status.set(format!(
+                                                    "Backup list failed: {}",
+                                                    err.display()
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        let backup_metadata = if bid_input.trim().is_empty() {
+                                            match latest_backup(&list_value) {
+                                                Some(v) => v,
+                                                None => {
+                                                    restore_status.set(
+                                                        "No backups available. Trigger one from /settings/security first or paste a backup_id.".to_owned(),
+                                                    );
                                                     return;
                                                 }
                                             }
                                         } else {
-                                            let bid_clone = bid_input.clone();
-                                            match with_authed_api(
-                                                &base,
-                                                api_token.clone(),
-                                                move |api| async move {
-                                                    api.get_key_backup(&bid_clone).await
-                                                },
-                                            )
-                                            .await
+                                            let wanted = bid_input.trim();
+                                            match list_value
+                                                .get("backups")
+                                                .and_then(Value::as_array)
+                                                .and_then(|backups| {
+                                                    backups.iter().find(|entry| {
+                                                        entry
+                                                            .get("backup_id")
+                                                            .and_then(Value::as_str)
+                                                            == Some(wanted)
+                                                    })
+                                                })
+                                                .cloned()
                                             {
-                                                Ok(v) => v,
-                                                Err(err) => {
+                                                Some(v) => v,
+                                                None => {
                                                     restore_status.set(format!(
-                                                        "Backup fetch failed: {}",
-                                                        err.display()
+                                                        "Backup {wanted} is not listed for this account."
                                                     ));
                                                     return;
                                                 }
+                                            }
+                                        };
+                                        let backup_value = match with_authed_api(
+                                            &base,
+                                            api_token.clone(),
+                                            {
+                                                let metadata = backup_metadata.clone();
+                                                let actor = actor.clone();
+                                                let device = device.clone();
+                                                move |api| async move {
+                                                    crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                                                        &api,
+                                                        &metadata,
+                                                        &actor,
+                                                        &device,
+                                                    )
+                                                    .await
+                                                }
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(value) => value,
+                                            Err(err) => {
+                                                restore_status.set(format!(
+                                                    "Backup fetch failed: {}",
+                                                    err.display()
+                                                ));
+                                                return;
                                             }
                                         };
 
@@ -181,12 +223,12 @@ pub fn RecoverPanel(
                             button {
                                 class: "secondary",
                                 "data-testid": "recovery-restore-mls-history-button",
-                                disabled: !has_session || account_did.trim().is_empty() || device_id.trim().is_empty(),
+                                disabled: !has_session || !has_account_device,
                                 onclick: move |_| {
                                     let base = base_url();
                                     let api_token = token();
-                                    let actor = account_did.clone();
-                                    let device = device_id.clone();
+                                    let actor = account_did_for_mls.clone();
+                                    let device = device_id_for_mls.clone();
                                     let mut state_store = state_store;
                                     restore_status.set(
                                         "Looking up latest MLS history backup from soland…".to_owned(),
@@ -227,40 +269,33 @@ pub fn RecoverPanel(
                                             );
                                             return;
                                         };
-                                        let backup_value = if candidate
-                                            .get("ciphertext")
-                                            .and_then(Value::as_str)
-                                            .is_some()
-                                        {
-                                            candidate
-                                        } else {
-                                            let Some(bid) = candidate
-                                                .get("backup_id")
-                                                .and_then(Value::as_str)
-                                                .map(ToOwned::to_owned)
-                                            else {
-                                                restore_status.set(
-                                                    "MLS history backup row missing backup_id.".to_owned(),
-                                                );
-                                                return;
-                                            };
-                                            match with_authed_api(
-                                                &base,
-                                                api_token.clone(),
-                                                move |api| async move {
-                                                    api.get_key_backup(&bid).await
-                                                },
-                                            )
-                                            .await
+                                        let backup_value = match with_authed_api(
+                                            &base,
+                                            api_token.clone(),
                                             {
-                                                Ok(value) => value,
-                                                Err(err) => {
-                                                    restore_status.set(format!(
-                                                        "MLS history backup fetch failed: {}",
-                                                        err.display()
-                                                    ));
-                                                    return;
+                                                let metadata = candidate.clone();
+                                                let actor = actor.clone();
+                                                let device = device.clone();
+                                                move |api| async move {
+                                                    crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                                                        &api,
+                                                        &metadata,
+                                                        &actor,
+                                                        &device,
+                                                    )
+                                                    .await
                                                 }
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(value) => value,
+                                            Err(err) => {
+                                                restore_status.set(format!(
+                                                    "MLS history backup fetch failed: {}",
+                                                    err.display()
+                                                ));
+                                                return;
                                             }
                                         };
                                         let secure_store =

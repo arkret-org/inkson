@@ -317,14 +317,31 @@ pub fn SettingsSecurityPanel(
                                         // re-deriving MLS epoch keys
                                         // is gated on that follow-up.
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.get_key_backup(&backup_id).await
+                                            api.list_key_backups().await
                                         })
                                         .await
                                         {
                                             Ok(response) => {
-                                                action_status.set(format!(
-                                                    "Fetched backup metadata: {response}"
-                                                ));
+                                                let found = response
+                                                    .get("backups")
+                                                    .and_then(serde_json::Value::as_array)
+                                                    .and_then(|backups| {
+                                                        backups.iter().find(|entry| {
+                                                            entry
+                                                                .get("backup_id")
+                                                                .and_then(serde_json::Value::as_str)
+                                                                == Some(backup_id.as_str())
+                                                        })
+                                                    });
+                                                match found {
+                                                    Some(metadata) => action_status.set(format!(
+                                                        "Fetched backup metadata: {metadata}"
+                                                    )),
+                                                    None => action_status.set(format!(
+                                                        "Backup {} is not listed for this account.",
+                                                        short_protocol_id(&backup_id)
+                                                    )),
+                                                }
                                             }
                                             Err(err) => {
                                                 action_status.set(format!(

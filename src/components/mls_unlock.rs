@@ -46,18 +46,20 @@ pub fn MlsUnlockPrompt(
         let mut state_store = state_store;
         let mut needs_mls_unlock = needs_mls_unlock;
         let mut restore_payload_cache = restore_payload_cache;
-        let cached_payload = restore_payload_cache();
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
-            let payload_result = if let Some(payload) = cached_payload {
-                Ok(payload)
-            } else {
-                with_authed_api(&base, session, |api| async move {
-                    crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
-                })
+            let fetch_actor = actor.clone();
+            let fetch_device = device.clone();
+            let payload_result = with_authed_api(&base, session, |api| async move {
+                crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                    &api,
+                    &fetch_actor,
+                    &fetch_device,
+                )
                 .await
-            };
+            })
+            .await;
             let result = match payload_result {
                 Ok(payload) => {
                     restore_payload_cache.set(Some(payload.clone()));

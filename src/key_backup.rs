@@ -10,6 +10,11 @@ use crate::recovery_crypto::{
 
 const KEY_BACKUP_SCHEMA: &str = "ck.schema.key_backup.v1";
 pub const KEY_BACKUP_DELETE_PROOF_HEADER: &str = "x-cokret-key-backup-delete-proof";
+pub const KEY_BACKUP_UNLOCK_PROOF_HEADER: &str = "x-cokret-key-backup-unlock-proof";
+pub const KEY_BACKUP_UNLOCK_PROOF_SCHEMA: &str = "ck.schema.key_backup_unlock_proof.v1";
+pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ck.schema.key_backup_plaintext.v1";
+pub const KEY_BACKUP_ACTIVE_SERIES_SCHEMA: &str = "ck.schema.key_backup_active_series.v1";
+pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
 /// §7.4.1 / §7.6 + the `ck.schema.key_backup.v1` `signed_fields.allOf`). Optional
@@ -51,7 +56,7 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
 /// Phase 2 (key-management.md §7.4.1, CKP-0013): sign a key-backup envelope with
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
-/// `auth_data` (verification_method / signed_fields / x_ssk_generation) is bound
+/// `auth_data` (verification_method / signed_fields / ssk_generation) is bound
 /// too, so it cannot be tampered. `ssk_generation`, when given, anchors the
 /// envelope to the published cross-signing self-signing key generation.
 pub fn sign_key_backup_auth_data(
@@ -76,7 +81,7 @@ pub fn sign_key_backup_auth_data(
         "signed_fields": signed_fields,
     });
     if let Some(generation) = ssk_generation {
-        auth["x_ssk_generation"] = Value::Number(serde_json::Number::from(generation));
+        auth["ssk_generation"] = Value::Number(serde_json::Number::from(generation));
     }
     body["auth_data"] = auth;
     // Sign over the envelope WITH auth_data present but WITHOUT the signature.
@@ -114,6 +119,7 @@ pub fn sign_key_backup_with_active_device(
         "device_id": device_id,
         "verification_method": signer.verification_method(),
         "signature_algorithm": signer.algorithm(),
+        "ssk_generation": DEFAULT_SSK_GENERATION,
         "signed_fields": signed_fields,
     });
     let payload = crate::canonical::canonical_json_bytes(body)?;
@@ -138,6 +144,13 @@ pub fn verify_key_backup_auth_data(
         .ok_or_else(|| "auth_data is required".to_owned())?;
     if auth.get("signature_algorithm").and_then(Value::as_str) != Some("EdDSA") {
         return Err("auth_data.signature_algorithm must be EdDSA".to_owned());
+    }
+    if !auth
+        .get("ssk_generation")
+        .and_then(Value::as_u64)
+        .is_some_and(|generation| generation >= 1)
+    {
+        return Err("auth_data.ssk_generation must be >= 1".to_owned());
     }
     let sig_b64 = auth
         .get("signature")
@@ -208,6 +221,98 @@ pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
 
 pub fn key_backup_delete_ownership_proof(actor_did: &str, backup_id: &str) -> String {
     format!("dev-ssk-delete:v1:{actor_did}:{backup_id}")
+}
+
+pub fn build_key_backup_unlock_proof_active(
+    backup: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+    recovery_session: Option<&Value>,
+) -> anyhow::Result<Value> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active signer is required for key backup unlock proof"))?;
+    let backup_id = required_str_anyhow(backup, "backup_id")?;
+    let backup_class = required_str_anyhow(backup, "backup_class")?;
+    let series_id = required_str_anyhow(backup, "series_id")?;
+    let ciphertext_digest = required_str_anyhow(backup, "ciphertext_digest")?;
+    let issued_at = chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let (recovery_session_id, proof_kind, proof_digest) = if let Some(session) = recovery_session {
+        let session_id = required_str_anyhow(session, "recovery_session_id")?.to_owned();
+        let summary = session
+            .get("proof_summary")
+            .ok_or_else(|| anyhow::anyhow!("verified recovery session missing proof_summary"))?;
+        let kind = required_str_anyhow(summary, "kind")?.to_owned();
+        let digest = required_str_anyhow(summary, "proof_digest")?.to_owned();
+        (session_id, kind, digest)
+    } else {
+        let session_id = format!("ck:recovery_session:{}", crate::operation::uuid_v7());
+        let local_digest = crate::canonical::canonical_sha256(&json!({
+            "type": "ck.key_backup.local_unlock_proof.v1",
+            "principal_id": principal_id,
+            "requesting_device_id": requesting_device_id,
+            "backup_id": backup_id,
+            "backup_class": backup_class,
+            "series_id": series_id,
+            "ciphertext_digest": ciphertext_digest,
+            "issued_at": issued_at,
+        }))?;
+        (session_id, "recovery_unlock".to_owned(), local_digest)
+    };
+    let signed_fields = vec![
+        "schema",
+        "recovery_session_id",
+        "principal_id",
+        "requesting_device_id",
+        "backup_id",
+        "backup_class",
+        "series_id",
+        "ciphertext_digest",
+        "proof_kind",
+        "proof_digest",
+        "issued_at",
+    ];
+    let mut proof = json!({
+        "schema": KEY_BACKUP_UNLOCK_PROOF_SCHEMA,
+        "recovery_session_id": recovery_session_id,
+        "principal_id": principal_id,
+        "requesting_device_id": requesting_device_id,
+        "backup_id": backup_id,
+        "backup_class": backup_class,
+        "series_id": series_id,
+        "ciphertext_digest": ciphertext_digest,
+        "proof_kind": proof_kind,
+        "proof_digest": proof_digest,
+        "issued_at": issued_at,
+        "auth_data": {
+            "device_id": requesting_device_id,
+            "verification_method": signer.verification_method(),
+            "signature_algorithm": signer.algorithm(),
+            "signed_fields": signed_fields,
+        }
+    });
+    let payload = crate::canonical::canonical_json_bytes(&proof)?;
+    let signature = signer
+        .sign_raw(&payload)
+        .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?;
+    proof["auth_data"]["signature"] = Value::String(B64.encode(signature));
+    Ok(proof)
+}
+
+pub async fn fetch_key_backup_with_active_unlock_proof(
+    api: &crate::api::CokretApi,
+    backup_metadata: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+) -> anyhow::Result<Value> {
+    let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
+    let proof = build_key_backup_unlock_proof_active(
+        backup_metadata,
+        principal_id,
+        requesting_device_id,
+        None,
+    )?;
+    api.get_key_backup_with_unlock_proof(&backup_id, &proof)
+        .await
 }
 
 pub fn attach_key_backup_domain_separation(
@@ -778,12 +883,13 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
     match method {
         "passphrase_kdf" => {
             // Spec §5.0.1 first-backup gate: a did_recovery envelope MUST encrypt
-            // to recovery_public_key / threshold_recovery / hardware_wrapped_key
-            // — passphrase_kdf alone is forbidden (a single passphrase must not
-            // control DID recovery).
+            // to recovery_public_key, while threshold / hardware factors live
+            // in the recovery policy proof layer. passphrase_kdf alone is
+            // forbidden because a single passphrase must not control DID
+            // recovery.
             if class == KeyBackupClass::DidRecovery {
                 return Err(
-                    "did_recovery backups must not use passphrase_kdf alone; use recovery_public_key, threshold_recovery, or hardware_wrapped_key"
+                    "did_recovery backups must not use passphrase_kdf alone; use recovery_public_key or satisfy threshold/hardware factors in the recovery policy proof layer"
                         .to_owned(),
                 );
             }
@@ -1022,6 +1128,10 @@ fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("{key} is required"))
 }
 
+fn required_str_anyhow<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
+    required_str(value, key).map_err(|err| anyhow::anyhow!(err))
+}
+
 fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
     value
         .get(key)
@@ -1161,7 +1271,7 @@ mod tests {
 
         assert_eq!(body["auth_data"]["verification_method"], vm);
         assert_eq!(body["auth_data"]["signature_algorithm"], "EdDSA");
-        assert_eq!(body["auth_data"]["x_ssk_generation"], 7);
+        assert_eq!(body["auth_data"]["ssk_generation"], 7);
         // signed_fields must cover the mandatory set (+ series fields present).
         let signed: Vec<String> = body["auth_data"]["signed_fields"]
             .as_array()
@@ -1189,7 +1299,7 @@ mod tests {
             "policy_version": 3,
         });
         let signing_key = SigningKey::from_bytes(&[43u8; 32]);
-        sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", None)
+        sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", Some(7))
             .unwrap();
         let signed: Vec<String> = body["auth_data"]["signed_fields"]
             .as_array()
@@ -1220,7 +1330,7 @@ mod tests {
             &signing_key,
             DEVICE,
             "did:web:alice.example#device",
-            None,
+            Some(1),
         )
         .unwrap();
         verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -1233,7 +1343,7 @@ mod tests {
         let mut body =
             build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
-        sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", None)
+        sign_key_backup_auth_data(&mut body, &signing_key, DEVICE, "did:web:a#device", Some(1))
             .unwrap();
 
         // Tamper a signed field (ciphertext is covered via ciphertext_digest, but

@@ -1593,13 +1593,31 @@ pub fn SettingsPanel(
                                 spawn(async move {
                                     let backup_id_for_msg = backup_id.clone();
                                     match with_authed_api(&base, api_token, |api| async move {
-                                        api.get_key_backup(&backup_id).await
+                                        api.list_key_backups().await
                                     })
                                     .await
                                     {
-                                        Ok(response) => key_backup_status.set(format!(
-                                            "Backup {backup_id_for_msg}: {response}"
-                                        )),
+                                        Ok(response) => {
+                                            let found = response
+                                                .get("backups")
+                                                .and_then(serde_json::Value::as_array)
+                                                .and_then(|backups| {
+                                                    backups.iter().find(|entry| {
+                                                        entry
+                                                            .get("backup_id")
+                                                            .and_then(serde_json::Value::as_str)
+                                                            == Some(backup_id.as_str())
+                                                    })
+                                                });
+                                            match found {
+                                                Some(metadata) => key_backup_status.set(format!(
+                                                    "Backup {backup_id_for_msg}: {metadata}"
+                                                )),
+                                                None => key_backup_status.set(format!(
+                                                    "Backup {backup_id_for_msg} is not listed for this account."
+                                                )),
+                                            }
+                                        }
                                         Err(err) => key_backup_status
                                             .set(format!("Backup load: {}", err.display())),
                                     }

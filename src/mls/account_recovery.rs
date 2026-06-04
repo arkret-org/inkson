@@ -12,7 +12,7 @@
 //! transmitted in clear.
 
 use anyhow::{Result, anyhow};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::key_backup::{
     BackupItem, KeyBackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
@@ -489,6 +489,52 @@ pub async fn fetch_mls_restore_payload(api: &crate::api::CokretApi) -> Result<Va
         .map_err(|err| anyhow!("list key backups: {err}"))
 }
 
+pub async fn fetch_mls_restore_payload_with_unlock_proof(
+    api: &crate::api::CokretApi,
+    actor_did: &str,
+    device_id: &str,
+) -> Result<Value> {
+    let payload = fetch_mls_restore_payload(api).await?;
+    let mut full_backups = Vec::new();
+    for entry in payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        if entry.get("ciphertext").and_then(Value::as_str).is_some() {
+            full_backups.push(entry);
+            continue;
+        }
+        let backup_class = entry
+            .get("backup_class")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(
+            backup_class,
+            "secret_storage" | "mls_history" | "did_recovery"
+        ) {
+            full_backups.push(entry);
+            continue;
+        }
+        let backup_id = entry
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .unwrap_or("(unknown)");
+        let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+            api, &entry, actor_did, device_id,
+        )
+        .await
+        .map_err(|err| anyhow!("fetch key backup {backup_id} with unlock proof: {err}"))?;
+        full_backups.push(full);
+    }
+    Ok(json!({
+        "backups": full_backups,
+        "next_cursor": payload.get("next_cursor").cloned().unwrap_or(Value::Null),
+        "state": payload.get("state").cloned().unwrap_or_else(|| json!("active")),
+    }))
+}
+
 /// Restore MLS account secret + history from an already-fetched
 /// `list_key_backups` payload.
 ///
@@ -675,7 +721,7 @@ pub async fn auto_restore_mls_history_with_passphrase(
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     // List once and reuse for both the account-secret and history selection.
-    let payload = fetch_mls_restore_payload(api).await?;
+    let payload = fetch_mls_restore_payload_with_unlock_proof(api, actor_did, device_id).await?;
     restore_mls_history_with_passphrase_from_payload(
         &payload,
         state_store,
@@ -1038,7 +1084,16 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
     let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_account_backup = select_mls_account_secret_backup(&list_payload);
+    let previous_account_backup = match select_mls_account_secret_backup(&list_payload) {
+        Some(metadata) => Some(
+            crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                api, &metadata, actor_did, device_id,
+            )
+            .await
+            .map_err(|err| anyhow!("fetch previous account MLS secret backup: {err}"))?,
+        ),
+        None => None,
+    };
     // Fresh backup_id per series link (see `apply_next_series`).
     let account_backup_id = fresh_backup_id();
 
@@ -1084,7 +1139,16 @@ pub async fn upload_mls_private_plaintext_backup(
         derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
 
     let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_backup = select_mls_private_plaintext_backup(&list_payload);
+    let previous_backup = match select_mls_private_plaintext_backup(&list_payload) {
+        Some(metadata) => Some(
+            crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                api, &metadata, actor_did, device_id,
+            )
+            .await
+            .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?,
+        ),
+        None => None,
+    };
     // Fresh backup_id per series link (see `apply_next_series`).
     let backup_id = fresh_backup_id();
 

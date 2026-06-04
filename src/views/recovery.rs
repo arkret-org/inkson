@@ -1202,26 +1202,53 @@ pub fn RecoveryPanel(
                                 button {
                                     class: "primary",
                                     "data-testid": "restore-decrypt-button",
-                                    disabled: restore_pass().is_empty() || target_row.salt_b64.is_empty() || target_row.nonce_b64.is_empty() || target_row.ciphertext_b64.is_empty(),
+                                    disabled: restore_pass().is_empty(),
                                     onclick: {
                                         let target_row = target_row.clone();
                                         let actor_key = actor_key.clone();
                                         let mut store = state_store;
+                                        let base = base_url.clone();
                                         move |_| {
                                             let pass_bytes = restore_pass().into_bytes();
-                                            // Spec §7.5: decrypt from the full envelope (verifies
-                                            // key_commitment + recomputes the deterministic nonce +
-                                            // binds the AEAD AAD), not from loose salt/nonce/ct.
-                                            let body = target_row.body.clone();
+                                            let metadata = target_row.body.clone();
                                             let bid = target_row.backup_id.clone();
                                             // Captured for the Option A account-MLS recovery below.
                                             let all_rows = backup_rows();
                                             let actor_key = actor_key.clone();
                                             let device = device_id();
+                                            let base = base.clone();
+                                            let api_token = token();
                                             restore_status.set("Stretching passphrase with Argon2id…".to_owned());
                                             restore_loading.set(true);
                                             spawn(async move {
                                                 let bid_label = short_protocol_id(&bid);
+                                                let fetch_actor = actor_key.clone();
+                                                let fetch_device = device.clone();
+                                                let fetch_metadata = metadata.clone();
+                                                let body = match with_authed_api(&base, api_token, |api| async move {
+                                                    crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                                                        &api,
+                                                        &fetch_metadata,
+                                                        &fetch_actor,
+                                                        &fetch_device,
+                                                    )
+                                                    .await
+                                                })
+                                                .await
+                                                {
+                                                    Ok(body) => body,
+                                                    Err(err) => {
+                                                        restore_status.set(format!(
+                                                            "Fetch {bid_label} failed: {}",
+                                                            err.display()
+                                                        ));
+                                                        restore_loading.set(false);
+                                                        return;
+                                                    }
+                                                };
+                                                // Spec §7.5: decrypt from the full envelope (verifies
+                                                // key_commitment + recomputes the deterministic nonce +
+                                                // binds the AEAD AAD), not from loose salt/nonce/ct.
                                                 match crate::key_backup::open_passphrase_kdf_backup_body(&pass_bytes, &body) {
                                                     Ok(plain) => {
                                                         let text = String::from_utf8_lossy(&plain).into_owned();
