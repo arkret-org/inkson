@@ -297,7 +297,7 @@ pub struct DeviceRevokeFullSnapshot {
 //
 // Each chain entry tracks the lifecycle of those Moves
 // individually — both must reach `Effective` before the device is
-// considered fully unspooled from the group. The space-admin page
+// considered fully unspooled from the group. The realm-admin page
 // renders this list with per-row stage chips so an operator can see
 // where the revocation chain has stalled.
 // ═══════════════════════════════════════════════════════════════════════════

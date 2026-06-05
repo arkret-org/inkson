@@ -132,9 +132,9 @@ pub enum Constraint {
     },
     /// Restrict to specific object types or facets.
     TypeRestriction {
-        object_type_allow: Vec<String>,
+        allowed_object_types: Vec<String>,
         #[serde(default)]
-        facet_allow: Vec<String>,
+        allowed_facets: Vec<String>,
     },
     /// Limit scope to specific Realm-owned Space containers.
     ScopeLimitation {
@@ -211,18 +211,18 @@ impl Constraint {
                 ConstraintResult::Allow
             }
             Self::TypeRestriction {
-                object_type_allow,
-                facet_allow,
+                allowed_object_types,
+                allowed_facets,
             } => {
                 if let Some(ref object_type) = ctx.object_type
-                    && !object_type_allow.contains(object_type)
+                    && !allowed_object_types.contains(object_type)
                 {
                     return ConstraintResult::Deny(format!(
                         "object type {object_type} not allowed"
                     ));
                 }
-                if !facet_allow.is_empty() {
-                    for facet in facet_allow {
+                if !allowed_facets.is_empty() {
+                    for facet in allowed_facets {
                         if !ctx.facets.contains(facet) {
                             return ConstraintResult::Deny(format!(
                                 "facet {facet} not allowed or unavailable"
@@ -944,8 +944,8 @@ mod tests {
     #[test]
     fn test_constraint_type_restriction_checks_facets() {
         let constraint = Constraint::TypeRestriction {
-            object_type_allow: vec!["flow".to_owned()],
-            facet_allow: vec!["stateful".to_owned(), "rankable".to_owned()],
+            allowed_object_types: vec!["flow".to_owned()],
+            allowed_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
         };
 
         let ctx_allowed = EvalContext {

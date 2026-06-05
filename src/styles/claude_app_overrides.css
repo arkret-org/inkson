@@ -1999,12 +1999,12 @@
   height: 16px;
 }
 
-.space-nav-menu-host {
+.realm-nav-menu-host {
   position: relative;
   display: none;
 }
 
-.space-nav-menu-button {
+.realm-nav-menu-button {
   position: relative;
   width: 36px;
   min-width: 36px;
@@ -2016,7 +2016,7 @@
   color: var(--accent);
 }
 
-.space-nav-menu-button::after {
+.realm-nav-menu-button::after {
   content: "";
   position: absolute;
   right: 6px;
@@ -2028,12 +2028,12 @@
   box-shadow: 0 0 0 2px var(--surface);
 }
 
-.space-nav-menu-host.is-open .space-nav-menu-button {
+.realm-nav-menu-host.is-open .realm-nav-menu-button {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.space-nav-menu-scrim {
+.realm-nav-menu-scrim {
   position: fixed;
   inset: 0;
   z-index: var(--layer-local-popover);
@@ -2043,7 +2043,7 @@
   cursor: default;
 }
 
-.space-nav-menu-panel {
+.realm-nav-menu-panel {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
@@ -2059,7 +2059,7 @@
   box-shadow: var(--shadow-lg);
 }
 
-.space-nav-menu-item {
+.realm-nav-menu-item {
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -2076,26 +2076,26 @@
   cursor: pointer;
 }
 
-.space-nav-menu-item:hover,
-.space-nav-menu-item:focus-visible {
+.realm-nav-menu-item:hover,
+.realm-nav-menu-item:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 
-.space-nav-menu-item.is-active {
+.realm-nav-menu-item.is-active {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
   background: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
 
-.space-nav-menu-item:disabled {
+.realm-nav-menu-item:disabled {
   color: var(--text-3);
   cursor: not-allowed;
   opacity: 0.58;
 }
 
-.space-nav-menu-item .ui-icon {
+.realm-nav-menu-item .ui-icon {
   width: 16px;
   height: 16px;
   color: var(--accent);
@@ -2111,7 +2111,7 @@
     display: none;
   }
 
-  .workspace-header .space-nav-menu-host {
+  .workspace-header .realm-nav-menu-host {
     display: block;
   }
 
@@ -2129,7 +2129,7 @@
     display: none;
   }
 
-  .workspace-header .space-nav-menu-panel {
+  .workspace-header .realm-nav-menu-panel {
     left: auto;
     right: 0;
     transform: none;
@@ -2276,7 +2276,7 @@
 .shell.app.sidebar-collapsed .sidebar-context .grow,
 .shell.app.sidebar-collapsed .sidebar-context .pill,
 .shell.app.sidebar-collapsed .sidebar-context .mini,
-.shell.app.sidebar-collapsed .cx-connect-section,
+.shell.app.sidebar-collapsed .ck-connect-section,
 .shell.app.sidebar-collapsed .server-switch-title,
 .shell.app.sidebar-collapsed .server-switch-state,
 .shell.app.sidebar-collapsed .server-switch-menu,
@@ -2331,7 +2331,7 @@
   justify-items: center;
 }
 
-.cx-connect-section {
+.ck-connect-section {
   padding-top: 0;
 }
 
@@ -2462,19 +2462,19 @@
   background: color-mix(in srgb, var(--accent) 13%, var(--nav-soft));
 }
 
-.cx-connect-form {
+.ck-connect-form {
   display: grid;
   gap: 8px;
   padding: 0 10px 10px;
 }
 
-.cx-connect-form .actions {
+.ck-connect-form .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
-.cx-server-input,
+.ck-server-input,
 .workspace-header .search input {
   width: 100%;
   min-width: 0;
@@ -2485,12 +2485,12 @@
   font: inherit;
 }
 
-.cx-server-input {
+.ck-server-input {
   padding: 7px 9px;
   font-size: 12px;
 }
 
-.cx-server-input:focus,
+.ck-server-input:focus,
 .server-connect input:focus {
   outline: none;
   border-color: var(--accent);

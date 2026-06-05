@@ -448,7 +448,7 @@ fn member_count_matches(
 
 fn context_field<'a>(ctx: &'a NotificationEvalContext, field: &str) -> Option<&'a str> {
     match field {
-        "realm_id" | "space_id" => Some(ctx.realm_id.as_str()),
+        "realm_id" => Some(ctx.realm_id.as_str()),
         "kind" | "event_kind" => Some(ctx.event_kind.as_str()),
         "notification_type" => Some(ctx.notification_type.as_str()),
         "flow_id" => ctx.flow_id.as_deref(),

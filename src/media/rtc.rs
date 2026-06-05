@@ -3,13 +3,13 @@
 //! This module captures the client-side wire contract for the new media
 //! binding profile that landed in cokret-spec round R3:
 //!
-//! - **CALL-1** — `ck.self.call.media.token_exchange`: obtain a backend token and `participant_binding`
-//!   from soland's `POST /rtc/token` endpoint via the SDK helper
+//! - **CALL-1** — `ck.self.call.media.token_exchange`: obtain a backend token and
+//!   `participant_binding` from soland's `POST /rtc/token` endpoint via the SDK helper
 //!   [`cokret_sdk::media::call_media_token_exchange`].
 //! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
 //!   options. No silent fallback to a different focus.
 //! - **MEDIA-1** — SFrame key provider derives keys from the MLS Exporter with label
-//!   `cx-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32). Any backend-supplied key is rejected
+//!   `ck-rtc-frame-key/v1` (length=19, Context="", KDF.Nh=32). Any backend-supplied key is rejected
 //!   with `e2ee_key_source_unauthorised`.
 //! - **MEDIA-2** — `ParticipantConnected` (LiveKit / SFU signal) must be cross-checked against
 //!   `ck.call.state.participants[]`. A mismatch fails closed with
@@ -34,7 +34,7 @@ use std::collections::BTreeSet;
 /// §8.1`). The MLS exporter MUST be invoked with exactly this
 /// label, length=19, and empty Context. KDF.Nh=32 is enforced by the
 /// MLS ciphersuite (HKDF-SHA256).
-pub const SFRAME_FRAME_KEY_LABEL: &str = "cx-rtc-frame-key/v1";
+pub const SFRAME_FRAME_KEY_LABEL: &str = "ck-rtc-frame-key/v1";
 
 /// Length parameter for the MLS exporter call (matches spec §11).
 pub const SFRAME_FRAME_KEY_LENGTH: u16 = 19;
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn frame_key_label_matches_spec() {
         // Pinned per `media-service-binding.md §8.1`.
-        assert_eq!(SFRAME_FRAME_KEY_LABEL, "cx-rtc-frame-key/v1");
+        assert_eq!(SFRAME_FRAME_KEY_LABEL, "ck-rtc-frame-key/v1");
         assert_eq!(SFRAME_FRAME_KEY_LENGTH, 19);
         assert!(SFRAME_FRAME_KEY_CONTEXT.is_empty());
         assert_eq!(MEDIA_TOKEN_TTL_MAX_SECS, 600);

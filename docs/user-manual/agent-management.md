@@ -32,7 +32,7 @@ The agent surface lives in `/agents` and is gated by the
 2. Scroll to **Register an automated member**.
 3. Fill in:
    - **agent_id** — e.g. `assistant:example.com`.
-   - **protocol** — e.g. `cx.agent.v1`.
+   - **protocol** — e.g. `ck.agent.v1`.
    - **capabilities** — comma-separated. Use the autocomplete to pick
      from the 14 canonical capabilities.
 4. Click **Register**. yougen submits a `ck.agent.endpoint` envelope.
@@ -117,7 +117,7 @@ full chain (start → status* → result) and surface the outcome via the
 1. Click **Deactivate** on the agent row.
 2. Type `DEACTIVATE` in the confirmation field.
 3. Click **Confirm — destructive**.
-4. yougen publishes a `cx.agent.lifecycle.deactivate` envelope. The agent
+4. yougen publishes a `ck.agent.lifecycle.deactivate` envelope. The agent
    can no longer be summoned by any controller.
 
 <!-- TODO(screenshot): agent-deactivate-confirm.png -->

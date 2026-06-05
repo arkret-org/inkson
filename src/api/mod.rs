@@ -110,12 +110,12 @@ use crate::models::{
     MimiNotifyResBody, MimiProviderDirectoryResBody, MimiProxyDownloadResBody,
     MimiReportAbuseResBody, MimiRoomUpdateResBody, MimiSubmitMessageResBody, MlsRotateResponse,
     ModerationReportResBody, OkResBody, PolicyCheckResBody, PushRegisterResponse,
-    RealmCreateResponse, RealmJoinCandidate, ReceiptResponse, ResolveHandleResponse,
-    ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse, SearchSpacesResponse,
-    ServerDescription, SnapshotHeadResponse, SolandDirectoryDescribeResBody,
-    SolandEventsDescribeResBody, SpaceCreateResponse, SpacePolicyResponse,
-    SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody, TypingResponse,
-    UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
+    RealmCreateResponse, RealmJoinCandidate, RealmPolicyResponse, ReceiptResponse,
+    ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse,
+    SearchSpacesResponse, ServerDescription, SnapshotHeadResponse, SolandDirectoryDescribeResBody,
+    SolandEventsDescribeResBody, SpaceCreateResponse, SubmitDidOperationResBody,
+    SubmitEventResponse, SyncDescribeResBody, TypingResponse, UpdateProfileResponse,
+    VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -1346,7 +1346,7 @@ fn parse_realm_bootstrap_members(inputs: &[String]) -> anyhow::Result<Vec<RealmB
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_bootstrap_events(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     title: &str,
     summary: Option<&str>,
@@ -1376,7 +1376,7 @@ pub fn build_realm_bootstrap_events(
     }
     let invitees = parse_realm_bootstrap_members(invitees)?;
     events.push(build_realm_create_event(
-        space_id,
+        realm_id,
         actor_id,
         title,
         summary,
@@ -1391,27 +1391,27 @@ pub fn build_realm_bootstrap_events(
         trust_domain,
         plaintext_visible_services,
     )?);
-    events.push(build_space_state_event(
-        space_id,
+    events.push(build_realm_state_event(
+        realm_id,
         actor_id,
         "ck.realm.join_rule",
         json!(join_rule),
     )?);
-    events.push(build_space_state_event(
-        space_id,
+    events.push(build_realm_state_event(
+        realm_id,
         actor_id,
         "ck.realm.history_visibility",
         json!(history_visibility),
     )?);
-    events.push(build_space_state_event(
-        space_id,
+    events.push(build_realm_state_event(
+        realm_id,
         actor_id,
         "ck.realm.discovery",
         json!(discoverability),
     )?);
 
     if let Some(event) =
-        build_plaintext_visible_services_event(space_id, actor_id, plaintext_visible_services)?
+        build_plaintext_visible_services_event(realm_id, actor_id, plaintext_visible_services)?
     {
         events.push(event);
     }
@@ -1419,7 +1419,7 @@ pub fn build_realm_bootstrap_events(
     for invitee in invitees.iter() {
         if invitee.actor_id != actor_id {
             events.push(build_member_state_event(
-                space_id, actor_id, invitee, "invite",
+                realm_id, actor_id, invitee, "invite",
             )?);
         }
     }
@@ -1428,7 +1428,7 @@ pub fn build_realm_bootstrap_events(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_create_event(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     title: &str,
     summary: Option<&str>,
@@ -1451,8 +1451,8 @@ pub fn build_realm_create_event(
         } else {
             federation_policy
         };
-    let realm_object_id = scope_id_as_realm_id(space_id);
-    let envelope_realm_id = scope_id_as_realm_id(space_id);
+    let realm_object_id = scope_id_as_realm_id(realm_id);
+    let envelope_realm_id = scope_id_as_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
     let mut object = json!({
@@ -1516,8 +1516,8 @@ pub fn build_realm_create_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(space_id, actor_id, "ck.realm.create")
-        .target_ref(space_id)
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
+        .target_ref(realm_id)
         .body(json!({ "object": object }))
         .preconditions(preconditions)
         .effects(effects)
@@ -1726,8 +1726,8 @@ pub fn build_space_lifecycle_event(
 
 /// Build a Realm facet state event (`ck.realm.join_rule`,
 /// `ck.realm.history_visibility`, `ck.realm.discovery`, ...).
-pub fn build_space_state_event(
-    space_id: &str,
+pub fn build_realm_state_event(
+    realm_id: &str,
     actor_id: &str,
     kind: &str,
     value: Value,
@@ -1747,7 +1747,7 @@ pub fn build_space_state_event(
         }
     };
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(space_id);
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
     let cell = space_cell(cell_family, &realm_id_wire);
     let preconditions = vec![Precondition {
         cell: cell.clone(),
@@ -1772,7 +1772,7 @@ pub fn build_space_state_event(
             predecessor: None,
         },
     }];
-    let mut envelope = OperationBuilder::new(space_id, actor_id, kind)
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
         .body(json!({ "value": value }))
         .preconditions(preconditions)
         .effects(effects)
@@ -1781,13 +1781,134 @@ pub fn build_space_state_event(
     Ok(envelope)
 }
 
+/// Build a `ck.realm.archive` lifecycle facet event. Realm archive is a
+/// reversible boolean register; there is no separate `ck.realm.restore`.
+pub fn build_realm_archive_event(
+    realm_id: &str,
+    actor_id: &str,
+    archived: bool,
+    reason: Option<&str>,
+) -> anyhow::Result<EventEnvelope> {
+    let created_at = event_timestamp();
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
+    let mut payload = json!({ "archived": archived });
+    if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+        payload["reason"] = json!(reason);
+    }
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.archive")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a `ck.realm.tombstone` terminal lifecycle event. The successor Realm
+/// is required by spec; callers that do not have one must use
+/// [`build_realm_destroy_event`] instead.
+pub fn build_realm_tombstone_event(
+    realm_id: &str,
+    actor_id: &str,
+    successor_realm_id: &str,
+    reason: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let successor_realm_id = successor_realm_id.trim();
+    if successor_realm_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "successor_realm_id is required for ck.realm.tombstone"
+        ));
+    }
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(anyhow::anyhow!("reason is required for ck.realm.tombstone"));
+    }
+    let created_at = event_timestamp();
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
+    let payload = json!({
+        "reason": reason,
+        "successor_realm_id": successor_realm_id,
+    });
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.tombstone")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
+/// Build a `ck.realm.destroy` terminal lifecycle event.
+pub fn build_realm_destroy_event(
+    realm_id: &str,
+    actor_id: &str,
+    reason: &str,
+) -> anyhow::Result<EventEnvelope> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(anyhow::anyhow!("reason is required for ck.realm.destroy"));
+    }
+    let created_at = event_timestamp();
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
+    let payload = json!({ "reason": reason });
+    let effects = vec![Effect {
+        cell,
+        op: LatticeOp {
+            kind: "set".to_owned(),
+            tag: None,
+            value: Some(payload.clone()),
+            from: None,
+            to: None,
+            reason: None,
+            issuer_seq: None,
+            element_id: None,
+            predecessor: None,
+        },
+    }];
+    let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.destroy")
+        .body(payload)
+        .effects(effects)
+        .build("yougen");
+    envelope.created_at = created_at;
+    Ok(envelope)
+}
+
 pub fn build_realm_history_sharing_policy_event(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     policy: Value,
 ) -> anyhow::Result<EventEnvelope> {
-    build_space_state_event(
-        space_id,
+    build_realm_state_event(
+        realm_id,
         actor_id,
         "ck.realm.history_sharing_policy",
         policy,
@@ -1795,18 +1916,18 @@ pub fn build_realm_history_sharing_policy_event(
 }
 
 pub fn build_realm_preview_policy_event(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     policy: Value,
 ) -> anyhow::Result<EventEnvelope> {
-    build_space_state_event(space_id, actor_id, "ck.realm.preview_policy", policy)
+    build_realm_state_event(realm_id, actor_id, "ck.realm.preview_policy", policy)
 }
 
 /// Build a `ck.realm.plaintext_visible_services` event when the caller
 /// supplies at least one service DID. Returns `None` when the input
 /// list is empty so the bootstrap chain can skip emission entirely.
 pub fn build_plaintext_visible_services_event(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     service_dids: &[String],
 ) -> anyhow::Result<Option<EventEnvelope>> {
@@ -1837,7 +1958,7 @@ pub fn build_plaintext_visible_services_event(
         return Ok(None);
     }
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(space_id);
+    let realm_id_wire = scope_id_as_realm_id(realm_id);
     let cell = space_cell(
         "ck.component.realm.plaintext_visible_services.v1",
         &realm_id_wire,
@@ -1869,7 +1990,7 @@ pub fn build_plaintext_visible_services_event(
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
     let mut envelope =
-        OperationBuilder::new(space_id, actor_id, "ck.realm.plaintext_visible_services")
+        OperationBuilder::new(realm_id, actor_id, "ck.realm.plaintext_visible_services")
             .body(body_value)
             .preconditions(preconditions)
             .effects(effects)
@@ -1879,13 +2000,13 @@ pub fn build_plaintext_visible_services_event(
 }
 
 fn build_member_state_event(
-    space_id: &str,
+    realm_id: &str,
     actor_id: &str,
     member: &RealmBootstrapMember,
     membership: &str,
 ) -> anyhow::Result<EventEnvelope> {
     build_member_state_transition_event_with_binding(
-        space_id,
+        realm_id,
         actor_id,
         &member.actor_id,
         None,
@@ -2684,10 +2805,10 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
 /// 迁移去向(详见 spec):
 /// - 投影派生类(notifications / contacts 列表 / consent 列表)→ 订阅 `account/subscribe`
 ///   事件流,客户端本地 reduce;
-/// - 写状态类(contacts request/respond、consent grant/revoke、profile、mark-all-read)
-///   → 提交 `ck.*` 事件(`/_cokret/self/events`);
-/// - 真·协议原语(register / account/me / principal-realm / logout / bridge-describe)
-///   → 待 soland 在 `/_cokret/` 暴露后切换;
+/// - 写状态类(contacts request/respond、consent grant/revoke、profile、mark-all-read) → 提交 `ck.*`
+///   事件(`/_cokret/self/events`);
+/// - 真·协议原语(register / account/me / principal-realm / logout / bridge-describe) → 待 soland 在
+///   `/_cokret/` 暴露后切换;
 /// - 运维/遥测(audit/user-action、admin anchorer、dev-login)→ 评估是否保留为本地面。
 ///
 /// 模板中以 `{` 开头的路径段为通配(匹配单段),其余段逐字相等。
@@ -2768,7 +2889,10 @@ mod tests {
         assert!(api.endpoint("_cokret/self/events").is_ok());
         // 白名单内的存量 soland → 放行(含 `{}` 通配段)
         assert!(api.endpoint("_soland/self/account/me").is_ok());
-        assert!(api.endpoint("_soland/self/consent/cells/alice/grant").is_ok());
+        assert!(
+            api.endpoint("_soland/self/consent/cells/alice/grant")
+                .is_ok()
+        );
         // 白名单外的 soland → 拒绝。用拼接构造负样例,避免静态守卫把它当成
         // 一处真实的违规调用字面量。
         let unlisted = format!("{}/self/spaces/ck:space:1", "_soland");
@@ -3372,7 +3496,7 @@ mod tests {
     #[test]
     fn member_state_invite_accept_event_carries_invite_ref() {
         let event = build_member_state_invite_accept_event(
-            "ck:space:0196419b-0000-7000-8000-000000000010",
+            "ck:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:bob.example",
             "ck:invite:0196419b-0000-7000-8000-000000000020",
         )
@@ -3458,9 +3582,8 @@ mod tests {
     #[test]
     fn space_create_payload_matches_spec_schema() {
         // Spec requires payload.object.realm_id to match the
-        // `^ck:realm:UUID7` pattern. Caller (yougen UI) holds the home
-        // Realm under its legacy ck:space: envelope id; the builder
-        // must rewrite for the inner reference.
+        // `^ck:realm:UUID7` pattern; the product Space id remains a
+        // separate `ck:space:*` object id.
         let event = build_space_create_event(
             "ck:space:0196419b-0000-7000-8000-000000000010",
             "ck:realm:0196419b-0000-7000-8000-000000000001",

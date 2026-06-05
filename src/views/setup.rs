@@ -762,7 +762,7 @@ pub fn SetupPanel(
                                         div { class: "workflow-form setup-field",
                                             label { "Who can discover that this Realm exists?" }
                                             select {
-                                                "data-testid": "space-discoverability-input",
+                                                "data-testid": "realm-discoverability-input",
                                                 value: "{discoverability_value}",
                                                 onchange: move |event| realm_discoverability.set(event.value()),
                                                 for (option_value, label, _) in DISCOVERABILITY_OPTIONS {
@@ -783,7 +783,7 @@ pub fn SetupPanel(
                                         div { class: "workflow-form setup-field",
                                             label { "How does a principal become a member?" }
                                             select {
-                                                "data-testid": "space-policy-join-rule-input",
+                                                "data-testid": "realm-policy-join-rule-input",
                                                 value: "{join_rule_value}",
                                                 onchange: move |event| realm_policy_join_rule.set(event.value()),
                                                 for (option_value, label, _) in JOIN_RULE_OPTIONS {
@@ -804,7 +804,7 @@ pub fn SetupPanel(
                                         div { class: "workflow-form setup-field",
                                             label { "What history can new members read?" }
                                             select {
-                                                "data-testid": "space-policy-history-visibility-input",
+                                                "data-testid": "realm-policy-history-visibility-input",
                                                 value: "{history_visibility_value}",
                                                 onchange: move |event| realm_policy_history_visibility.set(event.value()),
                                                 for (option_value, label, _) in HISTORY_VISIBILITY_OPTIONS {
@@ -1029,7 +1029,7 @@ pub fn SetupPanel(
                                     }
                                     button {
                                         class: "primary",
-                                        "data-testid": "create-space-button",
+                                        "data-testid": "create-realm-button",
                                         disabled: !can_create_realm,
                                         onclick: {
                                             let base = base_url.clone();
@@ -1110,9 +1110,9 @@ pub fn SetupPanel(
                                                                 // R15: ck.realm.create now returns
                                                                 // RealmCreateResponse with the new
                                                                 // `ck:realm:*` id under `realm_id`.
-                                                                let space_id = realm.realm_id.clone();
-                                                                selected_space.set(space_id.clone());
-                                                                created_realm_id.set(space_id.clone());
+                                                                let realm_id = realm.realm_id.clone();
+                                                                selected_space.set(realm_id.clone());
+                                                                created_realm_id.set(realm_id.clone());
                                                                 // Optimistic sidebar update goes
                                                                 // through the canonical store —
                                                                 // the `spaces` Signal is derived
@@ -1136,7 +1136,7 @@ pub fn SetupPanel(
                                                                     vec![actor.clone()]
                                                                 };
                                                                 state_store.write().save_space_projection(
-                                                                    space_id.clone(),
+                                                                    realm_id.clone(),
                                                                     json!({
                                                                         // Yougen-local schema tag — used by the
                                                                         // sidebar (M-SIDEBAR-TIER-1) to split
@@ -1176,17 +1176,17 @@ pub fn SetupPanel(
                                                                         match crate::mls::runtime::ensure_creator_mls_snapshot(
                                                                             &mut store,
                                                                             secure.as_ref(),
-                                                                            &space_id,
+                                                                            &realm_id,
                                                                             &actor,
                                                                             &device,
                                                                         ) {
                                                                             Ok(summary) => {
-                                                                                (store.mls_snapshot_for(&space_id), summary)
+                                                                                (store.mls_snapshot_for(&realm_id), summary)
                                                                             }
                                                                             Err(err) => {
                                                                                 let message = format!(
                                                                                     "created {}; MLS initial group setup failed: {}",
-                                                                                    space_id,
+                                                                                    realm_id,
                                                                                     err.user_message()
                                                                                 );
                                                                                 realm_state.set(message.clone());
@@ -1208,12 +1208,12 @@ pub fn SetupPanel(
                                                                         .as_ref()
                                                                         .and_then(|genesis_summary| {
                                                                             let store = state_store.read();
-                                                                            if store.mls_genesis_emitted_for(&space_id) {
+                                                                            if store.mls_genesis_emitted_for(&realm_id) {
                                                                                 return None;
                                                                             }
                                                                             match crate::views::kanban::build_creator_mls_genesis_event(
                                                                                 &store,
-                                                                                &space_id,
+                                                                                &realm_id,
                                                                                 &actor,
                                                                                 &device,
                                                                                 Some(genesis_summary),
@@ -1222,7 +1222,7 @@ pub fn SetupPanel(
                                                                                 Err(err) => {
                                                                                     tracing::warn!(
                                                                                         error = %err,
-                                                                                        space = %space_id,
+                                                                                        realm = %realm_id,
                                                                                         "building ck.mls.genesis event failed",
                                                                                     );
                                                                                     None
@@ -1232,16 +1232,16 @@ pub fn SetupPanel(
                                                                     if let Some(genesis_event) = genesis_event {
                                                                         match api.submit_event_envelope(&genesis_event).await {
                                                                             Ok(_) => {
-                                                                                state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                                                                                state_store.write().mark_mls_genesis_emitted(realm_id.clone());
                                                                             }
                                                                             Err(err) => {
                                                                                 let text = err.to_string();
                                                                                 if text.contains("mls_genesis_already_exists") {
-                                                                                    state_store.write().mark_mls_genesis_emitted(space_id.clone());
+                                                                                    state_store.write().mark_mls_genesis_emitted(realm_id.clone());
                                                                                 } else {
                                                                                     tracing::warn!(
                                                                                         error = %text,
-                                                                                        space = %space_id,
+                                                                                        realm = %realm_id,
                                                                                         "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
                                                                                     );
                                                                                 }
@@ -1263,7 +1263,7 @@ pub fn SetupPanel(
                                                                             Err(err) => {
                                                                                 tracing::warn!(
                                                                                     error = %err.user_message(),
-                                                                                    space = %space_id,
+                                                                                    realm = %realm_id,
                                                                                     "initial MLS history backup upload failed"
                                                                                 );
                                                                             }
@@ -1271,7 +1271,7 @@ pub fn SetupPanel(
                                                                     }
                                                                 }
 
-                                                                let mut steps = vec![format!("created {}", space_id)];
+                                                                let mut steps = vec![format!("created {}", realm_id)];
                                                                 if invitees.is_empty() {
                                                                     steps.push("seeded owner only".to_owned());
                                                                 } else {
@@ -1524,7 +1524,7 @@ pub fn SetupPanel(
                                 div { class: "setup-field",
                                     label { "Space title" }
                                     input {
-                                        "data-testid": "new-space-title-input",
+                                        "data-testid": "new-realm-title-input",
                                         required: true,
                                         "aria-required": "true",
                                         value: "{new_space_title_value}",
@@ -1558,7 +1558,7 @@ pub fn SetupPanel(
                                 div { class: "setup-field setup-field-span-2",
                                     label { "Summary" }
                                     textarea {
-                                        "data-testid": "new-space-summary-input",
+                                        "data-testid": "new-realm-summary-input",
                                         value: "{new_space_summary_value}",
                                         rows: "3",
                                         placeholder: "Optional description.",

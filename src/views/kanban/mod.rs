@@ -5348,7 +5348,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     let Some(summary) = fresh_summary else {
         return Ok(None);
     };
-    if summary.space_id != space_id {
+    if summary.realm_id != space_id {
         return Ok(None);
     }
     let anchor_view = state_store.anchor_view_for(space_id);
@@ -6454,11 +6454,11 @@ mod tests {
             "ck:realm:projection"
         );
         assert_eq!(
-            member_roster_realm_context("ck:space:board", "ck:space:legacy", None),
+            member_roster_realm_context("ck:realm:board", "ck:realm:legacy", None),
             "ck:realm:legacy"
         );
         assert_eq!(
-            member_roster_realm_context("ck:space:selected", "", None),
+            member_roster_realm_context("ck:realm:selected", "", None),
             "ck:realm:selected"
         );
     }
@@ -7188,7 +7188,7 @@ mod tests {
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_realm_id: Some("ck:space:0196419b-0000-7000-8000-000000000001".to_owned()),
+                parent_realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000001".to_owned()),
             },
         ]);
 

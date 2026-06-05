@@ -536,20 +536,20 @@ mod tests {
     }
 
     #[test]
-    fn projection_realm_id_climbs_legacy_parent_links() {
+    fn projection_realm_id_climbs_parent_links_to_realm() {
         let spaces = vec![
-            preview("ck:space:legacy-root", SpacePreviewKind::Realm, "", None),
+            preview("ck:realm:root", SpacePreviewKind::Realm, "", None),
             preview(
-                "ck:space:legacy-child",
+                "ck:space:child",
                 SpacePreviewKind::Space,
                 "",
-                Some("ck:space:legacy-root"),
+                Some("ck:realm:root"),
             ),
         ];
 
         assert_eq!(
-            projection_realm_id_for_space(&spaces, "ck:space:legacy-child"),
-            "ck:space:legacy-root"
+            projection_realm_id_for_space(&spaces, "ck:space:child"),
+            "ck:realm:root"
         );
     }
 
@@ -750,7 +750,7 @@ pub struct Mention {
     pub resolved_at: Option<String>,
 }
 
-/// Per-Space delivery binding surfaced to the member detail view.
+/// Per-Realm delivery binding surfaced to the member detail view.
 /// Mirrors `member_delivery_binding` from `event-payload.schema.json`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MemberDeliveryBindingView {
@@ -764,12 +764,12 @@ pub struct MemberDeliveryBindingView {
     pub service_endpoint: Option<String>,
 }
 
-// ── Space / Realm Management ────────────────────────────────────
+// ── Realm / Space Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpacePolicyResponse {
+pub struct RealmPolicyResponse {
     pub ok: bool,
-    pub space_id: String,
+    pub realm_id: String,
     pub join_rule: String,
     pub history_visibility: String,
 }

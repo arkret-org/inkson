@@ -1211,7 +1211,8 @@ pub(super) fn replay_first_move(
     if let Some(record) = write_records.write().get_mut(idx) {
         record.state = CardState::Quarantined;
         record.note =
-            "replay via ck.self.events.submit not yet wired; quarantining for manual review".to_owned();
+            "replay via ck.self.events.submit not yet wired; quarantining for manual review"
+                .to_owned();
     }
     board_status.set(
         "replay not available — write quarantined (TODO: rebuild ck.flow.update envelope)"

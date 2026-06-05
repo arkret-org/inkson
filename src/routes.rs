@@ -96,10 +96,7 @@ pub enum Route {
     RealmAdmin { realm_id: String },
 
     #[route("/realms/:realm_id/admin/:section", RealmAdminSectionPage)]
-    RealmAdminSection {
-        realm_id: String,
-        section: String,
-    },
+    RealmAdminSection { realm_id: String, section: String },
 
     #[route("/audit", crate::app::RouterView)]
     Audit,
@@ -122,10 +119,7 @@ pub enum Route {
     /// `board_options.first()`. `realm_id` is the Realm id; `board_id`
     /// is the board Space-container id.
     #[route("/kanban/:realm_id/board/:board_id", KanbanBoardPage)]
-    KanbanBoard {
-        realm_id: String,
-        board_id: String,
-    },
+    KanbanBoard { realm_id: String, board_id: String },
 
     /// Board + card-detail deep link. Carries the board id alongside the
     /// flow id so a refresh on an open card restores the right board
@@ -142,10 +136,7 @@ pub enum Route {
     /// search results that only know the flow id; the board is resolved
     /// from the projection (or local queue) on arrival.
     #[route("/kanban/:realm_id/task/:task_id", KanbanTaskPage)]
-    KanbanTask {
-        realm_id: String,
-        task_id: String,
-    },
+    KanbanTask { realm_id: String, task_id: String },
 
     #[route("/notifications", crate::app::RouterView)]
     Notifications,

@@ -326,7 +326,7 @@ impl CokretApi {
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveResBody> {
         self.post_json(
             "_cokret/root/identity/resolve",
-            json!({"did": did, "include": []}),
+            json!({"did": did, "requested_evidence_kinds": []}),
         )
         .await
     }

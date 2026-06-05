@@ -38,7 +38,7 @@ pub struct GovernanceBindingPayload {
     /// MLS group id (Space-scoped).
     pub group_id: String,
     /// `ck:space:` typed-id.
-    pub space_id: String,
+    pub realm_id: String,
     /// Epoch the commit advances from.
     pub prev_epoch: u64,
     /// Epoch the commit advances to.
@@ -62,7 +62,7 @@ impl GovernanceBindingPayload {
     /// `Err` if the typed ids fail validation.
     pub fn from_anchor(
         group_id: impl Into<String>,
-        space_id: &RealmId,
+        realm_id: &RealmId,
         prev_epoch: u64,
         new_epoch: u64,
         new_schedule: &Hash,
@@ -75,23 +75,23 @@ impl GovernanceBindingPayload {
         // the submitted Move's preconditions/effects EXACTLY match these
         // SDK-derived shapes — yougen must not re-derive or shorten them.
         let preconditions =
-            mls_commit_preconditions(&group_id, space_id, prev_epoch, attested_governance_anchor)
+            mls_commit_preconditions(&group_id, realm_id, prev_epoch, attested_governance_anchor)
                 .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;
         let effects = mls_commit_effects(
             &group_id,
-            space_id,
+            realm_id,
             new_epoch,
             new_schedule,
             attested_governance_anchor,
         )
         .map_err(|e| anyhow::anyhow!("mls_commit_effects invalid: {e:?}"))?;
 
-        let frontier_cell = covered_frontier_cell_id(space_id)
+        let frontier_cell = covered_frontier_cell_id(realm_id)
             .map_err(|e| anyhow::anyhow!("covered_frontier_cell_id invalid: {e:?}"))?;
 
         Ok(Self {
             group_id,
-            space_id: space_id.as_str().to_owned(),
+            realm_id: realm_id.as_str().to_owned(),
             prev_epoch,
             new_epoch,
             new_schedule_hash: new_schedule.as_str().to_owned(),
@@ -116,7 +116,7 @@ impl GovernanceBindingPayload {
     pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
             "group_id": &self.group_id,
-            "space_id": &self.space_id,
+            "realm_id": &self.realm_id,
             "prev_epoch": self.prev_epoch,
             "new_epoch": self.new_epoch,
             "new_schedule_hash": &self.new_schedule_hash,
@@ -139,8 +139,8 @@ mod tests {
 
     use super::*;
 
-    fn space_id() -> RealmId {
-        RealmId::new("ck:space:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
+    fn realm_id() -> RealmId {
+        RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
     }
 
     fn anchor() -> AnchorId {
@@ -155,7 +155,7 @@ mod tests {
     fn payload_carries_covered_frontier_cell() {
         let payload = GovernanceBindingPayload::from_anchor(
             "mls-group-1",
-            &space_id(),
+            &realm_id(),
             7,
             8,
             &schedule_hash(),
@@ -172,7 +172,7 @@ mod tests {
     fn payload_carries_sdk_preconditions_and_effects() {
         let payload = GovernanceBindingPayload::from_anchor(
             "mls-group-1",
-            &space_id(),
+            &realm_id(),
             7,
             8,
             &schedule_hash(),
@@ -194,7 +194,7 @@ mod tests {
     fn canonical_hash_changes_with_epoch() {
         let a = GovernanceBindingPayload::from_anchor(
             "g",
-            &space_id(),
+            &realm_id(),
             1,
             2,
             &schedule_hash(),
@@ -205,7 +205,7 @@ mod tests {
         .unwrap();
         let b = GovernanceBindingPayload::from_anchor(
             "g",
-            &space_id(),
+            &realm_id(),
             1,
             3,
             &schedule_hash(),

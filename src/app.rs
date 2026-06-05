@@ -31,7 +31,7 @@ use crate::routes::Route;
 // resolving without a sync_engine edit.
 pub(crate) use crate::space_tree::{
     descendant_space_ids, full_sync_projection_keep_set, realm_projection_is_encrypted,
-    space_previews_from_sync_spaces, space_tree_items,
+    space_previews_from_sync_realms, space_tree_items,
 };
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
@@ -406,7 +406,7 @@ pub fn RouterView() -> Element {
         &initial_session_token,
         initial_can_restore_session || initial_can_reissue_development_session,
     );
-    let initial_spaces = space_previews_from_sync_spaces(&initial_local_state.space_projections);
+    let initial_spaces = space_previews_from_sync_realms(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
@@ -746,7 +746,7 @@ pub fn RouterView() -> Element {
     // vice versa) and the two slid out of sync.
     use_effect(move || {
         let projections = state_store.read().load().space_projections;
-        let next = space_previews_from_sync_spaces(&projections);
+        let next = space_previews_from_sync_realms(&projections);
         // Perf (P1): this effect re-runs on *any* `state_store` write (drafts,
         // theme, notifications, read receipts, …), not just projection changes.
         // Skip the `set` when the derived list is unchanged so unrelated writes
@@ -4637,12 +4637,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 last_error.set(Some(format!("state_store flush failed: {error}")));
                             }
                         }
-                        let synced_timeline = timeline_events_from_sync_spaces(&sync.realms);
+                        let synced_timeline = timeline_events_from_sync_realms(&sync.realms);
                         // `spaces` is derived from `state_store.space_projections`
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
                         // and selected_space bookkeeping only.
-                        let reconciled = space_previews_from_sync_spaces(
+                        let reconciled = space_previews_from_sync_realms(
                             &state_store.read().load().space_projections,
                         );
                         if reconciled.is_empty() {
@@ -4695,7 +4695,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // derive effect; just refresh status text and
                         // make sure selected_space points at something
                         // still in scope.
-                        let fallback = space_previews_from_sync_spaces(
+                        let fallback = space_previews_from_sync_realms(
                             &state_store.read().load().space_projections,
                         );
                         if fallback.is_empty() {
@@ -4818,21 +4818,21 @@ fn copy_text_to_clipboard(text: &str) {
     let _ = document::eval(&script);
 }
 
-pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
+pub fn timeline_events_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
-    for (id, body) in spaces {
-        let id_label = short_protocol_id(id);
+    for (realm_id, body) in realms {
+        let realm_id_label = short_protocol_id(realm_id);
         let mut summary_event = TimelineEvent::system_notice(
-            format!("summary-{id}"),
+            format!("summary-{realm_id}"),
             "server",
             format!(
-                "{id_label}: {}",
+                "{realm_id_label}: {}",
                 body["summary"]["summary"]
                     .as_str()
                     .unwrap_or("No summary available")
             ),
         );
-        summary_event.space_id = Some(id.clone());
+        summary_event.realm_id = Some(realm_id.clone());
         events.push(summary_event);
 
         let Some(timeline_events) = body
@@ -4868,7 +4868,7 @@ pub fn timeline_events_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec
                 .unwrap_or("[message]")
                 .to_owned();
             events.push(TimelineEvent {
-                space_id: Some(id.clone()),
+                realm_id: Some(realm_id.clone()),
                 id: event_id.clone(),
                 sender: event
                     .get("sender")
@@ -5424,16 +5424,16 @@ mod tests {
     #[test]
     fn merge_timeline_events_keeps_existing_messages_on_summary_only_delta() {
         let mut summary = TimelineEvent::system_notice("summary-ck:realm:test", "server", "old");
-        summary.space_id = Some("ck:realm:test".to_owned());
+        summary.realm_id = Some("ck:realm:test".to_owned());
         let message = TimelineEvent {
             id: "ck:event:message".to_owned(),
-            space_id: Some("ck:realm:test".to_owned()),
+            realm_id: Some("ck:realm:test".to_owned()),
             body: "welcome".to_owned(),
             ..TimelineEvent::default()
         };
         let mut updated_summary =
             TimelineEvent::system_notice("summary-ck:realm:test", "server", "new");
-        updated_summary.space_id = Some("ck:realm:test".to_owned());
+        updated_summary.realm_id = Some("ck:realm:test".to_owned());
 
         let merged = merge_timeline_events(&[summary, message], vec![updated_summary]);
 

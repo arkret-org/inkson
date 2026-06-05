@@ -73,7 +73,7 @@ impl MessageCryptoState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ChatMessage {
-    pub(super) space_id: String,
+    pub(super) realm_id: String,
     pub(super) id: String,
     pub(super) sender: String,
     pub(super) body: String,
@@ -419,7 +419,6 @@ pub(super) fn build_chat_reaction_add_operation(
     match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
         &mut state_store.write(),
         secure_store.as_ref(),
-        space_id,
         &realm_id,
         actor,
         device_id,
@@ -1708,7 +1707,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
         MessageCryptoState::Plaintext
     };
     Some(ChatMessage {
-        space_id: first_string_in_candidates(&candidates, &["space_id"])
+        realm_id: first_string_in_candidates(&candidates, &["space_id"])
             .unwrap_or(space_id)
             .to_owned(),
         id: event_id,
@@ -1825,13 +1824,13 @@ pub(super) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
     cards
 }
 
-pub(super) fn chat_messages_from_sync_spaces_with_sidecar(
-    spaces: &std::collections::BTreeMap<String, Value>,
+pub(super) fn chat_messages_from_sync_realms_with_sidecar(
+    realms: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
-    for (space_id, body) in spaces {
+    for (realm_id, body) in realms {
         let Some(timeline_events) = body
             .get("timeline")
             .and_then(|timeline| timeline.get("events"))
@@ -1840,7 +1839,7 @@ pub(super) fn chat_messages_from_sync_spaces_with_sidecar(
             continue;
         };
         messages.extend(chat_messages_from_events_with_sidecar(
-            space_id,
+            realm_id,
             timeline_events,
             state_store,
             decrypt_identity,
@@ -1849,11 +1848,11 @@ pub(super) fn chat_messages_from_sync_spaces_with_sidecar(
     messages
 }
 
-pub(super) fn poll_cards_from_sync_spaces(
-    spaces: &std::collections::BTreeMap<String, Value>,
+pub(super) fn poll_cards_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::new();
-    for body in spaces.values() {
+    for body in realms.values() {
         let Some(timeline_events) = body
             .get("timeline")
             .and_then(|timeline| timeline.get("events"))
@@ -1866,22 +1865,22 @@ pub(super) fn poll_cards_from_sync_spaces(
     cards
 }
 
-pub(super) fn normalize_sync_space_id(space_id: &str) -> String {
-    space_id.trim().to_owned()
+pub(super) fn normalize_sync_realm_id(realm_id: &str) -> String {
+    realm_id.trim().to_owned()
 }
 
-pub(super) fn sync_space_ids_match(left: &str, right: &str) -> bool {
-    normalize_sync_space_id(left) == normalize_sync_space_id(right)
+pub(super) fn sync_realm_ids_match(left: &str, right: &str) -> bool {
+    normalize_sync_realm_id(left) == normalize_sync_realm_id(right)
 }
 
-pub(super) fn typing_actors_from_sync_spaces(
-    spaces: &std::collections::BTreeMap<String, Value>,
-    space_id: &str,
+pub(super) fn typing_actors_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
+    realm_id: &str,
     account_did: &str,
 ) -> Vec<String> {
     let mut actors = std::collections::BTreeSet::<String>::new();
-    for (candidate_space_id, body) in spaces {
-        if !sync_space_ids_match(candidate_space_id, space_id) {
+    for (candidate_realm_id, body) in realms {
+        if !sync_realm_ids_match(candidate_realm_id, realm_id) {
             continue;
         }
         let Some(ephemeral) = body.get("ephemeral").and_then(Value::as_array) else {
@@ -2067,8 +2066,8 @@ pub(super) fn first_string_in_candidate_paths<'a>(
     })
 }
 
-pub(super) fn default_discussion_flow_id(space_id: &str) -> String {
-    let trimmed = space_id.trim();
+pub(super) fn default_discussion_flow_id(realm_id: &str) -> String {
+    let trimmed = realm_id.trim();
     if trimmed.starts_with("ck:flow:") {
         trimmed.to_owned()
     } else if let Some(suffix) = trimmed.strip_prefix("ck:realm:") {
@@ -2117,7 +2116,7 @@ pub(super) fn flow_security_state_from_candidates(candidates: &[&Value]) -> Opti
 }
 
 pub(super) fn channel_from_flow_projection(
-    space_id: &str,
+    realm_id: &str,
     flow: &Value,
     is_default: bool,
 ) -> Option<ChannelEntity> {
@@ -2129,7 +2128,7 @@ pub(super) fn channel_from_flow_projection(
         .map(str::trim)
         .filter(|id| id.starts_with("ck:flow:"))
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_discussion_flow_id(space_id));
+        .unwrap_or_else(|| default_discussion_flow_id(realm_id));
     let name = first_string_in_candidate_paths(&[flow], &[&["title"], &["name"]])
         .filter(|title| !title.trim().is_empty())
         .map(ToOwned::to_owned)
@@ -2254,34 +2253,34 @@ pub(super) fn u32_at_path(value: &Value, path: &[&str]) -> Option<u32> {
 }
 
 pub(super) fn default_discussion_channel(
-    space_id: &str,
-    space_body: Option<&Value>,
+    realm_id: &str,
+    realm_body: Option<&Value>,
 ) -> ChannelEntity {
-    if let Some(flow) = space_body
+    if let Some(flow) = realm_body
         .and_then(|body| body.get("summary"))
         .and_then(|summary| summary.get("flow"))
-        && let Some(channel) = channel_from_flow_projection(space_id, flow, true)
+        && let Some(channel) = channel_from_flow_projection(realm_id, flow, true)
     {
         return channel;
     }
 
     ChannelEntity {
-        flow_id: default_discussion_flow_id(space_id),
+        flow_id: default_discussion_flow_id(realm_id),
         name: "Discussion".to_owned(),
         kind: "discussion".to_owned(),
         category: "default flow".to_owned(),
         topic: Some("Default Flow discussion track".to_owned()),
         unread: 0,
         is_default: true,
-        security_encrypted: space_body.map(crate::security_state::realm_projection_is_encrypted),
+        security_encrypted: realm_body.map(crate::security_state::realm_projection_is_encrypted),
         scope_circle: None,
     }
 }
 
-pub(super) fn discussion_channel_for_flow(space_id: &str, flow_id: &str) -> ChannelEntity {
+pub(super) fn discussion_channel_for_flow(realm_id: &str, flow_id: &str) -> ChannelEntity {
     let trimmed_flow_id = flow_id.trim();
     if trimmed_flow_id.is_empty() {
-        return default_discussion_channel(space_id, None);
+        return default_discussion_channel(realm_id, None);
     }
 
     ChannelEntity {
@@ -2291,13 +2290,13 @@ pub(super) fn discussion_channel_for_flow(space_id: &str, flow_id: &str) -> Chan
         category: "discussion".to_owned(),
         topic: None,
         unread: 0,
-        is_default: trimmed_flow_id == default_discussion_flow_id(space_id),
+        is_default: trimmed_flow_id == default_discussion_flow_id(realm_id),
         security_encrypted: None,
         scope_circle: None,
     }
 }
 
-pub(super) fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<ChannelEntity> {
+pub(super) fn channel_from_flow_event(realm_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
     if !candidates
         .iter()
@@ -2390,27 +2389,27 @@ pub(super) fn channel_from_flow_event(space_id: &str, event: &Value) -> Option<C
         category,
         topic,
         unread: 0,
-        is_default: flow_id == default_discussion_flow_id(space_id),
+        is_default: flow_id == default_discussion_flow_id(realm_id),
         security_encrypted,
         scope_circle,
     })
 }
 
-pub(super) fn channels_from_events(space_id: &str, events: &[Value]) -> Vec<ChannelEntity> {
+pub(super) fn channels_from_events(realm_id: &str, events: &[Value]) -> Vec<ChannelEntity> {
     events
         .iter()
-        .filter_map(|event| channel_from_flow_event(space_id, event))
+        .filter_map(|event| channel_from_flow_event(realm_id, event))
         .collect()
 }
 
-pub(super) fn channels_from_sync_spaces(
-    spaces: &std::collections::BTreeMap<String, Value>,
-    default_space_ids: &[String],
+pub(super) fn channels_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
+    default_realm_ids: &[String],
 ) -> Vec<ChannelEntity> {
     let mut channels = Vec::new();
-    for (space_id, body) in spaces {
-        if default_space_ids.iter().any(|id| id == space_id) {
-            channels.push(default_discussion_channel(space_id, Some(body)));
+    for (realm_id, body) in realms {
+        if default_realm_ids.iter().any(|id| id == realm_id) {
+            channels.push(default_discussion_channel(realm_id, Some(body)));
         }
         let Some(timeline_events) = body
             .get("timeline")
@@ -2419,7 +2418,7 @@ pub(super) fn channels_from_sync_spaces(
         else {
             continue;
         };
-        channels.extend(channels_from_events(space_id, timeline_events));
+        channels.extend(channels_from_events(realm_id, timeline_events));
     }
     channels
 }
@@ -2496,7 +2495,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
             if services.is_empty() {
                 return Err(error);
             }
-            api.update_space(
+            api.update_realm_metadata(
                 space_id,
                 actor_did,
                 json!({"plaintext_visible_services": services}),

@@ -93,10 +93,10 @@ pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 /// storage entries) lives inside the key-backup `ciphertext`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MlsSnapshotEnvelope {
-    /// Yougen's space id the envelope belongs to. Not encrypted —
+    /// Yougen's realm id the envelope belongs to. Not encrypted —
     /// the boot path needs to know which envelope maps to which
     /// space without decrypting them all first.
-    pub space_id: String,
+    pub realm_id: String,
     /// Recorded MLS group id (hex-encoded by the SDK). Surfaced for
     /// debug + audit; does not leak material.
     pub group_id: String,
@@ -193,7 +193,7 @@ pub enum EnvelopeError {
 }
 
 /// Encrypt a serialised MLS group state record under a device snapshot secret.
-/// `space_id` is metadata only (not encrypted); `state_bytes` is the
+/// `realm_id` is metadata only (not encrypted); `state_bytes` is the
 /// SDK-serialised `MlsGroupStateRecord` JSON. `salt` SHOULD be a
 /// 16-byte random value but the helper accepts any length so tests
 /// can pin a deterministic salt.
@@ -205,7 +205,7 @@ pub enum EnvelopeError {
 /// epoch / timestamp) fails the AEAD verification instead of
 /// decrypting cleanly.
 pub fn encrypt_state(
-    space_id: &str,
+    realm_id: &str,
     group_id: &str,
     epoch: u64,
     state_bytes: &[u8],
@@ -230,7 +230,7 @@ pub fn encrypt_state(
         // MLS group state record. Treat as unreachable.
         .expect("chacha20-poly1305 encrypt should not fail for in-memory MLS state");
     MlsSnapshotEnvelope {
-        space_id: space_id.to_owned(),
+        realm_id: realm_id.to_owned(),
         group_id: group_id.to_owned(),
         epoch,
         salt_hex: hex_encode(salt),
@@ -371,12 +371,12 @@ impl MlsSnapshotEnvelope {
                 "mls_group_id": self.group_id,
                 "epoch": self.epoch,
                 "secret_id": "yougen_mls_snapshot",
-                "space_ref": self.space_id
+                "realm_ref": self.realm_id
             }],
             "ciphertext": ciphertext,
             "ciphertext_digest": ciphertext_digest,
             "envelope_meta": {
-                "space_ref": self.space_id,
+                "realm_ref": self.realm_id,
                 "group_id": self.group_id,
                 "epoch": self.epoch,
                 "recorded_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -550,7 +550,7 @@ mod tests {
             "correct horse battery staple",
             &fixed_salt(),
         );
-        assert_eq!(envelope.space_id, "ck:realm:demo");
+        assert_eq!(envelope.realm_id, "ck:realm:demo");
         assert_eq!(envelope.group_id, "aabbccdd");
         assert_eq!(envelope.epoch, 7);
         // Ciphertext is not the plaintext — encryption did something.
@@ -667,7 +667,7 @@ mod tests {
             Some(crate::key_backup::KeyBackupClass::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
-        assert_eq!(body["envelope_meta"]["space_ref"], "ck:realm:demo");
+        assert_eq!(body["envelope_meta"]["realm_ref"], "ck:realm:demo");
         assert_eq!(body["envelope_meta"]["epoch"], 42);
         // The ciphertext is a base64url-encoded JSON envelope — it
         // round-trips back to the same struct without exposing plaintext
@@ -675,7 +675,7 @@ mod tests {
         let blob = body["ciphertext"].as_str().unwrap();
         let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
         let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.space_id, "ck:realm:demo");
+        assert_eq!(parsed.realm_id, "ck:realm:demo");
         assert_eq!(parsed.epoch, 42);
     }
 

@@ -102,7 +102,7 @@ pub fn CallPanel(state_store: Signal<LocalStateStore>) -> Element {
                         strong { "SFrame key" }
                         span { "data-testid": "media-binding-sframe-key", "MLS Exporter only" }
                         div { class: "muted",
-                            "Label cx-rtc-frame-key/v1, length=19, Context=\"\". Backend-supplied keys rejected (e2ee_key_source_unauthorised)."
+                            "Label ck-rtc-frame-key/v1, length=19, Context=\"\". Backend-supplied keys rejected (e2ee_key_source_unauthorised)."
                         }
                     }
                     div { class: "metric",

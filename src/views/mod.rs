@@ -76,13 +76,13 @@ pub mod onboarding;
 /// (claude-design no dedicated page yet; lives at `/quarantine` and is
 /// linked from the Settings sidebar for admins.)
 pub mod quarantine;
+pub mod realm_admin;
 pub mod recovery;
 /// `views::settings` is a module directory. The aggregate entry lives in
 /// `settings/mod.rs`; per-card panels live in sibling files. See the
 /// settings/mod.rs head comment for the territory split (G3.Y1 vs G3.Y3).
 pub mod settings;
 pub mod setup;
-pub mod realm_admin;
 pub mod timeline;
 pub mod verify_device;
 /// G3.Y4 — real WebRTC call surface (1:1 + group + mute + screen

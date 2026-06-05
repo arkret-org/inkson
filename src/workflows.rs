@@ -90,18 +90,18 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): create-space form wired through views/setup.rs:605 (`api.create_space(actor, title, summary, discoverability, join_rule, history_visibility, invitees, plaintext_services)`). Server still owns policy template + retention rule defaults, but the client-side bootstrap path is complete and round-trips through `state_store.save_space_projection` on success.",
         },
         ClientWorkflow {
-            id: "space.membership",
+            id: "realm.membership",
             name: "Invite, add, remove, and kick members",
             stage: WorkflowStage::Blocked,
-            client_surface: "Realm / Space setup + Space Admin membership",
+            client_surface: "Realm setup + Realm Admin membership",
             server_dependency: "Missing invite/member state operations, authz checks, MLS Welcome/Commit delivery, and removal epoch rotation",
         },
         ClientWorkflow {
-            id: "space.delete",
-            name: "Leave, archive, and delete space",
+            id: "realm.delete",
+            name: "Leave, archive, and destroy Realm",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Realm / Space setup + Space Admin destructive flows (`views/realm_admin.rs` Leave + Delete buttons)",
-            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): leave-space wired through views/realm_admin.rs:2046 (`api.leave_space(space_id)` + `forget_space` + sync-cursor reset); delete-space wired through views/realm_admin.rs:2566 (`api.delete_space(space_id)`). Both surfaces report success/failure via `status_msg` so the operator sees what landed. Tombstone policy + history retention enforcement remain server-side concerns.",
+            client_surface: "Realm setup + Realm Admin destructive flows (`views/realm_admin.rs` Leave + Destroy buttons)",
+            server_dependency: "F-REALM-LIFECYCLE-1 (2026-05-19): leave-realm is wired through views/realm_admin.rs (`api.leave_realm(realm_id)` + local cache reset); destroy-realm is wired through views/realm_admin.rs (`api.destroy_realm(realm_id)`). Both surfaces report success/failure via `status_msg`; Realm destroy retention enforcement remains server-side.",
         },
         ClientWorkflow {
             id: "message.create",
@@ -146,26 +146,26 @@ mod tests {
                 .iter()
                 .any(|workflow| workflow.id == "account.registration")
         );
-        // F-SPACE-LIFECYCLE-1 (2026-05-19): space.create + space.delete
-        // moved from Blocked → ClientReady because the corresponding UI
+        // F-REALM-LIFECYCLE-1 (2026-05-19): realm.delete moved from
+        // Blocked → ClientReady because the corresponding UI
         // wiring (`views/setup.rs` create flow + `views/realm_admin.rs`
-        // Leave / Delete buttons) was already shipped — the workflow
-        // ledger had drifted. Explicitly negate them here so a future
-        // regression that reintroduces the gap fails this test.
+        // Leave / Destroy buttons) was already shipped. Explicitly negate
+        // it here so a future regression that reintroduces the gap fails
+        // this test.
         assert!(
             !blocked.iter().any(|workflow| workflow.id == "space.create"),
             "space.create should be ClientReady — UI wired via views/setup.rs:605 (`api.create_space`)"
         );
         assert!(
-            !blocked.iter().any(|workflow| workflow.id == "space.delete"),
-            "space.delete should be ClientReady — UI wired via views/realm_admin.rs Leave + Delete buttons"
+            !blocked.iter().any(|workflow| workflow.id == "realm.delete"),
+            "realm.delete should be ClientReady — UI wired via views/realm_admin.rs Leave + Destroy buttons"
         );
-        // space.membership remains Blocked: MLS Welcome / Commit
+        // realm.membership remains Blocked: MLS Welcome / Commit
         // delivery + removal epoch rotation are still server gaps.
         assert!(
             blocked
                 .iter()
-                .any(|workflow| workflow.id == "space.membership")
+                .any(|workflow| workflow.id == "realm.membership")
         );
     }
 

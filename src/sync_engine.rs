@@ -398,7 +398,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     // bookkeeping.
     let _ = spaces; // suppress unused capture; consumed by the derive effect
     let reconciled =
-        crate::app::space_previews_from_sync_spaces(&state_store.read().load().space_projections);
+        crate::app::space_previews_from_sync_realms(&state_store.read().load().space_projections);
     if reconciled.is_empty() {
         status.set(crate::views::ConnectionState::Empty.label().to_owned());
     } else {
@@ -419,7 +419,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
         }
     }
 
-    let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.realms);
+    let synced_timeline = crate::app::timeline_events_from_sync_realms(&response.realms);
     let next_timeline = if is_full_sync {
         synced_timeline
     } else {
@@ -686,7 +686,7 @@ mod tests {
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
-        response.left_realms = vec!["ck:space:b".to_owned()];
+        response.left_realms = vec!["ck:realm:b".to_owned()];
 
         // Mirror the engine's left_realms step.
         for id in &response.left_realms {

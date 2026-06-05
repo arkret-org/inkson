@@ -347,17 +347,6 @@ impl CokretApi {
         self.submit_event_envelope(&envelope).await
     }
 
-    /// Backward-compatible alias for callers that still pass a Realm scope
-    /// through the old "space" naming used during the Realm/Space inversion.
-    pub async fn update_space(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        patch: Value,
-    ) -> anyhow::Result<SubmitEventResponse> {
-        self.update_realm_metadata(realm_id, actor_id, patch).await
-    }
-
     /// Update a structural Space object's metadata via `ck.space.update`.
     /// The event is submitted to the Space's home Realm (`realm_id`), while
     /// `space_id` identifies the Space object being patched.
@@ -399,13 +388,13 @@ impl CokretApi {
 
     /// Set Realm join_rule + history_visibility policy via two
     /// `ck.realm.*` facet events.
-    pub async fn set_space_policy_events(
+    pub async fn set_realm_policy_events(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor_id: &str,
         join_rule: &str,
         history_visibility: &str,
-    ) -> anyhow::Result<SpacePolicyResponse> {
+    ) -> anyhow::Result<RealmPolicyResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -419,9 +408,9 @@ impl CokretApi {
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
         for event in [
-            build_space_state_event(space_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
-            build_space_state_event(
-                space_id,
+            build_realm_state_event(realm_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
+            build_realm_state_event(
+                realm_id,
                 actor_id,
                 "ck.realm.history_visibility",
                 json!(history_visibility),
@@ -429,9 +418,9 @@ impl CokretApi {
         ] {
             self.submit_event_envelope(&event).await?;
         }
-        Ok(SpacePolicyResponse {
+        Ok(RealmPolicyResponse {
             ok: true,
-            space_id: space_id.to_owned(),
+            realm_id: realm_id.to_owned(),
             join_rule: join_rule.to_owned(),
             history_visibility: history_visibility.to_owned(),
         })
@@ -440,19 +429,19 @@ impl CokretApi {
     /// Create an invite via `ck.invite.create` event (spec-canonical). The
     /// `invite_id` is generated client-side so the caller can correlate
     /// optimistic UI rows with the eventual server projection.
-    pub async fn invite_to_space(
+    pub async fn invite_to_realm(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor_id: &str,
         invite_id: &str,
         target: &str,
         role: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
         let invitee_did = self
-            .resolve_invitee_did_for_invite(target, space_id, actor_id)
+            .resolve_invitee_did_for_invite(target, realm_id, actor_id)
             .await?;
         let envelope = crate::operation::cx_ops::invite_create_structured(
-            space_id,
+            realm_id,
             actor_id,
             invite_id,
             &invitee_did,
@@ -463,15 +452,15 @@ impl CokretApi {
     }
 
     /// Accept an invite via `ck.invite.accept` event (spec-canonical).
-    pub async fn accept_space_invite(
+    pub async fn accept_realm_invite(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope =
-            crate::operation::cx_ops::invite_accept(space_id, actor_id, invite_id).build("yougen");
-        let resolved = self.resolve_realm(&scope_id_as_realm_id(space_id)).await?;
+            crate::operation::cx_ops::invite_accept(realm_id, actor_id, invite_id).build("yougen");
+        let resolved = self.resolve_realm(realm_id).await?;
         let candidate = select_join_candidate(&resolved, "invite_accept")?;
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
@@ -522,21 +511,21 @@ impl CokretApi {
     }
 
     /// Reject an invite via `ck.invite.cancel` event (spec-canonical).
-    pub async fn reject_space_invite(
+    pub async fn reject_realm_invite(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor_id: &str,
         invite_id: &str,
         reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
         let envelope =
-            crate::operation::cx_ops::invite_cancel(space_id, actor_id, invite_id, reason)
+            crate::operation::cx_ops::invite_cancel(realm_id, actor_id, invite_id, reason)
                 .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
 
     /// Leave a Realm via `ck.member.state` event (`join → leave` FSM).
-    pub async fn leave_space(
+    pub async fn leave_realm(
         &self,
         realm_id: &str,
         actor_id: &str,
@@ -550,6 +539,51 @@ impl CokretApi {
             "self_leave",
         )
         .await
+    }
+
+    /// Archive a Realm via the reversible `ck.realm.archive` lifecycle facet.
+    pub async fn archive_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Restore a Realm by writing `ck.realm.archive{archived:false}`.
+    pub async fn restore_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope =
+            build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Tombstone a Realm and point clients at an explicit successor Realm.
+    pub async fn tombstone_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        successor_realm_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
+        self.submit_event_envelope(&envelope).await
+    }
+
+    /// Permanently retire a Realm via `ck.realm.destroy`.
+    pub async fn destroy_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let envelope = build_realm_destroy_event(realm_id, actor_id, reason)?;
+        self.submit_event_envelope(&envelope).await
     }
 
     /// Ban a member via `ck.member.state` event (`join → ban` FSM).
@@ -584,20 +618,20 @@ impl CokretApi {
     // refresh. Pairs with soland's `routing::events::projection_query`.
     pub async fn list_space_container_projections(
         &self,
-        space_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
-        // `ck:space:<uuid>` is RFC-3986-safe in query string position
+        // `ck:realm:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
-        let realm_id = scope_id_as_realm_id(space_id);
+        let realm_id = scope_id_as_realm_id(realm_id);
         let path = format!("_cokret/self/projection/spaces?realm_id={realm_id}");
         self.get_json(&path).await
     }
 
     pub async fn list_flow_projections(
         &self,
-        space_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
-        let realm_id = scope_id_as_realm_id(space_id);
+        let realm_id = scope_id_as_realm_id(realm_id);
         let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await
     }

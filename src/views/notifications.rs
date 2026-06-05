@@ -804,11 +804,7 @@ fn drop_joined_invite_notifications(
 }
 
 fn joined_realm_ids(response: &ClientSyncResponse) -> BTreeSet<String> {
-    response
-        .realms
-        .keys()
-        .cloned()
-        .collect()
+    response.realms.keys().cloned().collect()
 }
 
 fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncResponse) {

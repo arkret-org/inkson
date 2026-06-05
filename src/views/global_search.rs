@@ -248,8 +248,8 @@ pub fn GlobalSearchPanel(
                         {
                             let snippet = result_snippet(&result);
                             let destination = result_destination(&result);
-                            let space_id_text = result
-                                .get("space_id")
+                            let realm_id_text = result
+                                .get("realm_id")
                                 .and_then(Value::as_str)
                                 .unwrap_or("-")
                                 .to_owned();
@@ -264,7 +264,7 @@ pub fn GlobalSearchPanel(
                                 .unwrap_or("message")
                                 .to_owned();
                             let destination_for_button = destination.clone();
-                            let space_id_label = short_protocol_id(&space_id_text);
+                            let realm_id_label = short_protocol_id(&realm_id_text);
                             let sender_label = short_protocol_id(&sender);
                             rsx! {
                                 div {
@@ -276,8 +276,8 @@ pub fn GlobalSearchPanel(
                                         span {
                                             class: "id mono",
                                             "data-testid": "global-search-result-space",
-                                            title: "{space_id_text}",
-                                            "{space_id_label}"
+                                            title: "{realm_id_text}",
+                                            "{realm_id_label}"
                                         }
                                     }
                                     if !sender.is_empty() {

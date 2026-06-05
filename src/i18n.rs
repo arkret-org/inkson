@@ -549,8 +549,8 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("realm_admin.save_metadata", "Save Title & Summary");
     dict.set("realm_admin.save_metadata_move", "Save Metadata (Move)");
-    dict.set("realm_admin.tombstone_delete", "Tombstone / Delete");
-    dict.set("realm_admin.archive_space", "Archive Space");
+    dict.set("realm_admin.destroy_realm", "Destroy Realm");
+    dict.set("realm_admin.archive_realm", "Archive Realm");
     dict.set("verify_device.refresh_trust", "Refresh");
     dict.set("verify_device.verify_action", "Verify");
     dict.set("verify_device.revoke_action", "Revoke");
@@ -584,7 +584,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.kick_member_move", "Kick (Move)");
     dict.set("realm_admin.ban_member_move", "Ban (Move)");
     dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
-    dict.set("realm_admin.leave_space", "Leave");
+    dict.set("realm_admin.leave_realm", "Leave");
     dict.set("recovery.primary", "Primary");
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
@@ -720,7 +720,7 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Space-admin view (section labels)
-    dict.set("realm_admin.title", "Space Settings");
+    dict.set("realm_admin.title", "Realm Settings");
     dict.set("realm_admin.governance", "Governance");
     dict.set("realm_admin.devices", "Devices");
     dict.set("realm_admin.members", "Members");
@@ -801,7 +801,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.button.redact", "Redact");
     dict.set("chat.you_badge", "You");
     // Member visual indicators surfaced wherever a principal DID is
-    // rendered (space-admin member list, @mention picker, chat sender
+    // rendered (realm-admin member list, @mention picker, chat sender
     // attribution).
     dict.set("member.badge.agent", "Agent");
     // Compose drop-zone + attachment upload (A6.2).
@@ -1550,8 +1550,8 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("realm_admin.save_metadata", "保存标题和摘要");
     dict.set("realm_admin.save_metadata_move", "通过 Move 保存元数据");
-    dict.set("realm_admin.tombstone_delete", "终结 / 删除");
-    dict.set("realm_admin.archive_space", "归档 Space");
+    dict.set("realm_admin.destroy_realm", "销毁 Realm");
+    dict.set("realm_admin.archive_realm", "归档 Realm");
     dict.set("verify_device.refresh_trust", "刷新");
     dict.set("verify_device.verify_action", "验证");
     dict.set("verify_device.revoke_action", "撤销");
@@ -1579,7 +1579,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.kick_member_move", "踢出（Move）");
     dict.set("realm_admin.ban_member_move", "封禁（Move）");
     dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
-    dict.set("realm_admin.leave_space", "退出");
+    dict.set("realm_admin.leave_realm", "退出");
     dict.set("recovery.primary", "主");
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
@@ -1709,7 +1709,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.mls_recovery.submit", "设置 / 替换恢复口令");
 
     // Space-admin view
-    dict.set("realm_admin.title", "Space 设置");
+    dict.set("realm_admin.title", "Realm 设置");
     dict.set("realm_admin.governance", "治理");
     dict.set("realm_admin.devices", "设备");
     dict.set("realm_admin.members", "成员");

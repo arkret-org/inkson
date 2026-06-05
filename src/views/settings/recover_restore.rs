@@ -315,9 +315,9 @@ pub fn RecoverPanel(
                                                     .as_deref()
                                                     .unwrap_or("(unknown backup)");
                                                 restore_status.set(format!(
-                                                    "MLS history restored from {backup_label}; space {} epoch {} (floor {}).",
+                                                    "MLS history restored from {backup_label}; realm {} epoch {} (floor {}).",
                                                     crate::views::helpers::short_protocol_id(
-                                                        &summary.space_id
+                                                        &summary.realm_id
                                                     ),
                                                     summary.envelope_epoch,
                                                     summary.epoch_floor

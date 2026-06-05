@@ -810,11 +810,11 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Remove Member" })).toHaveCount(0);
   await expect(setupPanel.getByRole("button", { name: "Delete Space" })).toHaveCount(0);
 
-  await page.getByTestId("space-title-input").fill("Setup Flow Space");
-  await page.getByTestId("space-summary-input").fill("Created from yougen workspace setup");
-  await page.getByTestId("new-space-next-button").click();
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("three independent axes");
-  await page.getByTestId("new-space-next-button").click();
+  await page.getByTestId("realm-title-input").fill("Setup Flow Space");
+  await page.getByTestId("realm-summary-input").fill("Created from yougen workspace setup");
+  await page.getByTestId("new-realm-next-button").click();
+  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("three independent axes");
+  await page.getByTestId("new-realm-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
   await expect(setupPanel.getByRole("button", { name: "Create Realm" })).toBeVisible();
   await expect(setupPanel.getByRole("button", { name: "Create Space" })).toHaveCount(0);
@@ -830,18 +830,18 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.plaintext_visible_services"),
   );
-  await page.getByTestId("create-space-button").click();
+  await page.getByTestId("create-realm-button").click();
   const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
     realmCreateRequest.then((request) => request.postDataJSON()),
     plaintextPolicyRequest.then((request) => request.postDataJSON()),
   ]);
   expect(JSON.stringify(realmCreateBody)).toContain("ck.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText(/created ck:realm:/);
-  await expect(page.getByTestId("space-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
+  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText(/created ck:realm:/);
+  await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("space-setup-done")).toBeVisible();
   await expect(page.getByTestId("mls-backup-banner")).toBeVisible();
-  await expect(page.getByTestId("space-lifecycle-flow").getByTestId("selected-space-id")).toContainText("ck:realm:");
+  await expect(page.getByTestId("realm-lifecycle-flow").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
   await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
@@ -1221,15 +1221,15 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
-  await page.goto("/space/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("space-admin-panel")).toBeVisible();
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
   await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
   await page.getByTestId("queue-discussion-admission").click();
-  await expect(page.getByTestId("space-admin-status")).toContainText("Discussion-scoped external admission");
+  await expect(page.getByTestId("realm-admin-status")).toContainText("Discussion-scoped external admission");
 
   await page.getByTestId("space-name-input").fill("Updated Demo Space");
   await page.getByTestId("update-metadata-button").click();
-  await expect(page.getByTestId("space-admin-status")).toContainText("updated");
+  await expect(page.getByTestId("realm-admin-status")).toContainText("updated");
 
   await page.getByTestId("invite-target-input").fill("did:web:carol.example");
   const inviteCommit = page.waitForRequest("**/_cokret/self/events");
@@ -1237,7 +1237,7 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
   expect(inviteBody.kind).toBe("ck.invite.create");
   expect(inviteBody.payload.invite_id).toBe("ck:invite:e2e");
-  await expect(page.getByTestId("space-admin-status")).toContainText("invited did:web:carol.example");
+  await expect(page.getByTestId("realm-admin-status")).toContainText("invited did:web:carol.example");
   await expect(page.getByTestId("invite-row")).toContainText("pending");
 
   const acceptCommit = page.waitForRequest("**/_cokret/self/events");
@@ -1253,10 +1253,10 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   await expect(page.getByTestId("invite-row")).toContainText("canceled");
 
   await page.getByTestId("rotate-space-epoch").click();
-  await expect(page.getByTestId("space-admin-status")).toContainText("rotated to epoch");
+  await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
 
-  await page.getByTestId("archive-space-button").click();
-  await expect(page.getByTestId("space-admin-status")).toContainText("archived");
+  await page.getByTestId("archive-realm-button").click();
+  await expect(page.getByTestId("realm-admin-status")).toContainText("archived");
 });
 
 test("server switcher hides custom endpoint controls", async ({ page }) => {

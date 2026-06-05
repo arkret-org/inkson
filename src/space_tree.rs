@@ -470,8 +470,8 @@ pub(crate) fn space_tree_items(spaces: &[SpacePreview]) -> Vec<SpaceTreeItem> {
     items
 }
 
-pub fn space_previews_from_sync_spaces(spaces: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
-    let mut previews: Vec<SpacePreview> = spaces
+pub fn space_previews_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<SpacePreview> {
+    let mut previews: Vec<SpacePreview> = realms
         .iter()
         .filter(|(id, body)| {
             is_realm_or_space_projection_id(id) && !projection_looks_like_flow(body)
@@ -810,7 +810,7 @@ mod tests {
             }),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
         let root = previews
             .iter()
             .find(|space| space.space_id == "ck:space:root")
@@ -845,7 +845,7 @@ mod tests {
             }),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
         let child = previews
             .iter()
             .find(|space| space.space_id == "ck:space:child")
@@ -895,7 +895,7 @@ mod tests {
             }),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
         assert_eq!(previews[0].space_id, "ck:space:root");
@@ -934,7 +934,7 @@ mod tests {
             }),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
         assert_eq!(
@@ -982,7 +982,7 @@ mod tests {
             }),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
         assert_eq!(
@@ -1028,9 +1028,9 @@ mod tests {
     }
 
     #[test]
-    fn space_previews_from_sync_spaces_filters_flow_like_projections() {
+    fn space_previews_from_sync_realms_filters_flow_like_projections() {
         // Replacement for the old `merge_space_previews_filters_flow_like_search_results`
-        // test. The sync engine relies on `space_previews_from_sync_spaces`
+        // test. The sync engine relies on `space_previews_from_sync_realms`
         // (rather than the retired client-side merge filter) to keep
         // flow-like projections out of the sidebar — verify that here.
         let mut spaces = BTreeMap::new();
@@ -1046,7 +1046,7 @@ mod tests {
             json!({"summary": {"title": "Real Space"}}),
         );
 
-        let previews = space_previews_from_sync_spaces(&spaces);
+        let previews = space_previews_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
         assert_eq!(previews[0].space_id, "ck:space:real");

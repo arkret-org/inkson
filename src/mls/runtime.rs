@@ -143,7 +143,7 @@ impl WelcomeApplyOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MlsHistoryRestoreSummary {
     pub backup_id: Option<String>,
-    pub space_id: String,
+    pub realm_id: String,
     pub group_id: String,
     pub envelope_epoch: u64,
     pub epoch_floor: u64,
@@ -151,7 +151,7 @@ pub struct MlsHistoryRestoreSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InitialMlsSnapshotSummary {
-    pub space_id: String,
+    pub realm_id: String,
     pub group_id: String,
     pub epoch: u64,
     /// Base64 TLS-serialized ratchet tree of the freshly created group —
@@ -208,7 +208,7 @@ pub fn decode_mls_history_backup_envelope(
     let meta = body
         .get("envelope_meta")
         .ok_or_else(|| MlsRuntimeError::BackupDecode("envelope_meta is required".to_owned()))?;
-    require_backup_str(meta, "space_ref", &envelope.space_id)?;
+    require_backup_str(meta, "realm_ref", &envelope.realm_id)?;
     require_backup_str(meta, "group_id", &envelope.group_id)?;
     require_backup_u64(meta, "epoch", envelope.epoch)?;
 
@@ -224,7 +224,7 @@ pub fn decode_mls_history_backup_envelope(
             "contents must include mls_group_state".to_owned(),
         ));
     };
-    require_backup_str(group_state, "space_ref", &envelope.space_id)?;
+    require_backup_str(group_state, "realm_ref", &envelope.realm_id)?;
     require_backup_str(group_state, "mls_group_id", &envelope.group_id)?;
     require_backup_u64(group_state, "epoch", envelope.epoch)?;
 
@@ -233,11 +233,11 @@ pub fn decode_mls_history_backup_envelope(
 
 pub fn mls_restore_epoch_floor(
     state_store: &crate::local_state::LocalStateStore,
-    space_id: &str,
+    realm_id: &str,
 ) -> u64 {
-    let anchor_epoch = state_store.anchor_view_for(space_id).mls_epoch.unwrap_or(0);
+    let anchor_epoch = state_store.anchor_view_for(realm_id).mls_epoch.unwrap_or(0);
     let local_epoch = state_store
-        .mls_snapshot_for(space_id)
+        .mls_snapshot_for(realm_id)
         .map(|snapshot| snapshot.epoch)
         .unwrap_or(0);
     anchor_epoch.max(local_epoch)
@@ -253,7 +253,7 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     let envelope = decode_mls_history_backup_envelope(body)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let epoch_floor = mls_restore_epoch_floor(state_store, &envelope.space_id);
+    let epoch_floor = mls_restore_epoch_floor(state_store, &envelope.realm_id);
     crate::mls::persistence::restore_envelope(&envelope, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let summary = MlsHistoryRestoreSummary {
@@ -261,16 +261,16 @@ pub fn restore_mls_history_backup_with_device_snapshot(
             .get("backup_id")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
-        space_id: envelope.space_id.clone(),
+        realm_id: envelope.realm_id.clone(),
         group_id: envelope.group_id.clone(),
         envelope_epoch: envelope.epoch,
         epoch_floor,
     };
-    state_store.save_mls_snapshot(envelope.space_id.clone(), envelope);
+    state_store.save_mls_snapshot(envelope.realm_id.clone(), envelope);
     Ok(summary)
 }
 
-/// Ensure a Realm/Space creator has the initial local MLS group snapshot.
+/// Ensure a Realm creator has the initial local MLS group snapshot.
 ///
 /// The creator does not receive a Welcome for the group they create. Without
 /// this genesis snapshot, their first encrypted write would fail with
@@ -278,14 +278,14 @@ pub fn restore_mls_history_backup_with_device_snapshot(
 pub fn ensure_creator_mls_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    let space = space_id.trim();
+    let space = realm_id.trim();
     if space.is_empty() {
         return Err(MlsRuntimeError::Genesis(
-            "space_id is required for initial MLS group setup".to_owned(),
+            "realm_id is required for initial MLS group setup".to_owned(),
         ));
     }
     if state_store.mls_snapshot_for(space).is_some() {
@@ -324,7 +324,7 @@ pub fn ensure_creator_mls_snapshot(
         &salt,
     );
     let summary = InitialMlsSnapshotSummary {
-        space_id: space.to_owned(),
+        realm_id: space.to_owned(),
         group_id: post_state.group_id.clone(),
         epoch: post_state.epoch,
         ratchet_tree,
@@ -673,14 +673,14 @@ pub fn prepare_account_mls_secret_rotation(
     }
     let new_secret = generate_account_mls_secret().map_err(MlsRuntimeError::DeviceSecret)?;
     let mut rewrapped_snapshots = BTreeMap::new();
-    for (space_id, snapshot) in snapshots {
+    for (realm_id, snapshot) in snapshots {
         let plaintext = crate::mls::persistence::decrypt_envelope(
             snapshot,
             &previous_secret.secret,
         )
         .map_err(|err| {
             MlsRuntimeError::SnapshotRestore(format!(
-                "could not decrypt MLS snapshot for {space_id} before account-secret rotation: {err}"
+                "could not decrypt MLS snapshot for {realm_id} before account-secret rotation: {err}"
             ))
         })?;
         let mut salt = [0u8; 16];
@@ -688,7 +688,7 @@ pub fn prepare_account_mls_secret_rotation(
         // Re-wrapping does not advance the epoch — carry the epoch-start clock
         // so a secret rotation never resets the §2.9 minimal-metadata 1h cap.
         let rotated = crate::mls::persistence::encrypt_state(
-            &snapshot.space_id,
+            &snapshot.realm_id,
             &snapshot.group_id,
             snapshot.epoch,
             &plaintext,
@@ -696,7 +696,7 @@ pub fn prepare_account_mls_secret_rotation(
             &salt,
         )
         .carry_epoch_started_at(snapshot);
-        rewrapped_snapshots.insert(space_id.clone(), rotated);
+        rewrapped_snapshots.insert(realm_id.clone(), rotated);
     }
     Ok(AccountMlsSecretRotation {
         previous_version: previous_secret.version,
@@ -713,8 +713,8 @@ pub fn commit_account_mls_secret_rotation(
     actor_did: &str,
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
-    for (space_id, envelope) in &rotation.rewrapped_snapshots {
-        state_store.save_mls_snapshot(space_id.clone(), envelope.clone());
+    for (realm_id, envelope) in &rotation.rewrapped_snapshots {
+        state_store.save_mls_snapshot(realm_id.clone(), envelope.clone());
     }
     store_account_mls_secret_version(
         secure_store,
@@ -746,7 +746,7 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
 pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     messages_value: &serde_json::Value,
@@ -815,14 +815,14 @@ pub fn apply_welcome_messages_with_device_snapshot(
             continue;
         }
         let snapshot = crate::mls::persistence::encrypt_state(
-            space_id,
+            realm_id,
             &post_state.group_id,
             post_state.epoch,
             &serialized_state,
             &secret,
             &salt,
         );
-        state_store.save_mls_snapshot(space_id.to_owned(), snapshot);
+        state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
         outcome.applied += 1;
     }
     Ok(outcome)
@@ -832,7 +832,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
 pub fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     content_type: &str,
@@ -851,7 +851,7 @@ pub fn encrypt_values_with_device_snapshot(
         return Err(MlsRuntimeError::EmptyPlaintext);
     }
     let snapshot = state_store
-        .mls_snapshot_for(space_id)
+        .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -880,7 +880,7 @@ pub fn encrypt_values_with_device_snapshot(
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
     // X14 — persist-on-accept: do NOT save the post-commit snapshot here.
-    // The caller MUST call `state_store.save_mls_snapshot(space_id,
+    // The caller MUST call `state_store.save_mls_snapshot(realm_id,
     // new_envelope)` ONLY after the server ACCEPTS the corresponding
     // `ck.mls.commit` event. Persisting before acceptance let the local
     // snapshot epoch race ahead of the server's accepted epoch whenever a
@@ -890,7 +890,7 @@ pub fn encrypt_values_with_device_snapshot(
     // letting the caller persist on accept keeps `snapshot.epoch ==
     // server.epoch` in lockstep by construction.
     let new_envelope = crate::mls::persistence::encrypt_state(
-        space_id,
+        realm_id,
         &post_state.group_id,
         post_state.epoch,
         &serialized_state,
@@ -918,7 +918,7 @@ pub fn encrypt_values_with_device_snapshot(
 pub fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     content_type: &str,
@@ -935,7 +935,7 @@ pub fn encrypt_message_with_device_snapshot(
     MlsRuntimeError,
 > {
     let snapshot = state_store
-        .mls_snapshot_for(space_id)
+        .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
     // `aad_visibility=hidden`. Enforce before any commit/encrypt so a non-hidden
@@ -943,7 +943,7 @@ pub fn encrypt_message_with_device_snapshot(
     // server-side reject). The 1h epoch cap needs no separate force here: every
     // message self-update-commits below, so each message already opens a fresh
     // epoch — the within-epoch frequency window for messages is one message.
-    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(space_id);
+    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -970,7 +970,7 @@ pub fn encrypt_message_with_device_snapshot(
     // and preventing the permanent `mls_epoch_skew` that optimistic
     // pre-accept persistence caused.
     let new_envelope = crate::mls::persistence::encrypt_state(
-        space_id,
+        realm_id,
         &post_state.group_id,
         post_state.epoch,
         &serialized_state,
@@ -1098,7 +1098,7 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
     hex
 }
 
-/// Restore this device's MLS group for `space_id` and derive the §2.9 v1
+/// Restore this device's MLS group for `realm_id` and derive the §2.9 v1
 /// reaction routing tag for `canonical_emoji` at the current epoch.
 ///
 /// Read-only on the MLS group — it only reads the epoch's exporter secret,
@@ -1108,14 +1108,13 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
 pub fn reaction_routing_tag_v1(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
     realm_id: &str,
     actor_did: &str,
     device_id: &str,
     canonical_emoji: &str,
 ) -> Result<String, MlsRuntimeError> {
     let snapshot = state_store
-        .mls_snapshot_for(space_id)
+        .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -1147,14 +1146,13 @@ pub fn reaction_routing_tag_v1(
 pub fn encrypt_reaction_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    space_id: &str,
     realm_id: &str,
     actor_did: &str,
     device_id: &str,
     canonical_emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
     let snapshot = state_store
-        .mls_snapshot_for(space_id)
+        .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -1166,7 +1164,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // requirement is a MUST. Assert it up front (with the same SDK helper
     // soland rejects with) so any future edit that widens visibility on a
     // minimal Realm fails loudly here instead of leaking message-id metadata.
-    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(space_id);
+    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&cokret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
 
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
@@ -1217,7 +1215,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
     let new_envelope = crate::mls::persistence::encrypt_state(
-        space_id,
+        realm_id,
         &post_state.group_id,
         post_state.epoch,
         &serialized_state,
@@ -1242,7 +1240,7 @@ pub fn encrypt_reaction_with_device_snapshot(
         // reaction). Carry the epoch-start clock forward so a stream of
         // reactions can never reset the §2.9 1h cap.
         let new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
-        state_store.save_mls_snapshot(space_id.to_owned(), new_envelope);
+        state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
         Ok(EncryptedReaction {
             routing_tag,
             encrypted_payload,
@@ -1568,7 +1566,7 @@ mod tests {
             ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
 
         let summary = summary.expect("missing creator snapshot should be created");
-        assert_eq!(summary.space_id, space);
+        assert_eq!(summary.realm_id, space);
         assert_eq!(summary.epoch, 0);
         assert!(state.mls_snapshot_for(space).is_some());
         // X14: encrypt no longer persists internally — the caller saves the
@@ -1786,7 +1784,7 @@ mod tests {
 
         let decoded = decode_mls_history_backup_envelope(&body).unwrap();
 
-        assert_eq!(decoded.space_id, envelope.space_id);
+        assert_eq!(decoded.realm_id, envelope.realm_id);
         assert_eq!(decoded.group_id, envelope.group_id);
         assert_eq!(decoded.epoch, envelope.epoch);
         assert_eq!(body["backup_class"], "mls_history");
@@ -2047,7 +2045,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(restored.space_id, space);
+        assert_eq!(restored.realm_id, space);
         assert_eq!(restored.envelope_epoch, record.epoch);
         assert_eq!(restored.epoch_floor, 0);
         assert_eq!(state.mls_snapshot_for(space).unwrap().epoch, record.epoch);
@@ -2196,7 +2194,7 @@ mod tests {
         .expect("restore succeeds once the account secret is recovered");
 
         // The restored snapshot must match A's group_id / epoch.
-        assert_eq!(summary.space_id, space);
+        assert_eq!(summary.realm_id, space);
         assert_eq!(summary.group_id, record.group_id);
         assert_eq!(summary.envelope_epoch, record.epoch);
         let restored_snapshot = state_b.mls_snapshot_for(space).unwrap();

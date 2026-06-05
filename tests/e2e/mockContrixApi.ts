@@ -983,7 +983,7 @@ export async function mockCokretApi(page: Page) {
               { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
               {
                 type: "type_restriction",
-                params: { object_type_allow: ["space"], facet_allow: ["renderable", "stateful"] },
+                params: { allowed_object_types: ["space"], allowed_facets: ["renderable", "stateful"] },
               },
             ],
             delegation_chain: ["ck:grant:root", "ck:grant:e2e"],

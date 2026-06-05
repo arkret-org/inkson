@@ -55,7 +55,7 @@ struct BlobAttachment {
 /// Event model for timeline display.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineEvent {
-    pub space_id: Option<String>,
+    pub realm_id: Option<String>,
     pub id: String,
     pub sender: String,
     pub sender_display: String,
@@ -87,7 +87,7 @@ impl Default for TimelineEvent {
     fn default() -> Self {
         Self {
             id: String::new(),
-            space_id: None,
+            realm_id: None,
             sender: "yougen".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),
@@ -128,7 +128,7 @@ impl TimelineEvent {
     }
 
     pub fn pending_message(
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         id: impl Into<String>,
         sender: impl Into<String>,
         sender_display: impl Into<String>,
@@ -137,7 +137,7 @@ impl TimelineEvent {
         thread_id: Option<String>,
     ) -> Self {
         Self {
-            space_id: Some(space_id.into()),
+            realm_id: Some(realm_id.into()),
             id: id.into(),
             sender: sender.into(),
             sender_display: sender_display.into(),
@@ -352,7 +352,7 @@ async fn submit_timeline_message_with_plaintext_retry(
             if service_did.is_empty() {
                 return Err(error);
             }
-            api.update_space(
+            api.update_realm_metadata(
                 space_id,
                 actor_did,
                 json!({"plaintext_visible_services": [service_did]}),
@@ -474,9 +474,9 @@ pub fn TimelinePanel(
         .filter(|(_, event)| {
             selected_space_scope.is_empty()
                 || event
-                    .space_id
+                    .realm_id
                     .as_deref()
-                    .map(|space_id| selected_space_scope.iter().any(|id| id == space_id))
+                    .map(|realm_id| selected_space_scope.iter().any(|id| id == realm_id))
                     .unwrap_or(true)
         })
         .map(|(i, event)| (i, event.clone()))
@@ -514,7 +514,7 @@ pub fn TimelinePanel(
                 })
                 .await
             {
-                let events = timeline_events_from_sync_spaces(&sync.realms);
+                let events = timeline_events_from_sync_realms(&sync.realms);
                 if !events.is_empty() {
                     let current = timeline();
                     timeline.set(crate::app::merge_timeline_events(&current, events));
@@ -1660,7 +1660,7 @@ pub fn TimelinePanel(
                         } else {
                             let event_id = format!("ev:local:{}", uuid_v7());
                             timeline.write().push(TimelineEvent {
-                                space_id: Some(space_for_plain.clone()),
+                                realm_id: Some(space_for_plain.clone()),
                                 id: event_id.clone(),
                                 sender: account_did_key.clone(),
                                 sender_display: "you".to_owned(),
@@ -2117,23 +2117,23 @@ fn timeline_actor_id(event: &Value) -> Option<&str> {
         .find_map(|key| event.get(key).and_then(Value::as_str))
 }
 
-fn timeline_events_from_sync_spaces(
-    spaces: &std::collections::BTreeMap<String, Value>,
+fn timeline_events_from_sync_realms(
+    realms: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<TimelineEvent> {
     let mut events = Vec::new();
-    for (space_id, body) in spaces {
-        let space_id_label = short_protocol_id(space_id);
+    for (realm_id, body) in realms {
+        let realm_id_label = short_protocol_id(realm_id);
         let mut summary_event = TimelineEvent::system_notice(
-            format!("summary-{space_id}"),
+            format!("summary-{realm_id}"),
             "server",
             format!(
-                "{space_id_label}: {}",
+                "{realm_id_label}: {}",
                 body["summary"]["summary"]
                     .as_str()
                     .unwrap_or("No summary available")
             ),
         );
-        summary_event.space_id = Some(space_id.clone());
+        summary_event.realm_id = Some(realm_id.clone());
         events.push(summary_event);
 
         let Some(timeline_events) = body
@@ -2174,7 +2174,7 @@ fn timeline_events_from_sync_spaces(
             // on every successful decrypt.
             let encrypted_payload = content.get("encrypted_content").cloned();
             events.push(TimelineEvent {
-                space_id: Some(space_id.clone()),
+                realm_id: Some(realm_id.clone()),
                 id: event_id.clone(),
                 // canonical envelope 主体是 `actor_id`(spec
                 // forbidden-wire-fields.json: sender → sender_actor_id)。优先

@@ -175,7 +175,7 @@ impl CokretApi {
     pub async fn resolve_invitee_did_for_invite(
         &self,
         target: &str,
-        space_id: &str,
+        realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<String> {
         let target = target.trim();
@@ -187,7 +187,7 @@ impl CokretApi {
         }
 
         let handle = canonical_invitee_handle(target)?;
-        let realm_id = scope_id_as_realm_id(space_id);
+        let realm_id = scope_id_as_realm_id(realm_id);
         let resolved = self
             .resolve_handle_with_context(
                 &handle,

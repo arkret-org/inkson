@@ -346,16 +346,16 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Capability approval workflow ----
-  // claude-design: desktop/space-admin.html
+  // claude-design: desktop/realm-admin.html
   // spec: authz/capabilities.md
-  test("space-admin: capability approval pending until 2 of 3 admins sign", async ({ page }) => {
+  test("realm-admin: capability approval pending until 2 of 3 admins sign", async ({ page }) => {
     // the capability-grant approval workflow
     // requires the `grant-explanation` rows to render so an admin can
     // see (a) what's being granted, and (b) the current pending /
     // accepted state. The 2-of-3 quorum logic is server-side (soland
     // policy engine); this e2e pins the UI surface so the explanation
     // panel exists for admins to inspect.
-    await page.goto("/space/ck:space:0196419b-0000-7000-8000-000000000000/admin", {
+    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });

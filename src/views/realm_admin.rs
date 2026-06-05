@@ -1176,7 +1176,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.set_space_policy_events(&space, &actor, &rule, &vis).await
+                                            api.set_realm_policy_events(&space, &actor, &rule, &vis).await
                                         },
                                     )
                                     .await
@@ -1972,13 +1972,13 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Leave space
-            div { class: "event", "data-testid": "leave-space",
-                div { class: "event-head", span { "Leave Space" } span { "" } }
+            // Leave Realm
+            div { class: "event", "data-testid": "leave-realm",
+                div { class: "event-head", span { "Leave Realm" } span { "" } }
                 div { class: "actions",
                     button {
                         class: "secondary",
-                        "data-testid": "leave-space-button",
+                        "data-testid": "leave-realm-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -2001,7 +2001,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.leave_space(&space, &actor_did).await
+                                            api.leave_realm(&space, &actor_did).await
                                         },
                                     )
                                     .await
@@ -2020,7 +2020,7 @@ pub fn RealmAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("realm_admin.leave_space")}
+                        {crate::i18n::tr("realm_admin.leave_realm")}
                     }
                 }
             }
@@ -2469,7 +2469,7 @@ pub fn RealmAdminPanel(
                 div { class: "actions",
                     button {
                         class: "secondary",
-                        "data-testid": "archive-space-button",
+                        "data-testid": "archive-realm-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -2490,7 +2490,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.archive_space(&space, &space, &actor_did).await
+                                            api.archive_realm(&space, &actor_did).await
                                         },
                                     )
                                     .await
@@ -2505,11 +2505,11 @@ pub fn RealmAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("realm_admin.archive_space")}
+                        {crate::i18n::tr("realm_admin.archive_realm")}
                     }
                     button {
                         class: "secondary",
-                        "data-testid": "delete-space-button",
+                        "data-testid": "destroy-realm-button",
                         onclick: {
                             let base = base_url.clone();
                             let space = selected_space.clone();
@@ -2530,13 +2530,13 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.delete_space(&space, &space, &actor_did).await
+                                            api.destroy_realm(&space, &actor_did, "operator_request").await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(_) => status_msg.set(format!(
-                                            "deleted {}",
+                                            "destroyed {}",
                                             short_protocol_id(&space_for_msg)
                                         )),
                                         Err(err) => status_msg.set(format!("delete failed: {}", err.display())),
@@ -2544,7 +2544,7 @@ pub fn RealmAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("realm_admin.tombstone_delete")}
+                        {crate::i18n::tr("realm_admin.destroy_realm")}
                     }
                 }
             }

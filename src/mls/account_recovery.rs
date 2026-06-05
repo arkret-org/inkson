@@ -407,7 +407,7 @@ fn mls_history_backup_needs_restore(
     if crate::mls::persistence::decrypt_envelope(&envelope, local_secret).is_err() {
         return true;
     }
-    let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.space_id) else {
+    let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.realm_id) else {
         return true;
     };
     if local_snapshot.group_id != envelope.group_id || local_snapshot.epoch < envelope.epoch {
@@ -1200,13 +1200,13 @@ mod tests {
     }
 
     fn history_envelope(
-        space_id: &str,
+        realm_id: &str,
         group_id: &str,
         epoch: u64,
         secret: &str,
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
         crate::mls::persistence::encrypt_state(
-            space_id,
+            realm_id,
             group_id,
             epoch,
             b"opaque sdk state bytes",
@@ -1402,7 +1402,7 @@ mod tests {
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
         let mut state = temp_state_store("prompt-current-history");
         let envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
-        state.save_mls_snapshot(envelope.space_id.clone(), envelope.clone());
+        state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&envelope)]
         });
@@ -1477,7 +1477,7 @@ mod tests {
         // epoch/group gates.
         let local_envelope =
             history_envelope("ck:space:prompt", "group-a", 7, "forked-random-secret");
-        state.save_mls_snapshot(local_envelope.space_id.clone(), local_envelope);
+        state.save_mls_snapshot(local_envelope.realm_id.clone(), local_envelope);
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&server_envelope)]
         });

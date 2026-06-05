@@ -5383,7 +5383,7 @@ mod tests {
         }
         let reader = LocalStateStore::with_path(path);
         let restored = reader.mls_snapshot_for(space).expect("envelope persists");
-        assert_eq!(restored.space_id, envelope.space_id);
+        assert_eq!(restored.realm_id, envelope.realm_id);
         assert_eq!(restored.epoch, 5);
         assert_eq!(restored.ciphertext_hex, envelope.ciphertext_hex);
         assert_eq!(reader.mls_snapshots().len(), 1);

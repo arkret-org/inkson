@@ -29,7 +29,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("views/global_search.rs", 1),
     ("views/mod.rs", 1),
     ("views/settings/mod.rs", 1),
-    ("views/space_admin.rs", 3),
+    ("views/realm_admin.rs", 3),
     ("workflows.rs", 1),
 ];
 

@@ -187,12 +187,12 @@ impl MimiClient {
     pub async fn request_consent(
         &self,
         target_identifier: &str,
-        space_id: Option<&str>,
+        realm_id: Option<&str>,
     ) -> Result<MimiConsentRequestResult, MimiClientError> {
         let url = format!("{}/_cokret/open/mimi/consent/request", self.base_url);
         let body = json!({
             "target_identifier": target_identifier,
-            "space_id": space_id,
+            "realm_id": realm_id,
             "privacy_mode": "private_contact_discovery",
             "protocol_draft": self.drafts.protocol_draft,
             "identifier_draft": self.drafts.identifier_draft,
