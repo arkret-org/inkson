@@ -23,9 +23,7 @@ impl CokretApi {
     }
 
     /// Ship a single client-side telemetry entry to
-    /// soland's audit ingest endpoint (or, if soland routes the path
-    /// through coauth, the coauth audit feed — soland's reverse
-    /// proxy makes the choice transparent to the client).
+    /// soland's deployment-local audit ingest endpoint.
     ///
     /// The endpoint shape mirrors sodmin's audit feed: a plain JSON
     /// body keyed by actor/action/outcome/note/recorded_at. The
@@ -36,7 +34,7 @@ impl CokretApi {
         let request = self
             .http
             .post(
-                self.endpoint("_soland/self/audit/user-action")
+                self.endpoint("_soland/admin/audit/user-action")
                     .map_err(|err| AuditPostError::Other(err.to_string()))?,
             )
             .json(&payload);

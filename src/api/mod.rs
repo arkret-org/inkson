@@ -996,6 +996,14 @@ fn validate_outgoing_registered_payload(event: &EventEnvelope) -> anyhow::Result
         })
 }
 
+pub fn build_read_cursor_advance_event(
+    marker: &crate::local_state::ReadMarkerRecord,
+) -> EventEnvelope {
+    OperationBuilder::new(&marker.body.realm_id, &marker.actor, &marker.marker_type)
+        .body(marker.cx_read_cursor_payload())
+        .build(&marker.device_id)
+}
+
 fn ensure_events_submit_batch_accepted(response: &Value) -> anyhow::Result<()> {
     let status = response
         .get("status")
@@ -2821,13 +2829,10 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/self/consent/cells",
     "_soland/self/consent/cells/{holder}/grant",
     "_soland/self/consent/cells/{holder}/revoke",
-    // notifications —— messages 投影 + read cursor 的派生视图
-    "_soland/self/notifications",
-    "_soland/self/notifications/mark-all-read",
     // index/search —— 对 projection 的子串扫描
     "_soland/self/index/search",
-    // audit —— 客户端遥测上报
-    "_soland/self/audit/user-action",
+    // audit —— 客户端遥测上报,部署本地非 self 面
+    "_soland/admin/audit/user-action",
     // gate/auth —— dev-login / logout / bridge-describe(`/_cokret/gate` 下暂无等价)
     "_soland/gate/auth/dev-login",
     "_soland/gate/auth/logout",

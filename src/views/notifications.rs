@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cokret_sdk::push_rule_core::{
     EventContext as PushRuleEventContext, ShouldNotify, evaluate_watch_level,
@@ -34,9 +34,11 @@ enum NotificationAction {
 #[derive(Clone, Debug, PartialEq)]
 struct Notification {
     id: String,
+    source_event_id: Option<String>,
     title: String,
     body: String,
     realm_id: String,
+    flow_id: Option<String>,
     realm_label: Option<String>,
     kind: String,
     read: bool,
@@ -54,6 +56,8 @@ struct Notification {
 #[component]
 pub fn NotificationsPanel(
     base_url: String,
+    account_did: String,
+    device_id: String,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
@@ -192,10 +196,14 @@ pub fn NotificationsPanel(
                             "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
                             onclick: {
                                 let base_url = base_url.clone();
+                                let account_did = account_did.clone();
+                                let device_id = device_id.clone();
                                 move |_| {
                                     mark_all_notifications_read(
                                         base_url.clone(),
                                         token(),
+                                        account_did.clone(),
+                                        device_id.clone(),
                                         state_store,
                                         notifications,
                                         status_msg,
@@ -462,21 +470,20 @@ fn refresh_notifications(
     spawn(async move {
         match with_authed_api(&base_url, access_token, |api| async move {
             let response = api.account_subscribe_snapshot(None).await?;
-            let notification_response = api.list_notifications().await.ok();
             let invite_notifications = api
                 .invites()
                 .await
                 .map(|response| response.invites)
                 .unwrap_or_default();
-            Ok::<_, anyhow::Error>((response, notification_response, invite_notifications))
+            Ok::<_, anyhow::Error>((response, invite_notifications))
         })
         .await
         {
-            Ok((response, notification_response, invite_notifications)) => {
+            Ok((response, invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&response.account_data);
                 let dnd = dnd_settings_from_account_data(&response.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
-                    notification_response.as_ref(),
+                    Some(&response.notifications),
                     &response.account_data,
                 );
                 let joined_realms = joined_realm_ids(&response);
@@ -487,7 +494,7 @@ fn refresh_notifications(
                     &joined_realms,
                 );
                 let unread_count =
-                    notification_unread_count(notification_response.as_ref(), &raw_notifications);
+                    notification_unread_count(Some(&response.notifications), &raw_notifications);
                 server_unread.set(unread_count);
                 let hydrated = {
                     let mut store = state_store.write();
@@ -515,41 +522,110 @@ fn refresh_notifications(
 fn mark_all_notifications_read(
     base_url: String,
     access_token: String,
+    actor_did: String,
+    device_id: String,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
     mut server_unread: Signal<usize>,
 ) {
+    let snapshot = notifications();
+    let ids = snapshot
+        .iter()
+        .map(|notification| notification.id.clone())
+        .collect::<Vec<_>>();
+    let read_targets = read_cursor_targets(&snapshot);
+    for notification in notifications.write().iter_mut() {
+        notification.read = true;
+    }
+    // Perf (P1): "mark all read" used to flush the whole local
+    // state once per notification. Coalesce into a single flush.
+    let markers = {
+        let mut store = state_store.write();
+        store.batch(|store| {
+            for id in ids {
+                store.set_notification_read(id, true);
+            }
+        });
+        if actor_did.trim().is_empty() || device_id.trim().is_empty() {
+            Vec::new()
+        } else {
+            read_targets
+                .into_iter()
+                .map(|target| {
+                    store.save_read_cursor(
+                        actor_did.clone(),
+                        device_id.clone(),
+                        target.realm_id,
+                        target.flow_id,
+                        target.event_id,
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    server_unread.set(0);
+    if markers.is_empty() {
+        status_msg.set("All loaded notifications marked read locally.".to_owned());
+        return;
+    }
+
+    status_msg.set(format!(
+        "All loaded notifications marked read; syncing {} read cursor(s)...",
+        markers.len()
+    ));
     spawn(async move {
+        let marker_count = markers.len();
         match with_authed_api(&base_url, access_token, |api| async move {
-            api.mark_all_notifications_read().await
+            for marker in markers {
+                api.submit_read_cursor_advance(&marker).await?;
+            }
+            Ok::<_, anyhow::Error>(())
         })
         .await
         {
-            Ok(_) => {
-                let ids = notifications()
-                    .iter()
-                    .map(|notification| notification.id.clone())
-                    .collect::<Vec<_>>();
-                for notification in notifications.write().iter_mut() {
-                    notification.read = true;
-                }
-                // Perf (P1): "mark all read" used to flush the whole local
-                // state once per notification. Coalesce into a single flush.
-                let mut store = state_store.write();
-                store.batch(|store| {
-                    for id in ids {
-                        store.set_notification_read(id, true);
-                    }
-                });
-                server_unread.set(0);
-                status_msg.set("All visible notifications marked read.".to_owned());
-            }
-            Err(err) => {
-                status_msg.set(format!("Mark all read failed: {}", err.display()));
-            }
+            Ok(()) => status_msg.set(format!(
+                "All loaded notifications marked read; synced {marker_count} read cursor(s)."
+            )),
+            Err(err) => status_msg.set(format!(
+                "All loaded notifications marked read locally; read cursor sync failed: {}",
+                err.display()
+            )),
         }
     });
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NotificationReadTarget {
+    realm_id: String,
+    flow_id: Option<String>,
+    event_id: String,
+    timestamp: String,
+}
+
+fn read_cursor_targets(notifications: &[Notification]) -> Vec<NotificationReadTarget> {
+    let mut latest_by_realm = BTreeMap::<String, NotificationReadTarget>::new();
+    for notification in notifications {
+        let Some(event_id) = notification.source_event_id.clone() else {
+            continue;
+        };
+        if notification.realm_id.trim().is_empty() {
+            continue;
+        }
+        let target = NotificationReadTarget {
+            realm_id: notification.realm_id.clone(),
+            flow_id: notification.flow_id.clone(),
+            event_id,
+            timestamp: notification.timestamp.clone(),
+        };
+        match latest_by_realm.get(&target.realm_id) {
+            Some(existing) if existing.timestamp >= target.timestamp => {}
+            _ => {
+                latest_by_realm.insert(target.realm_id.clone(), target);
+            }
+        }
+    }
+    latest_by_realm.into_values().collect()
 }
 
 fn run_notification_action(
@@ -611,26 +687,23 @@ fn accept_invite_notification(
                 Ok(sync) => sync,
                 Err(_) => api.account_subscribe_snapshot(None).await?,
             };
-            let notification_response = api.list_notifications().await.ok();
             let invite_notifications = api
                 .invites()
                 .await
                 .map(|response| response.invites)
                 .unwrap_or_default();
-            Ok::<_, anyhow::Error>((sync, notification_response, invite_notifications))
+            Ok::<_, anyhow::Error>((sync, invite_notifications))
         })
         .await
         {
-            Ok((sync, notification_response, invite_notifications)) => {
+            Ok((sync, invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&sync.account_data);
                 let dnd = dnd_settings_from_account_data(&sync.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
 
-                let mut raw_notifications = raw_notifications_from_sources(
-                    notification_response.as_ref(),
-                    &sync.account_data,
-                );
+                let mut raw_notifications =
+                    raw_notifications_from_sources(Some(&sync.notifications), &sync.account_data);
                 drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
                 append_invite_notifications(
                     &mut raw_notifications,
@@ -645,7 +718,7 @@ fn accept_invite_notification(
                         .set_notification_archived(notification_id.clone(), true);
                 }
                 let unread_count =
-                    notification_unread_count(notification_response.as_ref(), &raw_notifications);
+                    notification_unread_count(Some(&sync.notifications), &raw_notifications);
                 server_unread.set(unread_count);
 
                 let hydrated = {
@@ -691,7 +764,7 @@ fn raw_notifications_from_sources(
     account_data: &[Value],
 ) -> Vec<Value> {
     notification_response
-        .and_then(|response| response.get("items").and_then(Value::as_array).cloned())
+        .and_then(notification_items_from_value)
         .unwrap_or_else(|| {
             account_data
                 .iter()
@@ -699,6 +772,19 @@ fn raw_notifications_from_sources(
                 .cloned()
                 .collect::<Vec<_>>()
         })
+}
+
+pub(crate) fn notification_items_from_value(value: &Value) -> Option<Vec<Value>> {
+    if value.is_null() {
+        return None;
+    }
+    if let Some(items) = value.get("items").and_then(Value::as_array) {
+        return Some(items.clone());
+    }
+    if let Some(events) = value.get("events").and_then(Value::as_array) {
+        return Some(events.clone());
+    }
+    value.as_array().cloned()
 }
 
 fn notification_unread_count(
@@ -873,6 +959,23 @@ fn notification_from_value(
 
     let id = value_string(&value, &["notification_id", "id"])
         .unwrap_or_else(|| format!("notification-{index}"));
+    let source_event_id = value_string_with_prefix(
+        &value,
+        &[
+            "source_event_id",
+            "event_id",
+            "target_event_id",
+            "message_event_id",
+            "timeline_event_id",
+        ],
+        "ck:event:",
+    )
+    .or_else(|| id.strip_prefix("ck:event:").map(|_| id.clone()));
+    let flow_id = value_string_with_prefix(
+        &value,
+        &["flow_id", "target_flow_id", "space_id"],
+        "ck:flow:",
+    );
     let client_state = local_state
         .notification_client_state
         .get(&id)
@@ -908,9 +1011,11 @@ fn notification_from_value(
 
     Some(Notification {
         id,
+        source_event_id,
         title,
         body,
         realm_id,
+        flow_id,
         realm_label: value_string(&value, &["realm_label", "realm_title"]),
         kind: kind.clone(),
         read: value_bool(&value, "read").unwrap_or(client_state.read),
@@ -994,6 +1099,10 @@ fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
             .and_then(|field| field.as_str())
             .map(ToOwned::to_owned)
     })
+}
+
+fn value_string_with_prefix(value: &Value, keys: &[&str], prefix: &str) -> Option<String> {
+    value_string(value, keys).filter(|candidate| candidate.starts_with(prefix))
 }
 
 fn nested_value_string(value: &Value, parents: &[&str], key: &str) -> Option<String> {
@@ -1219,6 +1328,67 @@ mod tests {
     }
 
     #[test]
+    fn read_cursor_targets_pick_latest_event_per_realm() {
+        let realm_a = "ck:realm:01904100-0000-7000-8000-000000000002";
+        let flow_a = "ck:flow:01904100-0000-7000-8000-000000000003";
+        let realm_b = "ck:realm:01904100-0000-7000-8000-000000000004";
+        let raw = vec![
+            json!({
+                "notification_id": "old-a",
+                "notification_type": "message",
+                "realm_id": realm_a,
+                "flow_id": flow_a,
+                "source_event_id": "ck:event:01904100-0000-7000-8000-000000000005",
+                "timestamp": "2026-05-29T00:00:00Z",
+            }),
+            json!({
+                "notification_id": "new-a",
+                "notification_type": "message",
+                "realm_id": realm_a,
+                "flow_id": flow_a,
+                "event_id": "ck:event:01904100-0000-7000-8000-000000000006",
+                "timestamp": "2026-05-29T00:00:01Z",
+            }),
+            json!({
+                "notification_id": "no-position",
+                "notification_type": "message",
+                "realm_id": realm_a,
+                "timestamp": "2026-05-29T00:00:02Z",
+            }),
+            json!({
+                "notification_id": "new-b",
+                "notification_type": "mention",
+                "realm_id": realm_b,
+                "source_event_id": "ck:event:01904100-0000-7000-8000-000000000007",
+                "timestamp": "2026-05-29T00:00:03Z",
+            }),
+        ];
+
+        let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
+        let targets = read_cursor_targets(&notifications);
+
+        assert_eq!(targets.len(), 2);
+        let target_a = targets
+            .iter()
+            .find(|target| target.realm_id == realm_a)
+            .expect("realm A target");
+        assert_eq!(
+            target_a.event_id,
+            "ck:event:01904100-0000-7000-8000-000000000006"
+        );
+        assert_eq!(target_a.flow_id.as_deref(), Some(flow_a));
+        let target_b = targets
+            .iter()
+            .find(|target| target.realm_id == realm_b)
+            .expect("realm B target");
+        assert_eq!(
+            target_b.event_id,
+            "ck:event:01904100-0000-7000-8000-000000000007"
+        );
+        assert!(target_b.flow_id.is_none());
+    }
+
+    #[test]
     fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
         let account_data = vec![
             json!({
@@ -1239,5 +1409,21 @@ mod tests {
         let server_empty = json!({ "items": [], "unread_count": 0 });
         assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
         assert_eq!(notification_unread_count(Some(&server_empty), &fallback), 0);
+
+        let subscribe_delta = json!({
+            "events": [{
+                "notification_id": "n2",
+                "kind": "mention",
+                "read": false
+            }],
+            "unread_count": 1
+        });
+        let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
+        assert_eq!(from_subscribe.len(), 1);
+        assert_eq!(from_subscribe[0]["notification_id"].as_str(), Some("n2"));
+        assert_eq!(
+            notification_unread_count(Some(&subscribe_delta), &from_subscribe),
+            1
+        );
     }
 }

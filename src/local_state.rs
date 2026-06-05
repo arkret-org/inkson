@@ -97,6 +97,8 @@ pub struct ReadCursorPosition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerBody {
+    #[serde(default = "new_read_cursor_id")]
+    pub id: String,
     pub schema: String,
     pub realm_id: String,
     pub read_scope: ReadScope,
@@ -114,18 +116,23 @@ pub struct ReadMarkerRecord {
 }
 
 impl ReadMarkerRecord {
+    pub fn cx_read_cursor_payload(&self) -> Value {
+        json!({
+            "id": &self.body.id,
+            "schema": &self.body.schema,
+            "actor_id": &self.actor,
+            "device_id": &self.device_id,
+            "realm_id": &self.body.realm_id,
+            "read_scope": &self.body.read_scope,
+            "position": &self.body.position,
+            "updated_at": self.updated_at,
+        })
+    }
+
     pub fn cx_read_cursor_operation(&self) -> Value {
         json!({
             "kind": &self.marker_type,
-            "payload": {
-                "schema": &self.body.schema,
-                "actor_id": &self.actor,
-                "device_id": &self.device_id,
-                "realm_id": &self.body.realm_id,
-                "read_scope": &self.body.read_scope,
-                "position": &self.body.position,
-                "updated_at": self.updated_at,
-            },
+            "payload": self.cx_read_cursor_payload(),
         })
     }
 }
@@ -2122,6 +2129,7 @@ impl LocalStateStore {
         let marker = ReadMarkerRecord {
             marker_type: "ck.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
+                id: new_read_cursor_id(),
                 schema: "ck.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.clone(),
                 read_scope: read_scope.clone(),
@@ -3510,6 +3518,10 @@ fn default_flow_id_for_realm(realm_id: &str) -> String {
         .unwrap_or_else(|| realm_id.to_owned())
 }
 
+fn new_read_cursor_id() -> String {
+    format!("ck:read_cursor:{}", crate::operation::uuid_v7())
+}
+
 fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {
     format!(
         "{}\n{}\n{}\n{}",
@@ -4279,6 +4291,7 @@ mod tests {
             serde_json::json!({
                 "kind": "ck.read_cursor.advance",
                 "payload": {
+                    "id": &marker.body.id,
                     "schema": "ck.schema.read_cursor.v1",
                     "actor_id": "did:web:alice.example",
                     "device_id": "device-1",
@@ -4301,6 +4314,7 @@ mod tests {
         let persisted = reader
             .read_cursor_for("ck:realm:demo", None)
             .expect("read marker persisted");
+        assert_eq!(persisted.body.id, marker.body.id);
         assert_eq!(persisted.actor, "did:web:alice.example");
         assert_eq!(persisted.device_id, "device-1");
         assert_eq!(persisted.body.position.event_id, "ck:event:read-1");

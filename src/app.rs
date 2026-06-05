@@ -2982,6 +2982,8 @@ pub fn RouterView() -> Element {
                     Route::Notifications => rsx! {
                         crate::views::notifications::NotificationsPanel {
                             base_url: base_url(),
+                            account_did: account_did(),
+                            device_id: device_id(),
                             token,
                             state_store,
                         }
@@ -4526,16 +4528,26 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // returns the canonical RealmRemark JSON in
                             // `content`. Entries for other namespaces are
                             // ignored here.
-                            let notification_projection = sync
-                                .account_data
-                                .iter()
-                                .filter(|entry| {
-                                    crate::views::notifications::is_notification_account_data(entry)
-                                })
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            if !notification_projection.is_empty() {
+                            if let Some(notification_projection) =
+                                crate::views::notifications::notification_items_from_value(
+                                    &sync.notifications,
+                                )
+                            {
                                 store.save_notification_projection(notification_projection);
+                            } else {
+                                let notification_projection = sync
+                                    .account_data
+                                    .iter()
+                                    .filter(|entry| {
+                                        crate::views::notifications::is_notification_account_data(
+                                            entry,
+                                        )
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                if !notification_projection.is_empty() {
+                                    store.save_notification_projection(notification_projection);
+                                }
                             }
                             for entry in &sync.account_data {
                                 let Some(data_type) =

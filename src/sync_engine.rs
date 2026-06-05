@@ -389,6 +389,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
             }
 
             apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
+            apply_notification_projection(store, response);
         }); // store.batch — single coalesced flush happens here
     }
 
@@ -525,6 +526,24 @@ fn ingest_member_identity_events_from_projection(
                 }
             }
         }
+    }
+}
+
+fn apply_notification_projection(store: &mut LocalStateStore, response: &ClientSyncResponse) {
+    if let Some(notification_projection) =
+        crate::views::notifications::notification_items_from_value(&response.notifications)
+    {
+        store.save_notification_projection(notification_projection);
+        return;
+    }
+    let notification_projection = response
+        .account_data
+        .iter()
+        .filter(|entry| crate::views::notifications::is_notification_account_data(entry))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !notification_projection.is_empty() {
+        store.save_notification_projection(notification_projection);
     }
 }
 

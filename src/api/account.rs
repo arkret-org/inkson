@@ -434,12 +434,22 @@ impl CokretApi {
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
-        self.get_json("_soland/self/notifications").await
+        Ok(self.account_subscribe_snapshot(None).await?.notifications)
     }
 
     pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
-        self.post_json("_soland/self/notifications/mark-all-read", json!({}))
-            .await
+        Ok(json!({
+            "ok": true,
+            "local_only": true,
+        }))
+    }
+
+    pub async fn submit_read_cursor_advance(
+        &self,
+        marker: &crate::local_state::ReadMarkerRecord,
+    ) -> anyhow::Result<SubmitEventResponse> {
+        let event = build_read_cursor_advance_event(marker);
+        self.submit_event_envelope(&event).await
     }
 
     pub async fn invites(&self) -> anyhow::Result<InvitesResponse> {
