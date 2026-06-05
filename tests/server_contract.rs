@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use reqwest::StatusCode;
 use serde_json::json;
 use yougen::account_data::{
-    AccountDataKey, ContactRemark, SpaceRemark, contact_remark_account_data_key,
-    space_remark_account_data_key,
+    AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
+    realm_remark_account_data_key,
 };
 use yougen::api::{
     CokretApiError, decode_cokret_error, is_auth_expired_error, parse_directory_describe,
@@ -467,10 +467,10 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 }
 
 #[test]
-fn account_data_canonical_contact_and_space_remark_keys_contract() {
+fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
-        space_remark_account_data_key("ck:space:contract"),
-        "ck.contacts.space.ck:space:contract"
+        realm_remark_account_data_key("ck:realm:contract"),
+        "ck.contacts.realm.ck:realm:contract"
     );
     assert_eq!(
         contact_remark_account_data_key("did:web:alice.example"),
@@ -502,10 +502,10 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 
     let secret = "Alice from Ops Private";
     let contact_remark = ContactRemark::new("did:web:alice.example", secret);
-    let space_remark = SpaceRemark::new("ck:space:contract", secret);
+    let _realm_remark = RealmRemark::new("ck:realm:contract", secret);
 
     let event = OperationBuilder::new(
-        "ck:space:contract",
+        "ck:realm:contract",
         "did:web:local.example",
         "ck.message.create",
     )

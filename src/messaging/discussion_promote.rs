@@ -1,38 +1,18 @@
-//! G3.Y2 — "promote a Flow's discussion to its own child Space" state.
+//! G3.Y2 — "promote a Flow's discussion to a Circle-scoped Flow" state.
 //!
 //! Spec: `models/flow-and-message.md §5` (`scope_circle_id`) +
-//! `models/space-hierarchy.md §3-§4` (parent/child confirmed edge).
+//! `models/circle.md §7.2` (wide anchor Flow + narrow discussion Flow).
 //!
-//! The full promote flow needs three durable events:
-//! 1. `ck.space.create` for the new child Space, with `parent_space_id` pointing back at the
-//!    parent.
-//! 2. `ck.space.child` on the parent + `ck.space.parent` on the child (the bidirectional
-//!    confirmation edge).
-//! 3. `ck.flow.update` on the original Flow, setting `scope_circle_id = <circle_id>`.
-//!
-//! WIRE FIELD NOTE (R3): the pre-inversion `discussion_space_ref` field was a
-//! `hard_reject` forbidden wire field (`registry/forbidden-wire-fields.json`,
-//! since 59ac1d4); the canonical replacement is `scope_circle_id`. Per
-//! `schemas/flow.schema.json` + `models/circle.md`, `scope_circle_id` points
-//! at an intra-Realm **Circle** (`ck:circle:<uuid7>`, MUST share the Flow's
-//! `realm_id`), NOT at a child Space. This module's promote flow currently
-//! mints a child *Space* (`ck:space:<uuid7>`), so the value it threads into
-//! `scope_circle_id` is Space-shaped, not Circle-shaped. Reworking promote to
-//! create / bind a Circle object is out of scope for this fix (it touches the
-//! whole promote object model). For now we only correct the forbidden wire
-//! key name so we no longer emit a `hard_reject` field; **the Circle semantics
-//! of the value remain to be reconciled in a follow-up** (the child-space id
-//! is not a valid `ck:circle:` id and will not satisfy flow.schema.json's
-//! pattern at the server).
+//! This flow creates a Circle plus a private discussion Flow under the current
+//! Realm. It MUST NOT create a Space hierarchy, and it MUST NOT write a Space
+//! id into `scope_circle_id` (that field is for `ck:circle:*` ids only).
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps
 //! the wire builders covered by unit tests while the soland reducer is
 //! completed.
 
-use serde_json::{Value, json};
-
-use crate::operation::{EventEnvelope, OperationBuilder, scope_id_as_realm_id, uuid_v7};
+use crate::operation::{EventEnvelope, cx_ops, uuid_v7};
 
 /// Whether the local UI should expose the discussion promote modal.
 pub fn discussion_promote_enabled() -> bool {
@@ -45,8 +25,8 @@ pub struct PromoteDiscussionDraft {
     /// Message id (or Flow id, depending on entry point) being
     /// promoted. `None` means the modal is closed.
     pub source_id: Option<String>,
-    /// User-visible title for the new child Space. Pre-filled from
-    /// the source Flow's name on open.
+    /// User-visible title for the new private discussion Flow. Pre-filled
+    /// from the source Flow's name on open.
     pub title: String,
 }
 
@@ -70,148 +50,81 @@ impl PromoteDiscussionDraft {
     }
 }
 
-/// Generated identifiers for the new child Space + the edge events.
+/// Generated identifiers for the new Circle-scoped discussion Flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromoteIds {
-    pub child_space_id: String,
-    pub child_edge_event_id: String,
-    pub parent_edge_event_id: String,
+    pub circle_id: String,
+    pub discussion_flow_id: String,
 }
 
 impl PromoteIds {
     pub fn fresh() -> Self {
         Self {
-            child_space_id: format!("ck:space:{}", uuid_v7()),
-            child_edge_event_id: format!("evt-child-{}", uuid_v7()),
-            parent_edge_event_id: format!("evt-parent-{}", uuid_v7()),
+            circle_id: format!("ck:circle:{}", uuid_v7()),
+            discussion_flow_id: format!("ck:flow:{}", uuid_v7()),
         }
     }
 }
 
-/// Build the `ck.space.create` envelope for the new child Space.
-pub fn build_child_space_create_op(
-    parent_space_id: &str,
+/// Build the `ck.circle.create` envelope for the private discussion scope.
+pub fn build_discussion_circle_create_op(
+    realm_id: &str,
     actor: &str,
     ids: &PromoteIds,
     title: &str,
 ) -> EventEnvelope {
-    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    OperationBuilder::new(parent_space_id, actor, "ck.space.create")
-        .target_ref(&ids.child_space_id)
-        .body(json!({
-            "object": {
-                "id": ids.child_space_id,
-                "schema": "ck.schema.space.v1",
-                "realm_id": scope_id_as_realm_id(parent_space_id),
-                "kind": "space",
-                "title": title.trim(),
-                "parent_space_id": parent_space_id,
-                "created_by": actor,
-                "created_at": created_at,
-                "fields": {
-                    "discoverability": "listed",
-                    "join_rule": "invite"
-                }
-            }
-        }))
-        .build("yougen")
+    cx_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title).build("yougen")
 }
 
-/// Build the parent-side `ck.space.child` confirmation edge.
-pub fn build_child_edge_op(
-    parent_space_id: &str,
+/// Build the `ck.flow.create` envelope for the new private discussion Flow.
+pub fn build_discussion_flow_create_op(
+    realm_id: &str,
     actor: &str,
-    child_space_id: &str,
+    ids: &PromoteIds,
+    title: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(parent_space_id, actor, "ck.space.child")
-        .target_ref(child_space_id)
-        .body(json!({
-            "child_space_id": child_space_id,
-        }))
-        .build("yougen")
+    cx_ops::scoped_discussion_flow_create(
+        realm_id,
+        actor,
+        &ids.discussion_flow_id,
+        &ids.circle_id,
+        title,
+    )
+    .expect("valid scoped discussion flow create")
+    .build("yougen")
 }
 
-/// Build the child-side `ck.space.parent` confirmation edge.
-pub fn build_parent_edge_op(
-    child_space_id: &str,
+/// Build the `ck.relation.create` envelope that links the private Flow back
+/// to the source public Flow/message.
+pub fn build_confidential_discussion_relation_op(
+    realm_id: &str,
     actor: &str,
-    parent_space_id: &str,
+    source_id: &str,
+    ids: &PromoteIds,
 ) -> EventEnvelope {
-    OperationBuilder::new(child_space_id, actor, "ck.space.parent")
-        .target_ref(parent_space_id)
-        .body(json!({
-            "parent_space_id": parent_space_id,
-        }))
-        .build("yougen")
+    cx_ops::confidential_discussion_relation_create(
+        realm_id,
+        actor,
+        &ids.discussion_flow_id,
+        source_id,
+        &ids.circle_id,
+    )
+    .build("yougen")
 }
 
-/// Build the `ck.flow.update` that points the source Flow's
-/// `scope_circle_id` at the promoted discussion scope.
-///
-/// NOTE (R3): `scope_circle_id` is the canonical replacement for the
-/// forbidden `discussion_space_ref` wire field. Per `schemas/flow.schema.json`
-/// + `models/circle.md` it MUST reference an intra-Realm Circle
-/// (`ck:circle:<uuid7>`), not a child Space. The value threaded here is still
-/// the freshly-minted child *Space* id — the Circle semantics of the value are
-/// to be reconciled in a follow-up (see module-level WIRE FIELD NOTE). The
-/// wire key name is corrected so we no longer emit a `hard_reject` field.
-pub fn build_flow_discussion_ref_op(
-    parent_space_id: &str,
-    actor: &str,
-    flow_id: &str,
-    child_space_id: &str,
-) -> EventEnvelope {
-    let mut patch = cokret_sdk::Patch::new();
-    patch
-        .insert_op("scope_circle_id", cokret_sdk::PatchOp::set(child_space_id))
-        .unwrap_or_else(|err| {
-            panic!("invalid ck.patch.v1 scope_circle_id patch: {err}");
-        });
-    let payload = cokret_sdk::ObjectPatchPayload::for_target(flow_id, patch)
-        .and_then(|payload| payload.to_value())
-        .unwrap_or_else(|err| {
-            panic!("invalid ck.flow.update object_patch_payload: {err}");
-        });
-
-    OperationBuilder::new(parent_space_id, actor, "ck.flow.update")
-        .target_ref(flow_id)
-        .body(payload)
-        .build("yougen")
-}
-
-/// Convenience helper that bundles all four envelopes into a single
-/// list, in spec-required submit order.
+/// Convenience helper that bundles the promote envelopes in submit order.
 pub fn build_promote_ops(
-    parent_space_id: &str,
+    realm_id: &str,
     actor: &str,
-    source_flow_id: Option<&str>,
+    source_id: &str,
     ids: &PromoteIds,
     title: &str,
 ) -> Vec<EventEnvelope> {
-    let mut ops = vec![
-        build_child_space_create_op(parent_space_id, actor, ids, title),
-        build_child_edge_op(parent_space_id, actor, &ids.child_space_id),
-        build_parent_edge_op(&ids.child_space_id, actor, parent_space_id),
-    ];
-    if let Some(flow_id) = source_flow_id {
-        ops.push(build_flow_discussion_ref_op(
-            parent_space_id,
-            actor,
-            flow_id,
-            &ids.child_space_id,
-        ));
-    }
-    ops
-}
-
-/// Extract a stable child-space id for client-side optimistic UI
-/// updates from a successful submit response. Returns `None` if the
-/// response shape doesn't carry one.
-pub fn child_space_id_from_response(value: &Value) -> Option<String> {
-    value
-        .get("space_id")
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
+    vec![
+        build_discussion_circle_create_op(realm_id, actor, ids, title),
+        build_discussion_flow_create_op(realm_id, actor, ids, title),
+        build_confidential_discussion_relation_op(realm_id, actor, source_id, ids),
+    ]
 }
 
 #[cfg(test)]
@@ -240,63 +153,41 @@ mod tests {
     }
 
     #[test]
-    fn promote_ops_emits_four_events_when_flow_known() {
+    fn promote_ops_emit_circle_flow_and_private_relation() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
-            "ck:space:0196419b-0000-7000-8000-000000000001",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            Some("ck:flow:0196419b-0000-7000-8000-000000000002"),
+            "ck:flow:0196419b-0000-7000-8000-000000000003",
             &ids,
-            "Child",
-        );
-        assert_eq!(ops.len(), 4);
-        let kinds: Vec<&str> = ops.iter().map(|op| op.kind.as_str()).collect();
-        assert_eq!(
-            kinds,
-            vec![
-                "ck.space.create",
-                "ck.space.child",
-                "ck.space.parent",
-                "ck.flow.update"
-            ]
-        );
-    }
-
-    #[test]
-    fn flow_discussion_ref_update_matches_registered_payload_schema() {
-        let event = build_flow_discussion_ref_op(
-            "ck:space:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ck:flow:0196419b-0000-7000-8000-000000000002",
-            "ck:space:0196419b-0000-7000-8000-000000000003",
-        );
-        assert_eq!(event.kind, "ck.flow.update");
-        // R3: the forbidden `discussion_space_ref` wire key MUST NOT appear.
-        assert!(event.payload.get("discussion_space_ref").is_none());
-        assert_eq!(
-            event.payload["patch"]["scope_circle_id"]["value"],
-            "ck:space:0196419b-0000-7000-8000-000000000003"
-        );
-        cokret_sdk::schema::event_payload_validator_catalog()
-            .validate_payload(&event.kind, &event.payload)
-            .unwrap_or_else(|err| {
-                panic!(
-                    "discussion promote ck.flow.update payload violates spec: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&event.payload).unwrap()
-                );
-            });
-    }
-
-    #[test]
-    fn promote_ops_skips_flow_update_without_flow_id() {
-        let ids = PromoteIds::fresh();
-        let ops = build_promote_ops(
-            "ck:space:parent",
-            "did:web:alice.example",
-            None,
-            &ids,
-            "Child",
+            "Private discussion",
         );
         assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].kind, "ck.circle.create");
+        assert_eq!(ops[1].kind, "ck.flow.create");
+        assert_eq!(ops[2].kind, "ck.relation.create");
+        assert_eq!(
+            ops[0].payload["object"]["realm_id"],
+            "ck:realm:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
+        assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
+        assert_eq!(ops[2].payload["scope_circle_id"], ids.circle_id);
+        assert_eq!(ops[2].payload["from_ref"], ids.discussion_flow_id);
+        assert_eq!(
+            ops[2].payload["to_ref"],
+            "ck:flow:0196419b-0000-7000-8000-000000000003"
+        );
+        for event in &ops {
+            cokret_sdk::schema::event_payload_validator_catalog()
+                .validate_payload(&event.kind, &event.payload)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "discussion promote {} payload violates spec: {err}\npayload: {}",
+                        event.kind,
+                        serde_json::to_string_pretty(&event.payload).unwrap()
+                    );
+                });
+        }
     }
 }

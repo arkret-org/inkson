@@ -450,7 +450,7 @@ mod chain_tests {
     #[test]
     fn chain_is_complete_only_when_both_moves_effective() {
         let mut chain = MlsRevokeMoveChain {
-            group_id: "ck:space:01acme".to_owned(),
+            group_id: "ck:realm:01acme".to_owned(),
             commit_move_id: Some("sha256:aa".to_owned()),
             epoch_advance_move_id: Some("sha256:bb".to_owned()),
             commit_state: ChainMoveState::Effective,
@@ -467,7 +467,7 @@ mod chain_tests {
     #[test]
     fn chain_failure_propagates_to_summary() {
         let chain = MlsRevokeMoveChain {
-            group_id: "ck:space:01x".to_owned(),
+            group_id: "ck:realm:01x".to_owned(),
             commit_move_id: None,
             epoch_advance_move_id: None,
             commit_state: ChainMoveState::Failed {
@@ -483,7 +483,7 @@ mod chain_tests {
     #[test]
     fn chain_cancellation_propagates_to_summary() {
         let chain = MlsRevokeMoveChain {
-            group_id: "ck:space:01x".to_owned(),
+            group_id: "ck:realm:01x".to_owned(),
             commit_move_id: None,
             epoch_advance_move_id: None,
             commit_state: ChainMoveState::Cancelled,
@@ -495,16 +495,16 @@ mod chain_tests {
 
     #[test]
     fn chains_from_plan_produces_one_chain_per_commit_step() {
-        let groups = vec!["ck:space:01a".to_owned(), "ck:space:01b".to_owned()];
+        let groups = vec!["ck:realm:01a".to_owned(), "ck:realm:01b".to_owned()];
         let mut survivors = BTreeMap::new();
-        survivors.insert("ck:space:01a".to_owned(), 5);
-        survivors.insert("ck:space:01b".to_owned(), 3);
+        survivors.insert("ck:realm:01a".to_owned(), 5);
+        survivors.insert("ck:realm:01b".to_owned(), 3);
         let plan = DeviceRevokePlan::build("did:web:a", "ck:device:01x", &groups, &survivors);
         let mut epochs = BTreeMap::new();
-        epochs.insert("ck:space:01a".to_owned(), 7);
+        epochs.insert("ck:realm:01a".to_owned(), 7);
         let chains = chains_from_plan(&plan, &epochs);
         assert_eq!(chains.len(), 2);
-        assert_eq!(chains[0].group_id, "ck:space:01a");
+        assert_eq!(chains[0].group_id, "ck:realm:01a");
         assert_eq!(chains[0].pre_revoke_epoch, Some(7));
         assert_eq!(chains[1].pre_revoke_epoch, None);
         // Both freshly-built chains start in NotSubmitted.
@@ -537,12 +537,12 @@ mod tests {
 
     fn sample_plan() -> DeviceRevokePlan {
         let groups = vec![
-            "ck:space:01acme0".to_owned(),
-            "ck:space:01launch0".to_owned(),
+            "ck:realm:01acme0".to_owned(),
+            "ck:realm:01launch0".to_owned(),
         ];
         let mut survivors = BTreeMap::new();
-        survivors.insert("ck:space:01acme0".to_owned(), 23);
-        survivors.insert("ck:space:01launch0".to_owned(), 11);
+        survivors.insert("ck:realm:01acme0".to_owned(), 23);
+        survivors.insert("ck:realm:01launch0".to_owned(), 11);
         DeviceRevokePlan::build(
             "did:web:alice.example",
             "ck:device:01js0dv00000000000000000003",
@@ -622,15 +622,15 @@ mod tests {
         assert_eq!(
             welcomes,
             vec![
-                ("ck:space:01acme0".to_owned(), 23),
-                ("ck:space:01launch0".to_owned(), 11),
+                ("ck:realm:01acme0".to_owned(), 23),
+                ("ck:realm:01launch0".to_owned(), 11),
             ]
         );
     }
 
     #[test]
     fn missing_survivor_count_defaults_to_zero() {
-        let groups = vec!["ck:space:01x".to_owned()];
+        let groups = vec!["ck:realm:01x".to_owned()];
         let survivors = BTreeMap::new();
         let p = DeviceRevokePlan::build("did:web:b", "ck:device:01a", &groups, &survivors);
         let welcome = p

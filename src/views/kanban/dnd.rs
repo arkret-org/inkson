@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     operation: crate::operation::EventEnvelope,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
@@ -20,7 +20,7 @@ pub(super) fn submit_kanban_operation_event(
     let created_at = operation.created_at.clone();
     state_store.write().append_raw_operation(
         operation_id.clone(),
-        Some(space_id),
+        Some(realm_id),
         json!({
             "kind": kind,
             "operation_id": operation_id,
@@ -101,7 +101,7 @@ pub(super) fn submit_kanban_operation_event(
 pub(super) fn submit_column_order_updates(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     actor_did: String,
     ordered_columns: Vec<KanbanColumn>,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
@@ -113,7 +113,7 @@ pub(super) fn submit_column_order_updates(
         board_status.set("sign in before reordering lists".to_owned());
         return;
     }
-    if space_id.trim().is_empty() {
+    if realm_id.trim().is_empty() {
         board_status.set("select a Realm before reordering lists".to_owned());
         return;
     }
@@ -130,7 +130,7 @@ pub(super) fn submit_column_order_updates(
     ));
     for (column_id, rank) in updates {
         let op = crate::operation::cx_ops::space_update_patch(
-            &space_id,
+            &realm_id,
             &actor_did,
             &column_id,
             json!({ "rank": rank }),
@@ -139,7 +139,7 @@ pub(super) fn submit_column_order_updates(
         submit_kanban_operation_event(
             base_url.clone(),
             token,
-            space_id.clone(),
+            realm_id.clone(),
             op,
             scope_security_encrypted,
             state_store,
@@ -155,7 +155,7 @@ pub(super) fn submit_column_order_updates(
 pub(super) fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     actor_did: String,
     subject: String,
     kind: &'static str,
@@ -168,7 +168,7 @@ pub(super) fn submit_kanban_move(
     mut board_status: Signal<String>,
 ) {
     let hlc = Hlc::now("yougen").to_string();
-    let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
+    let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
     if actor_did.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
         return;
@@ -191,7 +191,7 @@ pub(super) fn submit_kanban_move(
             return;
         };
         crate::operation::cx_ops::kanban_card_flow_create(
-            &space_id,
+            &realm_id,
             &actor_did,
             &subject,
             board_space_id,
@@ -202,7 +202,7 @@ pub(super) fn submit_kanban_move(
         .build("yougen")
     } else {
         crate::operation::cx_ops::flow_position_update(
-            &space_id,
+            &realm_id,
             &actor_did,
             &subject,
             value.clone(),
@@ -240,7 +240,7 @@ pub(super) fn submit_kanban_move(
     write_records.write().push(record);
     state_store.write().append_raw_operation(
         op_id.clone(),
-        Some(space_id.clone()),
+        Some(realm_id.clone()),
         json!({
             "kind": kind,
             "operation_id": op_id,
@@ -258,7 +258,7 @@ pub(super) fn submit_kanban_move(
         short_protocol_id(&op_id)
     ));
     let api_token = token();
-    let space_for_record = space_id.clone();
+    let realm_for_record = realm_id.clone();
     let anchor_for_record = anchor_ref.clone();
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
@@ -279,7 +279,7 @@ pub(super) fn submit_kanban_move(
                 state_store.write().record_move_submission_with_event_id(
                     op_for_track.clone(),
                     Some(resp.event_id.clone()),
-                    space_for_record,
+                    realm_for_record,
                     kind_for_record.clone(),
                     state,
                     None,
@@ -346,7 +346,7 @@ pub(super) struct ColumnNeighbours {
 pub(super) fn dispatch_flow_position_move(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_did: String,
@@ -419,7 +419,7 @@ pub(super) fn dispatch_flow_position_move(
     submit_flow_position_cas_move(
         base_url,
         token,
-        space_id,
+        realm_id,
         board_space_id,
         board_view_id,
         actor_did,
@@ -498,18 +498,17 @@ pub(super) fn flow_lifecycle_from_wire(state: &str) -> FlowLifecycleState {
 pub(super) fn capability_gate_for_space_container(
     engine: &Signal<crate::capability::CapabilityEngine>,
     actor: &str,
-    space_id: &str,
     space_container_id: &str,
     action: &str,
 ) -> crate::capability::CapabilityGate {
     let resource = crate::capability::ResourceRef {
-        space_id: Some(space_id.to_owned()),
+        space_id: Some(space_container_id.to_owned()),
         object_ref: Some(space_container_id.to_owned()),
         object_type: Some("space_container".to_owned()),
         ..Default::default()
     };
     let ctx = crate::capability::EvalContext {
-        space_id: Some(space_id.to_owned()),
+        space_id: Some(space_container_id.to_owned()),
         space_container_id: Some(space_container_id.to_owned()),
         action: Some(action.to_owned()),
         ..Default::default()
@@ -521,18 +520,20 @@ pub(super) fn capability_gate_for_space_container(
 pub(super) fn capability_gate_for_flow(
     engine: &Signal<crate::capability::CapabilityEngine>,
     actor: &str,
-    space_id: &str,
+    board_space_id: &str,
     flow_id: &str,
     action: &str,
 ) -> crate::capability::CapabilityGate {
+    let board_space_id = board_space_id.trim();
+    let resource_space_id = (!board_space_id.is_empty()).then(|| board_space_id.to_owned());
     let resource = crate::capability::ResourceRef {
-        space_id: Some(space_id.to_owned()),
+        space_id: resource_space_id.clone(),
         object_ref: Some(flow_id.to_owned()),
         object_type: Some("Flow".to_owned()),
         ..Default::default()
     };
     let ctx = crate::capability::EvalContext {
-        space_id: Some(space_id.to_owned()),
+        space_id: resource_space_id,
         action: Some(action.to_owned()),
         ..Default::default()
     };
@@ -542,7 +543,7 @@ pub(super) fn capability_gate_for_flow(
 /// Dispatch a `ck.space.archive` or `ck.space.restore` operation against
 /// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
-/// `models/realm-and-space.md §4.4` (post-R1.7 rename). Soland's lifecycle
+/// `models/realm-and-space.md §4.4`. Soland's lifecycle
 /// envelope validator and the SDK reducer's lifecycle guard
 /// both enforce wire / state shape; this helper only handles the
 /// submit + local pending projection. If the submit fails the local
@@ -550,7 +551,7 @@ pub(super) fn capability_gate_for_flow(
 pub(super) fn dispatch_space_container_lifecycle(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     actor_did: String,
     space_container_id: String,
     target: SpaceContainerLifecycleState,
@@ -583,10 +584,10 @@ pub(super) fn dispatch_space_container_lifecycle(
     // Only Active <-> Archived reach here (validator rejects Tombstone).
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
-            crate::operation::cx_ops::space_archive(&space_id, &actor_did, &space_container_id)
+            crate::operation::cx_ops::realm_archive(&realm_id, &actor_did, &space_container_id)
         }
         SpaceContainerLifecycleState::Active => {
-            crate::operation::cx_ops::space_restore(&space_id, &actor_did, &space_container_id)
+            crate::operation::cx_ops::space_restore(&realm_id, &actor_did, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
             // Invariant: `validate_space_container_lifecycle_transition` (called above)
@@ -660,7 +661,7 @@ pub(super) fn validate_flow_lifecycle_transition(
 pub(super) fn dispatch_flow_lifecycle(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     actor_did: String,
     flow_id: String,
     target: FlowLifecycleState,
@@ -699,10 +700,10 @@ pub(super) fn dispatch_flow_lifecycle(
 
     let builder = match target {
         FlowLifecycleState::Archived => {
-            crate::operation::cx_ops::flow_archive(&space_id, &actor_did, &flow_id)
+            crate::operation::cx_ops::flow_archive(&realm_id, &actor_did, &flow_id)
         }
         FlowLifecycleState::Active => {
-            crate::operation::cx_ops::flow_restore(&space_id, &actor_did, &flow_id)
+            crate::operation::cx_ops::flow_restore(&realm_id, &actor_did, &flow_id)
         }
         FlowLifecycleState::Redacted => {
             // Invariant: `validate_flow_lifecycle_transition` (called above)
@@ -800,7 +801,7 @@ pub(super) fn set_card_state_in_columns(
 pub(super) fn submit_flow_position_cas_move(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_did: String,
@@ -816,7 +817,7 @@ pub(super) fn submit_flow_position_cas_move(
     submit_flow_position_cas_move_with_attempt(
         base_url,
         token,
-        space_id,
+        realm_id,
         board_space_id,
         board_view_id,
         actor_did,
@@ -841,7 +842,7 @@ pub(super) fn submit_flow_position_cas_move(
 pub(super) fn submit_flow_position_cas_move_with_attempt(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_did: String,
@@ -856,7 +857,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     mut board_status: Signal<String>,
 ) {
     let hlc = Hlc::now("yougen").to_string();
-    let anchor_ref = state_store.read().anchor_ref_for_move(&space_id);
+    let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
     if actor_did.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
         return;
@@ -880,7 +881,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
         FlowPositionEffect::Remove => serde_json::Value::Null,
     };
     let envelope = crate::operation::cx_ops::flow_position_cas_update(
-        &space_id,
+        &realm_id,
         &actor_did,
         kind,
         &board_space_id,
@@ -917,7 +918,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     write_records.write().push(record);
     state_store.write().append_raw_operation(
         move_id.clone(),
-        Some(space_id.clone()),
+        Some(realm_id.clone()),
         json!({
             "kind": kind,
             "move_id": move_id,
@@ -949,9 +950,9 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
     let anchor_for_record = anchor_ref.clone();
-    let space_for_record = space_id.clone();
+    let realm_for_record = realm_id.clone();
     let base_for_rebase = base_url.clone();
-    let space_for_rebase = space_id.clone();
+    let realm_for_rebase = realm_id.clone();
     let board_for_rebase = board_space_id.clone();
     let view_for_rebase = board_view_id.clone();
     let flow_for_rebase = flow_id.clone();
@@ -977,7 +978,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                 state_store.write().record_move_submission_with_event_id(
                     move_for_track.clone(),
                     Some(resp.event_id.clone()),
-                    space_for_record,
+                    realm_for_record,
                     kind_for_record.clone(),
                     submission_state,
                     None,
@@ -1035,7 +1036,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                     rebase_flow_position_after_conflict(
                         base_for_rebase,
                         token,
-                        space_for_rebase,
+                        realm_for_rebase,
                         board_for_rebase,
                         view_for_rebase,
                         actor_did.clone(),
@@ -1093,7 +1094,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
 pub(super) fn rebase_flow_position_after_conflict(
     base_url: String,
     token: Signal<String>,
-    space_id: String,
+    realm_id: String,
     board_space_id: String,
     board_view_id: String,
     actor_did: String,
@@ -1144,7 +1145,7 @@ pub(super) fn rebase_flow_position_after_conflict(
         submit_flow_position_cas_move_with_attempt(
             base_url,
             token,
-            space_id,
+            realm_id,
             board_space_id,
             board_view_id,
             actor_did,

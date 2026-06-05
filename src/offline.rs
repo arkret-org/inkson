@@ -20,8 +20,8 @@ pub struct QueuedOperation {
     pub body: serde_json::Value,
     /// When the operation was queued.
     pub queued_at: Hlc,
-    /// Space ID this operation belongs to (if any).
-    pub space_id: Option<String>,
+    /// Realm ID this operation belongs to (if any).
+    pub realm_id: Option<String>,
     /// Operation type for conflict resolution.
     pub op_type: Option<String>,
     /// Number of retry attempts.
@@ -337,7 +337,7 @@ impl QueuedOperationBuilder {
                 method: method.to_owned(),
                 body: serde_json::Value::Null,
                 queued_at: Hlc::now("yougen"),
-                space_id: None,
+                realm_id: None,
                 op_type: None,
                 retries: 0,
                 max_retries: 3,
@@ -350,8 +350,8 @@ impl QueuedOperationBuilder {
         self
     }
 
-    pub fn with_space(mut self, space_id: &str) -> Self {
-        self.op.space_id = Some(space_id.to_owned());
+    pub fn with_realm(mut self, realm_id: &str) -> Self {
+        self.op.realm_id = Some(realm_id.to_owned());
         self
     }
 
@@ -396,12 +396,12 @@ pub async fn pending_count() -> usize {
 /// drain worker replays the POST once `set_network_state(Online)` and
 /// the sync engine is anchored.
 pub async fn enqueue_message_send(
-    space_id: &str,
+    realm_id: &str,
     body: serde_json::Value,
 ) -> Result<(), OfflineError> {
     let op = QueuedOperationBuilder::new("/_cokret/self/events", "POST")
         .with_body(body)
-        .with_space(space_id)
+        .with_realm(realm_id)
         .with_op_type("ck.message.create")
         .build();
     global_queue().enqueue(op).await
@@ -579,14 +579,14 @@ mod tests {
     fn test_queued_operation_builder() {
         let op = QueuedOperationBuilder::new("_cokret/self/events", "POST")
             .with_body(serde_json::json!({"text": "hello"}))
-            .with_space("ck:space:test")
+            .with_realm("ck:realm:test")
             .with_op_type("message")
             .with_max_retries(5)
             .build();
 
         assert_eq!(op.endpoint, "_cokret/self/events");
         assert_eq!(op.method, "POST");
-        assert_eq!(op.space_id, Some("ck:space:test".to_owned()));
+        assert_eq!(op.realm_id, Some("ck:realm:test".to_owned()));
         assert_eq!(op.op_type, Some("message".to_owned()));
         assert_eq!(op.max_retries, 5);
     }
@@ -610,12 +610,12 @@ mod tests {
     async fn enqueue_message_send_records_op_type() {
         let _guard = GLOBAL_QUEUE_TEST_LOCK.lock().unwrap();
         global_queue().clear().await;
-        enqueue_message_send("ck:space:test", serde_json::json!({"body": "hi"}))
+        enqueue_message_send("ck:realm:test", serde_json::json!({"body": "hi"}))
             .await
             .unwrap();
         let head = global_queue().peek().await.unwrap();
         assert_eq!(head.op_type.as_deref(), Some("ck.message.create"));
-        assert_eq!(head.space_id.as_deref(), Some("ck:space:test"));
+        assert_eq!(head.realm_id.as_deref(), Some("ck:realm:test"));
         assert_eq!(head.method, "POST");
         global_queue().clear().await;
     }

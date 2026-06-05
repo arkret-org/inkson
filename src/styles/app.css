@@ -40,9 +40,9 @@ button, input, textarea, select { font: inherit; }
 .realm-tree-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
 .realm-tree-node-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
 .realm-tree-node-button.active { border-color: #5cc8a7; background: #284252; }
-.space-title { font-weight: 700; }
-.space-meta, .muted { color: #6b7787; font-size: 13px; }
-.sidebar .space-meta, .sidebar .muted { color: #cbd5e1; }
+.entity-title { font-weight: 700; }
+.card-meta, .muted { color: #6b7787; font-size: 13px; }
+.sidebar .card-meta, .sidebar .muted { color: #cbd5e1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
 .primary { background: #1f6b4f; color: white; }
@@ -300,7 +300,7 @@ body {
   line-height: 1.12;
 }
 .muted,
-.space-meta {
+.card-meta {
   color: var(--ck-muted);
 }
 .event,
@@ -503,19 +503,19 @@ body {
 .home-card-list.compact {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.home-space-card {
+.home-realm-card {
   border-color: var(--ck-line);
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.94));
   color: var(--ck-ink);
 }
-.home-space-card .space-title {
+.home-realm-card .entity-title {
   color: var(--ck-ink);
 }
-.home-space-card .space-meta,
-.home-space-card .muted {
+.home-realm-card .card-meta,
+.home-realm-card .muted {
   color: var(--ck-muted);
 }
-.home-space-card.cross-org {
+.home-realm-card.cross-org {
   border-color: rgba(58, 138, 103, 0.34);
   background: linear-gradient(135deg, rgba(236, 247, 239, 0.94), rgba(248, 244, 232, 0.92));
 }
@@ -866,7 +866,7 @@ body {
 .board-header {
   gap: 8px;
 }
-.board-header .space-title {
+.board-header .entity-title {
   margin-bottom: 0;
 }
 .board-diagnostics {
@@ -911,7 +911,7 @@ body {
   min-width: 0;
 }
 
-.board-column-title .space-title {
+.board-column-title .entity-title {
   min-width: 0;
   color: var(--text, var(--ck-ink));
   font-size: 15px;

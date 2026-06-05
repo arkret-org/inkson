@@ -156,12 +156,12 @@ fn build_version_diff(older_blocks: &[DocumentBlock], newer_blocks: &[DocumentBl
     }
 }
 
-fn storage_key(space_id: &str) -> String {
-    format!("document.draft.{space_id}")
+fn storage_key(realm_id: &str) -> String {
+    format!("document.draft.{realm_id}")
 }
 
-fn morph_id_storage_key(space_id: &str) -> String {
-    format!("document.morph_id.{space_id}")
+fn morph_id_storage_key(realm_id: &str) -> String {
+    format!("document.morph_id.{realm_id}")
 }
 
 /// Mint a fresh document Morph id. The id is local-only until the
@@ -418,12 +418,12 @@ fn default_draft() -> DocumentDraft {
 fn load_draft(
     state_store: &Signal<LocalStateStore>,
     account_key: &str,
-    space_id: &str,
+    realm_id: &str,
 ) -> DocumentDraft {
-    if space_id.is_empty() {
+    if realm_id.is_empty() {
         return default_draft();
     }
-    let key = storage_key(space_id);
+    let key = storage_key(realm_id);
     let raw = state_store.read().load_private_data(account_key, &key);
     match raw {
         Some(json) => match serde_json::from_str::<DocumentDraft>(&json) {
@@ -437,13 +437,13 @@ fn load_draft(
 fn save_draft(
     state_store: &mut Signal<LocalStateStore>,
     account_key: &str,
-    space_id: &str,
+    realm_id: &str,
     draft: &DocumentDraft,
 ) {
-    if space_id.is_empty() {
+    if realm_id.is_empty() {
         return;
     }
-    let key = storage_key(space_id);
+    let key = storage_key(realm_id);
     if let Ok(payload) = serde_json::to_string(draft) {
         state_store
             .write()
@@ -460,9 +460,9 @@ pub fn DocumentPanel(
     state_store: Signal<LocalStateStore>,
     account_did: String,
 ) -> Element {
-    let space_id = selected_realm_id.clone();
+    let realm_id = selected_realm_id.clone();
     let actor_key = account_did.clone();
-    let initial = load_draft(&state_store, &actor_key, &space_id);
+    let initial = load_draft(&state_store, &actor_key, &realm_id);
     let initial_title = initial
         .blocks
         .iter()
@@ -475,7 +475,7 @@ pub fn DocumentPanel(
         .find(|block| block.kind == BlockKind::Paragraph)
         .map(|block| block.content.clone())
         .unwrap_or_default();
-    let linked_incident_default = space_id.clone();
+    let linked_incident_default = realm_id.clone();
 
     let mut blocks = use_signal(|| initial.blocks.clone());
     let mut versions = use_signal(|| initial.versions.clone());
@@ -490,10 +490,10 @@ pub fn DocumentPanel(
     let initial_morph_id = document_ref.clone().or_else(|| {
         state_store
             .read()
-            .load_private_data(&actor_key, &morph_id_storage_key(&space_id))
+            .load_private_data(&actor_key, &morph_id_storage_key(&realm_id))
     });
     let mut current_morph_id = use_signal(move || initial_morph_id.unwrap_or_default());
-    let document_realm_initial = space_id.clone();
+    let document_realm_initial = realm_id.clone();
     let mut document_realm_id = use_signal(move || document_realm_initial.clone());
     let mut hydrated_document_id = use_signal(String::new);
 
@@ -533,7 +533,7 @@ pub fn DocumentPanel(
 
     let persist = {
         let actor_key = actor_key.clone();
-        let space_id = space_id.clone();
+        let realm_id = realm_id.clone();
         move |store: &mut Signal<LocalStateStore>,
               blocks_snapshot: Vec<DocumentBlock>,
               versions_snapshot: Vec<DocumentVersion>| {
@@ -541,10 +541,10 @@ pub fn DocumentPanel(
                 blocks: blocks_snapshot,
                 versions: versions_snapshot,
             };
-            save_draft(store, &actor_key, &space_id, &draft);
+            save_draft(store, &actor_key, &realm_id, &draft);
         }
     };
-    let space_id_label = short_protocol_id(&space_id);
+    let realm_id_label = short_protocol_id(&realm_id);
     let actor_key_label = short_protocol_id(&actor_key);
 
     {
@@ -636,7 +636,7 @@ pub fn DocumentPanel(
                         failed_label: Some("Local draft (sync failed)".to_owned()),
                         test_id: Some("document-sync-badge".to_owned()),
                     }
-                    span { class: "mono", title: "{space_id}", "{space_id_label}" }
+                    span { class: "mono", title: "{realm_id}", "{realm_id_label}" }
                 }
                 div { class: "muted",
                     "Edits save locally first. Save Version writes the document Morph projection."
@@ -717,7 +717,7 @@ pub fn DocumentPanel(
                             let persist = persist.clone();
                             let mut store = state_store;
                             let actor_key_save = actor_key.clone();
-                            let space_id_save = space_id.clone();
+                            let realm_id_save = realm_id.clone();
                             let base = base_url.clone();
                             move |_| {
                                 let v_count = versions().len();
@@ -734,7 +734,7 @@ pub fn DocumentPanel(
                                     chrono::Utc::now().format("%H:%M:%S")
                                 ));
 
-                                if space_id_save.trim().is_empty() {
+                                if realm_id_save.trim().is_empty() {
                                     sync_state.set(SyncState::Local);
                                     return;
                                 }
@@ -745,7 +745,7 @@ pub fn DocumentPanel(
                                 let base = base.clone();
                                 let token_val = token();
                                 let actor_key_save = actor_key_save.clone();
-                                let space_id_save = space_id_save.clone();
+                                let realm_id_save = realm_id_save.clone();
                                 let mut store_for_sync = store;
                                 spawn(async move {
                                     let body = document_body_payload(
@@ -758,7 +758,7 @@ pub fn DocumentPanel(
                                         .map(|b| b.content.clone())
                                         .unwrap_or_else(|| "Untitled Document".to_owned());
 
-                                    let morph_id_key = morph_id_storage_key(&space_id_save);
+                                    let morph_id_key = morph_id_storage_key(&realm_id_save);
                                     let existing_morph_id = current_morph_id();
                                     let existing_morph_id = if existing_morph_id.trim().is_empty() {
                                         store_for_sync
@@ -774,15 +774,15 @@ pub fn DocumentPanel(
                                     } else {
                                         (existing_morph_id, false)
                                     };
-                                    let operation_space_id = if document_realm_id().trim().is_empty() {
-                                        space_id_save.clone()
+                                    let operation_realm_id = if document_realm_id().trim().is_empty() {
+                                        realm_id_save.clone()
                                     } else {
                                         document_realm_id()
                                     };
 
                                     let op = if is_create {
                                         cx_ops::document_morph_create(
-                                            &operation_space_id,
+                                            &operation_realm_id,
                                             &actor_key_save,
                                             &morph_id,
                                             &title,
@@ -790,7 +790,7 @@ pub fn DocumentPanel(
                                         )
                                     } else {
                                         cx_ops::document_morph_update(
-                                            &operation_space_id,
+                                            &operation_realm_id,
                                             &actor_key_save,
                                             &morph_id,
                                             body,
@@ -802,7 +802,7 @@ pub fn DocumentPanel(
                                         .starts_with("ck:")
                                         .then(|| {
                                             cx_ops::document_relation_create(
-                                                &operation_space_id,
+                                                &operation_realm_id,
                                                 &actor_key_save,
                                                 &morph_id,
                                                 linked_incident_for_wire.trim(),
@@ -828,7 +828,7 @@ pub fn DocumentPanel(
                                                 );
                                             }
                                             current_morph_id.set(morph_id.clone());
-                                            document_realm_id.set(operation_space_id.clone());
+                                            document_realm_id.set(operation_realm_id.clone());
                                             sync_state.set(SyncState::Synced);
                                             save_status.set(format!(
                                                 "Saved and synced document {} (event {})",
@@ -1136,7 +1136,7 @@ pub fn DocumentPanel(
                             onclick: {
                                 let author_did = actor_key.clone();
                                 let base = base_url.clone();
-                                let fallback_space_id = space_id.clone();
+                                let fallback_realm_id = realm_id.clone();
                                 move |_| {
                                     let raw_range = comment_range_input();
                                     let body = comment_text_input().trim().to_owned();
@@ -1171,7 +1171,7 @@ pub fn DocumentPanel(
                                     comment_status.set(format!("comment {id} added"));
                                     let morph_id = current_morph_id();
                                     let realm_id = if document_realm_id().trim().is_empty() {
-                                        fallback_space_id.clone()
+                                        fallback_realm_id.clone()
                                     } else {
                                         document_realm_id()
                                     };
@@ -1469,16 +1469,16 @@ mod tests {
     };
 
     #[test]
-    fn storage_key_includes_space_id() {
-        let key = storage_key("ck:space:abc");
-        assert!(key.contains("ck:space:abc"));
+    fn storage_key_includes_realm_id() {
+        let key = storage_key("ck:realm:abc");
+        assert!(key.contains("ck:realm:abc"));
         assert!(key.starts_with("document.draft."));
     }
 
     #[test]
     fn morph_id_storage_key_is_distinct_from_draft_key() {
-        let draft_key = storage_key("ck:space:s1");
-        let morph_key = morph_id_storage_key("ck:space:s1");
+        let draft_key = storage_key("ck:realm:s1");
+        let morph_key = morph_id_storage_key("ck:realm:s1");
         assert_ne!(draft_key, morph_key);
         assert!(morph_key.starts_with("document.morph_id."));
     }

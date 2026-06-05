@@ -16,7 +16,7 @@
 //!       "invite_id": "inv-01abc",
 //!       "target": "did:web:bob.example",
 //!       "issuer": "did:web:alice.example",
-//!       "space_id": "ck:space:01...",
+//!       "realm_id": "ck:realm:01...",
 //!       "reason": "rate_limited",
 //!       "created_at": "2026-05-09T00:00:00Z",
 //!       "state": "pending_review"
@@ -39,7 +39,7 @@ pub struct QuarantineEntry {
     pub invite_id: String,
     pub target: String,
     pub issuer: Option<String>,
-    pub space_id: Option<String>,
+    pub realm_id: Option<String>,
     pub reason: Option<String>,
     pub state: String,
 }
@@ -60,8 +60,8 @@ impl QuarantineEntry {
             .get("issuer")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
-        let space_id = value
-            .get("space_id")
+        let realm_id = value
+            .get("realm_id")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
         let reason = value
@@ -77,7 +77,7 @@ impl QuarantineEntry {
             invite_id,
             target,
             issuer,
-            space_id,
+            realm_id,
             reason,
             state,
         })
@@ -191,10 +191,10 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                             rsx! { div { class: "muted", title: "{issuer}", "issuer {issuer_label}" } }
                         }
                     }
-                    if let Some(space_id) = &entry.space_id {
+                    if let Some(realm_id) = &entry.realm_id {
                         {
-                            let space_id_label = short_protocol_id(space_id);
-                            rsx! { div { class: "muted", title: "{space_id}", "space {space_id_label}" } }
+                            let realm_id_label = short_protocol_id(realm_id);
+                            rsx! { div { class: "muted", title: "{realm_id}", "realm {realm_id_label}" } }
                         }
                     }
                     if let Some(reason) = &entry.reason {
@@ -251,7 +251,7 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                         }
                         if reject_confirm() == Some(entry.invite_id.clone()) {
                             div { class: "event", "data-testid": "quarantine-reject-confirm",
-                                div { class: "space-title", "Reject this invite?" }
+                                div { class: "entity-title", "Reject this invite?" }
                                 div { class: "muted",
                                     "Rejection is recorded in the audit trail with the reason above. The target cannot be re-invited without a new issuance."
                                 }
@@ -342,7 +342,7 @@ mod tests {
                     "invite_id": "inv-01abc",
                     "target": "did:web:bob.example",
                     "issuer": "did:web:alice.example",
-                    "space_id": "ck:space:0196419b-0000-7000-8000-000000000000",
+                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                     "reason": "rate_limited",
                     "state": "pending_review"
                 }
@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(entries[0].invite_id, "inv-02");
         assert_eq!(entries[0].target, "(unknown target)");
         assert!(entries[0].issuer.is_none());
-        assert!(entries[0].space_id.is_none());
+        assert!(entries[0].realm_id.is_none());
         assert!(entries[0].reason.is_none());
         assert_eq!(entries[0].state, "unknown");
         assert_eq!(badge_for(&entries[0].state), "badge");

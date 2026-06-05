@@ -246,7 +246,7 @@ impl CokretApi {
     /// inside that Realm. Server validates the state-machine
     /// (active → archived → active, any → tombstoned) and rejects
     /// invalid transitions with `space_not_active` /
-    /// `space_not_archived` / `space_already_terminal`.
+    /// `space_not_archived` / `realm_already_terminal`.
     pub async fn change_space_lifecycle(
         &self,
         space_id: &str,
@@ -286,7 +286,7 @@ impl CokretApi {
         self.submit_event_envelope(&event).await
     }
 
-    /// Read the current anchorer cell value for a Space (admin-only).
+    /// Read the current anchorer cell value for a Realm (admin-only).
     /// Returns the raw JSON shape the server publishes — typically
     /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
     ///    "principals": [...], ... }`. The endpoint is being implemented
@@ -295,9 +295,9 @@ impl CokretApi {
     /// message rather than blocking the page.
     pub async fn admin_anchorer_describe(
         &self,
-        space_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        self.get_json(&format!("_soland/admin/spaces/{space_id}/anchorer"))
+        self.get_json(&format!("_soland/admin/realms/{realm_id}/anchorer"))
             .await
     }
 
@@ -622,7 +622,7 @@ impl CokretApi {
     ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
         // `ck:realm:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/projection/spaces?realm_id={realm_id}");
         self.get_json(&path).await
     }
@@ -631,7 +631,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await
     }

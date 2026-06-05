@@ -128,8 +128,7 @@ pub(super) struct KanbanColumn {
     pub(super) cards: Vec<KanbanCard>,
     /// Space-container lifecycle state. `Active` is the wire default; `Archived` is set
     /// optimistically after a successful `ck.space.archive` submit and reset
-    /// after `ck.space.restore`. Spec: `models/realm-and-space.md §4.4`
-    /// (post-R1.7 rename).
+    /// after `ck.space.restore`. Spec: `models/realm-and-space.md §4.4`.
     /// `Tombstoned` is irreversible and modeled here for completeness but the
     /// UI currently has no tombstone affordance — server-only path.
     pub(super) state: SpaceContainerLifecycleState,
@@ -591,12 +590,15 @@ pub(super) struct LocalSpaceCreate {
     pub(super) rank: Option<String>,
 }
 
-pub(super) fn local_projection_realm_id(selected_realm_id: &str, projection_realm_id: &str) -> String {
+pub(super) fn local_projection_realm_id(
+    selected_realm_id: &str,
+    projection_realm_id: &str,
+) -> String {
     let candidate = projection_realm_id.trim();
     if candidate.is_empty() {
-        scope_id_as_realm_id(selected_realm_id)
+        trim_realm_id(selected_realm_id)
     } else {
-        scope_id_as_realm_id(candidate)
+        trim_realm_id(candidate)
     }
 }
 
@@ -609,9 +611,7 @@ pub(super) fn local_space_create_matches_realm(
         || local_create
             .realm_id
             .as_deref()
-            .is_none_or(|local_realm_id| {
-                scope_id_as_realm_id(local_realm_id) == scope_id_as_realm_id(realm_id)
-            })
+            .is_none_or(|local_realm_id| trim_realm_id(local_realm_id) == trim_realm_id(realm_id))
 }
 
 pub(super) fn local_space_create_records(
@@ -667,10 +667,7 @@ pub(super) fn containers_with_local_space_creates(
             .iter_mut()
             .find(|view| view.space_id == local_create.id)
         {
-            if should_replace_projected_container_title(
-                &existing.title,
-                &existing.space_id,
-            ) {
+            if should_replace_projected_container_title(&existing.title, &existing.space_id) {
                 existing.title = local_create.title;
             }
             continue;
@@ -679,7 +676,7 @@ pub(super) fn containers_with_local_space_creates(
             space_id: local_create.id,
             realm_id: local_create
                 .realm_id
-                .unwrap_or_else(|| scope_id_as_realm_id(realm_id)),
+                .unwrap_or_else(|| trim_realm_id(realm_id)),
             kind: local_create.kind,
             title: local_create.title,
             state: "active".to_owned(),
@@ -747,14 +744,11 @@ pub(super) fn card_from_projection_item(
                 other => format!("discussion: {other}"),
             };
             let hist = if d.lazy_link {
-                "lazy_link (cross-Space)".to_owned()
+                "lazy_link (cross-Realm)".to_owned()
             } else if d.enabled {
-                // T2.3: tracks no longer carry independent access; a child
-                // Discussion Space owns its own access policy. The history
-                // visibility here reflects "the discussion is a child Space
-                // with its own access" — render as such, not as a
-                // branch-scoped grant.
-                "child Space access".to_owned()
+                // Tracks do not carry independent access; a private
+                // discussion uses a Circle-scoped Flow.
+                "Circle-scoped discussion".to_owned()
             } else {
                 "synthesis-only".to_owned()
             };
@@ -1104,12 +1098,12 @@ pub(super) fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
 /// encrypted realm's private patch values (`body` / `synthesis` /
 /// `description`) can be decrypted on read. All fields are cheap borrows
 /// captured from `KanbanPanel` (`state_store.read()`, `account_did`,
-/// `device_id`, and the realm/space id). `None` (the common, unencrypted
+/// `device_id`, and the Realm id). `None` (the common, unencrypted
 /// case, and every test) means "render plaintext values as-is".
 #[derive(Clone, Copy)]
 pub(super) struct MlsDecryptCtx<'a> {
     pub(super) state_store: &'a LocalStateStore,
-    pub(super) space_id: &'a str,
+    pub(super) realm_id: &'a str,
     pub(super) actor_did: &'a str,
     pub(super) device_id: &'a str,
 }
@@ -1167,7 +1161,7 @@ pub(super) fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value)
     let envelope = mls_envelope_value(value)?;
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         ctx.state_store,
-        ctx.space_id,
+        ctx.realm_id,
         ctx.actor_did,
         ctx.device_id,
         envelope,
@@ -1234,7 +1228,7 @@ pub(super) fn private_flow_field_locked(
     if let Some(ctx) = ctx
         && let Some(plaintext) =
             ctx.state_store
-                .private_plaintext_for(ctx.space_id, flow_id, field_path)
+                .private_plaintext_for(ctx.realm_id, flow_id, field_path)
         && !private_plaintext_display_text(&plaintext).trim().is_empty()
     {
         return false;
@@ -1277,7 +1271,7 @@ pub(super) fn private_flow_field_text(
     if let Some(ctx) = ctx
         && let Some(plaintext) =
             ctx.state_store
-                .private_plaintext_for(ctx.space_id, flow_id, field_path)
+                .private_plaintext_for(ctx.realm_id, flow_id, field_path)
     {
         let text = private_plaintext_display_text(&plaintext);
         if !text.trim().is_empty() {
@@ -1985,7 +1979,7 @@ pub(super) fn local_space_create_from_raw_operation(
         record
             .realm_id
             .as_ref()
-            .map(|space_id| scope_id_as_realm_id(space_id))
+            .map(|record_realm_id| trim_realm_id(record_realm_id))
     });
     let title = json_path_string(Some(object), &["title"])
         .or_else(|| json_path_string(Some(body), &["title"]))

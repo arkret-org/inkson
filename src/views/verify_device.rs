@@ -324,7 +324,7 @@ pub fn VerifyDevicePanel(
                         }
                         if !qr_data().is_empty() {
                             div { class: "event", "data-testid": "qr-display",
-                                div { class: "space-title", "QR verification payload" }
+                                div { class: "entity-title", "QR verification payload" }
                                 {
                                     let svg = render_qr_svg(&qr_data());
                                     if svg.is_empty() {
@@ -624,7 +624,7 @@ pub fn VerifyDevicePanel(
                                 );
                                 rsx! {
                             div { class: "event", "data-testid": "sas-display",
-                                div { class: "space-title", {crate::i18n::tr("verify_device.short_auth_string")} }
+                                div { class: "entity-title", {crate::i18n::tr("verify_device.short_auth_string")} }
                                 div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
                                 div { class: "muted", "data-testid": "sas-source", "Source: {sas_source}" }
                                 // SAS emoji row — now computed via SDK HKDF.
@@ -633,7 +633,7 @@ pub fn VerifyDevicePanel(
                                         span { class: "badge", "{codepoint} {label}" }
                                     }
                                 }
-                                div { class: "space-title", "data-testid": "sas-digits", "{digits_text}" }
+                                div { class: "entity-title", "data-testid": "sas-digits", "{digits_text}" }
                                 div { class: "muted", "{sas_code}" }
                                 div { class: "actions",
                                     button {
@@ -870,7 +870,7 @@ pub fn VerifyDevicePanel(
                                 }
                                 if revoke_confirm() == Some(entry.device_id.clone()) {
                                     div { class: "event", "data-testid": "revoke-confirm",
-                                        div { class: "space-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
+                                        div { class: "entity-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
                                         div { class: "muted",
                                             "Revoking removes the device from the authorized set, excludes it from future encrypted messages, and rotates the account MLS history secret. This cannot be undone."
                                         }

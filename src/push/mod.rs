@@ -102,6 +102,7 @@ const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
     "principal_id",
     "push_target_id",
     "remark",
+    "realm_id",
     "room_id",
     "sender",
     "sender_id",
@@ -112,7 +113,7 @@ const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
 /// Lint a push wakeup payload before it leaves the client / bridge tests.
 ///
 /// Spec `discovery/push-notifications.md` requires blind wakeups: the payload
-/// must not carry stable identities or Space/Event/Flow ids. The delivery route
+/// must not carry stable identities or Realm/Space/Event/Flow ids. The delivery route
 /// already knows the push target; the app resolves the actual notification body
 /// locally after waking and syncing.
 pub fn validate_blind_wakeup_payload(payload: &Value) -> anyhow::Result<()> {
@@ -141,6 +142,7 @@ fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Resu
         Value::String(value)
             if value.starts_with("did:")
                 || value.starts_with("ck:space:")
+                || value.starts_with("ck:realm:")
                 || value.starts_with("ck:flow:")
                 || value.starts_with("ck:event:") =>
         {

@@ -95,7 +95,7 @@ pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 pub struct MlsSnapshotEnvelope {
     /// Yougen's realm id the envelope belongs to. Not encrypted —
     /// the boot path needs to know which envelope maps to which
-    /// space without decrypting them all first.
+    /// Realm without decrypting them all first.
     pub realm_id: String,
     /// Recorded MLS group id (hex-encoded by the SDK). Surfaced for
     /// debug + audit; does not leak material.
@@ -766,14 +766,14 @@ mod tests {
             DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(b"ck:space:round28-snapshot").unwrap();
+        let group = identity.create_group(b"ck:realm:round28-snapshot").unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
         let original_epoch = record.epoch;
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ck:space:round28-snapshot",
+            "ck:realm:round28-snapshot",
             &original_group_id,
             original_epoch,
             &bytes,

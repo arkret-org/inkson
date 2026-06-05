@@ -102,8 +102,8 @@ impl CokretApi {
             .await
     }
 
-    /// A6.1 — global cross-space message search backed by soland's
-    /// `POST /_soland/self/index/search`. The server accepts `space_ids` to
+    /// A6.1 — global cross-Realm message search backed by soland's
+    /// `POST /_soland/self/index/search`. The server accepts `realm_ids` to
     /// scope the search; pass an empty slice for "search everywhere I
     /// have access to". `object_kinds` defaults to `["message"]` when
     /// `None`, mirroring the panel's primary affordance.
@@ -115,7 +115,7 @@ impl CokretApi {
     pub async fn index_search(
         &self,
         query: &str,
-        space_ids: &[String],
+        realm_ids: &[String],
         object_kinds: Option<&[&str]>,
         limit: u32,
     ) -> anyhow::Result<IndexSearchResponse> {
@@ -126,7 +126,7 @@ impl CokretApi {
             "query": query,
             "limit": limit,
             "object_kinds": kinds,
-            "space_ids": space_ids,
+            "realm_ids": realm_ids,
         });
         self.post_json("_soland/self/index/search", body).await
     }
@@ -187,7 +187,7 @@ impl CokretApi {
         }
 
         let handle = canonical_invitee_handle(target)?;
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let resolved = self
             .resolve_handle_with_context(
                 &handle,

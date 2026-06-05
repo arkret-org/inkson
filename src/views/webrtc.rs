@@ -129,7 +129,7 @@ pub fn WebrtcCallPanel(
         })
         .count();
 
-    let selected_space_seed = selected_realm_id.clone();
+    let selected_realm_seed = selected_realm_id.clone();
     let mut stage = use_signal(|| CallStage::Idle);
     let mut mic_muted = use_signal(|| false);
     let mut camera_on = use_signal(|| true);
@@ -139,7 +139,7 @@ pub fn WebrtcCallPanel(
     let mut incoming_from = use_signal(String::new);
     let mut outgoing_to = use_signal(String::new);
     let mut last_action = use_signal(String::new);
-    let mut call_space_id = use_signal(move || selected_space_seed.clone());
+    let mut call_realm_id = use_signal(move || selected_realm_seed.clone());
     let mut peer_did = use_signal(|| "did:web:bob.example".to_owned());
     let mut group_participants_input =
         use_signal(|| "did:web:bob.example\ndid:web:carol.example".to_owned());
@@ -200,12 +200,12 @@ pub fn WebrtcCallPanel(
 
                 if stage() == CallStage::Idle {
                     div { class: "event", "data-testid": "webrtc-call-config",
-                        label { "Space" }
+                        label { "Realm" }
                         input {
-                            "data-testid": "webrtc-space-id-input",
-                            value: "{call_space_id}",
+                            "data-testid": "webrtc-realm-id-input",
+                            value: "{call_realm_id}",
                             placeholder: "ck:realm:...",
-                            oninput: move |evt| call_space_id.set(evt.value()),
+                            oninput: move |evt| call_realm_id.set(evt.value()),
                         }
                         label { "Peer" }
                         input {
@@ -224,7 +224,7 @@ pub fn WebrtcCallPanel(
                             button {
                                 class: "primary",
                                 "data-testid": "webrtc-call-start-button",
-                                disabled: call_space_id.read().trim().is_empty() || peer_did.read().trim().is_empty(),
+                                disabled: call_realm_id.read().trim().is_empty() || peer_did.read().trim().is_empty(),
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
@@ -235,7 +235,7 @@ pub fn WebrtcCallPanel(
                                         let api_token = token();
                                         let actor = actor.clone();
                                         let device = device.clone();
-                                        let space_id = call_space_id().trim().to_owned();
+                                        let realm_id = call_realm_id().trim().to_owned();
                                         let peer = peer_did().trim().to_owned();
                                         outgoing_to.set(peer.clone());
                                         active_session_id.set(String::new());
@@ -253,7 +253,7 @@ pub fn WebrtcCallPanel(
                                             match create_live_session(
                                                 base,
                                                 api_token,
-                                                space_id,
+                                                realm_id,
                                                 vec![peer],
                                                 "p2p".to_owned(),
                                                 "none".to_owned(),
@@ -285,7 +285,7 @@ pub fn WebrtcCallPanel(
                             button {
                                 class: "secondary",
                                 "data-testid": "webrtc-group-call-start-button",
-                                disabled: call_space_id.read().trim().is_empty(),
+                                disabled: call_realm_id.read().trim().is_empty(),
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
@@ -296,7 +296,7 @@ pub fn WebrtcCallPanel(
                                         let api_token = token();
                                         let actor = actor.clone();
                                         let device = device.clone();
-                                        let space_id = call_space_id().trim().to_owned();
+                                        let realm_id = call_realm_id().trim().to_owned();
                                         let peers = participant_list_from_input(&group_participants_input());
                                         active_session_id.set(String::new());
                                         call_seq.set(0);
@@ -314,7 +314,7 @@ pub fn WebrtcCallPanel(
                                             match create_live_session(
                                                 base,
                                                 api_token,
-                                                space_id,
+                                                realm_id,
                                                 peers,
                                                 "sfu".to_owned(),
                                                 "allow".to_owned(),
@@ -642,13 +642,13 @@ pub fn WebrtcCallPanel(
                                             let base = base.clone();
                                             let api_token = token();
                                             let session_id = active_session_id();
-                                            let space_id = call_space_id();
+                                            let realm_id = call_realm_id();
                                             let mut recording_state = recording_state;
                                             let mut recording_blob_ref = recording_blob_ref;
                                             let mut signal_status = signal_status;
                                             let mut last_action = last_action;
                                             spawn(async move {
-                                                match start_live_recording(base, api_token, session_id, space_id).await {
+                                                match start_live_recording(base, api_token, session_id, realm_id).await {
                                                     Ok(recording) => {
                                                         recording_state.set(RecordingState::Recording);
                                                         recording_blob_ref.set(recording.recording_blob_ref.clone());
@@ -903,13 +903,13 @@ fn emit_signal_from_ui(
 async fn create_live_session(
     base: String,
     api_token: String,
-    space_id: String,
+    realm_id: String,
     participants: Vec<String>,
     mode: String,
     recording_policy: String,
 ) -> Result<CreateWebrtcSessionResponse, String> {
     with_authed_api(&base, api_token, |api| async move {
-        api.create_webrtc_session(&space_id, participants, &mode, &recording_policy)
+        api.create_webrtc_session(&realm_id, participants, &mode, &recording_policy)
             .await
     })
     .await
@@ -938,10 +938,10 @@ async fn start_live_recording(
     base: String,
     api_token: String,
     session_id: String,
-    space_id: String,
+    realm_id: String,
 ) -> Result<CallRecordingStartResponse, String> {
     with_authed_api(&base, api_token, |api| async move {
-        api.start_call_recording(&session_id, &space_id).await
+        api.start_call_recording(&session_id, &realm_id).await
     })
     .await
     .map_err(|err| err.display())

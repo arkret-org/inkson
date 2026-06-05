@@ -727,7 +727,6 @@ export async function mockCokretApi(page: Page) {
                     title: realm.title,
                     summary: realm.summary,
                     encryption_profile: realm.encryption_profile,
-                    child_realm_ids: [],
                   },
                   timeline: {
                     events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
@@ -741,10 +740,9 @@ export async function mockCokretApi(page: Page) {
             ),
             [DEMO_REALM]: {
               summary: {
-                title: "Cokret Demo Space",
-                summary: "Shared demo Space served by mocked server",
+                title: "Cokret Demo Realm",
+                summary: "Shared demo Realm served by mocked server",
                 encryption_profile: "mls_rfc9420",
-                child_realm_ids: [CHILD_REALM],
               },
               timeline: { events: demoTimelineEvents, limited: false },
               state: { events: [] },
@@ -753,10 +751,8 @@ export async function mockCokretApi(page: Page) {
             },
             [CHILD_REALM]: {
               summary: {
-                title: "Launch Child Space",
-                summary: "Nested board and discussion scope",
-                parent_realm_id: DEMO_REALM,
-                child_realm_ids: [GRANDCHILD_REALM],
+                title: "Launch Realm",
+                summary: "Board and discussion scope",
               },
               timeline: { events: [], limited: false },
               state: { events: [] },
@@ -765,9 +761,8 @@ export async function mockCokretApi(page: Page) {
             },
             [GRANDCHILD_REALM]: {
               summary: {
-                title: "Launch Deep Space",
-                summary: "Grandchild scope fixture",
-                parent_realm_id: CHILD_REALM,
+                title: "Launch Deep Realm",
+                summary: "Related scope fixture",
               },
               timeline: { events: [], limited: false },
               state: { events: [] },
@@ -785,7 +780,7 @@ export async function mockCokretApi(page: Page) {
             kind: "ck.notification",
             notification_id: "notif-msg-1",
             title: "New message",
-            body: "Alice sent a message in Demo Space",
+            body: "Alice sent a message in Demo Realm",
             realm_id: DEMO_REALM,
             notification_kind: "message",
             type: "message",
@@ -797,7 +792,7 @@ export async function mockCokretApi(page: Page) {
             notification_id: "notif-invite-1",
             invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
             title: "New invite",
-            body: "You were invited to review Demo Space",
+            body: "You were invited to review Demo Realm",
             realm_id: DEMO_REALM,
             notification_kind: "invite",
             type: "invite",

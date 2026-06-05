@@ -13,7 +13,7 @@ use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, MoveSubmissionState};
 use crate::models::SubmitEventResponse;
-use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, scope_id_as_realm_id, uuid_v7};
+use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::views::helpers::{
     StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
@@ -109,7 +109,7 @@ pub fn ChatPanel(
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
-    selected_space_scope: Vec<String>,
+    selected_navigation_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -131,14 +131,14 @@ pub fn ChatPanel(
     });
     let mut selected_channel = use_signal(move || initial_selected_channel.clone());
     {
-        let selected_space_for_initial_flow = selected_realm_id.clone();
+        let selected_realm_for_initial_flow = selected_realm_id.clone();
         let initial_flow_id_for_effect = initial_flow_id.clone();
         use_effect(move || {
-            if selected_space_for_initial_flow.trim().is_empty() {
+            if selected_realm_for_initial_flow.trim().is_empty() {
                 return;
             }
             let desired_channel = discussion_channel_for_flow(
-                &selected_space_for_initial_flow,
+                &selected_realm_for_initial_flow,
                 &initial_flow_id_for_effect,
             );
             if selected_channel() != desired_channel.flow_id {
@@ -166,7 +166,7 @@ pub fn ChatPanel(
     let mut compose_upload_status = use_signal(String::new);
     // A6.3 message pinning. Local-only scaffolding: the spec does not
     // yet define a `ck.message.pin` event_kind, so we keep pin state in
-    // a per-space Signal and surface it at the top of the discussion.
+    // a per-realm Signal and surface it at the top of the discussion.
     // When soland exposes the pin endpoint (see TODO below) we'll
     // replace this with a real API call + projection sync.
     //
@@ -216,10 +216,10 @@ pub fn ChatPanel(
     let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
     let mut presence_poll_key = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
-    // (or Flow id) + the desired child-Space title.
+    // (or Flow id) + the desired private discussion title.
     let mut promote_discussion_draft =
         use_signal(crate::messaging::discussion_promote::PromoteDiscussionDraft::default);
-    // Map of `source_message_id -> child_space_id` for the
+    // Map of `source_message_id -> private_discussion_flow_id` for the
     // `discussion-promoted-indicator` row. Populated optimistically
     // on submit and updated from the server response.
     let mut promoted_targets = use_signal(std::collections::BTreeMap::<String, String>::new);
@@ -277,10 +277,10 @@ pub fn ChatPanel(
         .as_ref()
         .map(|channel| channel.unread)
         .unwrap_or(0);
-    let selected_space_security_encrypted = {
+    let selected_realm_security_encrypted = {
         let state = state_store.read().load();
         crate::security_state::security_projection_for_scope_id(
-            &state.space_projections,
+            &state.realm_tree_projections,
             &selected_realm_id,
         )
         .map(crate::security_state::realm_projection_is_encrypted)
@@ -289,7 +289,7 @@ pub fn ChatPanel(
     let selected_channel_security_encrypted = selected_channel_info
         .as_ref()
         .and_then(|channel| channel.security_encrypted)
-        .unwrap_or(selected_space_security_encrypted);
+        .unwrap_or(selected_realm_security_encrypted);
     // In an encrypted channel the default Send must MLS-encrypt, never ship
     // plaintext. We hide the plaintext send button and promote the MLS send
     // button to the primary action carrying the `send-chat-button` testid;
@@ -314,10 +314,10 @@ pub fn ChatPanel(
         .iter()
         .filter(|msg| {
             msg.flow_id == selected_channel_value
-                && (selected_space_scope.is_empty()
-                    || selected_space_scope
+                && (selected_navigation_scope.is_empty()
+                    || selected_navigation_scope
                         .iter()
-                        .any(|space| space == &msg.realm_id))
+                        .any(|realm| realm == &msg.realm_id))
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -350,13 +350,13 @@ pub fn ChatPanel(
         // ephemeral channel; local marker state keeps the rendered
         // testid surface stable while server projection catches up.
         let base = base_url.clone();
-        let space = selected_realm_id.clone();
+        let realm = selected_realm_id.clone();
         let event_id = top_event.clone();
         let actor = account_did.clone();
         let api_token = token();
         spawn(async move {
             let _ = crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                api.send_receipt(&space, &actor, &event_id, "ck.receipt.read")
+                api.send_receipt(&realm, &actor, &event_id, "ck.receipt.read")
                     .await
             })
             .await;
@@ -379,11 +379,11 @@ pub fn ChatPanel(
     let participant_projection = state_store
         .read()
         .load()
-        .space_projections
+        .realm_tree_projections
         .get(&selected_realm_id)
         .cloned();
     let mut participants = space_participants(participant_projection.as_ref(), &account_did);
-    // Mark agent endpoints registered in this space so the @mention
+    // Mark agent endpoints registered in this Realm so the @mention
     // picker, member list, and sender row can render a 🤖 badge.
     // Source of truth is the local store's `ck.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
@@ -420,7 +420,7 @@ pub fn ChatPanel(
         presence_poll_key.set(poll_key.clone());
         let base = base_url.clone();
         let api_token = token();
-        let space = selected_realm_id.clone();
+        let realm = selected_realm_id.clone();
         let actor = account_did.clone();
         let participants_for_poll = participant_dids_for_presence.clone();
         let mut typing_actors_for_poll = typing_actors;
@@ -438,7 +438,7 @@ pub fn ChatPanel(
                     let mut got_sync_presence = false;
                     if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                         let active_typers =
-                            typing_actors_from_sync_realms(&sync.realms, &space, &actor);
+                            typing_actors_from_sync_realms(&sync.realms, &realm, &actor);
                         // Only write the signal when the value actually changed —
                         // an unchanged set would needlessly re-render the chat.
                         if poll_key_signal.read().as_str() == poll_key_for_task.as_str()
@@ -513,8 +513,8 @@ pub fn ChatPanel(
         let base = base_url.clone();
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
-        let selected_space_for_load = selected_realm_id.clone();
-        let selected_scope_for_load = selected_space_scope.clone();
+        let selected_realm_for_load = selected_realm_id.clone();
+        let selected_navigation_scope_for_load = selected_navigation_scope.clone();
         let account_did_for_load = account_did.clone();
         // P0 decrypt-on-read identity: this device's actor + device id let the
         // message projection decrypt remote members' canonical encrypted_content
@@ -552,8 +552,8 @@ pub fn ChatPanel(
                 {
                     let mut store = state_store.write();
                     store.save_sync_cursor(sync.cursor.clone());
-                    for (space_id, projection) in &sync.realms {
-                        store.save_space_projection(space_id.clone(), projection.clone());
+                    for (realm_id, projection) in &sync.realms {
+                        store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                     }
                 }
                 loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
@@ -562,34 +562,34 @@ pub fn ChatPanel(
                     decrypt_identity,
                 ));
                 loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realms));
-                let default_space_ids = if selected_scope_for_load.is_empty() {
-                    vec![selected_space_for_load.clone()]
+                let default_realm_ids = if selected_navigation_scope_for_load.is_empty() {
+                    vec![selected_realm_for_load.clone()]
                 } else {
-                    selected_scope_for_load.clone()
+                    selected_navigation_scope_for_load.clone()
                 };
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_sync_realms(&sync.realms, &default_space_ids),
+                    channels_from_sync_realms(&sync.realms, &default_realm_ids),
                 );
                 sync_cursor.set(sync.cursor);
             }
 
-            let spaces_to_backfill = if selected_scope_for_load.is_empty() {
-                vec![selected_space_for_load]
+            let realms_to_backfill = if selected_navigation_scope_for_load.is_empty() {
+                vec![selected_realm_for_load]
             } else {
-                selected_scope_for_load
+                selected_navigation_scope_for_load
             };
-            for space_id in spaces_to_backfill {
-                if space_id.trim().is_empty() {
+            for realm_id in realms_to_backfill {
+                if realm_id.trim().is_empty() {
                     continue;
                 }
-                if let Ok(backfill) = api.backfill(&space_id).await {
+                if let Ok(backfill) = api.backfill(&realm_id).await {
                     merge_channels(
                         &mut channels.write(),
-                        channels_from_events(&space_id, &backfill.events),
+                        channels_from_events(&realm_id, &backfill.events),
                     );
                     loaded_messages.extend(chat_messages_from_events_with_sidecar(
-                        &space_id,
+                        &realm_id,
                         &backfill.events,
                         Some(&state_store.read()),
                         decrypt_identity,
@@ -621,12 +621,12 @@ pub fn ChatPanel(
     // when no MLS snapshot is saved for the Space so the user sees a clear
     // "waiting for Welcome" indicator instead of a spinner forever.
     {
-        let space_for_crypto = selected_realm_id.clone();
+        let realm_for_crypto = selected_realm_id.clone();
         let mut messages_sig = messages;
         use_effect(move || {
             let snapshot_missing = state_store
                 .read()
-                .mls_snapshot_for(&space_for_crypto)
+                .mls_snapshot_for(&realm_for_crypto)
                 .is_none();
             // Only mutate when we'd actually move someone from Decrypting
             // into KeyMissing — Decrypting → Plaintext requires a real
@@ -679,7 +679,7 @@ pub fn ChatPanel(
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
                             h2 { {crate::i18n::tr("chat.discussions_header")} }
-                            HelpTip { text: "Discussion is the selected Flow's track. The default Flow is always available for this Space; the alternate filter includes every Flow with a discussion track." }
+                            HelpTip { text: "Discussion is the selected Flow's track. The default Flow is always available for this Realm; the alternate filter includes every Flow with a discussion track." }
                         }
                         div { class: "discussion-panel-head-actions",
                             button {
@@ -725,7 +725,7 @@ pub fn ChatPanel(
                                 div { class: "discussion-track-main",
                                     span { class: "discussion-track-name-row",
                                         SecurityStateBadge {
-                                            encrypted: channel.security_encrypted.unwrap_or(selected_space_security_encrypted),
+                                            encrypted: channel.security_encrypted.unwrap_or(selected_realm_security_encrypted),
                                             compact: true,
                                             test_id: Some("flow-track-security-state".to_owned()),
                                         }
@@ -818,7 +818,7 @@ pub fn ChatPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     move |_| {
                                         let title = new_channel_name().trim().to_owned();
                                         if title.is_empty() {
@@ -831,7 +831,7 @@ pub fn ChatPanel(
                                         let flow_id = format!("ck:flow:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match cx_ops::discussion_flow_create(
-                                            &space,
+                                            &realm,
                                             &actor,
                                             &flow_id,
                                             &title,
@@ -876,7 +876,7 @@ pub fn ChatPanel(
                                         let wait_for = active_sync_token(sync_cursor());
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         status_msg.set("Creating Flow".to_owned());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
@@ -912,7 +912,7 @@ pub fn ChatPanel(
                                                                 // must resume only from /account/subscribe cursors.
                                                                 store.append_raw_operation(
                                                                     op.local_operation_id().to_owned(),
-                                                                    Some(space.clone()),
+                                                                    Some(realm.clone()),
                                                                     json!({
                                                                         "flow_id": flow_id,
                                                                         "kind": "ck.flow.create",
@@ -968,7 +968,7 @@ pub fn ChatPanel(
                             let menu_open = watch_level_menu_open();
                             let level_label = crate::i18n::tr(watch_level_label_key(level_now));
                             let flow_id_for_watch = selected_channel_value.clone();
-                            let space_for_watch = selected_realm_id.clone();
+                            let realm_for_watch = selected_realm_id.clone();
                             let actor_for_watch = account_did.clone();
                             let watch_disabled = flow_id_for_watch.trim().is_empty();
                             rsx! {
@@ -1001,7 +1001,7 @@ pub fn ChatPanel(
                                                         {
                                                             let option_label = crate::i18n::tr(watch_level_label_key(option));
                                                             let flow_id_for_click = flow_id_for_watch.clone();
-                                                            let space_for_click = space_for_watch.clone();
+                                                            let realm_for_click = realm_for_watch.clone();
                                                             let actor_for_click = actor_for_watch.clone();
                                                             let base_for_click = base_url.clone();
                                                             let is_active = level_now == option;
@@ -1018,7 +1018,7 @@ pub fn ChatPanel(
                                                                         let api_token = token();
                                                                         let wait_for = active_sync_token(sync_cursor());
                                                                         let watch_op = cx_ops::flow_watch_set(
-                                                                            &space_for_click,
+                                                                            &realm_for_click,
                                                                             &actor_for_click,
                                                                             &actor_for_click,
                                                                             &flow_id_for_click,
@@ -1473,7 +1473,7 @@ pub fn ChatPanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let service_did = plaintext_service_did.clone();
-                                                let space = msg.realm_id.clone();
+                                                let realm = msg.realm_id.clone();
                                                 let actor = account_did.clone();
                                                 let local_id = msg.id.clone();
                                                 let body = msg.body.clone();
@@ -1496,7 +1496,7 @@ pub fn ChatPanel(
                                                     status_msg.set("Retrying message".to_owned());
                                                     let base = base.clone();
                                                     let service_did = service_did.clone();
-                                                    let space = space.clone();
+                                                    let realm = realm.clone();
                                                     let actor = actor.clone();
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
@@ -1510,15 +1510,15 @@ pub fn ChatPanel(
                                                     let projection = state_store
                                                         .read()
                                                         .load()
-                                                        .space_projections
-                                                        .get(&space)
+                                                        .realm_tree_projections
+                                                        .get(&realm)
                                                         .cloned();
                                                     let plaintext_services = plaintext_services_for_policy(
                                                         projection.as_ref(),
                                                         &service_did,
                                                     );
                                                     let op = chat_message_create_operation(
-                                                        &space,
+                                                        &realm,
                                                         &actor,
                                                         &flow_id,
                                                         "discussion",
@@ -1528,13 +1528,13 @@ pub fn ChatPanel(
                                                         reply_to.as_deref(),
                                                     );
                                                     let mention_values_for_store = mentions_to_json(&mentions);
-                                                    let space_for_record = space.clone();
+                                                    let realm_for_record = realm.clone();
                                                     let actor_for_retry = actor.clone();
                                                     spawn(async move {
                                                         match submit_chat_operation_with_auth_refresh(
                                                             &base,
                                                             &actor_for_retry,
-                                                            &space,
+                                                            &realm,
                                                             api_token,
                                                             wait_for,
                                                             &plaintext_services,
@@ -1545,7 +1545,7 @@ pub fn ChatPanel(
                                                                     let mut store = state_store.write();
                                                                     store.append_raw_operation(
                                                                         op.local_operation_id().to_owned(),
-                                                                        Some(space_for_record),
+                                                                        Some(realm_for_record),
                                                                         json!({
                                                                             "event_id": resp.event_id.clone(),
                                                                             "kind": "ck.message.create",
@@ -1726,7 +1726,7 @@ pub fn ChatPanel(
                                                             let option_id = option.id.clone();
                                                             let card_poll_id = poll_id.clone();
                                                             let card_message_id = card.message_id.clone();
-                                                            let space = msg.realm_id.clone();
+                                                            let realm = msg.realm_id.clone();
                                                             let actor = account_did.clone();
                                                             let card_closed = card.closed;
                                                             let base_for_vote = base_url.clone();
@@ -1744,7 +1744,7 @@ pub fn ChatPanel(
                                                                             onclick: {
                                                                                 let card_message_id = card_message_id.clone();
                                                                                 let actor = actor.clone();
-                                                                                let space = space.clone();
+                                                                                let realm = realm.clone();
                                                                                 let card_poll_id = card_poll_id.clone();
                                                                                 let option_id = option_id.clone();
                                                                                 let api_token = token();
@@ -1763,7 +1763,7 @@ pub fn ChatPanel(
                                                                                         found.error = None;
                                                                                     }
                                                                                     let base = base_for_vote.clone();
-                                                                                    let space = space.clone();
+                                                                                    let realm = realm.clone();
                                                                                     let actor = actor.clone();
                                                                                     let poll_id = card_poll_id.clone();
                                                                                     let option_id = option_id.clone();
@@ -1775,7 +1775,7 @@ pub fn ChatPanel(
                                                                                             api_token,
                                                                                             |api| async move {
                                                                                                 let op = crate::messaging::polls::build_poll_vote_op(
-                                                                                                    &space,
+                                                                                                    &realm,
                                                                                                     &actor,
                                                                                                     &poll_id,
                                                                                                     &option_id,
@@ -1831,7 +1831,7 @@ pub fn ChatPanel(
                                                             onclick: {
                                                                 let card_message_id = card.message_id.clone();
                                                                 let card_poll_id = poll_id.clone();
-                                                                let space = msg.realm_id.clone();
+                                                                let realm = msg.realm_id.clone();
                                                                 let actor = account_did.clone();
                                                                 let base_for_close = base_url.clone();
                                                                 let api_token = token();
@@ -1849,7 +1849,7 @@ pub fn ChatPanel(
                                                                         found.error = None;
                                                                     }
                                                                     let base = base_for_close.clone();
-                                                                    let space = space.clone();
+                                                                    let realm = realm.clone();
                                                                     let actor = actor.clone();
                                                                     let poll_id = card_poll_id.clone();
                                                                     let message_id_for_status = card_message_id.clone();
@@ -1860,7 +1860,7 @@ pub fn ChatPanel(
                                                                             api_token,
                                                                             |api| async move {
                                                                                 let op = crate::messaging::polls::build_poll_close_op(
-                                                                                    &space,
+                                                                                    &realm,
                                                                                     &actor,
                                                                                     &poll_id,
                                                                                 );
@@ -1913,11 +1913,11 @@ pub fn ChatPanel(
                                 }
                                 // G3.Y2 — discussion-promoted indicator.
                                 // Lights up after a successful promote
-                                // round-trip; the link target is the
-                                // new child space's chat route.
+                                // round-trip; the target is the private
+                                // Circle-scoped discussion Flow.
                                 {
                                     // After a successful promote, the
-                                    // resulting child-space id lives in
+                                    // resulting private discussion Flow id lives in
                                     // `promoted_targets` keyed by the
                                     // source message id; we render an
                                     // anchor row so the parent timeline
@@ -1926,18 +1926,22 @@ pub fn ChatPanel(
                                         .get(&msg.id)
                                         .cloned();
                                     match promoted_to {
-                                        Some(child_space_id) => {
-                                            let child_space_id_label = short_protocol_id(&child_space_id);
+                                        Some(discussion_flow_id) => {
+                                            let discussion_flow_id_label = short_protocol_id(&discussion_flow_id);
+                                            let discussion_flow_href = format!(
+                                                "/chat/{}",
+                                                selected_realm_id
+                                            );
                                             rsx! {
                                                 div {
                                                     class: "discussion-promoted-indicator",
                                                     "data-testid": "discussion-promoted-indicator",
-                                                    "data-child-space-id": "{child_space_id}",
-                                                    span { "Discussion moved to " }
+                                                    "data-discussion-flow-id": "{discussion_flow_id}",
+                                                    span { "Discussion moved to private Flow " }
                                                     a {
-                                                        href: "/kanban/{child_space_id}",
-                                                        title: "{child_space_id}",
-                                                        "{child_space_id_label}"
+                                                        href: "{discussion_flow_href}",
+                                                        title: "{discussion_flow_id}",
+                                                        "{discussion_flow_id_label}"
                                                     }
                                                 }
                                             }
@@ -1952,7 +1956,7 @@ pub fn ChatPanel(
                                                 class: "secondary emoji-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_realm_id.clone();
+                                                    let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let device = device_id.clone();
                                                     let msg_id = msg.id.clone();
@@ -1973,7 +1977,7 @@ pub fn ChatPanel(
                                                         // the advanced MLS ratchet) before the network spawn.
                                                         let Some(op) = build_chat_reaction_add_operation(
                                                             state_store,
-                                                            &space,
+                                                            &realm,
                                                             &actor,
                                                             &device,
                                                             &msg_id,
@@ -2020,7 +2024,7 @@ pub fn ChatPanel(
                                                 "data-testid": "chat-save-edit-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_realm_id.clone();
+                                                    let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
                                                     move |_| {
@@ -2040,7 +2044,7 @@ pub fn ChatPanel(
                                                         }
                                                         editing_message.set(None);
                                                         let base = base.clone();
-                                                        let space = space.clone();
+                                                        let realm = realm.clone();
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
                                                         let api_token = token();
@@ -2048,7 +2052,7 @@ pub fn ChatPanel(
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = chat_message_revise_operation(&space, &actor, &msg_id, &content);
+                                                                    let op = chat_message_revise_operation(&realm, &actor, &msg_id, &content);
                                                                     match api.submit_event_envelope(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
@@ -2092,7 +2096,7 @@ pub fn ChatPanel(
                                                 "data-testid": "chat-confirm-redact-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_realm_id.clone();
+                                                    let realm = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
                                                     move |_| {
@@ -2105,7 +2109,7 @@ pub fn ChatPanel(
                                                         }
                                                         redact_confirm.set(None);
                                                         let base = base.clone();
-                                                        let space = space.clone();
+                                                        let realm = realm.clone();
                                                         let actor = actor.clone();
                                                         let msg_id = msg_id.clone();
                                                         let api_token = token();
@@ -2113,7 +2117,7 @@ pub fn ChatPanel(
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                                 Ok(api) => {
-                                                                    let op = chat_message_redact_operation(&space, &actor, &msg_id, "user requested tombstone");
+                                                                    let op = chat_message_redact_operation(&realm, &actor, &msg_id, "user requested tombstone");
                                                                     match api.submit_event_envelope(&op).await {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
@@ -2344,10 +2348,10 @@ pub fn ChatPanel(
                 // client-side per-discussion toggle, so the third row
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.
-                let space_id_for_mute = selected_realm_id.clone();
+                let realm_id_for_mute = selected_realm_id.clone();
                 let flow_id_for_rr = selected_channel_value.clone();
                 let muted_realms_now = state_store.read().muted_realms();
-                let realm_is_muted = muted_realms_now.contains(&space_id_for_mute);
+                let realm_is_muted = muted_realms_now.contains(&realm_id_for_mute);
                 let rr_default_send = state_store.read().read_receipt_default_send();
                 let rr_flow_override =
                     state_store.read().read_receipt_flow_override(&flow_id_for_rr);
@@ -2387,12 +2391,12 @@ pub fn ChatPanel(
                                 "data-testid": "discussion-settings-mute",
                                 checked: realm_is_muted,
                                 onchange: {
-                                    let space_id = space_id_for_mute.clone();
+                                    let realm_id = realm_id_for_mute.clone();
                                     move |evt: Event<FormData>| {
                                         let new_muted = evt.value() == "true";
                                         state_store
                                             .write()
-                                            .set_realm_muted(space_id.clone(), new_muted);
+                                            .set_realm_muted(realm_id.clone(), new_muted);
                                     }
                                 },
                             }
@@ -2437,9 +2441,8 @@ pub fn ChatPanel(
             }
 
             // G3.Y2 — discussion promote confirmation modal. Renders
-            // a single input for the child Space title + a confirm
-            // button that fires the ck.space.create + ck.space.child
-            // + ck.space.parent + ck.flow.update batch.
+            // a single input for the child Board Space title + a confirm
+            // button that fires a Realm-scoped ck.space.create.
             if crate::messaging::discussion_promote::discussion_promote_enabled()
                 && promote_discussion_draft.read().is_open()
             {
@@ -2447,7 +2450,7 @@ pub fn ChatPanel(
                     "data-testid": "discussion-promote-modal",
                     div { class: "discussion-modal",
                         div { class: "discussion-modal-head",
-                            h2 { "Promote discussion to its own space" }
+                            h2 { "Promote discussion to its own Space" }
                             button {
                                 r#type: "button",
                                 class: "secondary",
@@ -2456,7 +2459,7 @@ pub fn ChatPanel(
                             }
                         }
                         label { class: "form-row",
-                            span { "Child space title" }
+                            span { "Child Space title" }
                             input {
                                 r#type: "text",
                                 "data-testid": "discussion-promote-confirm-input",
@@ -2473,9 +2476,8 @@ pub fn ChatPanel(
                                 disabled: !promote_discussion_draft.read().is_submittable(),
                                 onclick: {
                                     let base = base_url.clone();
-                                    let parent_space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
-                                    let selected_flow = selected_channel_value.clone();
                                     move |_| {
                                         let draft_snapshot = promote_discussion_draft.read().clone();
                                         let Some(source_id) = draft_snapshot.source_id.clone() else {
@@ -2488,13 +2490,12 @@ pub fn ChatPanel(
                                         // server round-trip completes.
                                         promoted_targets
                                             .write()
-                                            .insert(source_id.clone(), ids.child_space_id.clone());
+                                            .insert(source_id.clone(), ids.discussion_flow_id.clone());
                                         promote_discussion_draft.write().close();
 
                                         let base = base.clone();
-                                        let parent_space = parent_space.clone();
+                                        let realm = realm.clone();
                                         let actor = actor.clone();
-                                        let selected_flow = selected_flow.clone();
                                         let api_token = token();
                                         let ids_clone = ids.clone();
                                         spawn(async move {
@@ -2505,15 +2506,10 @@ pub fn ChatPanel(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    let flow_id_opt = if selected_flow.is_empty() {
-                                                        None
-                                                    } else {
-                                                        Some(selected_flow.as_str())
-                                                    };
                                                     let ops = crate::messaging::discussion_promote::build_promote_ops(
-                                                        &parent_space,
+                                                        &realm,
                                                         &actor,
-                                                        flow_id_opt,
+                                                        &source_id,
                                                         &ids_clone,
                                                         &title,
                                                     );
@@ -2526,7 +2522,7 @@ pub fn ChatPanel(
                                         });
                                     }
                                 },
-                                "Create child space"
+                                "Create private discussion"
                             }
                         }
                     }
@@ -2623,7 +2619,7 @@ pub fn ChatPanel(
                     ondragleave: move |_| compose_dragover.set(false),
                     ondrop: {
                         let base = base_url.clone();
-                        let space = selected_realm_id.clone();
+                        let realm = selected_realm_id.clone();
                         move |evt| {
                             evt.prevent_default();
                             compose_dragover.set(false);
@@ -2640,7 +2636,7 @@ pub fn ChatPanel(
                             }
                             let api_token = token();
                             let base = base.clone();
-                            let space = space.clone();
+                            let realm = realm.clone();
                             compose_upload_status.set(
                                 crate::i18n::tr("compose.upload_progress"),
                             );
@@ -2677,7 +2673,7 @@ pub fn ChatPanel(
                                         .upload_blob_bytes_scoped(
                                             bytes,
                                             &content_type,
-                                            Some(&space),
+                                            Some(&realm),
                                             Some(&filename),
                                         )
                                         .await
@@ -2723,7 +2719,7 @@ pub fn ChatPanel(
                         placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
                         oninput: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |evt: Event<FormData>| {
                                 let value = evt.value();
@@ -2744,11 +2740,11 @@ pub fn ChatPanel(
                                 // instead of one POST per keystroke. The
                                 // receiving side TTL-expires stale entries.
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let actor = actor.clone();
                                 typing_throttle.on_keystroke(move |is_typing| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let actor = actor.clone();
                                     let api_token = token();
                                     spawn(async move {
@@ -2756,7 +2752,7 @@ pub fn ChatPanel(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.send_typing(&space, &actor, None, is_typing).await
+                                                api.send_typing(&realm, &actor, None, is_typing).await
                                             },
                                         ).await;
                                     });
@@ -3015,7 +3011,7 @@ pub fn ChatPanel(
                                 disabled: !draft.is_sendable(),
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     let selected_flow = selected_channel_value.clone();
                                     move |_| {
@@ -3036,7 +3032,7 @@ pub fn ChatPanel(
                                         // the timeline anchors it.
                                         poll_cards.write().push(card.clone());
                                         messages.write().push(ChatMessage {
-                                            realm_id: space.clone(),
+                                            realm_id: realm.clone(),
                                             id: poll_id.clone(),
                                             sender: actor.clone(),
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -3056,7 +3052,7 @@ pub fn ChatPanel(
                                         poll_draft.set(None);
 
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let actor = actor.clone();
                                         let flow_id = selected_flow.clone();
                                         let api_token = token();
@@ -3069,7 +3065,7 @@ pub fn ChatPanel(
                                                 api_token,
                                                 |api| async move {
                                                     let op = crate::messaging::polls::build_poll_create_op(
-                                                        &space,
+                                                        &realm,
                                                         &actor,
                                                         &flow_id,
                                                         &poll_id_for_op,
@@ -3112,7 +3108,7 @@ pub fn ChatPanel(
                                 "data-testid": "send-poll-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     let selected_flow = selected_channel_value.clone();
                                     move |_| {
@@ -3129,7 +3125,7 @@ pub fn ChatPanel(
                                         );
                                         poll_cards.write().push(card.clone());
                                         messages.write().push(ChatMessage {
-                                            realm_id: space.clone(),
+                                            realm_id: realm.clone(),
                                             id: poll_id.clone(),
                                             sender: actor.clone(),
                                             body: format!("[poll] {}", draft_snapshot.question),
@@ -3149,7 +3145,7 @@ pub fn ChatPanel(
                                         poll_draft.set(None);
 
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let actor = actor.clone();
                                         let flow_id = selected_flow.clone();
                                         let api_token = token();
@@ -3162,7 +3158,7 @@ pub fn ChatPanel(
                                                 api_token,
                                                 |api| async move {
                                                     let op = crate::messaging::polls::build_poll_create_op(
-                                                        &space,
+                                                        &realm,
                                                         &actor,
                                                         &flow_id,
                                                         &poll_id_for_op,
@@ -3214,7 +3210,7 @@ pub fn ChatPanel(
                         onclick: {
                             let base = base_url.clone();
                             let service_did = plaintext_service_did.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
@@ -3265,7 +3261,7 @@ pub fn ChatPanel(
                                     return;
                                 };
                                 messages.write().push(ChatMessage {
-                                    realm_id: space.clone(),
+                                    realm_id: realm.clone(),
                                     id: local_id.clone(),
                                     sender: "yougen".to_owned(),
                                     body: body.clone(),
@@ -3289,7 +3285,7 @@ pub fn ChatPanel(
 
                                 let base = base.clone();
                                 let service_did = service_did.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let actor = actor.clone();
                                 let flow_id = channel.flow_id.clone();
@@ -3297,7 +3293,7 @@ pub fn ChatPanel(
                                 let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
                                 let mut op = chat_message_create_operation(
-                                    &space,
+                                    &realm,
                                     &actor,
                                     &flow_id,
                                     &channel_kind,
@@ -3324,7 +3320,7 @@ pub fn ChatPanel(
                                         .collect();
                                     let hashes =
                                         crate::messaging::mentions::mention_sidecar_hashes(
-                                            &space,
+                                            &realm,
                                             &mention_dids,
                                         );
                                     if let Some(content) = op
@@ -3348,7 +3344,7 @@ pub fn ChatPanel(
                                 // outgoing op.
                                 mention_picker_state.write().clear();
                                 let mention_values_for_store = mentions_to_json(&mentions);
-                                let space_for_record = space.clone();
+                                let realm_for_record = realm.clone();
                                 let actor_for_store = actor.clone();
                                 let body_for_store = body.clone();
                                 let body_for_restore = body.clone();
@@ -3358,8 +3354,8 @@ pub fn ChatPanel(
                                 let projection = state_store
                                     .read()
                                     .load()
-                                    .space_projections
-                                    .get(&space)
+                                    .realm_tree_projections
+                                    .get(&realm)
                                     .cloned();
                                 let plaintext_services =
                                     plaintext_services_for_policy(projection.as_ref(), &service_did);
@@ -3369,7 +3365,7 @@ pub fn ChatPanel(
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,
                                         &actor_for_retry,
-                                        &space,
+                                        &realm,
                                         api_token,
                                         wait_for,
                                         &plaintext_services,
@@ -3380,7 +3376,7 @@ pub fn ChatPanel(
                                                 let mut store = state_store.write();
                                                 store.append_raw_operation(
                                                     op.local_operation_id().to_owned(),
-                                                    Some(space_for_record),
+                                                    Some(realm_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
                                                         "kind": "ck.message.create",
@@ -3448,7 +3444,7 @@ pub fn ChatPanel(
                         "data-testid": send_secure_testid,
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let selected_flow = selected_channel_value.clone();
                             move |_| {
@@ -3457,10 +3453,10 @@ pub fn ChatPanel(
                                     status_msg.set("Type a message before secure send".to_owned());
                                     return;
                                 }
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let actor = actor.clone();
                                 let flow_id = if selected_flow.trim().is_empty() {
-                                    default_discussion_flow_id(&space)
+                                    default_discussion_flow_id(&realm)
                                 } else {
                                     selected_flow.clone()
                                 };
@@ -3470,7 +3466,7 @@ pub fn ChatPanel(
                                     .filter(|value| !value.trim().is_empty());
                                 let message_id = new_chat_message_id();
                                 messages.write().push(ChatMessage {
-                                    realm_id: space.clone(),
+                                    realm_id: realm.clone(),
                                     id: message_id.clone(),
                                     sender: "yougen".to_owned(),
                                     body: body.clone(),
@@ -3490,7 +3486,7 @@ pub fn ChatPanel(
                                 chat_draft.set(String::new());
                                 reply_to_message.set(None);
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let actor = actor.clone();
                                 let did = device_id.clone();
                                 let api_token = token();
@@ -3529,7 +3525,7 @@ pub fn ChatPanel(
                                     }
                                 };
                                 let _hlc = Hlc::now("yougen").to_string();
-                                let anchor_view = state_store.read().anchor_view_for(&space);
+                                let anchor_view = state_store.read().anchor_view_for_realm(&realm);
                                 let anchor_ref = anchor_view.move_anchor_ref();
                                 // 1) MLS commit event bumps the epoch +
                                 //    records covered_frontier.
@@ -3547,8 +3543,7 @@ pub fn ChatPanel(
                                     new_mls_snapshot,
                                 ): LocalMlsEncryptResult = run_local_mls_encrypt(
                                     state_store,
-                                    &space,
-                                    &scope_id_as_realm_id(&space),
+                                    &realm,
                                     &actor,
                                     &did,
                                     &secure_content_bytes,
@@ -3666,7 +3661,7 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                let realm_id = match cokret_sdk::RealmId::new(scope_id_as_realm_id(&space)) {
+                                let realm_id = match cokret_sdk::RealmId::new(trim_realm_id(&realm)) {
                                     Ok(value) => value,
                                     Err(err) => {
                                         fail_optimistic_chat_send(
@@ -3682,7 +3677,7 @@ pub fn ChatPanel(
                                 };
                                 let policy_root = match chat_mls_policy_root(
                                     &anchor_view,
-                                    &space,
+                                    &realm,
                                     &local_schedule_hash,
                                 ) {
                                     Ok(value) => value,
@@ -3729,7 +3724,7 @@ pub fn ChatPanel(
                                     match cokret_sdk::MlsCommitPayload::new(
                                         real_commit_envelope.group_id.clone(),
                                         prev_epoch,
-                                        chat_mls_base_epoch_ref(&anchor_view, &space),
+                                        chat_mls_base_epoch_ref(&anchor_view, &realm),
                                         Vec::new(),
                                         mls_commit_epoch,
                                         real_commit_envelope.commit_digest.clone(),
@@ -3751,7 +3746,7 @@ pub fn ChatPanel(
                                 // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
                                 let commit_builder =
                                     match crate::operation::cx_ops::mls_commit_with_governance(
-                                        &space,
+                                        &realm,
                                         &actor,
                                         &mls_commit_payload,
                                     ) {
@@ -3785,7 +3780,7 @@ pub fn ChatPanel(
                                     message_payload = message_payload.with_reply_to(reply_to);
                                 }
                                 let msg_op = OperationBuilder::new(
-                                    &space,
+                                    &realm,
                                     &actor,
                                     "ck.message.create",
                                 )
@@ -3795,7 +3790,7 @@ pub fn ChatPanel(
                                 ))
                                 .build("yougen");
                                 let base = base.clone();
-                                let space_for_record = space.clone();
+                                let realm_for_record = realm.clone();
                                 let anchor_for_record = anchor_ref.clone();
                                 let actor_for_audit = actor.clone();
                                 let audit_delivered: Vec<String> = local_member_dids
@@ -3852,14 +3847,14 @@ pub fn ChatPanel(
                                                     state_store
                                                         .write()
                                                         .save_mls_snapshot(
-                                                            space_for_record.clone(),
+                                                            realm_for_record.clone(),
                                                             snapshot,
                                                         );
                                                 }
                                                 state_store.write().record_move_submission_with_event_id(
                                                     commit_op_id.clone(),
                                                     Some(resp.event_id.clone()),
-                                                    space_for_record.clone(),
+                                                    realm_for_record.clone(),
                                                     "mls_commit".to_owned(),
                                                     MoveSubmissionState::from_submit_state(
                                                         "accepted", None,
@@ -3929,7 +3924,7 @@ pub fn ChatPanel(
                                                     // (e.g. another device/member).
                                                     store.append_raw_operation(
                                                         msg_op.local_operation_id().to_owned(),
-                                                        Some(space_for_record.clone()),
+                                                        Some(realm_for_record.clone()),
                                                         json!({
                                                             "event_id": resp.event_id.clone(),
                                                             "kind": "ck.message.create",
@@ -3952,7 +3947,7 @@ pub fn ChatPanel(
                                                     // X5.3 cross-device backup already
                                                     // snapshots — no extra backup wiring.
                                                     store.save_private_plaintext(
-                                                        &space_for_record,
+                                                        &realm_for_record,
                                                         &flow_id_for_sidecar,
                                                         &format!("message:{message_id_for_sidecar}"),
                                                         &body_for_sidecar,
@@ -3979,7 +3974,7 @@ pub fn ChatPanel(
                                             status_msg.set("Encrypted message sent".to_owned());
                                             let snapshot = state_store
                                                 .read()
-                                                .mls_snapshot_for(&space_for_record);
+                                                .mls_snapshot_for(&realm_for_record);
                                             if let Some(snapshot) = snapshot {
                                                 match crate::mls::runtime::upload_mls_snapshot_backup(
                                                     &api,
@@ -4045,7 +4040,7 @@ pub fn ChatPanel(
                                             // single-element fallback when
                                             // the group state path lands.
                                             let audit_op = build_audit_ryw_receipt(
-                                                &space_for_record,
+                                                &realm_for_record,
                                                 &actor_for_audit,
                                                 &resp.event_id,
                                                 audit_delivered.clone(),
@@ -4284,7 +4279,7 @@ mod tests {
     #[test]
     fn chat_message_create_operation_emits_schema_canonical_content() {
         let op = chat_message_create_operation(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
@@ -4330,7 +4325,7 @@ mod tests {
     fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
         let mentions = parse_structured_mentions("ping @here and @carol:example.com");
         let op = chat_message_create_operation(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
@@ -4355,7 +4350,7 @@ mod tests {
     #[test]
     fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         let op = chat_message_create_operation(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "ck:flow:01904100-0000-7000-8000-000000000001",
             "discussion",
@@ -4427,7 +4422,7 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("yougen-x10_6-rebuild-sidecar-{}", uuid_v7()));
         let mut store = LocalStateStore::with_path(temp);
         store.save_private_plaintext(
-            "ck:space:local",
+            "ck:realm:local",
             "ck:flow:announce",
             "message:chat-msg-enc",
             "secret discussion body",
@@ -4663,7 +4658,7 @@ mod tests {
 
     #[test]
     fn participant_with_agent_id_renders_with_agent_badge() {
-        // Three participants in the space: Alice (the local account),
+        // Three participants in the realm: Alice (the local account),
         // Bob (a real human member), and a Researcher Agent registered
         // via `ck.agent.endpoint`. After `annotate_agent_participants`
         // the agent DID must carry `is_agent = true` while the human
@@ -4715,13 +4710,13 @@ mod tests {
     }
 
     #[test]
-    fn agent_ids_from_raw_operations_filters_by_space_and_kind() {
+    fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
         use chrono::Utc;
 
         use crate::local_state::RawOperationRecord;
 
-        // Mixed bag of raw ops: an agent endpoint for the right space,
-        // an agent endpoint for a different space (should be filtered
+        // Mixed bag of raw ops: an agent endpoint for the right realm,
+        // an agent endpoint for a different realm (should be filtered
         // out by space_id), and a non-agent kind (should be filtered
         // out by kind).
         let records = vec![
@@ -4811,14 +4806,14 @@ mod tests {
     }
 
     #[test]
-    fn default_discussion_channel_uses_space_default_flow_projection() {
+    fn default_discussion_channel_uses_realm_default_flow_projection() {
         let body = json!({
             "summary": {
-                "title": "Demo Space",
+                "title": "Demo Realm",
                 "flow": {
                     "flow_id": "ck:flow:demo",
                     "title": "General",
-                    "summary": "Space-wide conversation",
+                    "summary": "Realm-wide conversation",
                     "tracks": {
                         "discussion": {"enabled": true},
                         "synthesis": {"enabled": true}
@@ -4832,7 +4827,7 @@ mod tests {
         assert_eq!(channel.flow_id, "ck:flow:demo");
         assert_eq!(channel.name, "General");
         assert_eq!(channel.kind, "discussion");
-        assert_eq!(channel.topic.as_deref(), Some("Space-wide conversation"));
+        assert_eq!(channel.topic.as_deref(), Some("Realm-wide conversation"));
         assert!(channel.is_default);
     }
 
@@ -4932,7 +4927,7 @@ mod tests {
 
     #[test]
     fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
-        // No local MLS snapshot for this space -> decrypt-on-read returns None
+        // No local MLS snapshot for this realm -> decrypt-on-read returns None
         // so the caller leaves the message in Decrypting/KeyMissing rather than
         // surfacing garbage.
         let temp = std::env::temp_dir().join(format!(
@@ -4951,7 +4946,7 @@ mod tests {
         assert!(
             decrypt_chat_encrypted_content(
                 &store,
-                "ck:space:none",
+                "ck:realm:none",
                 "did:web:alice.example",
                 "ck:device:01964137-0000-7000-8000-000000000001",
                 &envelope,

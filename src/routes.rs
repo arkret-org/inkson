@@ -22,8 +22,8 @@ pub enum Route {
     #[route("/realms/:realm_id", RealmPage)]
     Realm { realm_id: String },
 
-    #[route("/timeline/:realm_id", TimelineSpacePage)]
-    TimelineSpace { realm_id: String },
+    #[route("/timeline/:realm_id", TimelineRealmPage)]
+    TimelineRealm { realm_id: String },
 
     #[route("/timeline/:realm_id/message/:message_id", TimelineMessagePage)]
     TimelineMessage {
@@ -31,7 +31,7 @@ pub enum Route {
         message_id: String,
     },
 
-    #[route("/chat/:realm_id", ChatSpacePage)]
+    #[route("/chat/:realm_id", ChatRealmPage)]
     Chat { realm_id: String },
 
     #[route("/directory", crate::app::RouterView)]
@@ -110,8 +110,8 @@ pub enum Route {
     #[route("/kanban", crate::app::RouterView)]
     Kanban,
 
-    #[route("/kanban/:realm_id", KanbanSpacePage)]
-    KanbanSpace { realm_id: String },
+    #[route("/kanban/:realm_id", KanbanRealmPage)]
+    KanbanRealm { realm_id: String },
 
     /// CKP board-persistence — the selected Board id is part of the URL
     /// so a page refresh (or a deep link) restores the exact board the
@@ -150,8 +150,8 @@ pub enum Route {
     #[route("/document/new", crate::app::RouterView)]
     DocumentNew,
 
-    #[route("/document/:realm_id", DocumentSpacePage)]
-    DocumentSpace { realm_id: String },
+    #[route("/document/:realm_id", DocumentRealmPage)]
+    DocumentRealm { realm_id: String },
 
     #[route("/call", crate::app::RouterView)]
     Call,
@@ -180,7 +180,7 @@ pub enum Route {
 }
 
 #[component]
-fn TimelineSpacePage(realm_id: String) -> Element {
+fn TimelineRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
@@ -192,7 +192,7 @@ fn TimelineMessagePage(realm_id: String, message_id: String) -> Element {
 }
 
 #[component]
-fn ChatSpacePage(realm_id: String) -> Element {
+fn ChatRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
@@ -228,7 +228,7 @@ fn RealmAdminSectionPage(realm_id: String, section: String) -> Element {
 }
 
 #[component]
-fn KanbanSpacePage(realm_id: String) -> Element {
+fn KanbanRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
@@ -252,7 +252,7 @@ fn KanbanBoardTaskPage(realm_id: String, board_id: String, task_id: String) -> E
 }
 
 #[component]
-fn DocumentSpacePage(realm_id: String) -> Element {
+fn DocumentRealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
@@ -269,7 +269,7 @@ impl Route {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
             Route::Realm { .. } => View::Timeline,
-            Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+            Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
                 View::Timeline
             }
             Route::Chat { .. } => View::Chat,
@@ -298,12 +298,12 @@ impl Route {
             // `view` signal stays consistent for sidebar / palette state.
             Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
             Route::Kanban
-            | Route::KanbanSpace { .. }
+            | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
             | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. } => View::Kanban,
             Route::Notifications => View::Notifications,
-            Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => View::Document,
+            Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => View::Document,
             Route::Recovery => View::Recovery,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
@@ -316,16 +316,16 @@ impl Route {
     pub fn realm_id(&self) -> Option<&str> {
         match self {
             Route::Realm { realm_id }
-            | Route::TimelineSpace { realm_id }
+            | Route::TimelineRealm { realm_id }
             | Route::TimelineMessage { realm_id, .. }
             | Route::Chat { realm_id }
-            | Route::KanbanSpace { realm_id }
+            | Route::KanbanRealm { realm_id }
             | Route::KanbanBoard { realm_id, .. }
             | Route::KanbanBoardTask { realm_id, .. }
             | Route::KanbanTask { realm_id, .. }
             | Route::RealmAdmin { realm_id }
             | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
-            Route::DocumentSpace { realm_id } if !realm_id.starts_with("ck:morph:") => {
+            Route::DocumentRealm { realm_id } if !realm_id.starts_with("ck:morph:") => {
                 Some(realm_id.as_str())
             }
             _ => None,
@@ -463,7 +463,7 @@ mod tests {
             Some("ck:realm:home")
         );
         assert_eq!(
-            Route::TimelineSpace {
+            Route::TimelineRealm {
                 realm_id: "ck:realm:abc".to_owned()
             }
             .realm_id(),

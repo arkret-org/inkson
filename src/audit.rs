@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
 
-/// Spec-aligned audit policy mode for a Space.
+/// Spec-aligned audit policy mode for a Realm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditPolicy {
     /// `attested_audit.e2ee.v1` — every successful decrypt writes
     /// `ck.audit.accessed`. Read clients fail closed if they cannot emit.
     Attested,
-    /// `disclosed_audit.e2ee.v1` — every Space write produces a per-actor
+    /// `disclosed_audit.e2ee.v1` — every Realm write produces a per-actor
     /// `ck.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
     /// the read side.
     Disclosed,
@@ -40,7 +40,7 @@ impl AuditPolicy {
 /// `target_event_id` identifies the durable Event whose payload was read;
 /// `device_id` is the reader's device DID.
 pub fn build_audit_accessed(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     target_event_id: &str,
     device_id: &str,
@@ -51,7 +51,7 @@ pub fn build_audit_accessed(
     // device is carried inside `purpose` (a free-form string) rather than as an
     // illegal top-level `reader_device` field, which the server rejects with
     // schema_violation.
-    OperationBuilder::new(space_id, actor, "ck.audit.accessed")
+    OperationBuilder::new(realm_id, actor, "ck.audit.accessed")
         .target_ref(target_event_id)
         .body(json!({
             "target_ref": target_event_id,
@@ -64,7 +64,7 @@ pub fn build_audit_accessed(
 /// Build a `ck.audit.ryw_receipt` event. Emitted by the writer after a
 /// disclosed audit policy commit; the receipt is actor-private.
 pub fn build_audit_ryw_receipt(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     source_event_id: &str,
     delivered_to_devices: Vec<String>,
@@ -83,7 +83,7 @@ pub fn build_audit_ryw_receipt(
             delivered_to_devices.join(",")
         )
     };
-    OperationBuilder::new(space_id, actor, "ck.audit.ryw_receipt")
+    OperationBuilder::new(realm_id, actor, "ck.audit.ryw_receipt")
         .target_ref(source_event_id)
         .body(json!({
             "target_ref": source_event_id,
@@ -97,8 +97,8 @@ pub fn build_audit_ryw_receipt(
 /// holder may disclose about the principal. Spec: `identity-handles.md` §16.
 ///
 /// `policy` is the structured policy document; the reducer enforces shape.
-pub fn build_disclosure_policy(space_id: &str, actor: &str, policy: Value) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.identity.disclosure_policy").body(json!({
+pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> OperationBuilder {
+    OperationBuilder::new(realm_id, actor, "ck.identity.disclosure_policy").body(json!({
         "policy": policy,
     }))
 }
@@ -106,12 +106,12 @@ pub fn build_disclosure_policy(space_id: &str, actor: &str, policy: Value) -> Op
 /// Build a `ck.identity.presentation_request` event — request a verifiable
 /// presentation from a connection holder.
 pub fn build_presentation_request(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     target: &str,
     requested_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.identity.presentation_request")
+    OperationBuilder::new(realm_id, actor, "ck.identity.presentation_request")
         .target_ref(target)
         .body(json!({
             "target": target,
@@ -122,12 +122,12 @@ pub fn build_presentation_request(
 /// Build a `ck.identity.presentation_response` event — reply with a signed
 /// verifiable presentation.
 pub fn build_presentation_response(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     request_id: &str,
     presentation: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.identity.presentation_response")
+    OperationBuilder::new(realm_id, actor, "ck.identity.presentation_response")
         .target_ref(request_id)
         .body(json!({
             "request_id": request_id,
@@ -138,13 +138,13 @@ pub fn build_presentation_response(
 /// Build a `ck.identity.disclosure_receipt` event — actor-private record of
 /// what was disclosed and to whom (audit trail for the principal).
 pub fn build_disclosure_receipt(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     request_id: &str,
     counterparty: &str,
     disclosed_claims: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.identity.disclosure_receipt")
+    OperationBuilder::new(realm_id, actor, "ck.identity.disclosure_receipt")
         .target_ref(request_id)
         .body(json!({
             "request_id": request_id,
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn audit_accessed_emits_canonical_kind() {
         let op = build_audit_accessed(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:event:abc",
             "did:key:zDevice",
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn audit_ryw_receipt_lists_devices() {
         let op = build_audit_ryw_receipt(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn presentation_request_carries_claim_list() {
         let op = build_presentation_request(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn disclosure_receipt_records_counterparty() {
         let op = build_disclosure_receipt(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:event:req",
             "did:web:bob",

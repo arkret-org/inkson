@@ -3,17 +3,17 @@ use super::*;
 impl CokretApi {
     pub async fn report_moderation(
         &self,
-        space_id: &str,
+        realm_id: &str,
         target_ref: &str,
-        reason: &str,
+        report_reason_code: &str,
         reporter: &str,
     ) -> anyhow::Result<ModerationReportResBody> {
         self.post_json(
             "_cokret/self/moderation/report",
             json!({
-                "space_id": space_id,
+                "realm_id": realm_id,
                 "target_ref": target_ref,
-                "reason": reason,
+                "report_reason_code": report_reason_code,
                 "reporter": reporter,
                 "description": null,
                 "evidence_refs": []

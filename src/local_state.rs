@@ -430,7 +430,7 @@ impl MoveSubmissionState {
 
 /// Per-Move tracking record persisted in the local state store. `move_id`
 /// is content-addressed (`sha256:...`); the reducer round-trips
-/// `space_id` so client UIs can scope filtering. `kind` is a free-form
+/// `realm_id` so client UIs can scope filtering. `kind` is a free-form
 /// classifier the UI uses for icons (e.g. `ck.consent.grant`,
 /// `ck.message.create`, `mls_commit`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,7 +441,7 @@ pub struct MoveSubmissionRecord {
     /// sync `event_states[]` uses this id, so new records persist it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
-    pub space_id: String,
+    pub realm_id: String,
     pub kind: String,
     pub state: MoveSubmissionState,
     pub submitted_at: DateTime<Utc>,
@@ -917,7 +917,7 @@ pub struct ClientLocalState {
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
     pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
-    pub space_projections: BTreeMap<String, Value>,
+    pub realm_tree_projections: BTreeMap<String, Value>,
     pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
@@ -1004,14 +1004,14 @@ pub struct ClientLocalState {
     /// `state.json` without bound.
     #[serde(default)]
     pub telemetry_log: Vec<UserActionLogEntry>,
-    /// Persisted MLS group state snapshots, keyed by `space_id`. Each
+    /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
     /// [`crate::mls::persistence::encrypt_state`]; the boot path
-    /// rehydrates each space's `LocalMlsDevice` from the latest envelope
+    /// rehydrates each Realm's `LocalMlsDevice` from the latest envelope
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
-    /// Spaces whose `ck.mls.genesis` event has already been submitted to
+    /// Realms whose `ck.mls.genesis` event has already been submitted to
     /// soland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
@@ -1019,7 +1019,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
-    /// private flow fields. Keyed `space_id -> flow_id -> field_path ->
+    /// private flow fields. Keyed `realm_id -> flow_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
     /// emitted by the kanban writer (e.g. `"body"`, `"synthesis"`) and
     /// `plaintext` is the JSON-serialized patch *value* (the same bytes
@@ -1042,15 +1042,15 @@ pub struct ClientLocalState {
     /// sidecar is a separate later task — not implemented here.)
     #[serde(default)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
-    /// Actor-private Space remarks per
+    /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
-    /// `data_type == "ck.contacts.space.<space_id>"`) and from user edits
-    /// in settings. Keyed by Space id so the sidebar / dashboard can join
+    /// `data_type == "ck.contacts.realm.<realm_id>"`) and from user edits
+    /// in settings. Keyed by Realm id so the sidebar / dashboard can join
     /// it against the public `RealmTreeNode.name` at render time and prefer
     /// `local_name` when set.
     #[serde(default)]
-    pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,
+    pub realm_remarks: BTreeMap<String, crate::account_data::RealmRemark>,
     /// Actor-private contact remarks per
     /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
     /// hydrated from `ck.contacts.actor.<did>` account_data entries.
@@ -1102,7 +1102,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
     /// Actor DID that the currently-persisted account-scoped state
-    /// (sync cursor, space projections, session grant, OIDC bundle, …)
+    /// (sync cursor, realm-tree projections, session grant, OIDC bundle, …)
     /// belongs to. Stamped by [`LocalStateStore::adopt_account_scope`]
     /// whenever a session is established. When a new session's actor
     /// disagrees with this owner, every account-scoped record is wiped
@@ -1256,7 +1256,7 @@ impl Default for ClientLocalState {
             sync_cursor: None,
             raw_operations: Vec::new(),
             realm_lifecycle_state: BTreeMap::new(),
-            space_projections: BTreeMap::new(),
+            realm_tree_projections: BTreeMap::new(),
             drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
@@ -1279,7 +1279,7 @@ impl Default for ClientLocalState {
             mls_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_private_plaintext: BTreeMap::new(),
-            space_remarks: BTreeMap::new(),
+            realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
             server_trust_domain: None,
@@ -1314,7 +1314,7 @@ pub struct LocalStateStore {
     path: PathBuf,
 }
 
-fn space_projection_value_is_mls_encrypted(body: &Value) -> bool {
+fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
     fn normalized_profile(value: &str) -> String {
         value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
     }
@@ -1362,7 +1362,7 @@ fn space_projection_value_is_mls_encrypted(body: &Value) -> bool {
     false
 }
 
-/// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached Space/Realm
+/// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached realm-tree
 /// projection declare the `ck.profile.mls.minimal_metadata_realm.v1` profile?
 ///
 /// Mirrors soland's server-side `payload_declares_minimal_metadata_realm`
@@ -1370,7 +1370,7 @@ fn space_projection_value_is_mls_encrypted(body: &Value) -> bool {
 /// containers ([summary]/[object]/[realm]/[metadata]) the encryption-state
 /// reader walks, since the local projection nests the realm body. The profile
 /// id is the SDK constant so the client and server agree on the exact string.
-fn space_projection_value_is_minimal_metadata(body: &Value) -> bool {
+fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
     fn declares_in(container: &Value) -> bool {
         ["profiles", "active_profiles"].iter().any(|field| {
             container
@@ -1449,7 +1449,7 @@ impl LocalStateStore {
 
     /// Perf: run `body` with flushing suspended, then persist at most once.
     ///
-    /// Every flush-on-write setter (`save_space_projection`, `set_anchor_view`,
+    /// Every flush-on-write setter (`save_realm_tree_projection`, `set_anchor_view`,
     /// `set_notification_read`, …) becomes a no-op persist while the batch is
     /// open; the single trailing flush coalesces them. Batches nest safely —
     /// only the outermost one persists. Use this on hot paths that touch the
@@ -1564,13 +1564,19 @@ impl LocalStateStore {
             .is_some_and(|state| state.destroyed)
     }
 
-    pub fn save_space_projection(&mut self, space_id: impl Into<String>, projection: Value) {
+    pub fn save_realm_tree_projection(
+        &mut self,
+        projection_id: impl Into<String>,
+        projection: Value,
+    ) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
-        if self.cached.space_projections.get(&space_id) == Some(&projection) {
+        let projection_id = projection_id.into();
+        if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
             return; // projection identical — skip flush + dirtying renders
         }
-        self.cached.space_projections.insert(space_id, projection);
+        self.cached
+            .realm_tree_projections
+            .insert(projection_id, projection);
         let _ = self.flush();
     }
 
@@ -1750,25 +1756,25 @@ impl LocalStateStore {
             .unwrap_or_default()
     }
 
-    /// Drop every `space_projections` entry whose key isn't in `keep`. Used
-    /// by the sync reconcile path when `after=None` so spaces the server
-    /// no longer reports get pruned from the local cache instead of
-    /// lingering as ghost entries in the sidebar.
+    /// Drop every `realm_tree_projections` entry whose key isn't in `keep`.
+    /// Used by the sync reconcile path when `after=None` so Realm/Space
+    /// projection nodes the server no longer reports get pruned from the
+    /// local cache instead of lingering as ghost entries in the sidebar.
     ///
     /// Also prunes the auxiliary per-Realm caches (`drafts`,
-    /// `anchor_views`, `read_cursors`, `space_remarks`,
-    /// `mls_snapshots`, `move_submissions` keyed by space, the
+    /// `anchor_views`, `read_cursors`, `realm_remarks`,
+    /// `mls_snapshots`, `move_submissions` keyed by Realm, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
     /// `muted_realms`, and any leftover encrypted-message draft) so a
-    /// pruned Space doesn't leave private remnants behind.
-    pub fn retain_space_projections<F>(&mut self, keep: F) -> Vec<String>
+    /// pruned Realm/Space node doesn't leave private remnants behind.
+    pub fn retain_realm_tree_projections<F>(&mut self, keep: F) -> Vec<String>
     where
         F: Fn(&str) -> bool,
     {
         self.ensure_cached_loaded();
         let removed: Vec<String> = self
             .cached
-            .space_projections
+            .realm_tree_projections
             .keys()
             .filter(|id| !keep(id))
             .cloned()
@@ -1777,44 +1783,49 @@ impl LocalStateStore {
             return removed;
         }
         for id in &removed {
-            self.forget_space_inner(id);
+            self.forget_realm_tree_projection_inner(id);
         }
         let _ = self.flush();
         removed
     }
 
-    /// Remove a single Space and every per-Realm derived record. Public
-    /// entry point for `left_realms`-style sync deltas. Flushes once.
-    pub fn forget_space(&mut self, space_id: &str) {
+    /// Remove a single Realm Tree projection node and every derived record
+    /// keyed by the same id. Public entry point for `left_realms`-style sync
+    /// deltas. Flushes once.
+    pub fn forget_realm_tree_projection(&mut self, projection_id: &str) {
         self.ensure_cached_loaded();
-        let trimmed = space_id.trim();
+        let trimmed = projection_id.trim();
         if trimmed.is_empty() {
             return;
         }
-        self.forget_space_inner(trimmed);
+        self.forget_realm_tree_projection_inner(trimmed);
         let _ = self.flush();
     }
 
-    fn forget_space_inner(&mut self, space_id: &str) {
-        self.cached.space_projections.remove(space_id);
-        self.cached.realm_lifecycle_state.remove(space_id);
-        self.cached.drafts.remove(space_id);
-        self.cached.anchor_views.remove(space_id);
-        self.cached.space_remarks.remove(space_id);
-        self.cached.mls_snapshots.remove(space_id);
-        self.cached.muted_realms.remove(space_id);
-        self.cached.read_receipt_realm_overrides.remove(space_id);
-        self.cached.read_receipt_policy_snapshots.remove(space_id);
+    fn forget_realm_tree_projection_inner(&mut self, projection_id: &str) {
+        self.cached.realm_tree_projections.remove(projection_id);
+        self.cached.realm_lifecycle_state.remove(projection_id);
+        self.cached.drafts.remove(projection_id);
+        self.cached.anchor_views.remove(projection_id);
+        self.cached.realm_remarks.remove(projection_id);
+        self.cached.mls_snapshots.remove(projection_id);
+        self.cached.muted_realms.remove(projection_id);
+        self.cached
+            .read_receipt_realm_overrides
+            .remove(projection_id);
+        self.cached
+            .read_receipt_policy_snapshots
+            .remove(projection_id);
         // `read_cursors` are keyed by `"{realm}\n{kind}\n{ref}\n{track}"` —
         // strip every marker whose Realm prefix matches.
-        let prefix = format!("{space_id}\n");
+        let prefix = format!("{projection_id}\n");
         self.cached
             .read_cursors
             .retain(|key, _| !key.starts_with(&prefix));
-        // `move_submissions` carry a `space_id` field; drop matching entries.
+        // `move_submissions` carry a `realm_id` field; drop matching entries.
         self.cached
             .move_submissions
-            .retain(|_, record| record.space_id != space_id);
+            .retain(|_, record| record.realm_id != projection_id);
         // `pending_encrypted_messages` are keyed by message id, not space id,
         // so we leave them alone — the per-message flush path will reject
         // them if the target Space is gone.
@@ -1836,7 +1847,7 @@ impl LocalStateStore {
     /// of its own. Bundling the token clear into this helper would have
     /// made the account-change-during-connect path racy.
     ///
-    /// Pairs with [`Self::retain_space_projections`] which only handles
+    /// Pairs with [`Self::retain_realm_tree_projections`] which only handles
     /// the steady-state sync reconcile case.
     pub fn clear_account_scoped(&mut self) {
         self.ensure_cached_loaded();
@@ -2003,27 +2014,27 @@ impl LocalStateStore {
         Ok(Some(record))
     }
 
-    pub fn save_draft(&mut self, space_id: impl Into<String>, draft: impl Into<String>) {
+    pub fn save_draft(&mut self, draft_scope_id: impl Into<String>, draft: impl Into<String>) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let draft_scope_id = draft_scope_id.into();
         let draft = draft.into();
         if draft.trim().is_empty() {
-            if self.cached.drafts.remove(&space_id).is_none() {
+            if self.cached.drafts.remove(&draft_scope_id).is_none() {
                 return; // nothing to clear — skip flush
             }
         } else {
-            if self.cached.drafts.get(&space_id) == Some(&draft) {
+            if self.cached.drafts.get(&draft_scope_id) == Some(&draft) {
                 return; // draft unchanged — skip flush
             }
-            self.cached.drafts.insert(space_id, draft);
+            self.cached.drafts.insert(draft_scope_id, draft);
         }
         let _ = self.flush();
     }
 
-    pub fn draft_for(&self, space_id: &str) -> String {
+    pub fn draft_for(&self, draft_scope_id: &str) -> String {
         self.cached
             .drafts
-            .get(space_id)
+            .get(draft_scope_id)
             .cloned()
             .unwrap_or_default()
     }
@@ -2094,12 +2105,12 @@ impl LocalStateStore {
         &mut self,
         actor: impl Into<String>,
         device_id: impl Into<String>,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         topic_id: Option<String>,
         event_id: impl Into<String>,
     ) -> ReadMarkerRecord {
         self.ensure_cached_loaded();
-        let realm_id = space_id.into();
+        let realm_id = realm_id.into();
         let device_id = device_id.into();
         let event_id = event_id.into();
         let topic_id = topic_id.filter(|topic| !topic.trim().is_empty());
@@ -2129,23 +2140,23 @@ impl LocalStateStore {
 
     pub fn read_cursor_for(
         &self,
-        space_id: &str,
+        realm_id: &str,
         topic_id: Option<&str>,
     ) -> Option<ReadMarkerRecord> {
         self.load()
             .read_cursors
             .get(&read_cursor_key(
-                space_id,
-                &read_scope_for_cursor(space_id, topic_id),
+                realm_id,
+                &read_scope_for_cursor(realm_id, topic_id),
             ))
             .cloned()
     }
 
-    pub fn latest_read_cursor(&self, space_id: &str) -> Option<ReadMarkerRecord> {
+    pub fn latest_read_cursor(&self, realm_id: &str) -> Option<ReadMarkerRecord> {
         self.load()
             .read_cursors
             .into_values()
-            .filter(|marker| marker.body.realm_id == space_id)
+            .filter(|marker| marker.body.realm_id == realm_id)
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
@@ -2256,46 +2267,46 @@ impl LocalStateStore {
         self.load().read_receipt_flow_overrides
     }
 
-    // ── Space remarks (spec client-preferences.md §3.7) ─
+    // ── Realm remarks (spec client-preferences.md §3.7) ─
 
-    /// Return the stored remark for `space_id`, if any. `None` means the
-    /// user has not set a local override and the public `Space.title`
+    /// Return the stored remark for `realm_id`, if any. `None` means the
+    /// user has not set a local override and the public Realm title
     /// should be rendered.
-    pub fn space_remark(&self, space_id: &str) -> Option<crate::account_data::SpaceRemark> {
-        self.load().space_remarks.get(space_id).cloned()
+    pub fn realm_remark(&self, realm_id: &str) -> Option<crate::account_data::RealmRemark> {
+        self.load().realm_remarks.get(realm_id).cloned()
     }
 
-    /// All known Space remarks. The settings UI uses this to render the
-    /// edit list; callers MUST NOT publish this map to other Space
+    /// All known Realm remarks. The settings UI uses this to render the
+    /// edit list; callers MUST NOT publish this map to other Realm
     /// members — it is actor-private per §3.7.
-    pub fn space_remarks(&self) -> BTreeMap<String, crate::account_data::SpaceRemark> {
-        self.load().space_remarks
+    pub fn realm_remarks(&self) -> BTreeMap<String, crate::account_data::RealmRemark> {
+        self.load().realm_remarks
     }
 
-    /// Upsert a remark for `space_id`. Passing a remark whose
-    /// [`SpaceRemark::is_empty`] returns true tombstones the entry
-    /// (equivalent to `remove_space_remark`). Persists synchronously to
+    /// Upsert a remark for `realm_id`. Passing a remark whose
+    /// [`RealmRemark::is_empty`] returns true tombstones the entry
+    /// (equivalent to `remove_realm_remark`). Persists synchronously to
     /// disk; the caller is responsible for pushing the same payload to
     /// soland via `ck.account_data.set`.
-    pub fn set_space_remark(
+    pub fn set_realm_remark(
         &mut self,
-        space_id: impl Into<String>,
-        remark: crate::account_data::SpaceRemark,
+        realm_id: impl Into<String>,
+        remark: crate::account_data::RealmRemark,
     ) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let realm_id = realm_id.into();
         if remark.is_empty() {
-            self.cached.space_remarks.remove(&space_id);
+            self.cached.realm_remarks.remove(&realm_id);
         } else {
-            self.cached.space_remarks.insert(space_id, remark);
+            self.cached.realm_remarks.insert(realm_id, remark);
         }
         let _ = self.flush();
     }
 
-    /// Delete the remark for `space_id`. No-op if none is stored.
-    pub fn remove_space_remark(&mut self, space_id: &str) {
+    /// Delete the remark for `realm_id`. No-op if none is stored.
+    pub fn remove_realm_remark(&mut self, realm_id: &str) {
         self.ensure_cached_loaded();
-        self.cached.space_remarks.remove(space_id);
+        self.cached.realm_remarks.remove(realm_id);
         let _ = self.flush();
     }
 
@@ -2400,15 +2411,15 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Best-effort name for `space_id`: trimmed `local_name` from the
+    /// Best-effort name for `realm_id`: trimmed `local_name` from the
     /// stored remark if set, otherwise `public_title`. Mirrors the §3.7
     /// "UI MUST prefer local_name" rule so the sidebar / dashboard /
     /// dashboard cards all agree.
-    pub fn display_name_for_space(&self, space_id: &str, public_title: &str) -> String {
+    pub fn display_name_for_realm(&self, realm_id: &str, public_title: &str) -> String {
         match self
             .load()
-            .space_remarks
-            .get(space_id)
+            .realm_remarks
+            .get(realm_id)
             .map(|r| r.display_name(public_title).to_owned())
         {
             Some(name) => name,
@@ -2458,28 +2469,28 @@ impl LocalStateStore {
         self.load().read_receipt_policy_snapshots
     }
 
-    /// Get the latest Anchor view for a Space. Returns the Default view
+    /// Get the latest Anchor view for a Realm. Returns the Default view
     /// (empty frontier / empty leaves / no state_root) when none has been
     /// observed yet — Move builders treat that as "use sha256(empty)
     /// sentinel".
-    pub fn anchor_view_for(&self, space_id: &str) -> LocalAnchorView {
+    pub fn anchor_view_for_realm(&self, realm_id: &str) -> LocalAnchorView {
         self.load()
             .anchor_views
-            .get(space_id)
+            .get(realm_id)
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Replace the Anchor view snapshot for a Space. Called from the sync
+    /// Replace the Anchor view snapshot for a Realm. Called from the sync
     /// path once the `/sync` response surfaces the projection's Anchor
     /// view. Tests use this to seed Move-frontier behavior.
-    pub fn set_anchor_view(&mut self, space_id: impl Into<String>, view: LocalAnchorView) {
+    pub fn set_realm_anchor_view(&mut self, realm_id: impl Into<String>, view: LocalAnchorView) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
-        if self.cached.anchor_views.get(&space_id) == Some(&view) {
+        let realm_id = realm_id.into();
+        if self.cached.anchor_views.get(&realm_id) == Some(&view) {
             return; // anchor view unchanged — skip flush
         }
-        self.cached.anchor_views.insert(space_id, view);
+        self.cached.anchor_views.insert(realm_id, view);
         let _ = self.flush();
     }
 
@@ -2489,11 +2500,11 @@ impl LocalStateStore {
     }
 
     /// Convenience: pick the right `anchor_ref` to thread into a Move
-    /// builder for a given Space. Returns the lex-min frontier head when
+    /// builder for a given Realm. Returns the lex-min frontier head when
     /// available, otherwise the `sha256(empty)` sentinel. Mirrors
     /// [`LocalAnchorView::move_anchor_ref`].
-    pub fn anchor_ref_for_move(&self, space_id: &str) -> String {
-        self.anchor_view_for(space_id).move_anchor_ref()
+    pub fn anchor_ref_for_realm_move(&self, realm_id: &str) -> String {
+        self.anchor_view_for_realm(realm_id).move_anchor_ref()
     }
 
     /// Resolve effective send preference per spec (server policy → flow →
@@ -2559,14 +2570,14 @@ impl LocalStateStore {
     pub fn record_move_submission(
         &mut self,
         move_id: impl Into<String>,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
         anchor_ref: Option<String>,
     ) -> MoveSubmissionRecord {
         self.record_move_submission_with_event_id(
-            move_id, None, space_id, kind, state, reason, anchor_ref,
+            move_id, None, realm_id, kind, state, reason, anchor_ref,
         )
     }
 
@@ -2577,7 +2588,7 @@ impl LocalStateStore {
         &mut self,
         move_id: impl Into<String>,
         event_id: Option<String>,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
@@ -2588,7 +2599,7 @@ impl LocalStateStore {
         let record = MoveSubmissionRecord {
             move_id: move_id.clone(),
             event_id,
-            space_id: space_id.into(),
+            realm_id: realm_id.into(),
             kind: kind.into(),
             state,
             submitted_at: Utc::now(),
@@ -2654,7 +2665,7 @@ impl LocalStateStore {
     /// Apply per-event protocol states from a per-Realm sync projection.
     /// Spec source: `service-surface.md §5.3`, where each reducer-input
     /// Event may carry `event_id`, `event_state`, and an optional reason code.
-    pub fn ingest_move_event_states(&mut self, space_id: &str, body: &Value) -> usize {
+    pub fn ingest_move_event_states(&mut self, realm_id: &str, body: &Value) -> usize {
         let Some(entries) = body.get("event_states").and_then(|v| v.as_array()) else {
             return 0;
         };
@@ -2686,7 +2697,7 @@ impl LocalStateStore {
             let Some(record) = self.cached.move_submissions.get_mut(&record_key) else {
                 continue;
             };
-            if record.space_id != space_id {
+            if record.realm_id != realm_id {
                 continue;
             }
             if let Some(event_id) = event_id {
@@ -2704,14 +2715,14 @@ impl LocalStateStore {
         updated
     }
 
-    /// Read all tracked Moves for a specific Space, sorted by submit
+    /// Read all tracked Moves for a specific Realm, sorted by submit
     /// time (newest first). Used by the timeline / realm_admin pills.
-    pub fn move_submissions_for_space(&self, space_id: &str) -> Vec<MoveSubmissionRecord> {
+    pub fn move_submissions_for_realm(&self, realm_id: &str) -> Vec<MoveSubmissionRecord> {
         let mut out: Vec<MoveSubmissionRecord> = self
             .load()
             .move_submissions
             .into_values()
-            .filter(|record| record.space_id == space_id)
+            .filter(|record| record.realm_id == realm_id)
             .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
@@ -2726,45 +2737,45 @@ impl LocalStateStore {
         out
     }
 
-    /// True when at least one tracked Move in `space_id` is in
-    /// `AnchorerPaused`. Drives the Space-wide "waiting for recovery anchorer"
+    /// True when at least one tracked Move in `realm_id` is in
+    /// `AnchorerPaused`. Drives the Realm-wide "waiting for recovery anchorer"
     /// banner described in the M4 ticket.
-    pub fn space_has_paused_anchorer(&self, space_id: &str) -> bool {
-        self.move_submissions_for_space(space_id)
+    pub fn realm_has_paused_anchorer(&self, realm_id: &str) -> bool {
+        self.move_submissions_for_realm(realm_id)
             .iter()
             .any(|record| record.state == MoveSubmissionState::AnchorerPaused)
     }
 
-    /// True when at least one tracked Move targeting `space_id` is
+    /// True when at least one tracked Move targeting `realm_id` is
     /// stuck on `PendingMlsBinding`. Drives the M7 toast.
-    pub fn space_has_pending_mls_binding(&self, space_id: &str) -> bool {
-        self.move_submissions_for_space(space_id)
+    pub fn realm_has_pending_mls_binding(&self, realm_id: &str) -> bool {
+        self.move_submissions_for_realm(realm_id)
             .iter()
             .any(|record| record.state == MoveSubmissionState::PendingMlsBinding)
     }
 
-    /// True when the latest cached Space/Realm projection declares an
+    /// True when the latest cached realm-tree projection declares an
     /// MLS-backed encryption profile. Used by membership/admin surfaces
     /// to decide whether a membership frontier change must pause sends
     /// until an MLS commit covers it.
-    pub fn space_projection_is_mls_encrypted(&self, space_id: &str) -> bool {
+    pub fn realm_projection_is_mls_encrypted(&self, realm_id: &str) -> bool {
         self.load()
-            .space_projections
-            .get(space_id)
-            .is_some_and(space_projection_value_is_mls_encrypted)
+            .realm_tree_projections
+            .get(realm_id)
+            .is_some_and(realm_tree_projection_value_is_mls_encrypted)
     }
 
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
-    /// Space/Realm projection declare the
+    /// realm-tree projection declare the
     /// `ck.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
     /// this to decide whether the ≤1h epoch-lifetime cap and the
-    /// `aad_visibility=hidden` MUST apply to a given space. Unknown / absent
+    /// `aad_visibility=hidden` MUST apply to a given Realm. Unknown / absent
     /// projection ⇒ `false` (the realm is treated as a normal realm).
-    pub fn space_projection_is_minimal_metadata(&self, space_id: &str) -> bool {
+    pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
         self.load()
-            .space_projections
-            .get(space_id)
-            .is_some_and(space_projection_value_is_minimal_metadata)
+            .realm_tree_projections
+            .get(realm_id)
+            .is_some_and(realm_tree_projection_value_is_minimal_metadata)
     }
 
     /// Drop a tracked Move (after it terminates and the user
@@ -3079,60 +3090,60 @@ impl LocalStateStore {
 
     // ── MLS group state persistence ─────────────────────────────────
 
-    /// Persist (or replace) the MLS snapshot envelope for a space.
+    /// Persist (or replace) the MLS snapshot envelope for a Realm.
     /// Idempotent: a re-snapshot at the same epoch overwrites the
     /// previous record. The on-disk envelope is opaque to soland —
     /// device-secret-derived encryption keeps the server zero-knowledge
     /// of the underlying group keys.
     pub fn save_mls_snapshot(
         &mut self,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
         self.ensure_cached_loaded();
-        self.cached.mls_snapshots.insert(space_id.into(), envelope);
+        self.cached.mls_snapshots.insert(realm_id.into(), envelope);
         let _ = self.flush();
     }
 
-    /// Look up the latest MLS snapshot envelope for a space, if any.
-    /// Returns `None` when the space has not yet been snapshotted (a
+    /// Look up the latest MLS snapshot envelope for a Realm, if any.
+    /// Returns `None` when the Realm has not yet been snapshotted (a
     /// fresh group on this device, or a group that has not committed
     /// yet so there is no state to persist).
     pub fn mls_snapshot_for(
         &self,
-        space_id: &str,
+        realm_id: &str,
     ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        self.load().mls_snapshots.get(space_id).cloned()
+        self.load().mls_snapshots.get(realm_id).cloned()
     }
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
-    /// path to rehydrate every known space's group in one pass and by
+    /// path to rehydrate every known Realm's group in one pass and by
     /// device-recovery flows to enumerate the encrypted snapshots that
     /// can be restored for this device.
     pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope> {
         self.load().mls_snapshots
     }
 
-    /// Drop the MLS snapshot for a space — used after a successful
+    /// Drop the MLS snapshot for a Realm — used after a successful
     /// "rotate group" / "leave group" Move so the next boot doesn't
     /// try to rehydrate a stale leaf.
-    pub fn drop_mls_snapshot(&mut self, space_id: &str) {
+    pub fn drop_mls_snapshot(&mut self, realm_id: &str) {
         self.ensure_cached_loaded();
-        if self.cached.mls_snapshots.remove(space_id).is_some() {
+        if self.cached.mls_snapshots.remove(realm_id).is_some() {
             let _ = self.flush();
         }
     }
 
-    /// True once a `ck.mls.genesis` event has been submitted for this space.
-    pub fn mls_genesis_emitted_for(&self, space_id: &str) -> bool {
-        self.load().mls_genesis_emitted.contains(space_id)
+    /// True once a `ck.mls.genesis` event has been submitted for this Realm.
+    pub fn mls_genesis_emitted_for(&self, realm_id: &str) -> bool {
+        self.load().mls_genesis_emitted.contains(realm_id)
     }
 
     /// Record that a `ck.mls.genesis` event has been submitted for this
-    /// space so it is never re-emitted (idempotent).
-    pub fn mark_mls_genesis_emitted(&mut self, space_id: impl Into<String>) {
+    /// Realm so it is never re-emitted (idempotent).
+    pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) {
         self.ensure_cached_loaded();
-        if self.cached.mls_genesis_emitted.insert(space_id.into()) {
+        if self.cached.mls_genesis_emitted.insert(realm_id.into()) {
             let _ = self.flush();
         }
     }
@@ -3149,22 +3160,22 @@ impl LocalStateStore {
     /// author can never decrypt their own MLS ciphertext.
     pub fn save_private_plaintext(
         &mut self,
-        space_id: &str,
+        realm_id: &str,
         flow_id: &str,
         field_path: &str,
         plaintext: &str,
     ) {
-        let space_id = space_id.trim();
+        let realm_id = realm_id.trim();
         let flow_id = flow_id.trim();
         let field_path = field_path.trim();
-        if space_id.is_empty() || flow_id.is_empty() || field_path.is_empty() {
+        if realm_id.is_empty() || flow_id.is_empty() || field_path.is_empty() {
             return;
         }
         self.ensure_cached_loaded();
         let mut changed = false;
         if plaintext.is_empty() {
             // Cleared field: drop the sidecar entry (and prune empty maps).
-            if let Some(flows) = self.cached.mls_private_plaintext.get_mut(space_id)
+            if let Some(flows) = self.cached.mls_private_plaintext.get_mut(realm_id)
                 && let Some(fields) = flows.get_mut(flow_id)
             {
                 if fields.remove(field_path).is_some() {
@@ -3174,16 +3185,16 @@ impl LocalStateStore {
                     flows.remove(flow_id);
                 }
             }
-            if let Some(flows) = self.cached.mls_private_plaintext.get(space_id)
+            if let Some(flows) = self.cached.mls_private_plaintext.get(realm_id)
                 && flows.is_empty()
             {
-                self.cached.mls_private_plaintext.remove(space_id);
+                self.cached.mls_private_plaintext.remove(realm_id);
             }
         } else {
             let slot = self
                 .cached
                 .mls_private_plaintext
-                .entry(space_id.to_owned())
+                .entry(realm_id.to_owned())
                 .or_default()
                 .entry(flow_id.to_owned())
                 .or_default()
@@ -3201,17 +3212,17 @@ impl LocalStateStore {
 
     /// X5.1 — read back a single author-owned plaintext field from the
     /// local sidecar, if present. Returns `None` when no plaintext was
-    /// ever stored for this (space, flow, field) — the read path then
+    /// ever stored for this (Realm, flow, field) — the read path then
     /// falls back to decrypting another member's ciphertext.
     pub fn private_plaintext_for(
         &self,
-        space_id: &str,
+        realm_id: &str,
         flow_id: &str,
         field_path: &str,
     ) -> Option<String> {
         self.load()
             .mls_private_plaintext
-            .get(space_id.trim())
+            .get(realm_id.trim())
             .and_then(|flows| flows.get(flow_id.trim()))
             .and_then(|fields| fields.get(field_path.trim()))
             .filter(|plaintext| !plaintext.is_empty())
@@ -3223,19 +3234,19 @@ impl LocalStateStore {
     /// every stored field at once.
     pub fn private_plaintext_fields(
         &self,
-        space_id: &str,
+        realm_id: &str,
         flow_id: &str,
     ) -> BTreeMap<String, String> {
         self.load()
             .mls_private_plaintext
-            .get(space_id.trim())
+            .get(realm_id.trim())
             .and_then(|flows| flows.get(flow_id.trim()))
             .cloned()
             .unwrap_or_default()
     }
 
     /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
-    /// (`space -> flow -> field -> plaintext`) to JSON bytes for the encrypted
+    /// (`realm -> flow -> field -> plaintext`) to JSON bytes for the encrypted
     /// cross-device backup. Returns the serialization of an empty map (`{}`)
     /// when no sidecar entries exist, so callers can cheaply detect "nothing to
     /// back up" via [`Self::private_plaintext_is_empty`] first.
@@ -3243,7 +3254,7 @@ impl LocalStateStore {
         serde_json::to_vec(&self.load().mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
     }
 
-    /// X5.3 — true when the sidecar holds no plaintext for any space/flow/field.
+    /// X5.3 — true when the sidecar holds no plaintext for any Realm/flow/field.
     /// Used to skip the cross-device backup upload when there is nothing to
     /// protect.
     pub fn private_plaintext_is_empty(&self) -> bool {
@@ -3254,7 +3265,7 @@ impl LocalStateStore {
     /// backup) into the local cache, then flush.
     ///
     /// Merge semantics: incoming entries only FILL fields that are missing
-    /// locally; on a (space, flow, field) conflict the EXISTING LOCAL value is
+    /// locally; on a (Realm, flow, field) conflict the EXISTING LOCAL value is
     /// kept. Rationale: the local sidecar is written synchronously on every
     /// encrypted write by the author on THIS device, so a locally-present value
     /// is at least as fresh as the backup (which is only re-uploaded
@@ -3269,11 +3280,11 @@ impl LocalStateStore {
         }
         self.ensure_cached_loaded();
         let mut changed = false;
-        for (space_id, flows) in incoming {
+        for (realm_id, flows) in incoming {
             let local_flows = self
                 .cached
                 .mls_private_plaintext
-                .entry(space_id)
+                .entry(realm_id)
                 .or_default();
             for (flow_id, fields) in flows {
                 let local_fields = local_flows.entry(flow_id).or_default();
@@ -3706,14 +3717,14 @@ mod tests {
         let path = temp_state_path("private-plaintext-snapshot");
         let mut store = LocalStateStore::with_path(path);
         assert!(store.private_plaintext_is_empty());
-        store.save_private_plaintext("ck:space:s1", "ck:flow:f1", "body", "\"hello body\"");
+        store.save_private_plaintext("ck:realm:s1", "ck:flow:f1", "body", "\"hello body\"");
         store.save_private_plaintext(
-            "ck:space:s1",
+            "ck:realm:s1",
             "ck:flow:f1",
             "synthesis",
             "\"hello synthesis\"",
         );
-        store.save_private_plaintext("ck:space:s2", "ck:flow:f2", "body", "\"other body\"");
+        store.save_private_plaintext("ck:realm:s2", "ck:flow:f2", "body", "\"other body\"");
         assert!(!store.private_plaintext_is_empty());
 
         let json = store.private_plaintext_snapshot_json();
@@ -3726,15 +3737,15 @@ mod tests {
         assert!(fresh.private_plaintext_is_empty());
         fresh.merge_private_plaintext_map(map);
         assert_eq!(
-            fresh.private_plaintext_for("ck:space:s1", "ck:flow:f1", "body"),
+            fresh.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "body"),
             Some("\"hello body\"".to_owned())
         );
         assert_eq!(
-            fresh.private_plaintext_for("ck:space:s1", "ck:flow:f1", "synthesis"),
+            fresh.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "synthesis"),
             Some("\"hello synthesis\"".to_owned())
         );
         assert_eq!(
-            fresh.private_plaintext_for("ck:space:s2", "ck:flow:f2", "body"),
+            fresh.private_plaintext_for("ck:realm:s2", "ck:flow:f2", "body"),
             Some("\"other body\"".to_owned())
         );
     }
@@ -3745,7 +3756,7 @@ mod tests {
         // local value wins on conflict.
         let path = temp_state_path("private-plaintext-conflict");
         let mut store = LocalStateStore::with_path(path);
-        store.save_private_plaintext("ck:space:s1", "ck:flow:f1", "body", "\"local newer\"");
+        store.save_private_plaintext("ck:realm:s1", "ck:flow:f1", "body", "\"local newer\"");
 
         let mut fields = BTreeMap::new();
         fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
@@ -3753,17 +3764,17 @@ mod tests {
         let mut flows = BTreeMap::new();
         flows.insert("ck:flow:f1".to_owned(), fields);
         let mut incoming = BTreeMap::new();
-        incoming.insert("ck:space:s1".to_owned(), flows);
+        incoming.insert("ck:realm:s1".to_owned(), flows);
         store.merge_private_plaintext_map(incoming);
 
         // Conflict: local value kept.
         assert_eq!(
-            store.private_plaintext_for("ck:space:s1", "ck:flow:f1", "body"),
+            store.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "body"),
             Some("\"local newer\"".to_owned())
         );
         // Gap: backup fills it.
         assert_eq!(
-            store.private_plaintext_for("ck:space:s1", "ck:flow:f1", "synthesis"),
+            store.private_plaintext_for("ck:realm:s1", "ck:flow:f1", "synthesis"),
             Some("\"backup synthesis\"".to_owned())
         );
     }
@@ -3772,21 +3783,21 @@ mod tests {
     fn move_submission_record_round_trips_through_store() {
         let path = temp_state_path("move-submission");
         let mut store = LocalStateStore::with_path(path.clone());
-        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let mid = "sha256:111";
         store.record_move_submission(
             mid,
-            space,
+            realm,
             "ck.consent.grant",
             MoveSubmissionState::PendingAnchor,
             None,
             Some("ck:anchor:sha256:abc".to_owned()),
         );
-        let listed = store.move_submissions_for_space(space);
+        let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].move_id, mid);
         assert_eq!(listed[0].state, MoveSubmissionState::PendingAnchor);
-        assert!(!store.space_has_paused_anchorer(space));
+        assert!(!store.realm_has_paused_anchorer(realm));
 
         // Update to AnchorerPaused — Space should now flag the banner.
         assert!(store.update_move_submission_state(
@@ -3794,8 +3805,8 @@ mod tests {
             MoveSubmissionState::AnchorerPaused,
             Some("recovery anchorer not signed".to_owned()),
         ));
-        assert!(store.space_has_paused_anchorer(space));
-        let listed = store.move_submissions_for_space(space);
+        assert!(store.realm_has_paused_anchorer(realm));
+        let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed[0].state, MoveSubmissionState::AnchorerPaused);
         assert_eq!(
             listed[0].reason.as_deref(),
@@ -3804,12 +3815,12 @@ mod tests {
 
         // Persistence: a fresh reader sees the same state.
         let reader = LocalStateStore::with_path(path);
-        assert!(reader.space_has_paused_anchorer(space));
+        assert!(reader.realm_has_paused_anchorer(realm));
 
         // Drop it and the banner clears.
         let mut store = LocalStateStore::with_path(reader.path.clone());
         store.drop_move_submission(mid);
-        assert!(!store.space_has_paused_anchorer(space));
+        assert!(!store.realm_has_paused_anchorer(realm));
     }
 
     #[test]
@@ -3818,47 +3829,47 @@ mod tests {
         // plaintext sidecar must survive a reload (serde-persisted), since
         // it is the only place the author's own encrypted content lives.
         let path = temp_state_path("private-plaintext-sidecar");
-        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let flow = "ck:flow:0196419b-0000-7000-8000-0000000000aa";
         {
             let mut store = LocalStateStore::with_path(path.clone());
-            store.save_private_plaintext(space, flow, "body", "\"author body\"");
-            store.save_private_plaintext(space, flow, "synthesis", "\"author synthesis\"");
+            store.save_private_plaintext(realm, flow, "body", "\"author body\"");
+            store.save_private_plaintext(realm, flow, "synthesis", "\"author synthesis\"");
         }
         // Fresh reader (simulating a process restart / reload).
         let reader = LocalStateStore::with_path(path.clone());
         assert_eq!(
-            reader.private_plaintext_for(space, flow, "body").as_deref(),
+            reader.private_plaintext_for(realm, flow, "body").as_deref(),
             Some("\"author body\"")
         );
         assert_eq!(
             reader
-                .private_plaintext_for(space, flow, "synthesis")
+                .private_plaintext_for(realm, flow, "synthesis")
                 .as_deref(),
             Some("\"author synthesis\"")
         );
-        let fields = reader.private_plaintext_fields(space, flow);
+        let fields = reader.private_plaintext_fields(realm, flow);
         assert_eq!(fields.len(), 2);
         // Missing keys return None.
         assert!(
             reader
-                .private_plaintext_for(space, flow, "content")
+                .private_plaintext_for(realm, flow, "content")
                 .is_none()
         );
         assert!(
             reader
-                .private_plaintext_for("ck:space:other", flow, "body")
+                .private_plaintext_for("ck:realm:other", flow, "body")
                 .is_none()
         );
 
         // Clearing a field (empty plaintext) removes it and persists.
         let mut writer = LocalStateStore::with_path(path.clone());
-        writer.save_private_plaintext(space, flow, "body", "");
+        writer.save_private_plaintext(realm, flow, "body", "");
         let reader = LocalStateStore::with_path(path);
-        assert!(reader.private_plaintext_for(space, flow, "body").is_none());
+        assert!(reader.private_plaintext_for(realm, flow, "body").is_none());
         assert_eq!(
             reader
-                .private_plaintext_for(space, flow, "synthesis")
+                .private_plaintext_for(realm, flow, "synthesis")
                 .as_deref(),
             Some("\"author synthesis\"")
         );
@@ -3868,13 +3879,13 @@ mod tests {
     fn sync_event_states_update_submission_by_event_id() {
         let path = temp_state_path("move-event-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let local_id = "sha256:local-submit";
         let event_id = "ck:event:0196419b-0000-7000-8000-0000000000aa";
         store.record_move_submission_with_event_id(
             local_id,
             Some(event_id.to_owned()),
-            space,
+            realm,
             "ck.flow.move",
             MoveSubmissionState::PendingAnchor,
             None,
@@ -3882,7 +3893,7 @@ mod tests {
         );
 
         let updated = store.ingest_move_event_states(
-            space,
+            realm,
             &serde_json::json!({
                 "event_states": [{
                     "event_id": event_id,
@@ -3892,7 +3903,7 @@ mod tests {
         );
 
         assert_eq!(updated, 1);
-        let listed = store.move_submissions_for_space(space);
+        let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].move_id, local_id);
         assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
@@ -3903,11 +3914,11 @@ mod tests {
     fn sync_event_states_update_legacy_submission_keyed_by_event_id() {
         let path = temp_state_path("legacy-move-event-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let event_id = "ck:event:0196419b-0000-7000-8000-0000000000bb";
         store.record_move_submission(
             event_id,
-            space,
+            realm,
             "mls_member_remove",
             MoveSubmissionState::PendingMlsBinding,
             None,
@@ -3915,7 +3926,7 @@ mod tests {
         );
 
         let updated = store.ingest_move_event_states(
-            space,
+            realm,
             &serde_json::json!({
                 "event_states": [{
                     "event_id": event_id,
@@ -3926,7 +3937,7 @@ mod tests {
         );
 
         assert_eq!(updated, 1);
-        let listed = store.move_submissions_for_space(space);
+        let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
         assert_eq!(listed[0].state, MoveSubmissionState::FailedBottom);
         assert_eq!(listed[0].reason.as_deref(), Some("cell_in_bottom_state"));
@@ -3936,12 +3947,12 @@ mod tests {
     fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
         let path = temp_state_path("move-event-and-move-id-state");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let move_id = "sha256:local-submit-with-server-event";
         let event_id = "ck:event:0196419b-0000-7000-8000-0000000000cc";
         store.record_move_submission(
             move_id,
-            space,
+            realm,
             "ck.flow.move",
             MoveSubmissionState::PendingAnchor,
             None,
@@ -3949,7 +3960,7 @@ mod tests {
         );
 
         let updated = store.ingest_move_event_states(
-            space,
+            realm,
             &serde_json::json!({
                 "event_states": [{
                     "event_id": event_id,
@@ -3960,7 +3971,7 @@ mod tests {
         );
 
         assert_eq!(updated, 1);
-        let listed = store.move_submissions_for_space(space);
+        let listed = store.move_submissions_for_realm(realm);
         assert_eq!(listed[0].move_id, move_id);
         assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
         assert_eq!(listed[0].state, MoveSubmissionState::Effective);
@@ -3970,26 +3981,26 @@ mod tests {
     fn move_submission_pending_mls_binding_drives_toast() {
         let path = temp_state_path("move-mls-binding");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:space:0196419b-0000-7000-8000-000000000002";
+        let realm = "ck:realm:0196419b-0000-7000-8000-000000000002";
         store.record_move_submission(
             "sha256:222",
-            space,
+            realm,
             "ck.message.create",
             MoveSubmissionState::PendingMlsBinding,
             Some("covered_frontier missing".to_owned()),
             None,
         );
-        assert!(store.space_has_pending_mls_binding(space));
-        assert!(!store.space_has_paused_anchorer(space));
+        assert!(store.realm_has_pending_mls_binding(realm));
+        assert!(!store.realm_has_paused_anchorer(realm));
     }
 
     #[test]
     fn mls_encrypted_projection_detects_epoch_pause_scope() {
         let path = temp_state_path("mls-encrypted-projection");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:realm:0196419b-0000-7000-8000-0000000000ee";
-        store.save_space_projection(
-            space.to_owned(),
+        let realm = "ck:realm:0196419b-0000-7000-8000-0000000000ee";
+        store.save_realm_tree_projection(
+            realm.to_owned(),
             json!({
                 "schema": "ck.schema.realm.v1",
                 "summary": {
@@ -3998,10 +4009,10 @@ mod tests {
                 }
             }),
         );
-        assert!(store.space_projection_is_mls_encrypted(space));
+        assert!(store.realm_projection_is_mls_encrypted(realm));
 
         let plain = "ck:realm:0196419b-0000-7000-8000-0000000000ef";
-        store.save_space_projection(
+        store.save_realm_tree_projection(
             plain.to_owned(),
             json!({
                 "schema": "ck.schema.realm.v1",
@@ -4011,7 +4022,7 @@ mod tests {
                 }
             }),
         );
-        assert!(!store.space_projection_is_mls_encrypted(plain));
+        assert!(!store.realm_projection_is_mls_encrypted(plain));
     }
 
     #[test]
@@ -4023,14 +4034,14 @@ mod tests {
         let mut store = LocalStateStore::with_path(path);
 
         let top = "ck:realm:0196419b-0000-7000-8000-0000000000a1";
-        store.save_space_projection(
+        store.save_realm_tree_projection(
             top.to_owned(),
             json!({ "profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
         );
-        assert!(store.space_projection_is_minimal_metadata(top));
+        assert!(store.realm_projection_is_minimal_metadata(top));
 
         let nested = "ck:realm:0196419b-0000-7000-8000-0000000000a2";
-        store.save_space_projection(
+        store.save_realm_tree_projection(
             nested.to_owned(),
             json!({
                 "summary": {
@@ -4041,18 +4052,18 @@ mod tests {
                 }
             }),
         );
-        assert!(store.space_projection_is_minimal_metadata(nested));
+        assert!(store.realm_projection_is_minimal_metadata(nested));
 
         let plain = "ck:realm:0196419b-0000-7000-8000-0000000000a3";
-        store.save_space_projection(
+        store.save_realm_tree_projection(
             plain.to_owned(),
             json!({ "profiles": ["ck.profile.core.v1"] }),
         );
-        assert!(!store.space_projection_is_minimal_metadata(plain));
+        assert!(!store.realm_projection_is_minimal_metadata(plain));
 
-        // Unknown space (no projection) ⇒ treated as non-minimal.
+        // Unknown Realm (no projection) ⇒ treated as non-minimal.
         assert!(
-            !store.space_projection_is_minimal_metadata(
+            !store.realm_projection_is_minimal_metadata(
                 "ck:realm:0196419b-0000-7000-8000-0000000000a9"
             )
         );
@@ -4160,7 +4171,7 @@ mod tests {
             Some("ck:realm:demo".to_owned()),
             serde_json::json!({"type": "ck.message.create"}),
         );
-        store.save_space_projection("ck:realm:demo", serde_json::json!({"name": "Demo"}));
+        store.save_realm_tree_projection("ck:realm:demo", serde_json::json!({"name": "Demo"}));
         store.save_draft("ck:realm:demo", "hello");
 
         let state = store.load();
@@ -4169,7 +4180,10 @@ mod tests {
             state.raw_operations[0].operation_id,
             "ck:operation:local-01"
         );
-        assert_eq!(state.space_projections["ck:realm:demo"]["name"], "Demo");
+        assert_eq!(
+            state.realm_tree_projections["ck:realm:demo"]["name"],
+            "Demo"
+        );
         assert_eq!(store.draft_for("ck:realm:demo"), "hello");
 
         store.save_draft("ck:realm:demo", " ");
@@ -4200,7 +4214,7 @@ mod tests {
         let reader = LocalStateStore::with_path(path);
         assert!(reader.realm_is_destroyed(realm_id));
 
-        store.forget_space(realm_id);
+        store.forget_realm_tree_projection(realm_id);
         assert!(!store.realm_is_destroyed(realm_id));
     }
 
@@ -4209,12 +4223,12 @@ mod tests {
         let path = temp_state_path("persisted");
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.save_sync_cursor("sx:persisted");
-        writer.save_draft("ck:space:persisted", "draft survives restart");
+        writer.save_draft("ck:realm:persisted", "draft survives restart");
 
         let reader = LocalStateStore::with_path(path);
         let state = reader.load();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:persisted"));
-        assert_eq!(state.drafts["ck:space:persisted"], "draft survives restart");
+        assert_eq!(state.drafts["ck:realm:persisted"], "draft survives restart");
     }
 
     #[test]
@@ -4474,14 +4488,14 @@ mod tests {
     }
 
     #[test]
-    fn retain_space_projections_prunes_per_space_caches() {
+    fn retain_realm_tree_projections_prunes_per_realm_caches() {
         let path = temp_state_path("retain-prunes");
         let mut store = LocalStateStore::with_path(path);
         // Seed three realms with overlapping per-realm caches.
         for id in ["ck:realm:keep", "ck:realm:drop-a", "ck:realm:drop-b"] {
-            store.save_space_projection(id, serde_json::json!({"name": id}));
+            store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
             store.save_draft(id, "draft");
-            store.set_anchor_view(id, LocalAnchorView::default());
+            store.set_realm_anchor_view(id, LocalAnchorView::default());
             store.set_realm_muted(id, true);
         }
         // Independently keyed records that should follow the prune.
@@ -4500,14 +4514,14 @@ mod tests {
             "ck:event:99",
         );
 
-        let pruned = store.retain_space_projections(|id| id == "ck:realm:keep");
+        let pruned = store.retain_realm_tree_projections(|id| id == "ck:realm:keep");
         assert_eq!(pruned.len(), 2);
         assert!(pruned.contains(&"ck:realm:drop-a".to_owned()));
         assert!(pruned.contains(&"ck:realm:drop-b".to_owned()));
 
         let state = store.load();
-        assert_eq!(state.space_projections.len(), 1);
-        assert!(state.space_projections.contains_key("ck:realm:keep"));
+        assert_eq!(state.realm_tree_projections.len(), 1);
+        assert!(state.realm_tree_projections.contains_key("ck:realm:keep"));
         assert!(!state.drafts.contains_key("ck:realm:drop-a"));
         assert!(state.drafts.contains_key("ck:realm:keep"));
         assert!(!state.anchor_views.contains_key("ck:realm:drop-a"));
@@ -4530,31 +4544,31 @@ mod tests {
     }
 
     #[test]
-    fn retain_space_projections_keeps_everything_when_all_match() {
+    fn retain_realm_tree_projections_keeps_everything_when_all_match() {
         let path = temp_state_path("retain-all");
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("ck:space:a", serde_json::json!({}));
-        store.save_space_projection("ck:space:b", serde_json::json!({}));
-        let pruned = store.retain_space_projections(|_| true);
+        store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
+        store.save_realm_tree_projection("ck:space:b", serde_json::json!({}));
+        let pruned = store.retain_realm_tree_projections(|_| true);
         assert!(pruned.is_empty());
-        assert_eq!(store.load().space_projections.len(), 2);
+        assert_eq!(store.load().realm_tree_projections.len(), 2);
     }
 
     #[test]
-    fn forget_space_clears_a_single_space() {
+    fn forget_realm_tree_projection_clears_a_single_space() {
         let path = temp_state_path("forget-one");
         let mut store = LocalStateStore::with_path(path);
         for id in ["ck:space:gone", "ck:space:stay"] {
-            store.save_space_projection(id, serde_json::json!({}));
+            store.save_realm_tree_projection(id, serde_json::json!({}));
             store.save_draft(id, "draft");
-            store.set_anchor_view(id, LocalAnchorView::default());
+            store.set_realm_anchor_view(id, LocalAnchorView::default());
         }
 
-        store.forget_space("ck:space:gone");
+        store.forget_realm_tree_projection("ck:space:gone");
 
         let state = store.load();
-        assert!(!state.space_projections.contains_key("ck:space:gone"));
-        assert!(state.space_projections.contains_key("ck:space:stay"));
+        assert!(!state.realm_tree_projections.contains_key("ck:space:gone"));
+        assert!(state.realm_tree_projections.contains_key("ck:space:stay"));
         assert!(!state.drafts.contains_key("ck:space:gone"));
         assert!(state.drafts.contains_key("ck:space:stay"));
     }
@@ -4565,7 +4579,7 @@ mod tests {
         let mut store = LocalStateStore::with_path(path);
         // Account-scoped projections.
         store.save_sync_cursor("sx:before");
-        store.save_space_projection("ck:space:a", serde_json::json!({}));
+        store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
         store.save_draft("ck:space:a", "draft");
         store.save_private_data("did:web:tester.example", "theme", "night");
         // Device-level state that MUST survive. ensure_local_identity
@@ -4593,7 +4607,7 @@ mod tests {
         let state = store.load();
         assert!(state.sync_cursor.is_none(), "sync cursor should be wiped");
         assert!(
-            state.space_projections.is_empty(),
+            state.realm_tree_projections.is_empty(),
             "projections should be wiped"
         );
         assert!(state.drafts.is_empty(), "drafts should be wiped");
@@ -4633,7 +4647,7 @@ mod tests {
             .ensure_local_identity()
             .expect("ensure_local_identity should succeed in plaintext mode");
         store.save_sync_cursor("sx:alice");
-        store.save_space_projection("ck:space:a", serde_json::json!({}));
+        store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
         store.set_oidc_tokens(Some(OidcTokenBundle {
             access_token: "alice-at".to_owned(),
             refresh_token: Some("alice-rt".to_owned()),
@@ -4670,7 +4684,7 @@ mod tests {
         let state = store.load();
         assert!(state.sync_cursor.is_none(), "stale cursor must be wiped");
         assert!(
-            state.space_projections.is_empty(),
+            state.realm_tree_projections.is_empty(),
             "projections must be wiped"
         );
         assert!(
@@ -4855,13 +4869,13 @@ mod tests {
     fn anchor_view_default_returns_empty_bytes_sentinel() {
         let path = temp_state_path("anchor-default");
         let store = LocalStateStore::with_path(path);
-        let view = store.anchor_view_for("ck:realm:demo");
+        let view = store.anchor_view_for_realm("ck:realm:demo");
         assert!(view.frontier.is_empty());
         assert!(view.leaves.is_empty());
         assert!(view.state_root.is_none());
         assert_eq!(view.move_anchor_ref(), LocalAnchorView::EMPTY_ANCHOR_REF);
         assert_eq!(
-            store.anchor_ref_for_move("ck:realm:demo"),
+            store.anchor_ref_for_realm_move("ck:realm:demo"),
             LocalAnchorView::EMPTY_ANCHOR_REF
         );
     }
@@ -4871,7 +4885,7 @@ mod tests {
         let path = temp_state_path("anchor-set");
         {
             let mut store = LocalStateStore::with_path(path.clone());
-            store.set_anchor_view(
+            store.set_realm_anchor_view(
                 "ck:realm:demo",
                 LocalAnchorView {
                     frontier: vec![
@@ -4889,13 +4903,13 @@ mod tests {
             );
         }
         let reader = LocalStateStore::with_path(path);
-        let view = reader.anchor_view_for("ck:realm:demo");
+        let view = reader.anchor_view_for_realm("ck:realm:demo");
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves.len(), 1);
         assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
         assert_eq!(view.move_anchor_ref(), "ck:anchor:sha256:aaa");
         assert_eq!(
-            reader.anchor_ref_for_move("ck:realm:demo"),
+            reader.anchor_ref_for_realm_move("ck:realm:demo"),
             "ck:anchor:sha256:aaa"
         );
     }
@@ -4973,7 +4987,7 @@ mod tests {
     #[test]
     fn safer_winner_for_unknown_cell_family_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:ck.component.space.organization.v1:ck:realm:demo".to_owned();
+        let cell = "ck:cell:ck.component.test.unknown.v1:ck:realm:demo".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -4990,7 +5004,7 @@ mod tests {
                 ],
             },
         );
-        // No semantic safety ordering for space.organization — operator
+        // No semantic safety ordering for this test-only cell family — operator
         // must pick manually.
         assert!(view.safer_winner_for(&cell).is_none());
     }
@@ -5198,18 +5212,18 @@ mod tests {
     }
 
     #[test]
-    fn anchor_views_aggregates_across_spaces() {
+    fn anchor_views_aggregates_across_realms() {
         let path = temp_state_path("anchor-aggregate");
         let mut store = LocalStateStore::with_path(path);
-        store.set_anchor_view(
-            "ck:space:one",
+        store.set_realm_anchor_view(
+            "ck:realm:one",
             LocalAnchorView {
                 frontier: vec!["ck:anchor:sha256:one".to_owned()],
                 ..LocalAnchorView::default()
             },
         );
-        store.set_anchor_view(
-            "ck:space:two",
+        store.set_realm_anchor_view(
+            "ck:realm:two",
             LocalAnchorView {
                 frontier: vec!["ck:anchor:sha256:two".to_owned()],
                 ..LocalAnchorView::default()
@@ -5217,8 +5231,8 @@ mod tests {
         );
         let all = store.anchor_views();
         assert_eq!(all.len(), 2);
-        assert!(all.contains_key("ck:space:one"));
-        assert!(all.contains_key("ck:space:two"));
+        assert!(all.contains_key("ck:realm:one"));
+        assert!(all.contains_key("ck:realm:two"));
     }
 
     #[test]
@@ -5363,13 +5377,13 @@ mod tests {
     #[test]
     fn mls_snapshot_persists_and_round_trips_through_store() {
         // MLS snapshot envelope is durable across store instances and the
-        // boot path can rehydrate every space's group from the persisted
+        // boot path can rehydrate every realm's group from the persisted
         // record.
         use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-persist");
-        let space = "ck:space:round28-mls";
+        let realm = "ck:realm:round28-mls";
         let envelope = encrypt_state(
-            space,
+            realm,
             "deadbeef",
             5,
             b"placeholder-state-bytes",
@@ -5378,11 +5392,11 @@ mod tests {
         );
         {
             let mut writer = LocalStateStore::with_path(path.clone());
-            assert!(writer.mls_snapshot_for(space).is_none());
-            writer.save_mls_snapshot(space, envelope.clone());
+            assert!(writer.mls_snapshot_for(realm).is_none());
+            writer.save_mls_snapshot(realm, envelope.clone());
         }
         let reader = LocalStateStore::with_path(path);
-        let restored = reader.mls_snapshot_for(space).expect("envelope persists");
+        let restored = reader.mls_snapshot_for(realm).expect("envelope persists");
         assert_eq!(restored.realm_id, envelope.realm_id);
         assert_eq!(restored.epoch, 5);
         assert_eq!(restored.ciphertext_hex, envelope.ciphertext_hex);
@@ -5394,11 +5408,11 @@ mod tests {
         use crate::mls::persistence::encrypt_state;
         let path = temp_state_path("mls-snapshot-drop");
         let mut store = LocalStateStore::with_path(path);
-        let space = "ck:space:drop-me";
-        store.save_mls_snapshot(space, encrypt_state(space, "abcd", 1, b"x", "p", b"salt"));
-        assert!(store.mls_snapshot_for(space).is_some());
-        store.drop_mls_snapshot(space);
-        assert!(store.mls_snapshot_for(space).is_none());
+        let realm = "ck:realm:drop-me";
+        store.save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"));
+        assert!(store.mls_snapshot_for(realm).is_some());
+        store.drop_mls_snapshot(realm);
+        assert!(store.mls_snapshot_for(realm).is_none());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -5469,88 +5483,88 @@ mod tests {
         assert!(other.to_string().contains("conn refused"));
     }
 
-    // ── Space remarks (spec client-preferences.md §3.7) ─
+    // ── Realm remarks (spec client-preferences.md §3.7) ─
 
     #[test]
-    fn space_remark_set_and_display_name_prefers_local_name() {
-        let path = temp_state_path("space-remark-set");
+    fn realm_remark_set_and_display_name_prefers_local_name() {
+        let path = temp_state_path("realm-remark-set");
         let mut store = LocalStateStore::with_path(path);
-        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
-        assert!(store.space_remark(space_id).is_none());
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        assert!(store.realm_remark(realm_id).is_none());
         assert_eq!(
-            store.display_name_for_space(space_id, "Engineering"),
+            store.display_name_for_realm(realm_id, "Engineering"),
             "Engineering",
             "no remark → public title"
         );
 
-        let remark = crate::account_data::SpaceRemark::new(space_id, "Acme · Eng");
-        store.set_space_remark(space_id, remark);
+        let remark = crate::account_data::RealmRemark::new(realm_id, "Acme · Eng");
+        store.set_realm_remark(realm_id, remark);
         assert_eq!(
-            store.display_name_for_space(space_id, "Engineering"),
+            store.display_name_for_realm(realm_id, "Engineering"),
             "Acme · Eng",
             "remark → local_name"
         );
-        assert!(store.space_remarks().contains_key(space_id));
+        assert!(store.realm_remarks().contains_key(realm_id));
     }
 
     #[test]
-    fn space_remark_empty_value_tombstones_entry() {
-        let path = temp_state_path("space-remark-tombstone");
+    fn realm_remark_empty_value_tombstones_entry() {
+        let path = temp_state_path("realm-remark-tombstone");
         let mut store = LocalStateStore::with_path(path);
-        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
-        store.set_space_remark(
-            space_id,
-            crate::account_data::SpaceRemark::new(space_id, "x"),
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        store.set_realm_remark(
+            realm_id,
+            crate::account_data::RealmRemark::new(realm_id, "x"),
         );
-        assert!(store.space_remark(space_id).is_some());
+        assert!(store.realm_remark(realm_id).is_some());
 
         // Whitespace-only local_name is treated as tombstone — see
-        // SpaceRemark::is_empty.
-        store.set_space_remark(
-            space_id,
-            crate::account_data::SpaceRemark {
+        // RealmRemark::is_empty.
+        store.set_realm_remark(
+            realm_id,
+            crate::account_data::RealmRemark {
                 local_name: "   ".into(),
-                ..crate::account_data::SpaceRemark::default()
+                ..crate::account_data::RealmRemark::default()
             },
         );
         assert!(
-            store.space_remark(space_id).is_none(),
+            store.realm_remark(realm_id).is_none(),
             "empty remark must remove the entry"
         );
     }
 
     #[test]
-    fn space_remark_remove_clears_only_target_space() {
-        let path = temp_state_path("space-remark-remove");
+    fn realm_remark_remove_clears_only_target_realm() {
+        let path = temp_state_path("realm-remark-remove");
         let mut store = LocalStateStore::with_path(path);
-        let a = "ck:space:00000000-0000-7000-8000-000000000001";
-        let b = "ck:space:00000000-0000-7000-8000-000000000002";
-        store.set_space_remark(a, crate::account_data::SpaceRemark::new(a, "A"));
-        store.set_space_remark(b, crate::account_data::SpaceRemark::new(b, "B"));
+        let a = "ck:realm:00000000-0000-7000-8000-000000000001";
+        let b = "ck:realm:00000000-0000-7000-8000-000000000002";
+        store.set_realm_remark(a, crate::account_data::RealmRemark::new(a, "A"));
+        store.set_realm_remark(b, crate::account_data::RealmRemark::new(b, "B"));
 
-        store.remove_space_remark(a);
-        assert!(store.space_remark(a).is_none());
+        store.remove_realm_remark(a);
+        assert!(store.realm_remark(a).is_none());
         assert_eq!(
-            store.space_remark(b).map(|r| r.local_name),
+            store.realm_remark(b).map(|r| r.local_name),
             Some("B".to_owned()),
-            "removing one Space remark must not touch the other"
+            "removing one Realm remark must not touch the other"
         );
     }
 
     #[test]
-    fn space_remark_persists_to_disk_between_instances() {
-        let path = temp_state_path("space-remark-persist");
-        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
+    fn realm_remark_persists_to_disk_between_instances() {
+        let path = temp_state_path("realm-remark-persist");
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
         {
             let mut writer = LocalStateStore::with_path(path.clone());
-            writer.set_space_remark(
-                space_id,
-                crate::account_data::SpaceRemark::new(space_id, "Acme · Eng"),
+            writer.set_realm_remark(
+                realm_id,
+                crate::account_data::RealmRemark::new(realm_id, "Acme · Eng"),
             );
         }
         let reader = LocalStateStore::with_path(path);
         assert_eq!(
-            reader.display_name_for_space(space_id, "Engineering"),
+            reader.display_name_for_realm(realm_id, "Engineering"),
             "Acme · Eng"
         );
     }

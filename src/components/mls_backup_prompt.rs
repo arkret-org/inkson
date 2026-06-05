@@ -79,7 +79,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
 /// [`crate::components::MlsUnlockPrompt`].
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_backup`
-/// is `true` — which the boot/per-space detection in `App` sets when this
+/// is `true` — which the boot/per-Realm detection in `App` sets when this
 /// account has a LOCAL account MLS secret (encryption has been used) but the
 /// server holds NO `mls_account_secret` backup yet. The user picks a recovery
 /// passphrase and we call

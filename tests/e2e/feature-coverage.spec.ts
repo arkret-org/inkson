@@ -306,7 +306,7 @@ test.describe("feature coverage placeholders", () => {
     // Realms tab is the default for the directory; just in case it's
     // not the active tab on first mount, click it explicitly so the
     // search button hits search-realms (not search-actors etc.).
-    await page.getByTestId("tab-spaces").click();
+    await page.getByTestId("tab-realms").click();
     await page.getByTestId("directory-search-input").fill("demo");
     await page.getByTestId("directory-search-button").click();
     // The mock returns a single listed Realm (`discoverability=listed`).

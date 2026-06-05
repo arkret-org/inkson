@@ -488,10 +488,8 @@ pub fn projection_realm_id_for_known_node(
     if requested.is_empty() {
         return Some(String::new());
     }
-    let by_id: std::collections::BTreeMap<&str, &RealmTreeNode> = nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect();
+    let by_id: std::collections::BTreeMap<&str, &RealmTreeNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
     let mut current = requested;
     let mut visited = std::collections::BTreeSet::new();
 

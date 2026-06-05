@@ -42,7 +42,7 @@ pub fn DirectoryPanel(
     let mut query = use_signal(String::new);
     // Local search-results scratch. Previously this view borrowed the
     // global `spaces` Signal as a write target — that overloaded the
-    // sidebar's "joined Spaces" channel with directory search hits and
+    // sidebar's joined Realm-tree channel with directory search hits and
     // was the original reason the SyncEngine's reconcile couldn't be
     // trusted (any directory search would resurrect ghost results
     // until the next sync). Keeping the buffer local closes that hole.
@@ -606,7 +606,7 @@ pub fn DirectoryPanel(
                             span { "{realm.category.clone().unwrap_or_else(|| \"realm\".to_owned())}" }
                             span { if realm.public { "public" } else { "private" } }
                         }
-                        div { class: "space-title", "{realm.title}" }
+                        div { class: "entity-title", "{realm.title}" }
                         div { class: "muted", "{realm.description.clone().unwrap_or_default()}" }
                         div { class: "actions",
                             Link {
@@ -709,9 +709,9 @@ pub fn DirectoryPanel(
                         let proof_count = value_vec(&org, "proofs").len();
                         let verified = value_bool_any(&org, &["verified_badge", "verified"]);
                         let member_count = value_count_any(&org, &["member_count", "actor_count", "members"]);
-                        let space_count = value_count_any(&org, &["space_count", "spaces"]);
-                        let inheritance_hint = if space_count > 0 {
-                            format!("Policy inheritance: active across {space_count} realm(s)")
+                        let realm_count = value_count_any(&org, &["realm_count", "realms"]);
+                        let inheritance_hint = if realm_count > 0 {
+                            format!("Policy inheritance: active across {realm_count} realm(s)")
                         } else {
                             "Policy inheritance: no linked realms".to_owned()
                         };
@@ -731,7 +731,7 @@ pub fn DirectoryPanel(
                                     span { "organization" }
                                     span { title: "{org_did}", "{org_did_label}" }
                                 }
-                                div { class: "space-title",
+                                div { class: "entity-title",
                                     "{org_name}"
                                     if verified {
                                         span {
@@ -754,7 +754,7 @@ pub fn DirectoryPanel(
                                         "{member_count} member(s)"
                                     }
                                     span {
-                                        class: if space_count > 0 { "badge badge-success" } else { "badge badge-info" },
+                                        class: if realm_count > 0 { "badge badge-success" } else { "badge badge-info" },
                                         "data-testid": "organization-policy-hint",
                                         "{inheritance_hint}"
                                     }
@@ -897,7 +897,7 @@ pub fn DirectoryPanel(
                                 }
                             }
                             div {
-                                div { class: "space-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
+                                div { class: "entity-title", "{actor.get(\"handle\").and_then(|v| v.as_str()).unwrap_or(\"unknown\")}" }
                                 div { class: "muted", "{actor.get(\"display_name\").and_then(|v| v.as_str()).unwrap_or(\"\")}" }
                             }
                             // G3.Y3 — directory-side `block-actor-button`.
@@ -1017,7 +1017,7 @@ pub fn DirectoryPanel(
                                     span { "Resolved" }
                                     span { "{resolved.handle}" }
                                 }
-                                div { class: "space-title", title: "{resolved_did_attr}", "{resolved_display}" }
+                                div { class: "entity-title", title: "{resolved_did_attr}", "{resolved_display}" }
                                 if let Some(doc) = resolved_did_document {
                                     div { class: "muted", "DID document loaded" }
                                     div { class: "muted", "{doc}" }
@@ -1090,7 +1090,7 @@ fn GenericEntityCard(title: String, summary: String, entity_type: String) -> Ele
                 span { "data-testid": "entity-type-label", "{entity_type}" }
                 span { "projection" }
             }
-            div { class: "space-title", "{title}" }
+            div { class: "entity-title", "{title}" }
             div { class: "muted", "{summary}" }
             div { class: "actions",
                 span { class: "badge green", "data-testid": "entity-facets", "renderable" }
@@ -1117,7 +1117,7 @@ fn ProtocolObjectResult(result: Value) -> Element {
                 span { "{kind}" }
                 span { class: object_state_class(access.as_str()), "{access}" }
             }
-            div { class: "space-title", "{title}" }
+            div { class: "entity-title", "{title}" }
             div { class: "muted", "{summary}" }
             div { class: "actions",
                 span { class: "badge", "renderer {renderer}" }

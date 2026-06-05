@@ -21,18 +21,18 @@ use crate::local_state::{
     ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant,
 };
 use crate::models::{
-    ServerDescription, ServerDescriptionExt, RealmTreeNode, RealmTreeNodeKind,
+    RealmTreeNode, RealmTreeNodeKind, ServerDescription, ServerDescriptionExt,
     projection_realm_id_for_known_node,
 };
-use crate::routes::Route;
-// R28-B — space-tree / projection / field-extraction helpers moved to
+// R28-B — realm-tree / projection / field-extraction helpers moved to
 // `crate::realm_tree`. Re-export the two `pub` entry points used by
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
     descendant_node_ids, full_sync_projection_keep_set, realm_projection_is_encrypted,
-    realm_tree_nodes_from_sync_realms, realm_tree_items,
+    realm_tree_items, realm_tree_nodes_from_sync_realms,
 };
+use crate::routes::Route;
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
 use crate::views::timeline::TimelineEvent;
@@ -406,7 +406,8 @@ pub fn RouterView() -> Element {
         &initial_session_token,
         initial_can_restore_session || initial_can_reissue_development_session,
     );
-    let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms(&initial_local_state.space_projections);
+    let initial_realm_tree_nodes =
+        realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_navigation_scope_mode = load_navigation_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
@@ -696,7 +697,7 @@ pub fn RouterView() -> Element {
         let mut invalidator_token = token;
         let mut invalidator_sync_cursor = sync_cursor;
         let mut invalidator_selected_realm_id = selected_realm_id;
-        let mut invalidator_spaces = realm_tree_nodes;
+        let mut invalidator_realm_tree_nodes = realm_tree_nodes;
         let mut invalidator_timeline = timeline;
         let mut invalidator_device_queue = device_queue;
         let mut invalidator_crypto_state = crypto_state;
@@ -723,7 +724,7 @@ pub fn RouterView() -> Element {
                 );
                 invalidator_sync_cursor.set("-".to_owned());
                 invalidator_selected_realm_id.set(String::new());
-                invalidator_spaces.set(Vec::new());
+                invalidator_realm_tree_nodes.set(Vec::new());
                 invalidator_timeline.set(Vec::new());
                 invalidator_device_queue.set(0);
                 invalidator_crypto_state.set("Session expired".to_owned());
@@ -738,7 +739,7 @@ pub fn RouterView() -> Element {
 
     // Single-source-of-truth for the sidebar. Anything that wants to
     // change the visible Space list writes to
-    // `state_store.space_projections` (sync engine, connect()'s initial
+    // `state_store.realm_tree_projections` (sync engine, connect()'s initial
     // bootstrap, setup's optimistic post-create insert, future
     // push-notification ingestion). This effect derives the `realm_tree_nodes`
     // Signal from those projections so consumers can keep reading
@@ -747,7 +748,7 @@ pub fn RouterView() -> Element {
     // where signal writers forgot to also update the projection (or
     // vice versa) and the two slid out of sync.
     use_effect(move || {
-        let projections = state_store.read().load().space_projections;
+        let projections = state_store.read().load().realm_tree_projections;
         let next = realm_tree_nodes_from_sync_realms(&projections);
         // Perf (P1): this effect re-runs on *any* `state_store` write (drafts,
         // theme, notifications, read receipts, …), not just projection changes.
@@ -851,7 +852,7 @@ pub fn RouterView() -> Element {
         }
     }
 
-    // SyncEngine — long-poll loop that keeps `space_projections` +
+    // SyncEngine — long-poll loop that keeps `realm_tree_projections` +
     // derived signals continuously aligned with `/sync`. Spawn per
     // generation so logout / server-switch / account-change can stop
     // the previous loop cleanly by bumping the counter.
@@ -1236,11 +1237,11 @@ pub fn RouterView() -> Element {
     if let (Some(realm_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
             &route,
-            Route::TimelineSpace { .. }
-                | Route::KanbanSpace { .. }
+            Route::TimelineRealm { .. }
+                | Route::KanbanRealm { .. }
                 | Route::KanbanBoard { .. }
                 | Route::KanbanBoardTask { .. }
-                | Route::DocumentSpace { .. }
+                | Route::DocumentRealm { .. }
         )
     {
         let stored_surface =
@@ -1261,10 +1262,14 @@ pub fn RouterView() -> Element {
         .find(|node| context_realm_id.as_deref() == Some(node.id.as_str()))
         .cloned();
     let active_scope_mode = navigation_scope_mode();
-    let active_navigation_scope_ids =
-        scoped_navigation_ids(&loaded_realm_tree_nodes, &active_realm_id, active_scope_mode);
+    let active_navigation_scope_ids = scoped_navigation_ids(
+        &loaded_realm_tree_nodes,
+        &active_realm_id,
+        active_scope_mode,
+    );
     let active_projection_realm_id =
-        projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id).unwrap_or_default();
+        projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
+            .unwrap_or_default();
     let active_navigation_scope_set: BTreeSet<String> =
         active_navigation_scope_ids.iter().cloned().collect();
     let active_navigation_scope_count = active_navigation_scope_ids.len();
@@ -1278,19 +1283,19 @@ pub fn RouterView() -> Element {
         )
     };
     let realm_tree = realm_tree_items(&loaded_realm_tree_nodes);
-    let space_projections = state_store.read().load().space_projections;
+    let realm_tree_projections = state_store.read().load().realm_tree_projections;
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()
     } else {
         active_projection_realm_id.as_str()
     };
     let active_realm_security_encrypted = crate::security_state::security_projection_for_scope_id(
-        &space_projections,
+        &realm_tree_projections,
         active_security_scope_id,
     )
     .or_else(|| {
         crate::security_state::security_projection_for_scope_id(
-            &space_projections,
+            &realm_tree_projections,
             &active_realm_id,
         )
     })
@@ -1974,13 +1979,13 @@ pub fn RouterView() -> Element {
                                     "sidebar-nav-item realm-tree-item"
                                 };
                                 // Spec client-preferences.md §3.7: when the
-                                // user has a private Space remark, prefer its
+                                // user has a private Realm remark, prefer its
                                 // local_name; fall back to the public title.
                                 // Use a "(remark)" badge so duplicate-titled
-                                // Spaces can be distinguished without leaking
+                                // Realms can be distinguished without leaking
                                 // the remark beyond this device.
-                                let remark = if item_node.kind == RealmTreeNodeKind::Space {
-                                    state_store.read().space_remark(&item_node.id)
+                                let remark = if item_node.kind == RealmTreeNodeKind::Realm {
+                                    state_store.read().realm_remark(&item_node.id)
                                 } else {
                                     None
                                 };
@@ -1997,7 +2002,7 @@ pub fn RouterView() -> Element {
                                 };
                                 let (icon_name, icon_class, icon_title) = match item_node.kind {
                                     RealmTreeNodeKind::Realm => {
-                                        let is_encrypted = space_projections
+                                        let is_encrypted = realm_tree_projections
                                             .get(&item_node.id)
                                             .is_some_and(realm_projection_is_encrypted);
                                         if is_encrypted {
@@ -2041,7 +2046,7 @@ pub fn RouterView() -> Element {
                                 if has_remark {
                                     span {
                                         class: "pill muted xs",
-                                        "data-testid": "realm-tree-space-remark-badge",
+                                        "data-testid": "realm-tree-realm-remark-badge",
                                         title: "Local remark (private to this account)",
                                         "备注"
                                     }
@@ -2141,10 +2146,10 @@ pub fn RouterView() -> Element {
                                 SecurityStateBadge {
                                     encrypted: active_realm_security_encrypted,
                                     compact: false,
-                                    test_id: Some("space-security-state".to_owned()),
+                                    test_id: Some("realm-security-state".to_owned()),
                                 }
                             }
-                            span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
+                            span { class: "topbar-context-title", "data-testid": "realm-title", "{topbar_context_title}" }
                             if route_uses_realm_context && !active_realm_id.is_empty() {
                                 {
                                     let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
@@ -2154,7 +2159,7 @@ pub fn RouterView() -> Element {
                                     rsx! {
                                         span {
                                             class: "topbar-current-surface",
-                                            "data-testid": "current-space-surface",
+                                            "data-testid": "current-realm-surface",
                                             title: "Current view: {current_surface_label}",
                                             UiIcon { name: current_surface_icon }
                                             span { class: "topbar-current-surface-label", "{current_surface_label}" }
@@ -2690,7 +2695,7 @@ pub fn RouterView() -> Element {
                                             device_id: device_id(),
                                             token,
                                             selected_realm_id: active_realm_id.clone(),
-                                            selected_space_scope: active_navigation_scope_ids.clone(),
+                                            selected_navigation_scope: active_navigation_scope_ids.clone(),
                                             timeline,
                                             draft,
                                             state_store,
@@ -2715,7 +2720,7 @@ pub fn RouterView() -> Element {
                                             device_id: device_id(),
                                             selected_realm_id: active_realm_id.clone(),
                                             projection_realm_id: active_projection_realm_id.clone(),
-                                            selected_space_scope: active_navigation_scope_ids.clone(),
+                                            selected_navigation_scope: active_navigation_scope_ids.clone(),
                                             sync_cursor,
                                             frontier_state,
                                             state_store,
@@ -2744,7 +2749,7 @@ pub fn RouterView() -> Element {
                             }
                         }
                     },
-                    Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+                    Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
                         if let Some(sid) = route.realm_id()
                             && selected_realm_id() != sid
                         {
@@ -2758,7 +2763,7 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
-                                    selected_space_scope: active_navigation_scope_ids.clone(),
+                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     timeline,
                                     draft,
                                     state_store,
@@ -2787,11 +2792,11 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
-                                    selected_space_scope: active_navigation_scope_ids.clone(),
+                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
-                                    initial_flow_id: default_flow_id_for_scope(&active_realm_id),
+                                    initial_flow_id: default_flow_id_for_realm(&active_realm_id),
                                     embedded: false,
                                 }
                             }
@@ -2944,7 +2949,7 @@ pub fn RouterView() -> Element {
                         crate::views::developer::DeveloperToolsPanel { state_store }
                     },
                     Route::Kanban
-                    | Route::KanbanSpace { .. }
+                    | Route::KanbanRealm { .. }
                     | Route::KanbanBoard { .. }
                     | Route::KanbanBoardTask { .. }
                     | Route::KanbanTask { .. } => {
@@ -2963,7 +2968,7 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     selected_realm_id: active_realm_id.clone(),
                                     projection_realm_id: active_projection_realm_id.clone(),
-                                    selected_space_scope: active_navigation_scope_ids.clone(),
+                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -2981,14 +2986,14 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
-                    Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
+                    Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
                         if let Some(sid) = route.realm_id()
                             && selected_realm_id() != sid
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
                         let document_ref = match &route {
-                            Route::DocumentSpace { realm_id }
+                            Route::DocumentRealm { realm_id }
                                 if realm_id.starts_with("ck:morph:") =>
                             {
                                 Some(realm_id.clone())
@@ -3416,7 +3421,7 @@ fn ProfileGateNotice(profile: &'static str) -> Element {
                     span { "{title}" }
                     span { "{friendly}" }
                 }
-                div { class: "space-title", "{body}" }
+                div { class: "entity-title", "{body}" }
                 div { class: "profile-gate-details",
                     button {
                         r#type: "button",
@@ -3507,9 +3512,9 @@ impl RealmSurface {
 
     fn route(self, realm_id: String) -> Route {
         match self {
-            Self::Timeline => Route::TimelineSpace { realm_id },
-            Self::Board => Route::KanbanSpace { realm_id },
-            Self::Document => Route::DocumentSpace { realm_id },
+            Self::Timeline => Route::TimelineRealm { realm_id },
+            Self::Board => Route::KanbanRealm { realm_id },
+            Self::Document => Route::DocumentRealm { realm_id },
         }
     }
 
@@ -3559,11 +3564,11 @@ fn persist_realm_surface_preference(
     );
 }
 
-fn default_flow_id_for_scope(scope_id: &str) -> String {
-    scope_id
+fn default_flow_id_for_realm(realm_id: &str) -> String {
+    realm_id
         .strip_prefix("ck:realm:")
         .map(|suffix| format!("ck:flow:{suffix}"))
-        .unwrap_or_else(|| scope_id.to_owned())
+        .unwrap_or_else(|| realm_id.to_owned())
 }
 
 fn resolve_realm_surface(
@@ -3578,16 +3583,16 @@ fn resolve_realm_surface(
             account_key,
             realm_id,
         )),
-        Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+        Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
             Some(RealmSurface::Timeline)
         }
         Route::Chat { .. } => None,
         Route::Kanban
-        | Route::KanbanSpace { .. }
+        | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => Some(RealmSurface::Board),
-        Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
+        Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
             Some(RealmSurface::Document)
         }
         Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => None,
@@ -3600,17 +3605,17 @@ fn route_uses_realm_context(route: &Route) -> bool {
         route,
         Route::Realm { .. }
             | Route::Timeline
-            | Route::TimelineSpace { .. }
+            | Route::TimelineRealm { .. }
             | Route::TimelineMessage { .. }
             | Route::Chat { .. }
             | Route::Kanban
-            | Route::KanbanSpace { .. }
+            | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
             | Route::KanbanBoardTask { .. }
             | Route::KanbanTask { .. }
             | Route::Document
             | Route::DocumentNew
-            | Route::DocumentSpace { .. }
+            | Route::DocumentRealm { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. }
     )
@@ -3621,7 +3626,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
         Route::Realm { .. } => "Realm",
-        Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
+        Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }
         Route::Chat { .. } => "Discussion",
@@ -3650,12 +3655,12 @@ fn route_label(route: &Route) -> &'static str {
         Route::Audit => "Audit",
         Route::Developer => "Developer Tools",
         Route::Kanban
-        | Route::KanbanSpace { .. }
+        | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => "Board View",
         Route::Notifications => "Notifications",
-        Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => "Document View",
+        Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
         Route::Recover => "Restore from backup",
@@ -3687,7 +3692,7 @@ fn mls_welcome_bootstrap_key(
     session_token: &str,
     account_did: &str,
     device_id: &str,
-    space_id: &str,
+    realm_id: &str,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
 ) -> Option<String> {
@@ -3698,12 +3703,12 @@ fn mls_welcome_bootstrap_key(
     let session = session_token.trim();
     let actor = account_did.trim();
     let device = device_id.trim();
-    let space = space_id.trim();
+    let realm = realm_id.trim();
     if base.is_empty()
         || session.is_empty()
         || actor.is_empty()
         || device.is_empty()
-        || space.is_empty()
+        || realm.is_empty()
     {
         return None;
     }
@@ -3711,7 +3716,7 @@ fn mls_welcome_bootstrap_key(
     let mut token_hash = DefaultHasher::new();
     session.hash(&mut token_hash);
     Some(format!(
-        "{base}|{actor}|{device}|{space}|{:016x}",
+        "{base}|{actor}|{device}|{realm}|{:016x}",
         token_hash.finish()
     ))
 }
@@ -4483,25 +4488,26 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 sync.realms.keys().cloned().collect();
                             let keep_set = full_sync_projection_keep_set(
                                 &server_set,
-                                &store.load().space_projections,
+                                &store.load().realm_tree_projections,
                             );
-                            let pruned = store.retain_space_projections(|id| keep_set.contains(id));
+                            let pruned =
+                                store.retain_realm_tree_projections(|id| keep_set.contains(id));
                             if !pruned.is_empty() {
                                 tracing::info!(
                                     pruned_count = pruned.len(),
-                                    "full sync pruned stale space projections",
+                                    "full sync pruned stale realm-tree projections",
                                 );
                             }
                             // Explicit `left_realms` deltas — soland emits
                             // these on incremental syncs too; for full sync
-                            // they're redundant with `retain_space_projections`
+                            // they're redundant with `retain_realm_tree_projections`
                             // above but cheap to apply when soland evolves
                             // to send them on full sync.
                             for left_id in &sync.left_realms {
-                                store.forget_space(left_id);
+                                store.forget_realm_tree_projection(left_id);
                             }
                             for (id, body) in &sync.realms {
-                                store.save_space_projection(id.clone(), body.clone());
+                                store.save_realm_tree_projection(id.clone(), body.clone());
                                 // Thread the per-Realm Anchor view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read
@@ -4510,14 +4516,14 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 // sentinel) so we still record presence.
                                 let view =
                                     crate::local_state::LocalAnchorView::from_sync_body(body);
-                                store.set_anchor_view(id.clone(), view);
+                                store.set_realm_anchor_view(id.clone(), view);
                                 store.ingest_move_event_states(id, body);
                             }
-                            // Hydrate Space remarks from the actor-private
+                            // Hydrate Realm remarks from the actor-private
                             // account_data projection (spec
                             // client-preferences.md §3.7). soland keys these
-                            // entries by `ck.contacts.space.<space_id>` and
-                            // returns the canonical SpaceRemark JSON in
+                            // entries by `ck.contacts.realm.<realm_id>` and
+                            // returns the canonical RealmRemark JSON in
                             // `content`. Entries for other namespaces are
                             // ignored here.
                             let notification_projection = sync
@@ -4619,23 +4625,23 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     }
                                     continue;
                                 }
-                                let Some(space_id) =
-                                    crate::account_data::space_id_from_space_remark_key(data_type)
+                                let Some(realm_id) =
+                                    crate::account_data::realm_id_from_realm_remark_key(data_type)
                                 else {
                                     continue;
                                 };
                                 let Some(content) = entry.get("content") else {
                                     continue;
                                 };
-                                match serde_json::from_value::<crate::account_data::SpaceRemark>(
+                                match serde_json::from_value::<crate::account_data::RealmRemark>(
                                     content.clone(),
                                 ) {
                                     Ok(remark) => {
-                                        store.set_space_remark(space_id.to_owned(), remark);
+                                        store.set_realm_remark(realm_id.to_owned(), remark);
                                     }
                                     Err(error) => {
                                         tracing::warn!(
-                                            "ignoring malformed Space remark for {space_id}: {error}"
+                                            "ignoring malformed Realm remark for {realm_id}: {error}"
                                         );
                                     }
                                 }
@@ -4653,12 +4659,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             }
                         }
                         let synced_timeline = timeline_events_from_sync_realms(&sync.realms);
-                        // `realm_tree_nodes` is derived from `state_store.space_projections`
+                        // `realm_tree_nodes` is derived from `state_store.realm_tree_projections`
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
                         // and selected_realm_id bookkeeping only.
                         let reconciled = realm_tree_nodes_from_sync_realms(
-                            &state_store.read().load().space_projections,
+                            &state_store.read().load().realm_tree_projections,
                         );
                         if reconciled.is_empty() {
                             status.set(ConnectionState::Empty.label().to_owned());
@@ -4714,7 +4720,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // make sure selected_realm_id points at something
                         // still in scope.
                         let fallback = realm_tree_nodes_from_sync_realms(
-                            &state_store.read().load().space_projections,
+                            &state_store.read().load().realm_tree_projections,
                         );
                         if fallback.is_empty() {
                             status.set(format!(
@@ -5382,22 +5388,22 @@ mod tests {
         let session = "session-token";
         let actor = "did:web:yougen.example";
         let device = "ck:device:01964137-0000-7000-8000-000000000001";
-        let space = "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
+        let realm = "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
 
         assert_eq!(
-            mls_welcome_bootstrap_key(base, session, actor, device, space, false, true),
+            mls_welcome_bootstrap_key(base, session, actor, device, realm, false, true),
             None
         );
         assert_eq!(
-            mls_welcome_bootstrap_key(base, session, actor, device, space, true, false),
+            mls_welcome_bootstrap_key(base, session, actor, device, realm, true, false),
             None
         );
         assert_eq!(
-            mls_welcome_bootstrap_key(base, "", actor, device, space, true, true),
+            mls_welcome_bootstrap_key(base, "", actor, device, realm, true, true),
             None
         );
         assert!(
-            mls_welcome_bootstrap_key(base, session, actor, device, space, true, true).is_some()
+            mls_welcome_bootstrap_key(base, session, actor, device, realm, true, true).is_some()
         );
     }
 
@@ -5433,11 +5439,19 @@ mod tests {
         ];
 
         assert_eq!(
-            scoped_navigation_ids(&realm_tree_nodes, "ck:space:root", NavigationScopeMode::Exact),
+            scoped_navigation_ids(
+                &realm_tree_nodes,
+                "ck:space:root",
+                NavigationScopeMode::Exact
+            ),
             vec!["ck:space:root".to_owned()]
         );
         assert_eq!(
-            scoped_navigation_ids(&realm_tree_nodes, "ck:space:root", NavigationScopeMode::IncludeDescendants),
+            scoped_navigation_ids(
+                &realm_tree_nodes,
+                "ck:space:root",
+                NavigationScopeMode::IncludeDescendants
+            ),
             vec![
                 "ck:space:root".to_owned(),
                 "ck:space:child".to_owned(),

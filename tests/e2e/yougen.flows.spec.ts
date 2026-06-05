@@ -113,28 +113,28 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
   await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
-  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Space");
-  await expect(page.getByTestId("realm-tree-list")).toContainText("Launch Child Space");
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Launch Realm");
   await expect(
-    page.getByTestId("realm-tree-node-button").filter({ hasText: "Cokret Demo Space" }).locator(".sidebar-nav-icon"),
+    page.getByTestId("realm-tree-node-button").filter({ hasText: "Cokret Demo Realm" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
   await expect(
-    page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Child Space" }).locator(".sidebar-nav-icon"),
-  ).toHaveAttribute("title", "Space");
+    page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Realm" }).locator(".sidebar-nav-icon"),
+  ).toHaveAttribute("title", "Realm");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
   await page.getByTestId("account-menu-button").click();
-  await page.getByTestId("space-scope-descendants").click();
+  await page.getByTestId("navigation-scope-descendants").click();
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-  await expect(page.getByTestId("spaces-summary")).toContainText("Recent Realms & Spaces");
+  await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms & Spaces");
   await expect(
-    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Cokret Demo Space" }).locator(".pill.muted.xs"),
+    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Cokret Demo Realm" }).locator(".pill.muted.xs"),
   ).toHaveText("Realm");
   await expect(
-    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Launch Child Space" }).locator(".pill.muted.xs"),
-  ).toHaveText("Space");
+    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Launch Realm" }).locator(".pill.muted.xs"),
+  ).toHaveText("Realm");
 
   await page.getByTestId("realm-tree-node-button").first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();
@@ -142,7 +142,7 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Space views");
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
   await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
-  await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
+  await expect(page.getByTestId("timeline")).toContainText("Shared demo Realm served by mocked server");
 });
 
 test("authenticated login route returns to the workspace", async ({ page }) => {
@@ -625,8 +625,8 @@ test("directory search resolve and space selection flow works", async ({ page })
 
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("directory-result")).toContainText("Cokret Demo Space");
-  await expect(page.getByTestId("index-query-results")).toContainText("Cokret Demo Space");
+  await expect(page.getByTestId("directory-result")).toContainText("Cokret Demo Realm");
+  await expect(page.getByTestId("index-query-results")).toContainText("Cokret Demo Realm");
   await expect(page.getByTestId("generic-entity-card")).toHaveAttribute("data-render-kind", "card");
   await expect(page.getByTestId("entity-type-label")).toContainText("space");
   await expect(page.getByTestId("entity-facets")).toContainText("renderable");
@@ -636,7 +636,7 @@ test("directory search resolve and space selection flow works", async ({ page })
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   await expect(page.getByTestId("status-label")).toContainText("resolved public");
-  await expect(page.getByTestId("directory-result").first()).toContainText("Cokret Demo Space");
+  await expect(page.getByTestId("directory-result").first()).toContainText("Cokret Demo Realm");
 
   await page.getByTestId("directory-advanced-diagnostics-toggle").click();
   await page.getByTestId("tab-objects").click();
@@ -755,15 +755,15 @@ test("notifications are derived from index projections and respect per-realm mut
   await page.getByTestId("topbar-notifications-button").click();
 
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
-  await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Space");
+  await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Realm");
   await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification(s).");
 
   await page
     .getByTestId("notification-item")
-    .filter({ hasText: "Alice sent a message in Demo Space" })
+    .filter({ hasText: "Alice sent a message in Demo Realm" })
     .getByTestId("mute-realm-button")
     .click();
-  await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Space");
+  await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Realm");
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
@@ -772,7 +772,7 @@ test("notifications are derived from index projections and respect per-realm mut
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
   await page.getByTestId("topbar-notifications-button").click();
-  await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Space");
+  await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Realm");
   const acceptInvite = page.waitForRequest(
     (request) =>
       request.url().endsWith("/_cokret/self/events") &&
@@ -780,7 +780,7 @@ test("notifications are derived from index projections and respect per-realm mut
   );
   await page
     .getByTestId("notification-item")
-    .filter({ hasText: "You were invited to review Demo Space" })
+    .filter({ hasText: "You were invited to review Demo Realm" })
     .getByTestId("notification-action")
     .click();
   const acceptBody = await acceptInvite.then((request) => request.postDataJSON());
@@ -802,7 +802,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
   await expect(setupPanel).toBeVisible();
-  await expect(page.getByTestId("space-title")).toContainText("New Realm");
+  await expect(page.getByTestId("realm-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(setupPanel.getByRole("button", { name: "Apply Policy" })).toHaveCount(0);
@@ -839,11 +839,11 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText(/created ck:realm:/);
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
-  await expect(page.getByTestId("space-setup-done")).toBeVisible();
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
   await expect(page.getByTestId("mls-backup-banner")).toBeVisible();
   await expect(page.getByTestId("realm-lifecycle-flow").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
-  await page.getByTestId("space-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
+  await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("timeline")).toBeVisible();
   await expect(page.getByTestId("sidebar")).toContainText("Setup Flow Space");
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -1220,14 +1220,14 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
   expect(deviceMessageRequest.headers()["idempotency-key"]).toBe("yougen-txn-1");
 });
 
-test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
+test("realm admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
   await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
   await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
   await page.getByTestId("queue-discussion-admission").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("Discussion-scoped external admission");
 
-  await page.getByTestId("space-name-input").fill("Updated Demo Space");
+  await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("updated");
 
@@ -1252,7 +1252,7 @@ test("space admin page handles metadata invites members and dangerous lifecycle"
   expect(cancelBody.kind).toBe("ck.invite.cancel");
   await expect(page.getByTestId("invite-row")).toContainText("canceled");
 
-  await page.getByTestId("rotate-space-epoch").click();
+  await page.getByTestId("rotate-realm-epoch").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
 
   await page.getByTestId("archive-realm-button").click();

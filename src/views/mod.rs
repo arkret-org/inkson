@@ -58,9 +58,9 @@ pub mod dashboard;
 pub mod developer;
 pub mod directory;
 pub mod document;
-/// A6.1 — global cross-Space message search panel. Backed by soland's
+/// A6.1 — global cross-Realm message search panel. Backed by soland's
 /// `POST /_soland/self/index/search` (substring scan over the in-memory
-/// projection); cross-space coverage will improve once the durable
+/// projection); cross-Realm coverage will improve once the durable
 /// projection lands.
 pub mod global_search;
 pub mod helpers;

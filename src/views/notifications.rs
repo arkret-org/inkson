@@ -254,7 +254,7 @@ pub fn NotificationsPanel(
                         span { "{notification.kind} / {notification.timestamp}" }
                     }
                     div {
-                        class: if notification.read { "muted" } else { "space-title" },
+                        class: if notification.read { "muted" } else { "entity-title" },
                         "{notification.body}"
                     }
                     if let Some(ref hint) = notification.watch_hint {
@@ -810,12 +810,12 @@ fn joined_realm_ids(response: &ClientSyncResponse) -> BTreeSet<String> {
 fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncResponse) {
     store.save_sync_cursor(response.cursor.clone());
     for left_id in &response.left_realms {
-        store.forget_space(left_id);
+        store.forget_realm_tree_projection(left_id);
     }
     for (id, body) in &response.realms {
-        store.save_space_projection(id.clone(), body.clone());
+        store.save_realm_tree_projection(id.clone(), body.clone());
         let view = LocalAnchorView::from_sync_body(body);
-        store.set_anchor_view(id.clone(), view);
+        store.set_realm_anchor_view(id.clone(), view);
         store.ingest_move_event_states(id, body);
     }
 }
@@ -827,7 +827,7 @@ fn hydrate_notifications(
     dnd: Option<&DndSettings>,
 ) -> Vec<Notification> {
     let joined_realms = local_state
-        .space_projections
+        .realm_tree_projections
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();

@@ -22,7 +22,7 @@ pub mod empty_state;
 /// reports without leaving the failing surface.
 pub mod error_boundary;
 /// One-time account-MLS-secret BACKUP prompt — the mirror of `mls_unlock`.
-/// Mounted once near the app shell; renders only when boot/per-space
+/// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
 pub mod mls_backup_prompt;
 /// Account-MLS-secret auto-unlock prompt — the recovery-passphrase banner

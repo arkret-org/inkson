@@ -246,7 +246,7 @@ pub fn SettingsDevicesPanel(
                         }
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "Devices" }
-                            HelpTip { text: "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE space the device participates in.".to_owned() }
+                            HelpTip { text: "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.".to_owned() }
                         }
                         div { class: "actions",
                             Link {

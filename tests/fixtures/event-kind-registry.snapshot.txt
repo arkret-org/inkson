@@ -90,10 +90,8 @@ ck.profile.update
 ck.reaction.add
 ck.reaction.remove
 ck.read_cursor.advance
-ck.realm.child
 ck.realm.create
 ck.realm.organization
-ck.realm.parent
 ck.realm.update
 ck.realm.upgrade
 ck.receipt.read

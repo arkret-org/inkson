@@ -47,18 +47,18 @@ pub fn discoverability_from_str(s: &str) -> Discoverability {
     }
 }
 
-/// Space discovery configuration.
+/// Realm discovery configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SpaceDiscovery {
-    /// Space ID.
-    pub space_id: String,
+pub struct RealmDiscovery {
+    /// Realm ID.
+    pub realm_id: String,
     /// Discoverability level.
     pub discoverability: Discoverability,
     /// Directory visibility settings.
     pub directory_visibility: DirectoryVisibility,
     /// Preview settings for non-members.
     pub preview: PreviewSettings,
-    /// Who can discover this space.
+    /// Who can discover this Realm.
     pub allowed_discoverers: Vec<String>,
     /// Anti-enumeration protection.
     pub anti_enumeration: bool,
@@ -196,17 +196,17 @@ pub struct PresencePolicy {
     pub actor_id: String,
     /// Whether presence is enabled.
     pub enabled: bool,
-    /// Per-space presence settings.
-    pub space_policies: HashMap<String, SpacePresencePolicy>,
-    /// Default policy for new spaces.
-    pub default_policy: SpacePresencePolicy,
+    /// Per-Realm presence settings.
+    pub realm_policies: HashMap<String, RealmPresencePolicy>,
+    /// Default policy for new Realms.
+    pub default_policy: RealmPresencePolicy,
     /// When this policy was last updated.
     pub updated_at: Hlc,
 }
 
-/// Per-space presence policy.
+/// Per-Realm presence policy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpacePresencePolicy {
+pub struct RealmPresencePolicy {
     /// Share online status.
     pub share_online: bool,
     /// Share typing indicators.
@@ -217,7 +217,7 @@ pub struct SpacePresencePolicy {
     pub share_last_seen: bool,
 }
 
-impl Default for SpacePresencePolicy {
+impl Default for RealmPresencePolicy {
     fn default() -> Self {
         Self {
             share_online: true,
@@ -363,8 +363,8 @@ fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
 /// Push notification E2EE metadata (minimal metadata sent to push gateway).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PushE2EEMetadata {
-    /// Space ID.
-    pub space_id: String,
+    /// Realm ID.
+    pub realm_id: String,
     /// Whether the message is encrypted.
     pub is_encrypted: bool,
     /// Message type hint (without content).
@@ -388,24 +388,24 @@ impl AuthorizationFilter {
     }
 
     /// Filter search results based on authorization.
-    pub fn filter_results<T>(&self, results: Vec<T>, get_space_id: impl Fn(&T) -> &str) -> Vec<T> {
+    pub fn filter_results<T>(&self, results: Vec<T>, get_realm_id: impl Fn(&T) -> &str) -> Vec<T> {
         results
             .into_iter()
             .filter(|result| {
-                let space_id = get_space_id(result);
-                self.can_access_space(space_id)
+                let realm_id = get_realm_id(result);
+                self.can_access_realm(realm_id)
             })
             .collect()
     }
 
-    /// Check if the actor can access a space.
-    fn can_access_space(&self, space_id: &str) -> bool {
-        // Check if any grant allows access to this space
+    /// Check if the actor can access a Realm.
+    fn can_access_realm(&self, realm_id: &str) -> bool {
+        // Check if any grant allows access to this Realm
         self.grants.iter().any(|grant| {
             grant
                 .resource_selectors
                 .iter()
-                .any(|selector| selector == space_id || selector == "*")
+                .any(|selector| selector == realm_id || selector == "*")
         })
     }
 }
@@ -418,8 +418,8 @@ pub struct DirectoryGrant {
 /// Discovery manager for coordinating discovery features.
 #[derive(Clone, Debug, Default)]
 pub struct DiscoveryManager {
-    /// Space discovery configurations.
-    space_configs: HashMap<String, SpaceDiscovery>,
+    /// Realm discovery configurations.
+    realm_configs: HashMap<String, RealmDiscovery>,
     /// Organization profiles.
     org_profiles: HashMap<String, OrgProfileStatus>,
     /// Display metadata cache.
@@ -435,14 +435,14 @@ impl DiscoveryManager {
         Self::default()
     }
 
-    /// Set space discovery configuration.
-    pub fn set_space_discovery(&mut self, config: SpaceDiscovery) {
-        self.space_configs.insert(config.space_id.clone(), config);
+    /// Set Realm discovery configuration.
+    pub fn set_realm_discovery(&mut self, config: RealmDiscovery) {
+        self.realm_configs.insert(config.realm_id.clone(), config);
     }
 
-    /// Get space discovery configuration.
-    pub fn get_space_discovery(&self, space_id: &str) -> Option<&SpaceDiscovery> {
-        self.space_configs.get(space_id)
+    /// Get Realm discovery configuration.
+    pub fn get_realm_discovery(&self, realm_id: &str) -> Option<&RealmDiscovery> {
+        self.realm_configs.get(realm_id)
     }
 
     /// Set organization profile.
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_presence_policy_default() {
-        let policy = SpacePresencePolicy::default();
+        let policy = RealmPresencePolicy::default();
         assert!(policy.share_online);
         assert!(policy.share_typing);
         assert!(policy.share_read_receipts);
@@ -635,27 +635,27 @@ mod tests {
     #[test]
     fn test_authorization_filter() {
         let grant = DirectoryGrant {
-            resource_selectors: vec!["ck:space:public".to_owned()],
+            resource_selectors: vec!["ck:realm:public".to_owned()],
         };
 
         let filter = AuthorizationFilter::new(vec![grant]);
 
         let results = vec![
-            ("Space A", "ck:space:public"),
-            ("Space B", "ck:space:private"),
+            ("Realm A", "ck:realm:public"),
+            ("Realm B", "ck:realm:private"),
         ];
 
         let filtered = filter.filter_results(results, |r| r.1);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].0, "Space A");
+        assert_eq!(filtered[0].0, "Realm A");
     }
 
     #[test]
     fn test_discovery_manager() {
         let mut manager = DiscoveryManager::new();
 
-        manager.set_space_discovery(SpaceDiscovery {
-            space_id: "ck:space:test".to_owned(),
+        manager.set_realm_discovery(RealmDiscovery {
+            realm_id: "ck:realm:test".to_owned(),
             discoverability: Discoverability::Public,
             directory_visibility: DirectoryVisibility {
                 show_in_directory: true,
@@ -675,7 +675,7 @@ mod tests {
             updated_at: Hlc::now("yougen"),
         });
 
-        let config = manager.get_space_discovery("ck:space:test");
+        let config = manager.get_realm_discovery("ck:realm:test");
         assert!(config.is_some());
         assert_eq!(config.unwrap().discoverability, Discoverability::Public);
     }
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn test_push_e2ee_metadata() {
         let metadata = PushE2EEMetadata {
-            space_id: "ck:space:test".to_owned(),
+            realm_id: "ck:realm:test".to_owned(),
             is_encrypted: true,
             message_type: "message".to_owned(),
             sender_hint: Some("alice".to_owned()),
@@ -692,6 +692,6 @@ mod tests {
 
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("is_encrypted"));
-        assert!(json.contains("ck:space:test"));
+        assert!(json.contains("ck:realm:test"));
     }
 }

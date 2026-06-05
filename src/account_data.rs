@@ -21,15 +21,15 @@ use crate::operation::OperationBuilder;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountDataKey {
-    /// `client.ui` — sidebar collapsed, theme, default view per Space.
+    /// `client.ui` — sidebar collapsed, theme, default view per Realm.
     ClientUi,
-    /// `ck.read_receipt.preferences` — global + per-space + per-flow send override.
+    /// `ck.read_receipt.preferences` — global + per-Realm + per-flow send override.
     ClientReadReceipts,
-    /// `client.presence` — per-space typing / online / last-seen toggles.
+    /// `client.presence` — per-Realm typing / online / last-seen toggles.
     ClientPresence,
     /// `ck.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
-    /// `ck.push_rules` — per-space mute, sound, push routing.
+    /// `ck.push_rules` — per-Realm mute, sound, push routing.
     ClientNotifications,
     /// `ck.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
     ClientDndSchedule,
@@ -170,7 +170,7 @@ impl AccountDataStore {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// A4a — `client.ui` payload (theme, sidebar collapsed, per-space view).
+// A4a — `client.ui` payload (theme, sidebar collapsed, per-Realm view).
 // Spec: `discovery/client-preferences.md` §2 — the `client.ui`
 // account-data key carries cross-device UI preferences. Yougen persists
 // theme + sidebar state locally and best-effort syncs them across
@@ -193,7 +193,7 @@ impl AccountDataStore {
 pub fn build_client_ui_body(
     theme: Option<&str>,
     sidebar_collapsed: Option<bool>,
-    per_space_view: &BTreeMap<String, String>,
+    per_realm_view: &BTreeMap<String, String>,
     avatar_blob_ref: Option<&str>,
 ) -> Value {
     let mut map = serde_json::Map::new();
@@ -205,12 +205,12 @@ pub fn build_client_ui_body(
     if let Some(value) = sidebar_collapsed {
         map.insert("sidebar_collapsed".to_owned(), Value::Bool(value));
     }
-    if !per_space_view.is_empty() {
+    if !per_realm_view.is_empty() {
         let mut obj = serde_json::Map::new();
-        for (k, v) in per_space_view {
+        for (k, v) in per_realm_view {
             obj.insert(k.clone(), Value::String(v.clone()));
         }
-        map.insert("per_space_view".to_owned(), Value::Object(obj));
+        map.insert("per_realm_view".to_owned(), Value::Object(obj));
     }
     if let Some(value) = avatar_blob_ref {
         let trimmed = value.trim();
@@ -277,20 +277,20 @@ pub fn merge_client_ui_theme(local_theme: &str, remote_value: &Value) -> Option<
     }
 }
 
-/// Wire-key for an actor-private Space remark per
-/// `discovery/client-preferences.md` §3.7: `ck.contacts.space.<space_id>`.
+/// Wire-key for an actor-private Realm remark per
+/// `discovery/client-preferences.md` §3.7: `ck.contacts.realm.<realm_id>`.
 ///
 /// The same string is the `key` used in `ck.account_data.set`. Callers should
-/// already have validated `space_id` shape (`ck:space:<uuid>`).
-pub fn space_remark_account_data_key(space_id: &str) -> String {
-    format!("ck.contacts.space.{space_id}")
+/// already have validated `realm_id` shape (`ck:realm:<uuid>`).
+pub fn realm_remark_account_data_key(realm_id: &str) -> String {
+    format!("ck.contacts.realm.{realm_id}")
 }
 
-/// Inverse of [`space_remark_account_data_key`]. Returns the `space_id`
-/// segment when `key` is a Space-remark wire key; returns `None` for any
+/// Inverse of [`realm_remark_account_data_key`]. Returns the `realm_id`
+/// segment when `key` is a Realm-remark wire key; returns `None` for any
 /// other namespace. Used when hydrating `account_data` entries from `/sync`.
-pub fn space_id_from_space_remark_key(key: &str) -> Option<&str> {
-    key.strip_prefix("ck.contacts.space.")
+pub fn realm_id_from_realm_remark_key(key: &str) -> Option<&str> {
+    key.strip_prefix("ck.contacts.realm.")
 }
 
 /// Wire-key for an actor-private contact remark per
@@ -305,26 +305,26 @@ pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
     key.strip_prefix("ck.contacts.actor.")
 }
 
-/// User-private Space remark per `discovery/client-preferences.md` §3.7.
+/// User-private Realm remark per `discovery/client-preferences.md` §3.7.
 ///
 /// Persisted as the `content` payload under
-/// `ck.contacts.space.<space_id>` (the wire key built by
-/// [`space_remark_account_data_key`]). The protocol treats the payload as
+/// `ck.contacts.realm.<realm_id>` (the wire key built by
+/// [`realm_remark_account_data_key`]). The protocol treats the payload as
 /// opaque on the server; this struct is the canonical local shape so the
 /// settings UI and the sidebar agree.
 ///
 /// All fields are spec-aligned; the struct intentionally mirrors the §3.6
-/// `ck.contacts.actor.<did>` shape so future cross-actor / cross-Space
+/// `ck.contacts.actor.<did>` shape so future cross-actor / cross-Realm
 /// editing UIs can be unified.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpaceRemark {
+pub struct RealmRemark {
     /// Schema version — currently fixed to `1`.
-    #[serde(default = "default_space_remark_version")]
+    #[serde(default = "default_remark_version")]
     pub version: u32,
-    /// Spec §3.7 `subject.id` — the Space id this remark applies to.
-    pub space_id: String,
+    /// Spec §3.7 `subject` — the Realm this remark applies to.
+    pub subject: RemarkSubject,
     /// Spec §3.7 `local_name` — actor-private alias shown in place of the
-    /// public `Space.title` when set. Max 128 chars; empty / whitespace-only
+    /// public Realm title when set. Max 128 chars; empty / whitespace-only
     /// means "no remark". Never serialised when empty so the wire payload
     /// can be tombstoned by setting `local_name=""`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -333,14 +333,14 @@ pub struct SpaceRemark {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
     /// Spec §3.7 `tags` — private grouping labels; namespace shared with
-    /// `ck.tags.space.<space_id>` so the same label can drive both UIs.
+    /// `ck.tags.realm.<realm_id>` so the same label can drive both UIs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    /// Spec §3.7 `pinned` — whether the Space sticks to the top of the
+    /// Spec §3.7 `pinned` — whether the Realm sticks to the top of the
     /// sidebar regardless of activity.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
-    /// Spec §3.7 `verified_title_at_save` — Space `title` snapshot at the
+    /// Spec §3.7 `verified_title_at_save` — Realm `title` snapshot at the
     /// time the remark was written, used to detect title drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_title_at_save: Option<String>,
@@ -357,7 +357,22 @@ pub struct SpaceRemark {
     pub updated_at: Option<String>,
 }
 
-fn default_space_remark_version() -> u32 {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemarkSubject {
+    pub kind: String,
+    pub id: String,
+}
+
+impl Default for RemarkSubject {
+    fn default() -> Self {
+        Self {
+            kind: "realm".to_owned(),
+            id: String::new(),
+        }
+    }
+}
+
+fn default_remark_version() -> u32 {
     1
 }
 
@@ -365,12 +380,15 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-impl SpaceRemark {
+impl RealmRemark {
     /// New remark seeded with `local_name`. Caller fills the rest as needed.
-    pub fn new(space_id: impl Into<String>, local_name: impl Into<String>) -> Self {
+    pub fn new(realm_id: impl Into<String>, local_name: impl Into<String>) -> Self {
         Self {
             version: 1,
-            space_id: space_id.into(),
+            subject: RemarkSubject {
+                kind: "realm".to_owned(),
+                id: realm_id.into(),
+            },
             local_name: local_name.into(),
             ..Self::default()
         }
@@ -386,8 +404,8 @@ impl SpaceRemark {
             && !self.pinned
     }
 
-    /// Best-effort name to render for a Space: trimmed `local_name` when set,
-    /// otherwise `fallback` (the public `Space.title`). Mirrors the priority
+    /// Best-effort name to render for a Realm: trimmed `local_name` when set,
+    /// otherwise `fallback` (the public Realm title). Mirrors the priority
     /// in `discovery/client-preferences.md` §3.7 UI rules.
     pub fn display_name<'a>(&'a self, fallback: &'a str) -> &'a str {
         let trimmed = self.local_name.trim();
@@ -406,7 +424,7 @@ impl SpaceRemark {
 /// public profile, mention, message, search, or push payloads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactRemark {
-    #[serde(default = "default_space_remark_version")]
+    #[serde(default = "default_remark_version")]
     pub version: u32,
     /// Subject actor DID. Wire field `actor_id` per the v1 protocol naming
     /// rule (single protocol subject uses `_id` even when the value is a
@@ -847,13 +865,13 @@ mod tests {
     }
 
     #[test]
-    fn space_remark_key_round_trip() {
-        let space_id = "ck:space:0196419b-0000-7000-8000-000000000000";
-        let key = space_remark_account_data_key(space_id);
-        assert_eq!(key, format!("ck.contacts.space.{space_id}"));
-        assert_eq!(space_id_from_space_remark_key(&key), Some(space_id));
+    fn realm_remark_key_round_trip() {
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let key = realm_remark_account_data_key(realm_id);
+        assert_eq!(key, format!("ck.contacts.realm.{realm_id}"));
+        assert_eq!(realm_id_from_realm_remark_key(&key), Some(realm_id));
         assert_eq!(
-            space_id_from_space_remark_key("ck.read_receipt.preferences"),
+            realm_id_from_realm_remark_key("ck.read_receipt.preferences"),
             None
         );
     }
@@ -865,23 +883,26 @@ mod tests {
         assert_eq!(key, format!("ck.contacts.actor.{did}"));
         assert_eq!(actor_did_from_contact_remark_key(&key), Some(did));
         assert_eq!(
-            actor_did_from_contact_remark_key("ck.contacts.space.x"),
+            actor_did_from_contact_remark_key("ck.contacts.realm.x"),
             None
         );
     }
 
     #[test]
-    fn space_remark_serialises_minimal_payload() {
+    fn realm_remark_serialises_minimal_payload() {
         // Empty fields MUST NOT appear on the wire — keeps the payload
         // tombstone-friendly and avoids leaking placeholder data.
-        let remark = SpaceRemark::new(
-            "ck:space:0196419b-0000-7000-8000-000000000000",
+        let remark = RealmRemark::new(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
             "Acme · Eng",
         );
         let wire = serde_json::to_value(&remark).unwrap();
         assert_eq!(
-            wire["space_id"],
-            "ck:space:0196419b-0000-7000-8000-000000000000"
+            wire["subject"],
+            serde_json::json!({
+                "kind": "realm",
+                "id": "ck:realm:0196419b-0000-7000-8000-000000000000"
+            })
         );
         assert_eq!(wire["local_name"], "Acme · Eng");
         assert_eq!(wire["version"], 1);
@@ -891,27 +912,27 @@ mod tests {
     }
 
     #[test]
-    fn space_remark_display_name_prefers_local_name() {
-        let r = SpaceRemark::new("ck:space:abc", "Acme · Eng");
+    fn realm_remark_display_name_prefers_local_name() {
+        let r = RealmRemark::new("ck:realm:abc", "Acme · Eng");
         assert_eq!(r.display_name("Engineering"), "Acme · Eng");
-        let empty = SpaceRemark {
+        let empty = RealmRemark {
             local_name: "   ".into(),
-            ..SpaceRemark::default()
+            ..RealmRemark::default()
         };
         assert_eq!(empty.display_name("Engineering"), "Engineering");
     }
 
     #[test]
-    fn space_remark_is_empty_treats_whitespace_as_tombstone() {
-        let r = SpaceRemark {
+    fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
+        let r = RealmRemark {
             local_name: "   ".into(),
             note: String::new(),
-            ..SpaceRemark::default()
+            ..RealmRemark::default()
         };
         assert!(r.is_empty());
-        let r2 = SpaceRemark {
+        let r2 = RealmRemark {
             local_name: "x".into(),
-            ..SpaceRemark::default()
+            ..RealmRemark::default()
         };
         assert!(!r2.is_empty());
     }
@@ -1085,15 +1106,15 @@ mod tests {
         let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), None);
         assert_eq!(body["theme"], "light");
         assert!(body.get("sidebar_collapsed").is_none());
-        assert!(body.get("per_space_view").is_none());
+        assert!(body.get("per_realm_view").is_none());
         assert!(body.get("avatar_blob_ref").is_none());
 
-        let mut per_space = BTreeMap::new();
-        per_space.insert("ck:space:abc".to_owned(), "kanban".to_owned());
-        let body = build_client_ui_body(Some("night"), Some(true), &per_space, None);
+        let mut per_realm = BTreeMap::new();
+        per_realm.insert("ck:realm:abc".to_owned(), "kanban".to_owned());
+        let body = build_client_ui_body(Some("night"), Some(true), &per_realm, None);
         assert_eq!(body["theme"], "night");
         assert_eq!(body["sidebar_collapsed"], true);
-        assert_eq!(body["per_space_view"]["ck:space:abc"], "kanban");
+        assert_eq!(body["per_realm_view"]["ck:realm:abc"], "kanban");
 
         // Empty theme string is dropped (treated as unset).
         let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);

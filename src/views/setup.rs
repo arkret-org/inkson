@@ -477,7 +477,7 @@ pub fn SetupPanel(
             && let Some(body) = state_store
                 .read()
                 .load()
-                .space_projections
+                .realm_tree_projections
                 .get(selected)
                 .cloned()
         {
@@ -522,7 +522,7 @@ pub fn SetupPanel(
     let projections_snapshot: Vec<(String, Value)> = state_store
         .read()
         .load()
-        .space_projections
+        .realm_tree_projections
         .iter()
         .map(|(id, body)| (id.clone(), body.clone()))
         .collect();
@@ -1111,9 +1111,9 @@ pub fn SetupPanel(
                                                                 // Optimistic sidebar update goes
                                                                 // through the canonical store —
                                                                 // the Realm tree Signal is derived
-                                                                // from `state_store.space_projections`
+                                                                // from `state_store.realm_tree_projections`
                                                                 // by RouterView's derive effect, so
-                                                                // the `save_space_projection`
+                                                                // the `save_realm_tree_projection`
                                                                 // below is the single write the
                                                                 // sidebar picks up.
                                                                 let mut projection_members = Vec::new();
@@ -1130,7 +1130,7 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     vec![actor.clone()]
                                                                 };
-                                                                state_store.write().save_space_projection(
+                                                                state_store.write().save_realm_tree_projection(
                                                                     realm_id.clone(),
                                                                     json!({
                                                                         // Yougen-local schema tag — used by the
@@ -1519,7 +1519,7 @@ pub fn SetupPanel(
                                 div { class: "setup-field",
                                     label { "Space title" }
                                     input {
-                                        "data-testid": "new-realm-title-input",
+                                        "data-testid": "new-space-title-input",
                                         required: true,
                                         "aria-required": "true",
                                         value: "{new_space_title_value}",
@@ -1553,7 +1553,7 @@ pub fn SetupPanel(
                                 div { class: "setup-field setup-field-span-2",
                                     label { "Summary" }
                                     textarea {
-                                        "data-testid": "new-realm-summary-input",
+                                        "data-testid": "new-space-summary-input",
                                         value: "{new_space_summary_value}",
                                         rows: "3",
                                         placeholder: "Optional description.",
@@ -1703,7 +1703,7 @@ pub fn SetupPanel(
                                                             if let Some(default_realm) = default_realm_opt {
                                                                 projection_body["default_realm_id"] = json!(default_realm);
                                                             }
-                                                            state_store.write().save_space_projection(
+                                                            state_store.write().save_realm_tree_projection(
                                                                 space.space_id.clone(),
                                                                 projection_body,
                                                             );

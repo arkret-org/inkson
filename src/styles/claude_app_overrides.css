@@ -2799,7 +2799,7 @@
   background: var(--surface-2);
 }
 
-.status.sidebar-status .space-title {
+.status.sidebar-status .entity-title {
   color: var(--text);
   font-size: 12px;
 }
@@ -2890,12 +2890,12 @@
   letter-spacing: 0.05em;
 }
 
-.space-title,
+.entity-title,
 .title {
   color: var(--text);
 }
 
-.space-meta,
+.card-meta,
 .muted {
   color: var(--text-2);
 }
@@ -2916,7 +2916,7 @@
   gap: 8px;
 }
 
-.realm-tree-node-button.home-space-card {
+.realm-tree-node-button.home-realm-card {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -2925,7 +2925,7 @@
   display: block;
 }
 
-.realm-tree-node-button.home-space-card.active {
+.realm-tree-node-button.home-realm-card.active {
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--accent-ink);
@@ -3008,7 +3008,7 @@
 }
 
 .context-meta,
-.sidebar .space-meta,
+.sidebar .card-meta,
 .sidebar .muted,
 .mobile-status .muted {
   color: var(--nav-muted);
@@ -3049,7 +3049,7 @@
 }
 
 .sidebar-nav-item.is-cross-org,
-.home-space-card.cross-org {
+.home-realm-card.cross-org {
   border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
@@ -3070,7 +3070,7 @@
     var(--surface);
 }
 
-.home-space-card {
+.home-realm-card {
   background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white), color-mix(in srgb, var(--surface-2) 92%, var(--accent) 8%));
 }
 

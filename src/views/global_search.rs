@@ -1,11 +1,11 @@
-//! A6.1 — global cross-Space message search panel.
+//! A6.1 — global cross-Realm message search panel.
 //!
 //! Spec: yougen UX backlog (see `_claude_todos.md` lane A). Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
 //! navigating directly to `/search` opens this panel. The query
 //! round-trips through soland's `POST /_soland/self/index/search` substring
-//! scan (the only cross-space message search endpoint we have for v1);
-//! cross-space coverage will improve once the durable projection
+//! scan (the only cross-Realm message search endpoint we have for v1);
+//! cross-Realm coverage will improve once the durable projection
 //! lands.
 //!
 //! UI states surfaced:
@@ -106,16 +106,16 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let route = match surface {
-        "timeline" | "message" => Route::TimelineSpace {
+        "timeline" | "message" => Route::TimelineRealm {
             realm_id: realm_id.to_owned(),
         },
-        "kanban" | "board" => Route::KanbanSpace {
+        "kanban" | "board" => Route::KanbanRealm {
             realm_id: realm_id.to_owned(),
         },
-        "chat" | "discussion" => Route::KanbanSpace {
+        "chat" | "discussion" => Route::KanbanRealm {
             realm_id: realm_id.to_owned(),
         },
-        "document" => Route::DocumentSpace {
+        "document" => Route::DocumentRealm {
             realm_id: realm_id.to_owned(),
         },
         _ => Route::Realm {
@@ -275,7 +275,7 @@ pub fn GlobalSearchPanel(
                                         span { "{kind}" }
                                         span {
                                             class: "id mono",
-                                            "data-testid": "global-search-result-space",
+                                            "data-testid": "global-search-result-realm",
                                             title: "{realm_id_text}",
                                             "{realm_id_label}"
                                         }
@@ -346,11 +346,11 @@ fn run_search(
     error_msg.set(String::new());
     has_searched.set(true);
     spawn(async move {
-        let space_ids: Vec<String> = Vec::new();
+        let realm_ids: Vec<String> = Vec::new();
         match with_authed_api(&base_url, api_token, move |api: CokretApi| {
             let q = query_trimmed.clone();
             async move {
-                api.index_search(&q, &space_ids, Some(&["message"]), 50)
+                api.index_search(&q, &realm_ids, Some(&["message"]), 50)
                     .await
             }
         })
@@ -397,8 +397,8 @@ mod tests {
         let with_summary = json!({"summary": "matched query"});
         assert_eq!(result_snippet(&with_summary), "matched query");
 
-        let with_title = json!({"title": "Demo Space"});
-        assert_eq!(result_snippet(&with_title), "Demo Space");
+        let with_title = json!({"title": "Demo Realm"});
+        assert_eq!(result_snippet(&with_title), "Demo Realm");
 
         let empty = json!({});
         assert_eq!(result_snippet(&empty), "<no body>");

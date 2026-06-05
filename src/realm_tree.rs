@@ -192,7 +192,7 @@ pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<St
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)?;
-            if kind != "ck.realm.parent" {
+            if kind != "ck.space.parent" {
                 return None;
             }
             for container in [
@@ -243,7 +243,7 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str);
-        if kind != Some("ck.realm.child") {
+        if kind != Some("ck.space.child") {
             continue;
         }
         for container in [
@@ -267,8 +267,7 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
 }
 
 pub(crate) fn realm_tree_parent_id(node: &RealmTreeNode) -> Option<&str> {
-    node
-        .parent_space_id
+    node.parent_space_id
         .as_deref()
         .filter(|parent| !parent.trim().is_empty())
         .or_else(|| {
@@ -323,10 +322,7 @@ pub(crate) fn descendant_node_ids(nodes: &[RealmTreeNode], root_node_id: &str) -
         if let Some(parent) = realm_tree_parent_id(node)
             .filter(|parent| known.contains(*parent) && *parent != node.id.as_str())
         {
-            child_map
-                .entry(parent)
-                .or_default()
-                .push(node.id.as_str());
+            child_map.entry(parent).or_default().push(node.id.as_str());
         }
         for child in node
             .child_space_ids
@@ -334,10 +330,7 @@ pub(crate) fn descendant_node_ids(nodes: &[RealmTreeNode], root_node_id: &str) -
             .map(String::as_str)
             .filter(|child| known.contains(*child) && *child != node.id.as_str())
         {
-            child_map
-                .entry(node.id.as_str())
-                .or_default()
-                .push(child);
+            child_map.entry(node.id.as_str()).or_default().push(child);
         }
     }
     for children in child_map.values_mut() {
@@ -368,19 +361,14 @@ pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
         .map(|(idx, node)| (node.id.as_str(), idx))
         .collect();
     let known: BTreeSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
-    let by_id: BTreeMap<&str, &RealmTreeNode> = nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect();
+    let by_id: BTreeMap<&str, &RealmTreeNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
     let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for node in nodes {
         if let Some(parent) = realm_tree_parent_id(node)
             .filter(|parent| known.contains(*parent) && *parent != node.id.as_str())
         {
-            child_map
-                .entry(parent)
-                .or_default()
-                .push(node.id.as_str());
+            child_map.entry(parent).or_default().push(node.id.as_str());
         }
         for child in node
             .child_space_ids
@@ -388,10 +376,7 @@ pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
             .map(String::as_str)
             .filter(|child| known.contains(*child) && *child != node.id.as_str())
         {
-            child_map
-                .entry(node.id.as_str())
-                .or_default()
-                .push(child);
+            child_map.entry(node.id.as_str()).or_default().push(child);
         }
     }
     for children in child_map.values_mut() {
@@ -590,7 +575,8 @@ pub fn should_retain_projection_after_full_sync(
     if server_set.contains(id) {
         return true;
     }
-    if !id.starts_with("ck:space:") || projection_tree_node_kind(id, body) != RealmTreeNodeKind::Space
+    if !id.starts_with("ck:space:")
+        || projection_tree_node_kind(id, body) != RealmTreeNodeKind::Space
     {
         return false;
     }
@@ -741,13 +727,13 @@ mod tests {
             ),
             Some("ck:space:root".to_owned())
         );
-        // `ck.realm.parent` state event.
+        // `ck.space.parent` state event.
         assert_eq!(
             extract_parent_space_id(
                 "ck:space:child",
                 &json!({
                     "state": [{
-                        "kind": "ck.realm.parent",
+                        "kind": "ck.space.parent",
                         "payload": {"parent_space_id": "ck:space:root"}
                     }]
                 })
@@ -765,7 +751,7 @@ mod tests {
         assert_eq!(
             extract_parent_space_id(
                 "ck:space:child",
-                &json!({"summary": {"parent_space_id": "ck:realm:root"}})
+                &json!({"summary": {"parent_space_id": "ck:flow:root"}})
             ),
             None
         );
@@ -928,16 +914,16 @@ mod tests {
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
                 "flows": [{
                     "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
-                    "title": "Cokret Demo Space",
+                    "title": "Cokret Demo Realm",
                 }],
                 "summary": {
                     "category": "collaboration",
-                    "title": "Cokret Demo Space",
+                    "title": "Cokret Demo Realm",
                     "summary": "Shared demo Space served by soland",
                     "tags": ["demo"],
                     "flow": {
                         "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
-                        "title": "Cokret Demo Space",
+                        "title": "Cokret Demo Realm",
                         "tracks": { "discussion": { "enabled": true } },
                     },
                 },
@@ -953,7 +939,7 @@ mod tests {
             previews[0].id,
             "ck:space:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(previews[0].title, "Cokret Demo Space");
+        assert_eq!(previews[0].title, "Cokret Demo Realm");
         assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
     }
 

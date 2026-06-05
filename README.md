@@ -20,7 +20,7 @@ adapt to your local toolchain.
 
 ## Realm vs Space
 
-After the Phase 1–4 terminology inversion (Round R1.x):
+Current Realm / Space vocabulary:
 
 - **Realm:** security boundary — membership, capability, E2EE, federation.
   Surfaced in the UI as **Workspace** (zh: 工作区).

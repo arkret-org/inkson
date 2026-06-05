@@ -5,7 +5,7 @@
 //! - `flow-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on the
 //!   card's Flow; comments are `ck.message.create` events carrying the card's `flow_id` and
 //!   `track_name = "discussion"`.
-//! - `space-and-place.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
+//! - `realm-and-space.md §4` — kanban cards ARE Flow objects, so reusing the message-create reducer
 //!   is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder

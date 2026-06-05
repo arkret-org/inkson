@@ -274,7 +274,7 @@ impl OpenedLink {
                 RealmRef::Alias(_) => Route::Directory,
             },
             TargetKind::Flow => match self.address.flow.as_deref() {
-                Some(flow) => Route::TimelineSpace {
+                Some(flow) => Route::TimelineRealm {
                     realm_id: typed_flow(flow),
                 },
                 None => Route::Directory,

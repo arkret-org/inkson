@@ -3,7 +3,7 @@
 //! Spec: `crypto-media/encryption-and-audit.md` §10. Every MLS commit MUST
 //! carry preconditions binding it to:
 //! 1. the previous MLS epoch (`mls_epoch_cell.head_eq(prev_epoch)`) — racing commits fail closed.
-//! 2. the Space's `covered_frontier_cell.contains(required_governance_anchor)` — the commit MUST
+//! 2. the Realm's `covered_frontier_cell.contains(required_governance_anchor)` — the commit MUST
 //!    already cover the governance anchor it asserts.
 //!
 //! The commit's effects then:
@@ -35,9 +35,9 @@ use serde::{Deserialize, Serialize};
 /// distinct binding hash when threading the binding through Move proof refs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceBindingPayload {
-    /// MLS group id (Space-scoped).
+    /// MLS group id (Realm-scoped).
     pub group_id: String,
-    /// `ck:space:` typed-id.
+    /// `ck:realm:` typed-id.
     pub realm_id: String,
     /// Epoch the commit advances from.
     pub prev_epoch: u64,
@@ -47,7 +47,7 @@ pub struct GovernanceBindingPayload {
     pub new_schedule_hash: String,
     /// Governance Anchor id this commit asserts coverage of.
     pub attested_governance_anchor: String,
-    /// Cell ref string of the Space's `covered_frontier_cell`.
+    /// Cell ref string of the Realm's `covered_frontier_cell`.
     pub covered_frontier_cell: String,
     /// Tag string written into the `covered_frontier_cell` or-set entry.
     pub covered_frontier_tag: String,

@@ -96,10 +96,8 @@ ck.profile.update	durable_event
 ck.reaction.add	durable_event
 ck.reaction.remove	durable_event
 ck.read_cursor.advance	actor_private_event
-ck.realm.child	durable_event
 ck.realm.create	durable_event
 ck.realm.organization	durable_event
-ck.realm.parent	durable_event
 ck.realm.update	durable_event
 ck.realm.upgrade	durable_event
 ck.receipt.read	ephemeral_event

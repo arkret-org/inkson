@@ -375,18 +375,18 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
     true
 }
 
-/// Spec client-preferences.md §3.7: push (or tombstone) a Space remark to
+/// Spec client-preferences.md §3.7: push (or tombstone) a Realm remark to
 /// soland via `ck.account_data.set`. Same graceful-degradation contract as
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
 /// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
-fn push_space_remark_account_data(
+fn push_realm_remark_account_data(
     base_url: String,
     api_token: String,
-    space_id: String,
-    remark: crate::account_data::SpaceRemark,
+    realm_id: String,
+    remark: crate::account_data::RealmRemark,
 ) {
-    let key = crate::account_data::space_remark_account_data_key(&space_id);
+    let key = crate::account_data::realm_remark_account_data_key(&realm_id);
     spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
@@ -406,7 +406,7 @@ fn push_space_remark_account_data(
         let body = match serde_json::to_value(&remark) {
             Ok(value) => value,
             Err(error) => {
-                tracing::warn!("space remark serialisation failed: {error}");
+                tracing::warn!("Realm remark serialisation failed: {error}");
                 return;
             }
         };
@@ -717,24 +717,24 @@ pub fn SettingsPanel(
     let mut read_receipt_realm_overrides =
         use_signal(|| state_store.read().read_receipt_realm_overrides());
     let mut read_receipt_override_input = use_signal(String::new);
-    // Space remarks editor state (spec client-preferences.md §3.7).
-    // `space_remarks_snapshot` is the resolved BTreeMap rendered for the
-    // list; `space_remark_inputs` keeps unsaved text edits keyed by
-    // space_id so users can type without round-tripping through soland.
-    // `new_space_remark_id` / `new_space_remark_name` drive the "Add by
-    // Space ID" row for Spaces the user has joined but isn't yet
+    // Realm remarks editor state (spec client-preferences.md §3.7).
+    // `realm_remarks_snapshot` is the resolved BTreeMap rendered for the
+    // list; `realm_remark_inputs` keeps unsaved text edits keyed by
+    // realm_id so users can type without round-tripping through soland.
+    // `new_realm_remark_id` / `new_realm_remark_name` drive the "Add by
+    // Realm ID" row for Realms the user has joined but isn't yet
     // tracking locally.
-    let mut space_remarks_snapshot = use_signal(|| state_store.read().space_remarks());
-    let mut space_remark_inputs = use_signal(|| {
+    let mut realm_remarks_snapshot = use_signal(|| state_store.read().realm_remarks());
+    let mut realm_remark_inputs = use_signal(|| {
         state_store
             .read()
-            .space_remarks()
+            .realm_remarks()
             .into_iter()
             .map(|(id, r)| (id, r.local_name))
             .collect::<std::collections::BTreeMap<String, String>>()
     });
-    let mut new_space_remark_id = use_signal(String::new);
-    let mut new_space_remark_name = use_signal(String::new);
+    let mut new_realm_remark_id = use_signal(String::new);
+    let mut new_realm_remark_name = use_signal(String::new);
     let mut contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
     let mut contact_remark_inputs = use_signal(|| {
         state_store
@@ -2365,64 +2365,64 @@ pub fn SettingsPanel(
                     }
                 }
 
-                // ── Space remarks (spec discovery/client-preferences.md §3.7) ─
-                // Actor-private local alias / note / pin for each Space the
+                // ── Realm remarks (spec discovery/client-preferences.md §3.7) ─
+                // Actor-private local alias / note / pin for each Realm the
                 // user has joined. Lets users disambiguate duplicate-titled
-                // Spaces without leaking the remark beyond this account.
+                // Realms without leaking the remark beyond this account.
                 // Pushed to soland via `ck.account_data.set` under
-                // `ck.contacts.space.<space_id>`; soland echoes the same
+                // `ck.contacts.realm.<realm_id>`; soland echoes the same
                 // entries back on the next `/sync` so other devices pick
                 // them up.
-                div { class: "event", "data-testid": "space-remarks-editor",
+                div { class: "event", "data-testid": "realm-remarks-editor",
                     div { class: "event-head",
-                        span { "Space remarks" }
-                        span { "ck.contacts.space.<space_id>" }
-                        HelpTip { text: "Private to this account. The remark replaces the public Space title in the sidebar / dashboard. Other Space members never see it." }
+                        span { "Realm remarks" }
+                        span { "ck.contacts.realm.<realm_id>" }
+                        HelpTip { text: "Private to this account. The remark replaces the public Realm title in the sidebar / dashboard. Other Realm members never see it." }
                     }
                     {
-                        let remarks = space_remarks_snapshot();
+                        let remarks = realm_remarks_snapshot();
                         if remarks.is_empty() {
                             rsx! {
                                 div {
                                     class: "muted",
-                                    "data-testid": "space-remarks-empty",
-                                    "No remarks yet. Add one below to distinguish duplicate-titled Spaces."
+                                    "data-testid": "realm-remarks-empty",
+                                    "No remarks yet. Add one below to distinguish duplicate-titled Realms."
                                 }
                             }
                         } else {
                             rsx! {
-                                for (space_id, remark) in remarks {
+                                for (realm_id, remark) in remarks {
                                     {
-                                        let space_id_label = short_protocol_id(&space_id);
+                                        let realm_id_label = short_protocol_id(&realm_id);
                                         rsx! {
                                             div {
                                                 class: "actions",
-                                                "data-testid": "space-remark-row",
-                                                "data-space-id": "{space_id}",
-                                                span { class: "mono", title: "{space_id}", "{space_id_label}" }
+                                                "data-testid": "realm-remark-row",
+                                                "data-realm-id": "{realm_id}",
+                                                span { class: "mono", title: "{realm_id}", "{realm_id_label}" }
                                                 input {
                                                     r#type: "text",
-                                                    "data-testid": "space-remark-input",
+                                                    "data-testid": "realm-remark-input",
                                                     placeholder: "Local name (private)",
-                                                    value: "{space_remark_inputs().get(&space_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                                    value: "{realm_remark_inputs().get(&realm_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
                                                     oninput: {
-                                                        let id = space_id.clone();
+                                                        let id = realm_id.clone();
                                                         move |evt: FormEvent| {
-                                                            let mut current = space_remark_inputs();
+                                                            let mut current = realm_remark_inputs();
                                                             current.insert(id.clone(), evt.value());
-                                                            space_remark_inputs.set(current);
+                                                            realm_remark_inputs.set(current);
                                                         }
                                                     },
                                                 }
                                                 button {
                                                     class: "secondary",
-                                                    "data-testid": "space-remark-save",
+                                                    "data-testid": "realm-remark-save",
                                                     onclick: {
-                                                        let id = space_id.clone();
+                                                        let id = realm_id.clone();
                                                         let existing = remark.clone();
                                                         move |_| {
                                                             let id = id.clone();
-                                                            let next_name = space_remark_inputs()
+                                                            let next_name = realm_remark_inputs()
                                                                 .get(&id)
                                                                 .cloned()
                                                                 .unwrap_or_default();
@@ -2437,22 +2437,22 @@ pub fn SettingsPanel(
                                                             );
                                                             state_store
                                                                 .write()
-                                                                .set_space_remark(id.clone(), next.clone());
-                                                            space_remarks_snapshot.set(
-                                                                state_store.read().space_remarks(),
+                                                                .set_realm_remark(id.clone(), next.clone());
+                                                            realm_remarks_snapshot.set(
+                                                                state_store.read().realm_remarks(),
                                                             );
                                                             if next.is_empty() {
                                                                 status.set(format!(
-                                                                    "Space remark cleared for {}",
+                                                                    "Realm remark cleared for {}",
                                                                     short_protocol_id(&id)
                                                                 ));
                                                             } else {
                                                                 status.set(format!(
-                                                                    "Space remark saved: {} → {}",
+                                                                    "Realm remark saved: {} → {}",
                                                                     short_protocol_id(&id), next.local_name
                                                                 ));
                                                             }
-                                                            push_space_remark_account_data(
+                                                            push_realm_remark_account_data(
                                                                 base_url(),
                                                                 token(),
                                                                 id,
@@ -2464,27 +2464,27 @@ pub fn SettingsPanel(
                                                 }
                                                 button {
                                                     class: "secondary",
-                                                    "data-testid": "space-remark-delete",
+                                                    "data-testid": "realm-remark-delete",
                                                     onclick: {
-                                                        let id = space_id.clone();
+                                                        let id = realm_id.clone();
                                                         move |_| {
                                                             let id = id.clone();
-                                                            state_store.write().remove_space_remark(&id);
-                                                            let mut inputs = space_remark_inputs();
+                                                            state_store.write().remove_realm_remark(&id);
+                                                            let mut inputs = realm_remark_inputs();
                                                             inputs.remove(&id);
-                                                            space_remark_inputs.set(inputs);
-                                                            space_remarks_snapshot.set(
-                                                                state_store.read().space_remarks(),
+                                                            realm_remark_inputs.set(inputs);
+                                                            realm_remarks_snapshot.set(
+                                                                state_store.read().realm_remarks(),
                                                             );
                                                             status.set(format!(
-                                                                "Space remark cleared for {}",
+                                                                "Realm remark cleared for {}",
                                                                 short_protocol_id(&id)
                                                             ));
-                                                            push_space_remark_account_data(
+                                                            push_realm_remark_account_data(
                                                                 base_url(),
                                                                 token(),
                                                                 id,
-                                                                crate::account_data::SpaceRemark::default(),
+                                                                crate::account_data::RealmRemark::default(),
                                                             );
                                                         }
                                                     },
@@ -2497,63 +2497,61 @@ pub fn SettingsPanel(
                             }
                         }
                     }
-                    div { class: "actions", "data-testid": "space-remark-add-row",
+                    div { class: "actions", "data-testid": "realm-remark-add-row",
                         input {
                             r#type: "text",
-                            "data-testid": "space-remark-add-id",
-                            placeholder: "ck:space:...",
-                            value: "{new_space_remark_id()}",
-                            oninput: move |evt| new_space_remark_id.set(evt.value()),
+                            "data-testid": "realm-remark-add-id",
+                            placeholder: "ck:realm:...",
+                            value: "{new_realm_remark_id()}",
+                            oninput: move |evt| new_realm_remark_id.set(evt.value()),
                         }
                         input {
                             r#type: "text",
-                            "data-testid": "space-remark-add-name",
+                            "data-testid": "realm-remark-add-name",
                             placeholder: "Local name",
-                            value: "{new_space_remark_name()}",
-                            oninput: move |evt| new_space_remark_name.set(evt.value()),
+                            value: "{new_realm_remark_name()}",
+                            oninput: move |evt| new_realm_remark_name.set(evt.value()),
                         }
                         button {
                             class: "secondary",
-                            "data-testid": "space-remark-add-save",
+                            "data-testid": "realm-remark-add-save",
                             onclick: move |_| {
-                                let space_id = new_space_remark_id().trim().to_owned();
-                                let local_name = new_space_remark_name().trim().to_owned();
-                                if space_id.is_empty() || local_name.is_empty() {
+                                let realm_id = new_realm_remark_id().trim().to_owned();
+                                let local_name = new_realm_remark_name().trim().to_owned();
+                                if realm_id.is_empty() || local_name.is_empty() {
                                     status.set(
-                                        "Enter both a Space ID and a local name".to_owned(),
+                                        "Enter both a Realm ID and a local name".to_owned(),
                                     );
                                     return;
                                 }
-                                if !space_id.starts_with("ck:space:") {
+                                if !realm_id.starts_with("ck:realm:") {
                                     status.set(
-                                        "Space ID must start with ck:space:".to_owned(),
+                                        "Realm ID must start with ck:realm:".to_owned(),
                                     );
                                     return;
                                 }
                                 let now_rfc3339 = chrono::Utc::now()
                                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                                let remark = crate::account_data::SpaceRemark {
-                                    version: 1,
-                                    space_id: space_id.clone(),
-                                    local_name: local_name.clone(),
-                                    saved_at: Some(now_rfc3339.clone()),
-                                    updated_at: Some(now_rfc3339),
-                                    ..crate::account_data::SpaceRemark::default()
-                                };
+                                let mut remark = crate::account_data::RealmRemark::new(
+                                    realm_id.clone(),
+                                    local_name.clone(),
+                                );
+                                remark.saved_at = Some(now_rfc3339.clone());
+                                remark.updated_at = Some(now_rfc3339);
                                 state_store
                                     .write()
-                                    .set_space_remark(space_id.clone(), remark.clone());
-                                space_remarks_snapshot.set(state_store.read().space_remarks());
-                                new_space_remark_id.set(String::new());
-                                new_space_remark_name.set(String::new());
+                                    .set_realm_remark(realm_id.clone(), remark.clone());
+                                realm_remarks_snapshot.set(state_store.read().realm_remarks());
+                                new_realm_remark_id.set(String::new());
+                                new_realm_remark_name.set(String::new());
                                 status.set(format!(
-                                    "Space remark saved: {} → {local_name}",
-                                    short_protocol_id(&space_id)
+                                    "Realm remark saved: {} → {local_name}",
+                                    short_protocol_id(&realm_id)
                                 ));
-                                push_space_remark_account_data(
+                                push_realm_remark_account_data(
                                     base_url(),
                                     token(),
-                                    space_id,
+                                    realm_id,
                                     remark,
                                 );
                             },
@@ -2849,7 +2847,7 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { {crate::i18n::tr("settings.privacy.blocked_users.title")} }
                         span { class: "badge", "{blocklist_snapshot.read().len()}" }
-                        HelpTip { text: "Local actor-private filter. Space-wide blocking belongs in moderation policy; account-data writes use ck.account.blocklist." }
+                        HelpTip { text: "Local actor-private filter. Realm-wide blocking belongs in moderation policy; account-data writes use ck.account.blocklist." }
                     }
                     div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
                         {
@@ -3337,11 +3335,11 @@ mod tests {
     /// rename can't silently desync devices.
     #[test]
     fn build_read_receipt_preferences_body_has_canonical_field_shape() {
-        let mut spaces = BTreeMap::new();
-        spaces.insert("ck:realm:demo".to_owned(), false);
+        let mut realms = BTreeMap::new();
+        realms.insert("ck:realm:demo".to_owned(), false);
         let mut flows = BTreeMap::new();
         flows.insert("ck:flow:demo".to_owned(), true);
-        let body = build_read_receipt_preferences_body(true, &spaces, &flows);
+        let body = build_read_receipt_preferences_body(true, &realms, &flows);
         assert_eq!(body["default_send"], serde_json::Value::Bool(true));
         assert_eq!(body["realm_overrides"]["ck:realm:demo"], false);
         assert_eq!(body["flow_overrides"]["ck:flow:demo"], true);

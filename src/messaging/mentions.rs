@@ -107,16 +107,16 @@ impl MentionPickerState {
 
 /// E2EE-safe mention routing hash.
 ///
-/// Per `discovery/push-notifications.md §4.5`, when the Space is
+/// Per `discovery/push-notifications.md §4.5`, when the Realm is
 /// encrypted the client MUST NOT put `mentions: [did, ...]` on the
 /// outer event in plaintext — the server only sees a list of opaque
 /// hashes (`content.mention_sidecar_hash`) it can match against per-actor
 /// inbox subscriptions without learning the mentioned DID.
 ///
 /// `salt` is the per-Realm mention salt issued by soland; until that
-/// projection exists, callers pass the space_id as a stand-in (the
+/// projection exists, callers pass the realm_id as a stand-in (the
 /// hash is still collision-resistant against random DIDs; the privacy
-/// guarantee just degrades to "server already knew the space_id").
+/// guarantee just degrades to "server already knew the realm_id").
 ///
 /// Returns lowercase hex.
 pub fn mention_sidecar_hash(salt: &str, did: &str) -> String {

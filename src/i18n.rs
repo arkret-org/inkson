@@ -445,7 +445,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("dashboard.realms_label", "Realms");
     dict.set("dashboard.realms_delta_search", "Search or join a Realm");
     dict.set("dashboard.realms_delta_signin", "Sign in to load realms");
-    dict.set("dashboard.current_space", "Current Realm");
+    dict.set("dashboard.current_realm", "Current Realm");
     dict.set("dashboard.workspace_setup", "Realm Setup");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -845,7 +845,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "notifications.filtered_body",
-        "All loaded notifications are currently hidden by archive, type, or per-space mute rules.",
+        "All loaded notifications are currently hidden by archive, type, or per-Realm mute rules.",
     );
 
     // Verify Device (cross-signing / SAS)
@@ -930,7 +930,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_x", "Horizontal");
     dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
-    // A6.1 — global cross-space message search.
+    // A6.1 — global cross-Realm message search.
     dict.set("search.title", "Search messages");
     dict.set("search.placeholder", "Search across all your realms...");
     dict.set(
@@ -1005,8 +1005,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("friendly.sync.pending", "Syncing…");
     dict.set("friendly.sync.frontier", "Sync state");
 
-    // R1.7 realm/space inversion — friendly labels for the security
-    // boundary (Realm) and container Space split.
+    // Friendly labels for the security-boundary Realm and container Space split.
     dict.set("friendly.realm", "Realm");
     dict.set("friendly.realm.short", "Realm");
     dict.set("friendly.realm.description", "Security boundary — membership, policy, federation, and encryption are governed at this level.");
@@ -1465,7 +1464,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.realms_label", "Realm");
     dict.set("dashboard.realms_delta_search", "搜索或加入 Realm");
     dict.set("dashboard.realms_delta_signin", "登录后加载 Realm");
-    dict.set("dashboard.current_space", "当前 Realm");
+    dict.set("dashboard.current_realm", "当前 Realm");
     dict.set("dashboard.workspace_setup", "Realm 设置");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -1945,7 +1944,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("friendly.sync.pending", "同步中…");
     dict.set("friendly.sync.frontier", "同步状态");
 
-    // R1.7：Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
+    // Realm 是安全边界（成员/策略/联邦/E2EE），Space 是容器（导航/看板/列表）。
     dict.set("friendly.realm", "Realm");
     dict.set("friendly.realm.short", "Realm");
     dict.set(

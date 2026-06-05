@@ -345,7 +345,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     {
         let mut store = state_store.write();
         // Perf (P0): a single sync response can touch the cursor, dozens of
-        // space projections, anchor views, member identity events and account
+        // realm-tree projections, anchor views, member identity events and account
         // data — each setter used to flush the *entire* `ClientLocalState` to
         // disk/localStorage. Wrap the whole apply in one batch so it persists
         // exactly once.
@@ -361,25 +361,25 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
                 let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
                 let keep_set = crate::app::full_sync_projection_keep_set(
                     &server_set,
-                    &store.load().space_projections,
+                    &store.load().realm_tree_projections,
                 );
-                let pruned = store.retain_space_projections(|id| keep_set.contains(id));
+                let pruned = store.retain_realm_tree_projections(|id| keep_set.contains(id));
                 if !pruned.is_empty() {
                     tracing::info!(
                         pruned_count = pruned.len(),
-                        "sync engine: full-sync pruned stale space projections",
+                        "sync engine: full-sync pruned stale realm-tree projections",
                     );
                 }
             }
             // Explicit `left_realms` deltas — meaningful primarily on
             // incremental sync, but cheap to apply on full sync too.
             for left_id in &response.left_realms {
-                store.forget_space(left_id);
+                store.forget_realm_tree_projection(left_id);
             }
             for (id, body) in &response.realms {
-                store.save_space_projection(id.clone(), body.clone());
+                store.save_realm_tree_projection(id.clone(), body.clone());
                 let view = LocalAnchorView::from_sync_body(body);
-                store.set_anchor_view(id.clone(), view);
+                store.set_realm_anchor_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
                 // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
@@ -392,13 +392,14 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
         }); // store.batch — single coalesced flush happens here
     }
 
-    // The `realm_tree_nodes` Signal is derived from `state_store.space_projections`
+    // The `realm_tree_nodes` Signal is derived from `state_store.realm_tree_projections`
     // via a use_effect in `RouterView` — we don't `set` it here. We do
     // still need a reconciled snapshot for status text + selected_realm_id
     // bookkeeping.
     let _ = realm_tree_nodes; // suppress unused capture; consumed by the derive effect
-    let reconciled =
-        crate::app::realm_tree_nodes_from_sync_realms(&state_store.read().load().space_projections);
+    let reconciled = crate::app::realm_tree_nodes_from_sync_realms(
+        &state_store.read().load().realm_tree_projections,
+    );
     if reconciled.is_empty() {
         status.set(crate::views::ConnectionState::Empty.label().to_owned());
     } else {
@@ -434,7 +435,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     sync_cursor.set(response.cursor.clone());
 }
 
-/// R3.1 MID-2 — walk a space projection's `members[]` roster looking
+/// R3.1 MID-2 — walk a Realm projection's `members[]` roster looking
 /// for inlined `identity_events[]` arrays. Each
 /// `ck.member.identity.update` envelope is recorded on the
 /// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
@@ -589,18 +590,18 @@ fn apply_account_data(
             }
             continue;
         }
-        // ck.contacts.space.<space_id> — actor-private Space remarks.
-        let Some(space_id) = crate::account_data::space_id_from_space_remark_key(data_type) else {
+        // ck.contacts.realm.<realm_id> — actor-private Realm remarks.
+        let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(data_type) else {
             continue;
         };
         let Some(content) = entry.get("content") else {
             continue;
         };
-        match serde_json::from_value::<crate::account_data::SpaceRemark>(content.clone()) {
-            Ok(remark) => store.set_space_remark(space_id.to_owned(), remark),
+        match serde_json::from_value::<crate::account_data::RealmRemark>(content.clone()) {
+            Ok(remark) => store.set_realm_remark(realm_id.to_owned(), remark),
             Err(error) => {
                 tracing::warn!(
-                    "sync engine: ignoring malformed Space remark for {space_id}: {error}",
+                    "sync engine: ignoring malformed Realm remark for {realm_id}: {error}",
                 );
             }
         }
@@ -643,8 +644,8 @@ mod tests {
                 .as_nanos(),
         ));
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("ck:realm:a", json!({"summary": {"title": "A"}}));
-        store.save_space_projection(
+        store.save_realm_tree_projection("ck:realm:a", json!({"summary": {"title": "A"}}));
+        store.save_realm_tree_projection(
             "ck:space:child",
             json!({
                 "__kind": "space",
@@ -652,7 +653,7 @@ mod tests {
                 "summary": {"title": "Child"}
             }),
         );
-        store.save_space_projection("ck:space:b", json!({"summary": {"title": "B"}}));
+        store.save_realm_tree_projection("ck:space:b", json!({"summary": {"title": "B"}}));
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:42");
@@ -662,15 +663,17 @@ mod tests {
 
         // Mirror the engine's full-sync prune step.
         let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
-        let keep_set =
-            crate::app::full_sync_projection_keep_set(&server_set, &store.load().space_projections);
-        let pruned = store.retain_space_projections(|id| keep_set.contains(id));
+        let keep_set = crate::app::full_sync_projection_keep_set(
+            &server_set,
+            &store.load().realm_tree_projections,
+        );
+        let pruned = store.retain_realm_tree_projections(|id| keep_set.contains(id));
         assert_eq!(pruned, vec!["ck:space:b".to_owned()]);
 
         let state = store.load();
-        assert!(state.space_projections.contains_key("ck:realm:a"));
-        assert!(state.space_projections.contains_key("ck:space:child"));
-        assert!(!state.space_projections.contains_key("ck:space:b"));
+        assert!(state.realm_tree_projections.contains_key("ck:realm:a"));
+        assert!(state.realm_tree_projections.contains_key("ck:space:child"));
+        assert!(!state.realm_tree_projections.contains_key("ck:space:b"));
         assert!(!state.drafts.contains_key("ck:space:b"));
     }
 
@@ -684,8 +687,8 @@ mod tests {
                 .as_nanos(),
         ));
         let mut store = LocalStateStore::with_path(path);
-        store.save_space_projection("ck:space:a", json!({"name": "A"}));
-        store.save_space_projection("ck:space:b", json!({"name": "B"}));
+        store.save_realm_tree_projection("ck:space:a", json!({"name": "A"}));
+        store.save_realm_tree_projection("ck:space:b", json!({"name": "B"}));
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
@@ -693,12 +696,12 @@ mod tests {
 
         // Mirror the engine's left_realms step.
         for id in &response.left_realms {
-            store.forget_space(id);
+            store.forget_realm_tree_projection(id);
         }
 
         let state = store.load();
-        assert!(state.space_projections.contains_key("ck:space:a"));
-        assert!(!state.space_projections.contains_key("ck:space:b"));
+        assert!(state.realm_tree_projections.contains_key("ck:space:a"));
+        assert!(!state.realm_tree_projections.contains_key("ck:space:b"));
         assert!(!state.drafts.contains_key("ck:space:b"));
     }
 }

@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionGroup {
     Common,
-    #[serde(alias = "PlaceFlow")]
     SpaceFlow,
     Conversation,
     Morph,
@@ -27,10 +26,8 @@ impl ActionGroup {
     pub fn actions(&self) -> &'static [&'static str] {
         match self {
             Self::Common => &[
-                // R1.7 realm/space inversion: capabilities targeting the
-                // security boundary now live in the `ck.realm.*` namespace;
-                // container actions (former `ck.place.*`) take the
-                // `ck.space.*` slot.
+                // Security-boundary capabilities live in the `ck.realm.*`
+                // namespace; container actions live in `ck.space.*`.
                 "ck.realm.read",
                 "ck.realm.update",
                 "ck.space.create",
@@ -652,7 +649,7 @@ mod tests {
         // ActionGroup table mirrors that exactly. A bare-name lookup
         // (`flow.create`) is now an explicit miss so we catch any
         // regression that re-introduces the legacy short form.
-        // R1.7: security boundary actions live in ck.realm.*; container
+        // Realm security-boundary actions live in ck.realm.*; Space
         // container actions live in ck.space.*.
         assert!(ActionGroup::Common.contains("ck.realm.read"));
         assert!(ActionGroup::Common.contains("ck.flow.create"));
@@ -665,8 +662,7 @@ mod tests {
     #[test]
     fn test_lifecycle_archive_restore_symmetry() {
         // Spec contract: every lifecycle family with `*.archive` MUST also
-        // expose `*.restore` (canonical archived -> active transition). After
-        // R1.7 the former `ck.place.*` capabilities are now `ck.space.*`.
+        // expose `*.restore` (canonical archived -> active transition).
         assert!(ActionGroup::Common.contains("ck.flow.archive"));
         assert!(ActionGroup::Common.contains("ck.flow.restore"));
         assert!(ActionGroup::Common.contains("ck.space.archive"));

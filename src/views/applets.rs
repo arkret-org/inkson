@@ -279,11 +279,11 @@ pub fn AppletsPanel(
                             "data-testid": "applet-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_realm_id.clone();
+                                let realm = selected_realm_id.clone();
                                 let actor = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let actor = actor.clone();
                                     let did = service_did().trim().to_owned();
                                     let ns = namespace().trim().to_owned();
@@ -301,7 +301,7 @@ pub fn AppletsPanel(
                                     spawn(async move {
                                         let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
                                         let op = crate::operation::cx_ops::applet_registration(
-                                            &space, &actor, &did, &ns, &caps_refs,
+                                            &realm, &actor, &did, &ns, &caps_refs,
                                         )
                                         .build("yougen");
                                         match with_authed_api(&base, api_token, |api| async move {

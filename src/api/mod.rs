@@ -119,7 +119,7 @@ use crate::models::{
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
-    scope_id_as_realm_id, uuid_v7,
+    trim_realm_id, uuid_v7,
 };
 
 /// B-F / CKP-0009 §3 — default home-policy discriminator passed on
@@ -1048,7 +1048,7 @@ pub fn build_typing_envelope(
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
@@ -1087,7 +1087,7 @@ pub fn build_receipt_read_envelope(
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
     let actor = cokret_sdk::Did::new(actor_did)
@@ -1446,8 +1446,8 @@ pub fn build_realm_create_event(
         } else {
             federation_policy
         };
-    let realm_object_id = scope_id_as_realm_id(realm_id);
-    let envelope_realm_id = scope_id_as_realm_id(realm_id);
+    let realm_object_id = trim_realm_id(realm_id);
+    let envelope_realm_id = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
     let mut object = json!({
@@ -1595,7 +1595,7 @@ pub fn build_space_create_event(
     let mut object = json!({
         "id": space_id,
         "schema": "ck.schema.space.v1",
-        "realm_id": scope_id_as_realm_id(realm_id),
+        "realm_id": trim_realm_id(realm_id),
         "kind": kind,
         "title": title,
         "state": "active",
@@ -1615,7 +1615,7 @@ pub fn build_space_create_event(
     if let Some(default_realm) = default_realm_id
         && !default_realm.trim().is_empty()
     {
-        object["default_realm_id"] = Value::String(scope_id_as_realm_id(default_realm.trim()));
+        object["default_realm_id"] = Value::String(trim_realm_id(default_realm.trim()));
     }
 
     let cell = space_cell("ck.component.space.create.v1", space_id);
@@ -1742,7 +1742,7 @@ pub fn build_realm_state_event(
         }
     };
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell(cell_family, &realm_id_wire);
     let preconditions = vec![Precondition {
         cell: cell.clone(),
@@ -1785,7 +1785,7 @@ pub fn build_realm_archive_event(
     reason: Option<&str>,
 ) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
     let mut payload = json!({ "archived": archived });
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
@@ -1833,7 +1833,7 @@ pub fn build_realm_tombstone_event(
         return Err(anyhow::anyhow!("reason is required for ck.realm.tombstone"));
     }
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
     let payload = json!({
         "reason": reason,
@@ -1872,7 +1872,7 @@ pub fn build_realm_destroy_event(
         return Err(anyhow::anyhow!("reason is required for ck.realm.destroy"));
     }
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
     let payload = json!({ "reason": reason });
     let effects = vec![Effect {
@@ -1953,7 +1953,7 @@ pub fn build_plaintext_visible_services_event(
         return Ok(None);
     }
     let created_at = event_timestamp();
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell(
         "ck.component.realm.plaintext_visible_services.v1",
         &realm_id_wire,
@@ -2086,7 +2086,7 @@ fn build_member_state_transition_event_with_binding(
     if let Some(delivery_binding) = delivery_binding {
         payload["delivery_binding"] = delivery_binding;
     }
-    let realm_id_wire = scope_id_as_realm_id(realm_id);
+    let realm_id_wire = trim_realm_id(realm_id);
     let cell = format!(
         "{}:{}",
         space_cell("ck.component.member.state.v1", &realm_id_wire),
@@ -2564,10 +2564,10 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn events_query_path(space_id: &str) -> String {
+fn events_query_path(realm_id: &str) -> String {
     format!(
         "_cokret/self/events/query?realms={}",
-        query_component(space_id)
+        query_component(realm_id)
     )
 }
 
@@ -2575,13 +2575,13 @@ fn events_query_path(space_id: &str) -> String {
 // streaming reader; the wasm build has no streaming subscribe path yet.
 #[cfg(not(target_arch = "wasm32"))]
 fn events_subscribe_path(
-    space_id: &str,
+    realm_id: &str,
     after: Option<&str>,
     include_history: Option<bool>,
 ) -> String {
     let mut url = format!(
         "_cokret/self/events/subscribe?realms={}",
-        query_component(space_id)
+        query_component(realm_id)
     );
     if let Some(after) = after {
         url.push_str("&after=");
@@ -2721,7 +2721,7 @@ fn select_join_candidate<'a>(
     resolved: &'a ResolveRealmResponse,
     join_method: &str,
 ) -> anyhow::Result<&'a RealmJoinCandidate> {
-    let realm_id = scope_id_as_realm_id(resolved.realm_preview.projection_realm_id());
+    let realm_id = trim_realm_id(resolved.realm_preview.projection_realm_id());
     resolved
         .join_candidates
         .iter()
@@ -2833,7 +2833,7 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/gate/auth/logout",
     "_soland/gate/auth/bridge/describe",
     // admin —— 运维面,deployment-local(按设计不入协议)
-    "_soland/admin/spaces/{space_id}/anchorer",
+    "_soland/admin/realms/{realm_id}/anchorer",
 ];
 
 /// 规整后的请求路径是否被红线放行:非 `_soland/` 一律放行;`_soland/` 仅当命中

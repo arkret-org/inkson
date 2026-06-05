@@ -45,22 +45,25 @@ pub fn DashboardPanel(
         .any(|space| space.kind == RealmTreeNodeKind::Realm);
     let has_product_spaces = realm_tree_snapshot
         .iter()
-        .any(|space| space.kind == RealmTreeNodeKind::Space);
+        .any(|node| node.kind == RealmTreeNodeKind::Space);
     let projection_label = projection_collection_label(has_realms, has_product_spaces);
-    let recent_projection_label = recent_projection_collection_label(has_realms, has_product_spaces);
-    let projection_browse_label = projection_collection_browse_label(has_realms, has_product_spaces);
-    let projection_signin_label = projection_collection_signin_label(has_realms, has_product_spaces);
+    let recent_projection_label =
+        recent_projection_collection_label(has_realms, has_product_spaces);
+    let projection_browse_label =
+        projection_collection_browse_label(has_realms, has_product_spaces);
+    let projection_signin_label =
+        projection_collection_signin_label(has_realms, has_product_spaces);
     let projection_empty_label = projection_collection_empty_label(has_realms, has_product_spaces);
     let projection_empty_help_label =
         projection_collection_empty_help_label(has_realms, has_product_spaces);
     let active_node = realm_tree_snapshot
         .iter()
-        .find(|space| space.id == selected_realm_id())
+        .find(|node| node.id == selected_realm_id())
         .cloned()
         .or_else(|| realm_tree_snapshot.first().cloned());
     let active_projection_kind_label = active_node
         .as_ref()
-        .map(|space| projection_kind_label(space.kind))
+        .map(|node| projection_kind_label(node.kind))
         .unwrap_or("Realm");
 
     let notification_summaries = {
@@ -77,7 +80,8 @@ pub fn DashboardPanel(
         .map(|space| space.id.clone())
         .unwrap_or_else(|| selected_realm_id());
     let active_projection_realm_id =
-        projection_realm_id_for_known_node(&realm_tree_snapshot, &active_node_id).unwrap_or_default();
+        projection_realm_id_for_known_node(&realm_tree_snapshot, &active_node_id)
+            .unwrap_or_default();
     if has_session
         && !active_node_id.trim().is_empty()
         && !active_projection_realm_id.trim().is_empty()
@@ -162,7 +166,7 @@ pub fn DashboardPanel(
                     }
                     Link {
                         class: "metric",
-                        to: Route::KanbanSpace { realm_id: space.id.clone() },
+                        to: Route::KanbanRealm { realm_id: space.id.clone() },
                         onclick: {
                             let id = space.id.clone();
                             move |_| {
@@ -224,19 +228,21 @@ pub fn DashboardPanel(
                                     }
                                 }
                             } else {
-                                for space in realm_tree_snapshot.iter() {
+                                for node in realm_tree_snapshot.iter() {
                                     {
                                         // Spec client-preferences.md §3.7:
-                                        // prefer the actor-private Space
+                                        // prefer the actor-private Realm
                                         // remark `local_name` over the public
-                                        // `Space.title` when set.
-                                        let remark = state_store
-                                            .read()
-                                            .space_remark(&space.id);
+                                        // Realm title when set.
+                                        let remark = if node.kind == crate::models::RealmTreeNodeKind::Realm {
+                                            state_store.read().realm_remark(&node.id)
+                                        } else {
+                                            None
+                                        };
                                         let display_name = remark
                                             .as_ref()
-                                            .map(|r| r.display_name(&space.title).to_owned())
-                                            .unwrap_or_else(|| space.title.clone());
+                                            .map(|r| r.display_name(&node.title).to_owned())
+                                            .unwrap_or_else(|| node.title.clone());
                                         let avatar_seed = display_name
                                             .chars()
                                             .next()
@@ -244,15 +250,15 @@ pub fn DashboardPanel(
                                         let has_remark = remark
                                             .as_ref()
                                             .is_some_and(|r| !r.local_name.trim().is_empty());
-                                        let kind_label = projection_kind_label(space.kind);
+                                        let kind_label = projection_kind_label(node.kind);
                                         rsx! {
                                         Link {
                                             class: "m-list-item",
                                             "data-testid": "dashboard-realm-tree-card",
-                                            title: "{space.title}",
-                                            to: Route::Realm { realm_id: space.id.clone() },
+                                            title: "{node.title}",
+                                            to: Route::Realm { realm_id: node.id.clone() },
                                             onclick: {
-                                                let id = space.id.clone();
+                                                let id = node.id.clone();
                                                 move |_| {
                                                     selected_realm_id.set(id.clone());
                                                     view.set(super::View::Timeline);
@@ -262,13 +268,13 @@ pub fn DashboardPanel(
                                             span { class: "grow",
                                                 span { class: "title", "{display_name}" }
                                                 span { class: "sub",
-                                                    {space.description.as_deref().unwrap_or("Open timeline")}
+                                                    {node.description.as_deref().unwrap_or("Open timeline")}
                                                 }
                                             }
                                             if has_remark {
                                                 span {
                                                     class: "pill muted xs",
-                                                    "data-testid": "dashboard-realm-tree-space-remark-badge",
+                                                    "data-testid": "dashboard-realm-tree-realm-remark-badge",
                                                     "备注"
                                                 }
                                             }
@@ -611,7 +617,10 @@ fn projection_collection_empty_label(has_realms: bool, has_product_spaces: bool)
     }
 }
 
-fn projection_collection_empty_help_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+fn projection_collection_empty_help_label(
+    has_realms: bool,
+    has_product_spaces: bool,
+) -> &'static str {
     match (has_realms, has_product_spaces) {
         (true, true) => "The connected server did not return realms or Spaces yet.",
         (false, true) => "The connected server did not return Spaces yet.",

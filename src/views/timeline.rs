@@ -268,7 +268,7 @@ fn public_update_requires_sanitization(body: &str) -> bool {
 }
 
 pub(crate) fn message_create_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     thread_id: Option<&str>,
     body: &str,
@@ -276,9 +276,9 @@ pub(crate) fn message_create_operation(
 ) -> EventEnvelope {
     // Spec `event-payload.schema.json` `message_create_payload` requires
     // `flow_id` and `track_name` (`flow-and-message.md` §2). The default Flow
-    // for a Realm/Space is `ck:flow:<uuid>` (typed-id re-tag, matching
-    // soland's `flow_id_from_space_id`); the default track is "discussion".
-    let flow_id = default_flow_id_for_scope(space_id);
+    // for a Realm is `ck:flow:<uuid>` (typed-id re-tag, matching
+    // soland's `flow_id_from_realm_id`); the default track is "discussion".
+    let flow_id = default_flow_id_for_realm(realm_id);
     let mut content = cokret_sdk::ContentBlock::text(body);
     if let Some(priority) = incident_priority.and_then(incident_priority_wire_value) {
         content = content.with_field("priority", json!(priority)).with_field(
@@ -297,7 +297,7 @@ pub(crate) fn message_create_operation(
     if let Some(thread_id) = thread_id {
         payload = payload.with_reply_to(thread_id);
     }
-    OperationBuilder::new(space_id, actor, "ck.message.create")
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
         .body(sdk_payload_value(
             payload.to_value(),
             "timeline ck.message.create payload serialize",
@@ -305,20 +305,20 @@ pub(crate) fn message_create_operation(
         .build("yougen")
 }
 
-fn default_flow_id_for_scope(scope_id: &str) -> String {
-    scope_id
+fn default_flow_id_for_realm(realm_id: &str) -> String {
+    realm_id
         .strip_prefix("ck:realm:")
         .map(|suffix| format!("ck:flow:{suffix}"))
-        .unwrap_or_else(|| scope_id.to_owned())
+        .unwrap_or_else(|| realm_id.to_owned())
 }
 
 fn message_revise_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     body: &str,
 ) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.message.revise")
+    OperationBuilder::new(realm_id, actor, "ck.message.revise")
         .target_ref(event_id)
         .body(json!({
             "content": text_content(body),
@@ -340,7 +340,7 @@ fn pending_send_error_is_permanent(error: &str) -> bool {
 
 async fn submit_timeline_message_with_plaintext_retry(
     api: &crate::api::CokretApi,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     operation: &EventEnvelope,
 ) -> anyhow::Result<crate::models::SubmitEventResponse> {
@@ -353,7 +353,7 @@ async fn submit_timeline_message_with_plaintext_retry(
                 return Err(error);
             }
             api.update_realm_metadata(
-                space_id,
+                realm_id,
                 actor_did,
                 json!({"plaintext_visible_services": [service_did]}),
             )
@@ -370,12 +370,12 @@ async fn submit_timeline_message_with_plaintext_retry(
 }
 
 fn message_redact_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     reason: Option<&str>,
 ) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.message.redact")
+    OperationBuilder::new(realm_id, actor, "ck.message.redact")
         .target_ref(event_id)
         .body(json!({
             "reason": reason,
@@ -384,8 +384,8 @@ fn message_redact_operation(
         .build("yougen")
 }
 
-fn reaction_add_operation(space_id: &str, actor: &str, event_id: &str, key: &str) -> EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.reaction.add")
+fn reaction_add_operation(realm_id: &str, actor: &str, event_id: &str, key: &str) -> EventEnvelope {
+    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -401,7 +401,7 @@ pub fn TimelinePanel(
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
-    selected_space_scope: Vec<String>,
+    selected_navigation_scope: Vec<String>,
     timeline: Signal<Vec<TimelineEvent>>,
     draft: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -454,10 +454,10 @@ pub fn TimelinePanel(
         .collect();
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
-    let selected_space_c = selected_realm_id.clone();
+    let selected_realm_c = selected_realm_id.clone();
     let account_did_key = account_did.clone();
     let device_id_key = device_id.clone();
-    let selected_space_key = selected_realm_id.clone();
+    let selected_realm_key = selected_realm_id.clone();
     let latest_read_cursor = state_store.read().latest_read_cursor(&selected_realm_id);
     let latest_read_cursor_event_id = latest_read_cursor
         .as_ref()
@@ -472,11 +472,11 @@ pub fn TimelinePanel(
         .iter()
         .enumerate()
         .filter(|(_, event)| {
-            selected_space_scope.is_empty()
+            selected_navigation_scope.is_empty()
                 || event
                     .realm_id
                     .as_deref()
-                    .map(|realm_id| selected_space_scope.iter().any(|id| id == realm_id))
+                    .map(|realm_id| selected_navigation_scope.iter().any(|id| id == realm_id))
                     .unwrap_or(true)
         })
         .map(|(i, event)| (i, event.clone()))
@@ -532,20 +532,20 @@ pub fn TimelinePanel(
     // button". This
     // future scans the current `timeline()` snapshot for events
     // carrying encrypted content, attempts a local MLS decrypt via
-    // the persisted snapshot for the Space, and on each new success
+    // the persisted snapshot for the Realm, and on each new success
     // emits a single `ck.audit.accessed` (dedup keyed by event_id).
     // Non-attested servers ignore the event; attested ones use it.
     let audit_accessed_emitted = use_signal(std::collections::HashSet::<String>::new);
     {
         let base_a = base_url.clone();
         let token_a = token;
-        let space_a = selected_realm_id.clone();
+        let realm_a = selected_realm_id.clone();
         let actor_a = account_did.clone();
         let device_a = device_id.clone();
         let mut emitted_sig = audit_accessed_emitted;
         use_future(move || {
             let base = base_a.clone();
-            let space = space_a.clone();
+            let realm = realm_a.clone();
             let actor = actor_a.clone();
             let device = device_a.clone();
             async move {
@@ -570,7 +570,7 @@ pub fn TimelinePanel(
                 let api_token = token_a();
                 for (event_id, payload_value) in candidates {
                     let Some(plaintext) =
-                        try_local_mls_decrypt(state_store, &space, &actor, &device, &payload_value)
+                        try_local_mls_decrypt(state_store, &realm, &actor, &device, &payload_value)
                     else {
                         continue;
                     };
@@ -578,13 +578,13 @@ pub fn TimelinePanel(
                     emitted_sig.write().insert(event_id.clone());
                     let base = base.clone();
                     let api_token = api_token.clone();
-                    let space = space.clone();
+                    let realm = realm.clone();
                     let actor = actor.clone();
                     let device = device.clone();
                     spawn(async move {
                         let _ = with_authed_api(&base, api_token, |api| async move {
                             let op = crate::audit::build_audit_accessed(
-                                &space, &actor, &event_id, &device,
+                                &realm, &actor, &event_id, &device,
                             )
                             .build("yougen");
                             api.submit_event_envelope(&op).await
@@ -607,7 +607,7 @@ pub fn TimelinePanel(
     let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_realm_id);
     let epoch_update_required = state_store
         .read()
-        .space_has_pending_mls_binding(&selected_realm_id);
+        .realm_has_pending_mls_binding(&selected_realm_id);
     let composer_blocked = realm_is_destroyed || epoch_update_required;
 
     rsx! {
@@ -845,20 +845,20 @@ pub fn TimelinePanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let event_id = event.id.clone();
-                                        let space = selected_realm_id.clone();
+                                        let realm = selected_realm_id.clone();
                                         let topic_id = event.thread_id.clone();
                                         let actor = account_did.clone();
                                         let device = device_id.clone();
                                         move |_| {
-                                            if event_id.trim().is_empty() || space.trim().is_empty() {
-                                                write_status.set("mark read skipped: missing event or space".to_owned());
+                                            if event_id.trim().is_empty() || realm.trim().is_empty() {
+                                                write_status.set("mark read skipped: missing event or realm".to_owned());
                                                 return;
                                             }
 
                                             let marker = state_store.write().save_read_cursor(
                                                 actor.clone(),
                                                 device.clone(),
-                                                space.clone(),
+                                                realm.clone(),
                                                 topic_id.clone(),
                                                 event_id.clone(),
                                             );
@@ -897,7 +897,7 @@ pub fn TimelinePanel(
                                             let base = base.clone();
                                             let api_token = token();
                                             let wait_for = active_sync_token(sync_cursor());
-                                            let receipt_space = marker.body.realm_id.clone();
+                                            let receipt_realm = marker.body.realm_id.clone();
                                             let receipt_event_id = marker.body.position.event_id.clone();
                                             let actor_for_status = marker.actor.clone();
                                             let actor_for_audit = marker.actor.clone();
@@ -911,7 +911,7 @@ pub fn TimelinePanel(
                                                     Ok(api) => {
                                                         match api
                                                             .send_receipt(
-                                                                &receipt_space,
+                                                                &receipt_realm,
                                                                 &actor_for_status,
                                                                 &receipt_event_id,
                                                                 "ck.receipt.read",
@@ -953,7 +953,7 @@ pub fn TimelinePanel(
                                                         // below.
                                                         let _ = (
                                                             &receipt_event_id,
-                                                            &receipt_space,
+                                                            &receipt_realm,
                                                             &actor_for_audit,
                                                             &device_for_audit,
                                                             &api,
@@ -979,20 +979,20 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_realm_id.clone();
+                                                let realm = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 let emoji = emoji.to_string();
                                                 move |_| {
                                                     let base = base.clone();
                                                     let eid = eid.clone();
-                                                    let space = space.clone();
+                                                    let realm = realm.clone();
                                                     let actor = actor.clone();
                                                     let emoji = emoji.clone();
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
                                                     spawn(async move {
                                                         if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                                            let op = reaction_add_operation(&space, &actor, &eid, &emoji);
+                                                            let op = reaction_add_operation(&realm, &actor, &eid, &emoji);
                                                             let _ = api.submit_event_envelope(&op).await;
                                                         }
                                                     });
@@ -1018,12 +1018,12 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_realm_id.clone();
+                                                let realm = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 move |_| {
                                                     let base = base.clone();
                                                     let eid = eid.clone();
-                                                    let space = space.clone();
+                                                    let realm = realm.clone();
                                                     let actor = actor.clone();
                                                     let content = edit_draft().trim().to_owned();
                                                     let api_token = token();
@@ -1058,7 +1058,7 @@ pub fn TimelinePanel(
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => {
                                                                 let op = message_revise_operation(
-                                                                    &space,
+                                                                    &realm,
                                                                     &actor,
                                                                     &eid,
                                                                     &content,
@@ -1075,7 +1075,7 @@ pub fn TimelinePanel(
                                                                     }
                                                                     state_store.write().append_raw_operation(
                                                                         op_id.clone(),
-                                                                        Some(space.clone()),
+                                                                        Some(realm.clone()),
                                                                         json!({
                                                                             "event_id": updated.event_id,
                                                                             "kind": "ck.message.revise",
@@ -1124,7 +1124,7 @@ pub fn TimelinePanel(
 
                             if redact_confirm() == Some(idx) {
                                 div { class: "event", "data-testid": "redact-confirm",
-                                    div { class: "space-title", "Redact this message?" }
+                                    div { class: "entity-title", "Redact this message?" }
                                     div { class: "actions",
                                         button {
                                             class: "primary",
@@ -1132,12 +1132,12 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_realm_id.clone();
+                                                let realm = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 move |_| {
                                                     let base = base.clone();
                                                     let eid = eid.clone();
-                                                    let space = space.clone();
+                                                    let realm = realm.clone();
                                                     let actor = actor.clone();
                                                     let api_token = token();
                                                     let wait_for = active_sync_token(sync_cursor());
@@ -1165,7 +1165,7 @@ pub fn TimelinePanel(
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                                             Ok(api) => {
                                                                 let op = message_redact_operation(
-                                                                    &space,
+                                                                    &realm,
                                                                     &actor,
                                                                     &eid,
                                                                     reason.as_deref(),
@@ -1178,7 +1178,7 @@ pub fn TimelinePanel(
                                                                     }
                                                                     state_store.write().append_raw_operation(
                                                                         op_id.clone(),
-                                                                        Some(space.clone()),
+                                                                        Some(realm.clone()),
                                                                         json!({
                                                                             "event_id": redacted.event_id,
                                                                             "kind": "ck.message.redact",
@@ -1285,7 +1285,7 @@ pub fn TimelinePanel(
 
         if let Some((decision_event_id, target_ref)) = moderation_appeal_target.clone() {
             crate::views::moderation_appeal::AppealEntrypoint {
-                realm_id: selected_space_c.clone(),
+                realm_id: selected_realm_c.clone(),
                 appellant: account_did_c.clone(),
                 decision_event_id,
                 target_ref,
@@ -1447,7 +1447,7 @@ pub fn TimelinePanel(
                 ondragleave: move |_| compose_dragover.set(false),
                 ondrop: {
                     let base = base_url_sig;
-                    let space = selected_space_c.clone();
+                    let realm = selected_realm_c.clone();
                     move |evt| {
                         evt.prevent_default();
                         compose_dragover.set(false);
@@ -1460,7 +1460,7 @@ pub fn TimelinePanel(
                         }
                         let api_token = token();
                         let base = base();
-                        let space = space.clone();
+                        let realm = realm.clone();
                         compose_upload_status.set(
                             crate::i18n::tr("compose.upload_progress"),
                         );
@@ -1493,7 +1493,7 @@ pub fn TimelinePanel(
                                     .upload_blob_bytes_scoped(
                                         bytes,
                                         &content_type,
-                                        Some(&space),
+                                        Some(&realm),
                                         Some(&filename),
                                     )
                                     .await
@@ -1556,7 +1556,7 @@ pub fn TimelinePanel(
                         "Write a plaintext dev-mode message (Ctrl+Enter to send)"
                     },
                 oninput: {
-                    let sc = selected_space_c.clone();
+                    let sc = selected_realm_c.clone();
                     let actor_for_typing = account_did_c.clone();
                     let device_for_typing = device_id_c.clone();
                     move |event| {
@@ -1572,13 +1572,13 @@ pub fn TimelinePanel(
                         // a trailing false once the user stops — instead of one
                         // POST per character.
                         let base = base_url_sig();
-                        let space = sc.clone();
+                        let realm = sc.clone();
                         let actor = actor_for_typing.clone();
                         let device = device_for_typing.clone();
                         typing_throttle.on_keystroke(move |is_typing| {
                             let base = base.clone();
                             let api_token = token();
-                            let space = space.clone();
+                            let realm = realm.clone();
                             let actor = actor.clone();
                             let device = device.clone();
                             let wait_for = active_sync_token(sync_cursor());
@@ -1590,7 +1590,7 @@ pub fn TimelinePanel(
                                     // ck.events.submit.
                                     let _ = api
                                         .send_typing(
-                                            &space,
+                                            &realm,
                                             &actor,
                                             Some(device.as_str()).filter(|s| !s.is_empty()),
                                             is_typing,
@@ -1625,15 +1625,15 @@ pub fn TimelinePanel(
                         let reply_target = reply_to_index()
                             .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
                         let thread_id = reply_target.clone();
-                        let space_for_encrypt = selected_space_key.clone();
-                        let space_for_plain = selected_space_key.clone();
-                        let space_for_draft = selected_space_key.clone();
+                        let realm_for_encrypt = selected_realm_key.clone();
+                        let realm_for_plain = selected_realm_key.clone();
+                        let realm_for_draft = selected_realm_key.clone();
                         let incident_priority_for_send = incident_priority();
                         if encrypt_toggle() {
                             match compose_local_encrypted_message(
                                 &account_did_key,
                                 &device_id_key,
-                                &space_for_encrypt,
+                                &realm_for_encrypt,
                                 "ck:message:local-compose",
                                 &body,
                             ) {
@@ -1660,7 +1660,7 @@ pub fn TimelinePanel(
                         } else {
                             let event_id = format!("ev:local:{}", uuid_v7());
                             timeline.write().push(TimelineEvent {
-                                realm_id: Some(space_for_plain.clone()),
+                                realm_id: Some(realm_for_plain.clone()),
                                 id: event_id.clone(),
                                 sender: account_did_key.clone(),
                                 sender_display: "you".to_owned(),
@@ -1684,13 +1684,13 @@ pub fn TimelinePanel(
                             });
                             let base = base_url_sig();
                             let api_token = token();
-                            let space = space_for_plain.clone();
+                            let realm = realm_for_plain.clone();
                             let actor = account_did_key.clone();
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
                                 if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
                                     let op = message_create_operation(
-                                        &space,
+                                        &realm,
                                         &actor,
                                         thread_id.as_deref(),
                                         &body,
@@ -1699,7 +1699,7 @@ pub fn TimelinePanel(
                                     let op_id = op.local_operation_id().to_owned();
                                     match submit_timeline_message_with_plaintext_retry(
                                         &api,
-                                        &space,
+                                        &realm,
                                         &actor,
                                         &op,
                                     ).await {
@@ -1721,7 +1721,7 @@ pub fn TimelinePanel(
                             });
                         }
                         draft.set(String::new());
-                        state_store.write().save_draft(space_for_draft, String::new());
+                        state_store.write().save_draft(realm_for_draft, String::new());
                         reply_to_index.set(None);
                         plaintext_ack.set(false);
                     }
@@ -1868,7 +1868,7 @@ pub fn TimelinePanel(
                     // avoids a wasted round-trip + confusing error.
                     disabled: composer_blocked,
                     onclick: {
-                        let sc = selected_space_c.clone();
+                        let sc = selected_realm_c.clone();
                         let ac = account_did_c.clone();
                         let dc = device_id_c.clone();
                         move |_| {
@@ -1899,15 +1899,15 @@ pub fn TimelinePanel(
                             let reply_target = reply_to_index()
                                 .and_then(|idx| timeline().get(idx).map(|event| event.id.clone()));
                             let thread_id = reply_target.clone();
-                            let space_for_encrypt = sc.clone();
-                            let space_for_plain = sc.clone();
-                            let space_for_draft = sc.clone();
+                            let realm_for_encrypt = sc.clone();
+                            let realm_for_plain = sc.clone();
+                            let realm_for_draft = sc.clone();
                             let incident_priority_for_send = incident_priority();
                             if encrypt_toggle() {
                                 match compose_local_encrypted_message(
                                     &ac,
                                     &dc,
-                                    &space_for_encrypt,
+                                    &realm_for_encrypt,
                                     "ck:message:local-compose",
                                     &body,
                                 ) {
@@ -1927,7 +1927,7 @@ pub fn TimelinePanel(
                                             message.payload.group_id
                                         ));
                                         write_status.set("queued local encrypted fact".to_owned());
-                                        state_store.write().save_draft(space_for_encrypt, "");
+                                        state_store.write().save_draft(realm_for_encrypt, "");
                                         draft.set(String::new());
                                         reply_to_index.set(None);
                                         plaintext_ack.set(false);
@@ -1937,7 +1937,7 @@ pub fn TimelinePanel(
                             } else {
                                 let local_event_id = format!("local-event-{}", uuid_v7());
                                 timeline.write().push(TimelineEvent::pending_message(
-                                    space_for_plain.clone(),
+                                    realm_for_plain.clone(),
                                     local_event_id.clone(),
                                     ac.clone(),
                                     "local",
@@ -1945,13 +1945,13 @@ pub fn TimelinePanel(
                                     reply_target.clone(),
                                     thread_id.clone(),
                                 ));
-                                state_store.write().save_draft(space_for_draft, "");
+                                state_store.write().save_draft(realm_for_draft, "");
                                 draft.set(String::new());
                                 reply_to_index.set(None);
                                 plaintext_ack.set(false);
 
                                 let base = base_url_sig();
-                                let space = space_for_plain;
+                                let realm = realm_for_plain;
                                 let api_token = token();
                                 let wait_for = active_sync_token(sync_cursor());
                                 let body_clone = body.clone();
@@ -1960,7 +1960,7 @@ pub fn TimelinePanel(
                                     match authed_api_with_sync(&base, api_token, wait_for) {
                                         Ok(api) => {
                                             let op = message_create_operation(
-                                                &space,
+                                                &realm,
                                                 &actor,
                                                 thread_id.as_deref(),
                                                 &body_clone,
@@ -1971,7 +1971,7 @@ pub fn TimelinePanel(
                                             loop {
                                                 match submit_timeline_message_with_plaintext_retry(
                                                     &api,
-                                                    &space,
+                                                    &realm,
                                                     &actor,
                                                     &op,
                                                 ).await {
@@ -1994,7 +1994,7 @@ pub fn TimelinePanel(
                                                             // only /account/subscribe cursors are persisted.
                                                             store.append_raw_operation(
                                                                 op_id.clone(),
-                                                                Some(space.clone()),
+                                                                Some(realm.clone()),
                                                                 json!({
                                                                     "event_id": sent.event_id,
                                                                     "kind": "ck.message.create",
@@ -2067,7 +2067,7 @@ pub fn TimelinePanel(
                     class: "secondary",
                     "data-testid": "report-queue-button",
                     onclick: {
-                        let sc = selected_space_c.clone();
+                        let sc = selected_realm_c.clone();
                         let ac = account_did_c.clone();
                         let dc = device_id_c.clone();
                         move |_| {
@@ -2075,7 +2075,7 @@ pub fn TimelinePanel(
                             let actor = ac.clone();
                             let dev = dc.clone();
                             let api_token = token();
-                            let space = sc.clone();
+                            let realm = sc.clone();
                             let wait_for = active_sync_token(sync_cursor());
                             spawn(async move {
                                 let _ = with_authed_api_with_sync(
@@ -2085,7 +2085,7 @@ pub fn TimelinePanel(
                                     |api| async move {
                                         let _ = api
                                             .report_moderation(
-                                                &space,
+                                                &realm,
                                                 "local:event",
                                                 "spam",
                                                 &actor,
@@ -2281,14 +2281,14 @@ fn plaintext_visible_service(base_url: &str) -> String {
 /// Only real SDK-encrypted payloads should trigger the audit hook.
 fn try_local_mls_decrypt(
     state_store: Signal<LocalStateStore>,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
     try_local_mls_decrypt_core(
         &state_store.read(),
-        space_id,
+        realm_id,
         actor_did,
         device_id,
         payload_value,
@@ -2298,19 +2298,19 @@ fn try_local_mls_decrypt(
 /// Shared MLS decrypt core used by both the timeline audit emitter
 /// (`try_local_mls_decrypt`, which holds a `Signal<LocalStateStore>`) and
 /// the kanban decrypt-on-read path (which already holds a borrowed
-/// `&LocalStateStore`). Restores the space's MLS group from the local
+/// `&LocalStateStore`). Restores the Realm's MLS group from the local
 /// snapshot + this device's snapshot secret and decrypts `payload_value`
 /// (a typed `EncryptedPayload` envelope). Every soft failure (no snapshot,
 /// wrong/absent device secret, payload that doesn't deserialize or
 /// decrypt) returns `None`.
 pub(crate) fn try_local_mls_decrypt_core(
     state_store: &LocalStateStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
-    let envelope = state_store.mls_snapshot_for(space_id)?;
+    let envelope = state_store.mls_snapshot_for(realm_id)?;
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let secret = crate::mls::runtime::load_device_snapshot_secret(
         secure_store.as_ref(),
@@ -2352,9 +2352,9 @@ mod tests {
     }
 
     #[test]
-    fn message_create_operation_retags_space_scope_to_flow_id() {
+    fn message_create_operation_attaches_incident_priority_under_realm() {
         let op = message_create_operation(
-            "ck:space:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+            "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
             "did:web:bob.example",
             None,
             "hello",

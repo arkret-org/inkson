@@ -95,7 +95,7 @@ pub fn set_proof_mode(mode: ProofMode) {
     PROOF_MODE.store(mode.as_u8(), Ordering::Relaxed);
 }
 
-pub(crate) fn scope_id_as_realm_id(value: &str) -> String {
+pub(crate) fn trim_realm_id(value: &str) -> String {
     value.trim().to_owned()
 }
 
@@ -353,7 +353,7 @@ impl OperationBuilder {
         let actor_seq = next_seq();
         // Normalize the wire `realm_id` field without accepting alternate
         // protocol namespaces.
-        let realm_id = scope_id_as_realm_id(&self.realm_id);
+        let realm_id = trim_realm_id(&self.realm_id);
         EventEnvelope {
             event_id: format!("ck:event:{}", uuid_v7()),
             kind: self.op_type,
@@ -476,8 +476,8 @@ pub mod cx_ops {
     use serde_json::{Value, json};
 
     use super::{
-        Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef,
-        scope_id_as_realm_id, uuid_v7,
+        Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef, trim_realm_id,
+        uuid_v7,
     };
 
     fn did_id(value: &str) -> cokret_sdk::Did {
@@ -493,6 +493,11 @@ pub mod cx_ops {
     fn space_id_value(value: &str) -> cokret_sdk::SpaceId {
         cokret_sdk::SpaceId::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid space id {value:?}: {err:?}"))
+    }
+
+    fn circle_id_value(value: &str) -> cokret_sdk::CircleId {
+        cokret_sdk::CircleId::new(value.to_owned())
+            .unwrap_or_else(|err| panic!("invalid circle id {value:?}: {err:?}"))
     }
 
     fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
@@ -569,7 +574,7 @@ pub mod cx_ops {
         flow_id: &str,
         title: &str,
     ) -> anyhow::Result<OperationBuilder> {
-        let typed_realm_id = cokret_sdk::RealmId::new(scope_id_as_realm_id(realm_id))
+        let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
         let did = cokret_sdk::Did::new(actor.to_owned())
             .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
@@ -587,6 +592,88 @@ pub mod cx_ops {
         Ok(OperationBuilder::new(realm_id, actor, "ck.flow.create")
             .target_ref(flow_id)
             .body(payload))
+    }
+
+    /// Build a canonical `ck.circle.create` operation for a private
+    /// discussion scope inside `realm_id`.
+    pub fn discussion_circle_create(
+        realm_id: &str,
+        actor: &str,
+        circle_id: &str,
+        title: &str,
+    ) -> OperationBuilder {
+        let display = cokret_sdk::CircleDisplay {
+            short_name: title.trim().chars().take(16).collect::<String>(),
+            color_token: cokret_sdk::CircleColorToken::Indigo,
+            symbol: cokret_sdk::CircleSymbol::Glyph {
+                glyph: cokret_sdk::CircleGlyph::Lock,
+            },
+        };
+        let circle = cokret_sdk::Circle::new(
+            circle_id_value(circle_id),
+            realm_id_value(&trim_realm_id(realm_id)),
+            title.trim(),
+            display,
+            did_id(actor),
+        );
+        let body = object_create_payload_value(circle, "ck.circle.create payload serialize");
+        OperationBuilder::new(realm_id, actor, "ck.circle.create")
+            .target_ref(circle_id)
+            .body(body)
+    }
+
+    /// Build a `ck.flow.create` operation whose full Flow scope is a
+    /// private discussion Circle.
+    pub fn scoped_discussion_flow_create(
+        realm_id: &str,
+        actor: &str,
+        flow_id: &str,
+        circle_id: &str,
+        title: &str,
+    ) -> anyhow::Result<OperationBuilder> {
+        let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+            .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
+        let did = cokret_sdk::Did::new(actor.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
+        let typed_flow_id = cokret_sdk::FlowId::new(flow_id.to_owned())
+            .map_err(|e| anyhow::anyhow!("invalid flow_id: {e:?}"))?;
+        let mut flow = cokret_sdk::FlowCreateObject::new(typed_flow_id, typed_realm_id, did)
+            .with_metadata_title(title)
+            .with_track(
+                "discussion",
+                cokret_sdk::FlowTrackConfig::discussion_primary(),
+            );
+        flow.scope_circle_id = Some(circle_id_value(circle_id));
+        let payload = cokret_sdk::ObjectCreatePayload::new(flow)
+            .to_value()
+            .map_err(|e| anyhow::anyhow!("ck.flow.create payload serialize: {e}"))?;
+        Ok(OperationBuilder::new(realm_id, actor, "ck.flow.create")
+            .target_ref(flow_id)
+            .body(payload))
+    }
+
+    /// Build the private-side relation from a Circle-scoped discussion Flow
+    /// back to the public anchor Flow/message.
+    pub fn confidential_discussion_relation_create(
+        realm_id: &str,
+        actor: &str,
+        private_flow_id: &str,
+        public_anchor_ref: &str,
+        circle_id: &str,
+    ) -> OperationBuilder {
+        let relation_id = format!("ck:relation:{}", uuid_v7());
+        OperationBuilder::new(realm_id, actor, "ck.relation.create")
+            .target_ref(private_flow_id)
+            .body(json!({
+                "relation_id": relation_id,
+                "kind": "confidential_discussion_of",
+                "from_ref": private_flow_id,
+                "to_ref": public_anchor_ref,
+                "scope_circle_id": circle_id,
+                "fields": {
+                    "role": "promoted_discussion"
+                }
+            }))
     }
 
     /// Build a `ck.flow.watch.set` operation. Spec:
@@ -700,8 +787,8 @@ pub mod cx_ops {
 
     /// Build a `ck.space.create` operation for Board/List container Spaces.
     ///
-    /// After R1.7 realm/space inversion, Board/List containers are Space
-    /// objects and the security boundary is Realm. The optional
+    /// Board/List containers are Space objects and the security boundary is
+    /// Realm. The optional
     /// `parent_space_id` + `rank` fields carry the board/list structural
     /// placement while the object id and event kind stay canonical.
     pub fn space_create(
@@ -715,7 +802,7 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         let mut object = cokret_sdk::SpaceCreateObject::new(
             space_id_value(container_space_id),
-            realm_id_value(&scope_id_as_realm_id(realm_id)),
+            realm_id_value(&trim_realm_id(realm_id)),
             kind,
             title,
             did_id(actor),
@@ -740,7 +827,7 @@ pub mod cx_ops {
         title: &str,
         document_body: serde_json::Value,
     ) -> OperationBuilder {
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::MorphCreateObject::new(
             morph_id_value(morph_id),
             realm_id_value(&realm_id),
@@ -770,7 +857,7 @@ pub mod cx_ops {
         status: &str,
         priority: &str,
     ) -> OperationBuilder {
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::FlowCreateObject::new(
             flow_id_value(flow_id),
             realm_id_value(&realm_id),
@@ -824,7 +911,7 @@ pub mod cx_ops {
         title: &str,
         rank: &str,
     ) -> OperationBuilder {
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let object = cokret_sdk::FlowCreateObject::new(
             flow_id_value(flow_id),
             realm_id_value(&realm_id),
@@ -881,7 +968,7 @@ pub mod cx_ops {
         body: &str,
         reply_to: Option<&str>,
     ) -> OperationBuilder {
-        let realm_id = scope_id_as_realm_id(realm_id);
+        let realm_id = trim_realm_id(realm_id);
         let discussion_flow_id = realm_id
             .strip_prefix("ck:realm:")
             .map(|suffix| format!("ck:flow:{suffix}"))
@@ -1150,7 +1237,7 @@ pub mod cx_ops {
     /// Space transitions from `Active` to `Archived`; reversible via
     /// [`space_restore`]. Spec: `models/realm-and-space.md` §4.4. The wire
     /// payload uses canonical `space_id` (no legacy alias).
-    pub fn space_archive(
+    pub fn realm_archive(
         realm_id: &str,
         actor: &str,
         container_space_id: &str,
@@ -1160,10 +1247,10 @@ pub mod cx_ops {
             .body(json!({ "space_id": container_space_id }))
     }
 
-    /// Build a `ck.space.restore` operation. Reverses [`space_archive`]
+    /// Build a `ck.space.restore` operation. Reverses [`realm_archive`]
     /// (`archived -> active`). The SDK reducer enforces `state == archived`
     /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
-    /// `models/realm-and-space.md` §4.4 (post-R1.7 rename), `common-fields.md §5`.
+    /// `models/realm-and-space.md` §4.4, `common-fields.md §5`.
     pub fn space_restore(
         realm_id: &str,
         actor: &str,
@@ -1890,7 +1977,7 @@ mod tests {
 
     #[test]
     fn operation_round_trip_serde() {
-        let op = OperationBuilder::new("ck:space:s1", "did:web:bob", "ck.message.create")
+        let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
             .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
             .build("node");
         let json = serde_json::to_string(&op).unwrap();
@@ -2298,8 +2385,6 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000030"
         );
         assert_eq!(op.payload["expected_position"]["rank"], "a1");
-        assert!(op.payload.get("board_place_id").is_none());
-        assert!(op.payload.get("target_place_id").is_none());
         assert!(op.payload.get("position").is_none());
     }
 
@@ -2390,8 +2475,6 @@ mod tests {
             op.local_target_ref(),
             Some("ck:space:0196419b-0000-7000-8000-000000000002")
         );
-        assert!(op.payload.get("place_id").is_none());
-        assert!(op.payload.get("board_place_id").is_none());
         assert_eq!(op.payload["object"]["schema"], "ck.schema.space.v1");
         assert_eq!(
             op.payload["object"]["id"],
@@ -2403,7 +2486,6 @@ mod tests {
         );
         assert!(op.payload["object"].get("space_id").is_none());
         assert_eq!(op.payload["object"]["kind"], "list");
-        assert!(op.payload["object"].get("board_place_id").is_none());
         assert_eq!(
             op.payload["object"]["parent_space_id"],
             "ck:space:0196419b-0000-7000-8000-000000000003"
@@ -2420,10 +2502,6 @@ mod tests {
 
     #[test]
     fn spec_space_schema_accepts_client_space_create_payload_shape() {
-        // R1.7 rename: the container schema artifact is now space.schema.json
-        // (the former place.schema.json was retired in cokret-spec's R1.7
-        // pass). The builder still has the legacy helper name
-        // `space_create` emits a canonical Space object.
         let schema = spec_schema("space.schema.json");
         let op = cx_ops::space_create(
             "ck:realm:0196419b-0000-7000-8000-000000000001",
@@ -2443,7 +2521,6 @@ mod tests {
             "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(op.kind, "ck.space.create");
-        assert!(op.payload.get("place_id").is_none());
         assert!(serde_json::to_string(&op).unwrap().contains("\"realm_id\""));
         assert!(!serde_json::to_string(&op).unwrap().contains("ck:list:"));
     }
@@ -2519,8 +2596,6 @@ mod tests {
             "ck.account_data.set",
             "ck.flow.update",
             "ck.flow.tracks.update",
-            // R1.7 rename: former `ck.place.create` is the container
-            // `ck.space.create`.
             "ck.space.create",
         ] {
             assert!(
@@ -2532,7 +2607,7 @@ mod tests {
 
     #[test]
     fn canonical_digest_is_stable_across_key_order() {
-        let mut op_a = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
+        let mut op_a = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
             .body(json!({"b": 2, "a": 1}))
             .build("node");
         op_a.event_id = "fixed".into();
@@ -2551,7 +2626,7 @@ mod tests {
     #[test]
     fn sign_ed25519_attaches_typed_proof() {
         use ed25519_dalek::SigningKey;
-        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
+        let mut op = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
@@ -2568,7 +2643,7 @@ mod tests {
 
     #[test]
     fn require_proof_fails_when_unsigned() {
-        let mut op = OperationBuilder::new("ck:space:s1", "did:web:alice", "ck.message.create")
+        let mut op = OperationBuilder::new("ck:realm:s1", "did:web:alice", "ck.message.create")
             .body(json!({"body": "hi"}))
             .build("node");
         op.proofs.clear();
@@ -2579,7 +2654,7 @@ mod tests {
     fn invite_helpers_emit_canonical_kinds() {
         let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
         let create = cx_ops::invite_create_structured(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
             "did:web:bob.example",
@@ -2603,7 +2678,7 @@ mod tests {
         assert_registered_payload_valid(&create);
 
         let accept = cx_ops::invite_accept(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:bob.example",
             invite_id,
         )
@@ -2614,7 +2689,7 @@ mod tests {
         assert_registered_payload_valid(&accept);
 
         let cancel = cx_ops::invite_cancel(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
             Some("expired"),
@@ -2630,7 +2705,7 @@ mod tests {
     #[test]
     fn space_lifecycle_helpers_emit_canonical_kinds() {
         let container_space_id = "ck:space:01904100-0000-7000-8000-1fb50799ad42";
-        let archive = cx_ops::space_archive(
+        let archive = cx_ops::realm_archive(
             "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
             "did:web:alice.example",
             container_space_id,
@@ -2638,7 +2713,6 @@ mod tests {
         .build("node");
         assert_eq!(archive.kind, "ck.space.archive");
         assert_eq!(archive.payload["space_id"], container_space_id);
-        assert!(archive.payload.get("place_id").is_none());
         assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
         let restore = cx_ops::space_restore(
@@ -2649,7 +2723,6 @@ mod tests {
         .build("node");
         assert_eq!(restore.kind, "ck.space.restore");
         assert_eq!(restore.payload["space_id"], container_space_id);
-        assert!(restore.payload.get("place_id").is_none());
         assert_eq!(restore.local_target_ref(), Some(container_space_id));
     }
 

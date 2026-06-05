@@ -14,13 +14,13 @@ use crate::operation::OperationBuilder;
 /// Build a `ck.morph.create` operation. Body shape mirrors
 /// `models/morph.md` §3 (typed Morph object).
 pub fn build_morph_create(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     morph: &Morph,
 ) -> anyhow::Result<OperationBuilder> {
     let value = serde_json::to_value(morph)?;
-    Ok(OperationBuilder::new(space_id, actor, "ck.morph.create")
-        .target_ref(space_id)
+    Ok(OperationBuilder::new(realm_id, actor, "ck.morph.create")
+        .target_ref(morph.id.as_str())
         .body(json!({"morph": value})))
 }
 
@@ -33,12 +33,12 @@ pub fn build_morph_create(
 /// separate `morph_id` field — that would trip the reducer's
 /// `schema_violation` gate.
 pub fn build_morph_update(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     morph_id: &str,
     patch: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.morph.update")
+    OperationBuilder::new(realm_id, actor, "ck.morph.update")
         .target_ref(morph_id)
         .body(json!({"target_ref": morph_id, "patch": patch}))
 }
@@ -54,14 +54,14 @@ pub fn build_morph_update(
 /// emit a top-level `relation_id`. The previous `source`/`target` names were
 /// not in the schema and would have been rejected with `schema_violation`.
 pub fn build_relation_create(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     relation_id: &str,
     kind: &str,
     from_ref: &str,
     to_ref: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.relation.create")
+    OperationBuilder::new(realm_id, actor, "ck.relation.create")
         .target_ref(relation_id)
         .body(json!({
             "kind": kind,
@@ -71,8 +71,8 @@ pub fn build_relation_create(
 }
 
 /// Build a `ck.relation.tombstone` operation by id.
-pub fn build_relation_delete(space_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.relation.tombstone")
+pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
+    OperationBuilder::new(realm_id, actor, "ck.relation.tombstone")
         .target_ref(relation_id)
         .body(json!({"relation_id": relation_id}))
 }
@@ -81,14 +81,14 @@ pub fn build_relation_delete(space_id: &str, actor: &str, relation_id: &str) -> 
 /// `container_position_payload`: `container_ref`, `source_ref`, `target_ref`,
 /// and the new ordering `rank`.
 pub fn build_container_move_item(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     container_ref: &str,
     source_ref: &str,
     target_ref: &str,
     rank: &str,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.container.move_item")
+    OperationBuilder::new(realm_id, actor, "ck.container.move_item")
         .target_ref(container_ref)
         .body(json!({
             "container_ref": container_ref,
@@ -101,7 +101,7 @@ pub fn build_container_move_item(
 /// Build a `ck.container.rebalance` operation. The required position fields
 /// remain at top level; `items` carries optional profile-specific batch detail.
 pub fn build_container_rebalance(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     container_ref: &str,
     source_ref: &str,
@@ -113,7 +113,7 @@ pub fn build_container_rebalance(
         .into_iter()
         .map(|(item_ref, rank)| json!({"item_ref": item_ref, "rank": rank}))
         .collect();
-    OperationBuilder::new(space_id, actor, "ck.container.rebalance")
+    OperationBuilder::new(realm_id, actor, "ck.container.rebalance")
         .target_ref(container_ref)
         .body(json!({
             "container_ref": container_ref,
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn morph_update_emits_canonical_kind() {
         let op = build_morph_update(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:morph:abc",
             json!({"morph_type": "task"}),
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn relation_create_carries_kind_and_endpoints() {
         let op = build_relation_create(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:relation:r1",
             "ck.relation.parent_of",
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn container_move_item_uses_spec_position_payload() {
         let op = build_container_move_item(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "ck:flow:f1",
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn container_rebalance_flattens_items() {
         let op = build_container_rebalance(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:space:0196419b-0000-7000-8000-000000000001",
             "ck:flow:f1",

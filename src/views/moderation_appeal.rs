@@ -24,7 +24,7 @@ use chrono::Utc;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::operation::{OperationBuilder, scope_id_as_realm_id};
+use crate::operation::{OperationBuilder, trim_realm_id};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// User-facing projection of the four moderation appeal wire states.
@@ -96,7 +96,7 @@ pub fn build_appeal_submit_op(
     // enforces the `ck:appeal:<uuidv7>` shape.
     let typed_appeal_id = cokret_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
-    let realm_id = scope_id_as_realm_id(realm_id);
+    let realm_id = trim_realm_id(realm_id);
     let payload = cokret_sdk::AppealSubmitPayload {
         appeal_id: typed_appeal_id.clone(),
         realm_id: cokret_sdk::RealmId::new(realm_id.clone())

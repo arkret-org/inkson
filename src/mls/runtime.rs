@@ -235,7 +235,10 @@ pub fn mls_restore_epoch_floor(
     state_store: &crate::local_state::LocalStateStore,
     realm_id: &str,
 ) -> u64 {
-    let anchor_epoch = state_store.anchor_view_for(realm_id).mls_epoch.unwrap_or(0);
+    let anchor_epoch = state_store
+        .anchor_view_for_realm(realm_id)
+        .mls_epoch
+        .unwrap_or(0);
     let local_epoch = state_store
         .mls_snapshot_for(realm_id)
         .map(|snapshot| snapshot.epoch)
@@ -282,13 +285,13 @@ pub fn ensure_creator_mls_snapshot(
     actor_did: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    let space = realm_id.trim();
-    if space.is_empty() {
+    let realm = realm_id.trim();
+    if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
             "realm_id is required for initial MLS group setup".to_owned(),
         ));
     }
-    if state_store.mls_snapshot_for(space).is_some() {
+    if state_store.mls_snapshot_for(realm).is_some() {
         return Ok(None);
     }
 
@@ -301,7 +304,7 @@ pub fn ensure_creator_mls_snapshot(
     let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group = identity
-        .create_group(space.as_bytes())
+        .create_group(realm.as_bytes())
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let ratchet_tree = group
         .ratchet_tree()
@@ -316,7 +319,7 @@ pub fn ensure_creator_mls_snapshot(
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
     let snapshot = crate::mls::persistence::encrypt_state(
-        space,
+        realm,
         &post_state.group_id,
         post_state.epoch,
         &serialized_state,
@@ -324,14 +327,14 @@ pub fn ensure_creator_mls_snapshot(
         &salt,
     );
     let summary = InitialMlsSnapshotSummary {
-        realm_id: space.to_owned(),
+        realm_id: realm.to_owned(),
         group_id: post_state.group_id.clone(),
         epoch: post_state.epoch,
         ratchet_tree,
         schedule_hash,
         cipher_suite,
     };
-    state_store.save_mls_snapshot(space.to_owned(), snapshot);
+    state_store.save_mls_snapshot(realm.to_owned(), snapshot);
     Ok(Some(summary))
 }
 
@@ -906,7 +909,7 @@ pub fn encrypt_values_with_device_snapshot(
     ))
 }
 
-/// Encrypt a single message plaintext under the Space MLS group, binding
+/// Encrypt a single message plaintext under the Realm MLS group, binding
 /// `aad` into the payload digest, and return the structured
 /// [`cokret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
@@ -943,7 +946,7 @@ pub fn encrypt_message_with_device_snapshot(
     // server-side reject). The 1h epoch cap needs no separate force here: every
     // message self-update-commits below, so each message already opens a fresh
     // epoch — the within-epoch frequency window for messages is one message.
-    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(realm_id);
+    let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -1164,7 +1167,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // requirement is a MUST. Assert it up front (with the same SDK helper
     // soland rejects with) so any future edit that widens visibility on a
     // minimal Realm fails loudly here instead of leaking message-id metadata.
-    let is_minimal_metadata = state_store.space_projection_is_minimal_metadata(realm_id);
+    let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&cokret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
 
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
@@ -1560,21 +1563,21 @@ mod tests {
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
 
         let summary =
-            ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
+            ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
 
         let summary = summary.expect("missing creator snapshot should be created");
-        assert_eq!(summary.realm_id, space);
+        assert_eq!(summary.realm_id, realm);
         assert_eq!(summary.epoch, 0);
-        assert!(state.mls_snapshot_for(space).is_some());
+        assert!(state.mls_snapshot_for(realm).is_some());
         // X14: encrypt no longer persists internally — the caller saves the
         // returned envelope on server-accept. Mirror that contract here.
         let encrypted = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
-            space,
+            realm,
             actor,
             device,
             "application/vnd.cokret.test+json",
@@ -1582,12 +1585,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted.2.len(), 1);
-        state.save_mls_snapshot(space, encrypted.4.clone());
-        assert!(state.mls_snapshot_for(space).unwrap().epoch >= 1);
+        state.save_mls_snapshot(realm, encrypted.4.clone());
+        assert!(state.mls_snapshot_for(realm).unwrap().epoch >= 1);
         let encrypted_again = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
-            space,
+            realm,
             actor,
             device,
             "application/vnd.cokret.test+json",
@@ -1595,8 +1598,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted_again.2.len(), 1);
-        state.save_mls_snapshot(space, encrypted_again.4.clone());
-        assert!(state.mls_snapshot_for(space).unwrap().epoch >= 2);
+        state.save_mls_snapshot(realm, encrypted_again.4.clone());
+        assert!(state.mls_snapshot_for(realm).unwrap().epoch >= 2);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1610,25 +1613,25 @@ mod tests {
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:realm:01904100-0000-7000-8000-000000000002";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000002";
 
         // Declare the minimal-metadata profile on the cached projection.
-        state.save_space_projection(
-            space,
+        state.save_realm_tree_projection(
+            realm,
             json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
         );
-        assert!(state.space_projection_is_minimal_metadata(space));
+        assert!(state.realm_projection_is_minimal_metadata(realm));
 
-        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
-        let base_epoch = state.mls_snapshot_for(space).unwrap().epoch;
+        ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+        let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
 
         // Backdate the persisted snapshot's epoch clock past the 1h cap.
-        let mut overdue = state.mls_snapshot_for(space).unwrap();
+        let mut overdue = state.mls_snapshot_for(realm).unwrap();
         overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-        state.save_mls_snapshot(space, overdue);
+        state.save_mls_snapshot(realm, overdue);
 
         let sealed = encrypt_reaction_with_device_snapshot(
-            &mut state, &secure, space, space, actor, device, "👍",
+            &mut state, &secure, realm, realm, actor, device, "👍",
         )
         .unwrap();
 
@@ -1639,7 +1642,7 @@ mod tests {
             .forced_commit_snapshot
             .expect("forced commit returns its snapshot");
         assert!(returned.epoch > base_epoch);
-        assert_eq!(state.mls_snapshot_for(space).unwrap().epoch, base_epoch);
+        assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, base_epoch);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1651,23 +1654,23 @@ mod tests {
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:realm:01904100-0000-7000-8000-000000000003";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000003";
 
-        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device).unwrap();
-        let base_epoch = state.mls_snapshot_for(space).unwrap().epoch;
-        let mut overdue = state.mls_snapshot_for(space).unwrap();
+        ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+        let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
+        let mut overdue = state.mls_snapshot_for(realm).unwrap();
         overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-        state.save_mls_snapshot(space, overdue);
+        state.save_mls_snapshot(realm, overdue);
 
-        assert!(!state.space_projection_is_minimal_metadata(space));
+        assert!(!state.realm_projection_is_minimal_metadata(realm));
         let sealed = encrypt_reaction_with_device_snapshot(
-            &mut state, &secure, space, space, actor, device, "👍",
+            &mut state, &secure, realm, realm, actor, device, "👍",
         )
         .unwrap();
         assert!(sealed.forced_commit.is_none());
         assert!(sealed.forced_commit_snapshot.is_none());
         // Same epoch persisted in place (no skew), epoch clock carried forward.
-        let after = state.mls_snapshot_for(space).unwrap();
+        let after = state.mls_snapshot_for(realm).unwrap();
         assert_eq!(after.epoch, base_epoch);
     }
 
@@ -1699,9 +1702,9 @@ mod tests {
         let secure = MemorySecureKeyStore::new();
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
 
-        let summary = ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
+        let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
             .unwrap()
             .expect("creator snapshot should be created");
         let binding = genesis_governance_binding(&summary.group_id);
@@ -1757,19 +1760,19 @@ mod tests {
     #[test]
     fn mls_genesis_emitted_flag_is_idempotent() {
         let mut state = temp_state_store("genesis-idempotent");
-        let space = "ck:realm:01904100-0000-7000-8000-000000000001";
-        assert!(!state.mls_genesis_emitted_for(space));
-        state.mark_mls_genesis_emitted(space);
-        assert!(state.mls_genesis_emitted_for(space));
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+        assert!(!state.mls_genesis_emitted_for(realm));
+        state.mark_mls_genesis_emitted(realm);
+        assert!(state.mls_genesis_emitted_for(realm));
         // Re-marking is a no-op / stays true.
-        state.mark_mls_genesis_emitted(space);
-        assert!(state.mls_genesis_emitted_for(space));
+        state.mark_mls_genesis_emitted(realm);
+        assert!(state.mls_genesis_emitted_for(realm));
     }
 
     #[test]
     fn mls_history_backup_body_decodes_to_snapshot_envelope() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "group-a",
             8,
             b"opaque sdk state",
@@ -1797,7 +1800,7 @@ mod tests {
     #[test]
     fn mls_history_backup_decode_rejects_metadata_mismatch() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "group-a",
             8,
             b"opaque sdk state",
@@ -1821,20 +1824,20 @@ mod tests {
     fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:space:01904100-0000-7000-8000-000000000009";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000009";
         let old_secret = "old-account-secret";
         let plaintext = b"opaque sdk state before revoke";
         let store = MemorySecureKeyStore::new();
         store_account_mls_secret_version(&store, actor, 1, old_secret).unwrap();
         let original = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             "group-after-revoke",
             12,
             plaintext,
             old_secret,
             b"deterministic-salt",
         );
-        let snapshots = BTreeMap::from([(space.to_owned(), original)]);
+        let snapshots = BTreeMap::from([(realm.to_owned(), original)]);
 
         let rotation =
             prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
@@ -1844,7 +1847,7 @@ mod tests {
         assert_ne!(rotation.new_secret, old_secret);
         let rotated = rotation
             .rewrapped_snapshots
-            .get(space)
+            .get(realm)
             .expect("rewrapped snapshot");
         let (_backup_id, body) = build_mls_history_backup_body(rotated, actor, device);
         let decoded = decode_mls_history_backup_envelope(&body).unwrap();
@@ -1869,7 +1872,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            state.mls_snapshot_for(space).unwrap().ciphertext_hex,
+            state.mls_snapshot_for(realm).unwrap().ciphertext_hex,
             rotated.ciphertext_hex
         );
     }
@@ -1880,19 +1883,19 @@ mod tests {
         let mut state = temp_state_store("missing-secret");
         let store = MemorySecureKeyStore::new();
         let envelope = crate::mls::persistence::encrypt_state(
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "group-for-missing-secret-test",
             1,
             b"not-a-real-group-state",
             "other-device-secret",
             b"deterministic-salt",
         );
-        state.save_mls_snapshot("ck:space:01904100-0000-7000-8000-000000000001", envelope);
+        state.save_mls_snapshot("ck:realm:01904100-0000-7000-8000-000000000001", envelope);
 
         let error = encrypt_values_with_device_snapshot(
             &mut state,
             &store,
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000001",
             "text/plain",
@@ -1914,7 +1917,7 @@ mod tests {
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:space:01904100-0000-7000-8000-000000000003";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000003";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
         let identity = CokretMlsIdentity::new_basic(
@@ -1922,11 +1925,11 @@ mod tests {
             DeviceId::new(device.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &bytes,
@@ -1934,13 +1937,13 @@ mod tests {
             b"deterministic-salt",
         );
         let mut state = temp_state_store("ready-encrypt");
-        state.save_mls_snapshot(space, envelope);
+        state.save_mls_snapshot(realm, envelope);
 
         let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope) =
             encrypt_values_with_device_snapshot(
                 &mut state,
                 &store,
-                space,
+                realm,
                 actor,
                 device,
                 "text/plain",
@@ -1951,7 +1954,7 @@ mod tests {
         assert_eq!(member_dids.len(), 1);
         assert_eq!(encrypted_values.len(), 1);
         assert!(encrypted_values[0].get("ciphertext").is_some());
-        assert!(state.mls_snapshot_for(space).is_some());
+        assert!(state.mls_snapshot_for(realm).is_some());
     }
 
     /// X14 — persist-on-accept contract: `encrypt_values_with_device_snapshot`
@@ -1968,20 +1971,20 @@ mod tests {
         let secure = MemorySecureKeyStore::new();
         let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
         let mut state = temp_state_store("persist-on-accept");
-        let space = "ck:realm:01904100-0000-7000-8000-000000000099";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000099";
 
         // Genesis installs the epoch-0 snapshot.
-        ensure_creator_mls_snapshot(&mut state, &secure, space, actor, device)
+        ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
             .unwrap()
             .expect("creator snapshot created");
-        let epoch_before = state.mls_snapshot_for(space).unwrap().epoch;
+        let epoch_before = state.mls_snapshot_for(realm).unwrap().epoch;
 
         // Encrypting produces a post-commit envelope at epoch+1 WITHOUT
         // touching the persisted snapshot.
         let result = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
-            space,
+            realm,
             actor,
             device,
             "application/vnd.cokret.test+json",
@@ -1990,7 +1993,7 @@ mod tests {
         .unwrap();
         let post_commit_envelope = result.4;
         assert_eq!(
-            state.mls_snapshot_for(space).unwrap().epoch,
+            state.mls_snapshot_for(realm).unwrap().epoch,
             epoch_before,
             "encrypt must NOT advance the persisted snapshot (persist-on-accept)"
         );
@@ -2001,9 +2004,9 @@ mod tests {
 
         // The caller saving the returned envelope (simulating server-accept)
         // is what advances the persisted snapshot.
-        state.save_mls_snapshot(space, post_commit_envelope.clone());
+        state.save_mls_snapshot(realm, post_commit_envelope.clone());
         assert_eq!(
-            state.mls_snapshot_for(space).unwrap().epoch,
+            state.mls_snapshot_for(realm).unwrap().epoch,
             post_commit_envelope.epoch
         );
     }
@@ -2015,7 +2018,7 @@ mod tests {
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:space:01904100-0000-7000-8000-000000000004";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000004";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
         let identity = CokretMlsIdentity::new_basic(
@@ -2023,10 +2026,10 @@ mod tests {
             DeviceId::new(device.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),
@@ -2045,10 +2048,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(restored.realm_id, space);
+        assert_eq!(restored.realm_id, realm);
         assert_eq!(restored.envelope_epoch, record.epoch);
         assert_eq!(restored.epoch_floor, 0);
-        assert_eq!(state.mls_snapshot_for(space).unwrap().epoch, record.epoch);
+        assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, record.epoch);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2058,7 +2061,7 @@ mod tests {
 
         let actor = "did:web:alice.example";
         let device = "ck:device:01904100-0000-7000-8000-000000000001";
-        let space = "ck:space:01904100-0000-7000-8000-000000000002";
+        let realm = "ck:realm:01904100-0000-7000-8000-000000000002";
         let store = MemorySecureKeyStore::new();
         let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
         let identity = CokretMlsIdentity::new_basic(
@@ -2066,10 +2069,10 @@ mod tests {
             DeviceId::new(device.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),
@@ -2082,8 +2085,8 @@ mod tests {
             device,
         );
         let mut state = temp_state_store("restore-rollback");
-        state.set_anchor_view(
-            space,
+        state.set_realm_anchor_view(
+            realm,
             crate::local_state::LocalAnchorView {
                 mls_epoch: Some(record.epoch + 1),
                 ..Default::default()
@@ -2096,7 +2099,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.user_message().contains("outdated snapshot"));
-        assert!(state.mls_snapshot_for(space).is_none());
+        assert!(state.mls_snapshot_for(realm).is_none());
     }
 
     /// End-to-end regression guard for "same account, brand-new browser sees
@@ -2116,7 +2119,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let device_a = "ck:device:01904100-0000-7000-8000-00000000000a";
         let device_b = "ck:device:01904100-0000-7000-8000-00000000000b";
-        let space = "ck:space:01904100-0000-7000-8000-0000000000ab";
+        let realm = "ck:realm:01904100-0000-7000-8000-0000000000ab";
         let passphrase: &[u8] = b"correct horse battery staple";
 
         // --- Device A: account secret + a real MLS group + history backup body.
@@ -2128,10 +2131,10 @@ mod tests {
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),
@@ -2194,10 +2197,10 @@ mod tests {
         .expect("restore succeeds once the account secret is recovered");
 
         // The restored snapshot must match A's group_id / epoch.
-        assert_eq!(summary.realm_id, space);
+        assert_eq!(summary.realm_id, realm);
         assert_eq!(summary.group_id, record.group_id);
         assert_eq!(summary.envelope_epoch, record.epoch);
-        let restored_snapshot = state_b.mls_snapshot_for(space).unwrap();
+        let restored_snapshot = state_b.mls_snapshot_for(realm).unwrap();
         assert_eq!(restored_snapshot.group_id, record.group_id);
         assert_eq!(restored_snapshot.epoch, record.epoch);
 
@@ -2244,7 +2247,7 @@ mod welcome_outcome_tests {
         let outcome = apply_welcome_messages_with_device_snapshot(
             &mut state,
             &store,
-            "ck:space:empty",
+            "ck:realm:empty",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000001",
             &json!({ "events": [] }),
@@ -2271,7 +2274,7 @@ mod welcome_outcome_tests {
         let outcome = apply_welcome_messages_with_device_snapshot(
             &mut state,
             &store,
-            "ck:space:malformed",
+            "ck:realm:malformed",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000001",
             &messages,

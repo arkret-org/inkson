@@ -17,7 +17,7 @@
 //! relations / redactions — per spec event-kind-registry, only events
 //! that declare a `cell_family` use the Move/Anchor path. The demo's
 //! purpose is to prove the wire path works for ONE such event
-//! (`ck.consent.grant`); follow-up tasks port member admin / space
+//! (`ck.consent.grant`); follow-up tasks port member admin / Realm
 //! organization / capability / etc. UIs to the same pattern.
 
 use dioxus::prelude::*;
@@ -34,7 +34,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// The consent-grant demo card. Rendered inside the Privacy section of
 /// the SettingsPanel. Self-contained: owns its own form state + status
-/// signal, only needs `base_url` / `token` / `space_id` from the parent.
+/// signal, only needs `base_url` / `token` from the parent.
 #[component]
 pub fn ConsentGrantDemoCard(
     base_url: Signal<String>,
@@ -43,7 +43,7 @@ pub fn ConsentGrantDemoCard(
 ) -> Element {
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
     let mut tag = use_signal(|| "scope:contacts".to_owned());
-    let mut space_id = use_signal(String::new);
+    let mut realm_id = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut last_move_id = use_signal(String::new);
 
@@ -56,12 +56,12 @@ pub fn ConsentGrantDemoCard(
             div { class: "muted",
                 "Submits a ck.consent.grant event via ck.self.events.submit; soland's reducer folds the OrSet add into the ck.component.consent.grant.v1 cell."
             }
-            label { "Space ID" }
+            label { "Realm ID" }
             input {
-                "data-testid": "consent-grant-space-id",
-                placeholder: "ck:space:...",
-                value: "{space_id}",
-                oninput: move |evt| space_id.set(evt.value()),
+                "data-testid": "consent-grant-realm-id",
+                placeholder: "ck:realm:...",
+                value: "{realm_id}",
+                oninput: move |evt| realm_id.set(evt.value()),
             }
             label { "Consent ID (cell subject)" }
             input {
@@ -82,12 +82,12 @@ pub fn ConsentGrantDemoCard(
                     onclick: move |_| {
                         let base = base_url();
                         let api_token = token();
-                        let space_val = space_id().trim().to_owned();
+                        let realm_val = realm_id().trim().to_owned();
                         let consent_val = consent_id().trim().to_owned();
                         let tag_val = tag().trim().to_owned();
-                        if space_val.is_empty() || consent_val.is_empty() || tag_val.is_empty() {
+                        if realm_val.is_empty() || consent_val.is_empty() || tag_val.is_empty() {
                             status.set(
-                                "Fill space_id / consent_id / tag before submitting".to_owned(),
+                                "Fill realm_id / consent_id / tag before submitting".to_owned(),
                             );
                             return;
                         }
@@ -99,7 +99,7 @@ pub fn ConsentGrantDemoCard(
                             }
                         };
                         let envelope = crate::operation::cx_ops::consent_grant(
-                            &space_val,
+                            &realm_val,
                             &actor_did,
                             &consent_val,
                             &tag_val,
@@ -134,12 +134,12 @@ pub fn ConsentGrantDemoCard(
                     onclick: move |_| {
                         let base = base_url();
                         let api_token = token();
-                        let space_val = space_id().trim().to_owned();
+                        let realm_val = realm_id().trim().to_owned();
                         let consent_val = consent_id().trim().to_owned();
                         let tag_val = tag().trim().to_owned();
-                        if space_val.is_empty() || consent_val.is_empty() || tag_val.is_empty() {
+                        if realm_val.is_empty() || consent_val.is_empty() || tag_val.is_empty() {
                             status.set(
-                                "Fill space_id / consent_id / tag before submitting".to_owned(),
+                                "Fill realm_id / consent_id / tag before submitting".to_owned(),
                             );
                             return;
                         }
@@ -151,7 +151,7 @@ pub fn ConsentGrantDemoCard(
                             }
                         };
                         let envelope = crate::operation::cx_ops::consent_revoke(
-                            &space_val,
+                            &realm_val,
                             &actor_did,
                             &consent_val,
                             &tag_val,
@@ -287,7 +287,7 @@ pub fn RevokeAllConsentCard(
     let mut confirming = use_signal(|| false);
     let mut status = use_signal(String::new);
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
-    let mut space_id = use_signal(String::new);
+    let mut realm_id = use_signal(String::new);
     // Round 4 (spec a77b995) — observed_dots input. The user pastes
     // `actor_id:actor_seq` lines (one per dot) so the cascade revoke
     // tells the reducer exactly which observations it covers. Without
@@ -304,12 +304,12 @@ pub fn RevokeAllConsentCard(
             div { class: "muted",
                 "Revoking with scope=any submits one ck.consent.revoke event per subscope; soland's reducer collapses them into a single OrSet remove fanout. This is irreversible — the recipient must re-issue consent if you change your mind."
             }
-            label { "Space ID" }
+            label { "Realm ID" }
             input {
-                "data-testid": "revoke-all-space-id",
-                placeholder: "ck:space:...",
-                value: "{space_id}",
-                oninput: move |evt| space_id.set(evt.value()),
+                "data-testid": "revoke-all-realm-id",
+                placeholder: "ck:realm:...",
+                value: "{realm_id}",
+                oninput: move |evt| realm_id.set(evt.value()),
             }
             label { "Consent ID (cell subject)" }
             input {
@@ -368,10 +368,10 @@ pub fn RevokeAllConsentCard(
                             onclick: move |_| {
                                 let base = base_url();
                                 let api_token = token();
-                                let space_val = space_id().trim().to_owned();
+                                let realm_val = realm_id().trim().to_owned();
                                 let consent_val = consent_id().trim().to_owned();
-                                if space_val.is_empty() || consent_val.is_empty() {
-                                    status.set("Fill space_id and consent_id first".to_owned());
+                                if realm_val.is_empty() || consent_val.is_empty() {
+                                    status.set("Fill realm_id and consent_id first".to_owned());
                                     return;
                                 }
                                 let actor_did = match state_store.write().ensure_local_identity() {
@@ -406,7 +406,7 @@ pub fn RevokeAllConsentCard(
                                     let mut succeeded = 0usize;
                                     for scope in &scopes {
                                         let envelope = crate::operation::cx_ops::consent_revoke(
-                                            &space_val,
+                                            &realm_val,
                                             &actor_did,
                                             &consent_val,
                                             scope,

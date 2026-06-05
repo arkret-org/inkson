@@ -180,7 +180,7 @@ pub(super) struct SpaceParticipant {
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) the
 /// helper returns `(None, vec![], None, None)` and the caller aborts the
 /// Send Secure flow.
-/// Encrypt a discussion message under the Space MLS group and return the
+/// Encrypt a discussion message under the Realm MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. The caller
 /// wraps these into a spec-conforming `ck.schema.encrypted_envelope.v1` via
 /// [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
@@ -205,7 +205,6 @@ pub(super) type LocalMlsEncryptResult = (
 
 pub(super) fn run_local_mls_encrypt(
     mut state_store: Signal<LocalStateStore>,
-    space_id: &str,
     realm_id: &str,
     principal_id: &str,
     device_id: &str,
@@ -221,7 +220,7 @@ pub(super) fn run_local_mls_encrypt(
         crate::mls::runtime::encrypt_message_with_device_snapshot(
             &mut state_store.write(),
             secure_store.as_ref(),
-            space_id,
+            realm_id,
             principal_id,
             device_id,
             "application/vnd.cokret.message+json",
@@ -257,7 +256,7 @@ pub(super) fn chat_sha256_hash_from_ref(value: &str) -> Option<String> {
     None
 }
 
-pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &str) -> String {
+pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, realm_id: &str) -> String {
     anchor_view
         .frontier
         .iter()
@@ -273,7 +272,7 @@ pub(super) fn chat_mls_base_epoch_ref(anchor_view: &LocalAnchorView, space_id: &
         .unwrap_or_else(|| {
             crate::canonical::canonical_sha256(&json!({
                 "kind": "chat_mls_base_epoch",
-                "space_id": space_id,
+                "realm_id": realm_id,
                 "epoch": anchor_view.mls_epoch.unwrap_or(0),
             }))
             .unwrap_or_else(|_| {
@@ -302,7 +301,7 @@ pub(super) fn chat_mls_membership_frontier(
 
 pub(super) fn chat_mls_policy_root(
     anchor_view: &LocalAnchorView,
-    space_id: &str,
+    realm_id: &str,
     schedule_hash: &cokret_sdk::Hash,
 ) -> Result<cokret_sdk::Hash, String> {
     let hash = anchor_view
@@ -312,7 +311,7 @@ pub(super) fn chat_mls_policy_root(
         .unwrap_or_else(|| {
             crate::canonical::canonical_sha256(&json!({
                 "kind": "chat_mls_policy_root",
-                "space_id": space_id,
+                "realm_id": realm_id,
                 "frontier": anchor_view.frontier,
                 "state_root": anchor_view.state_root,
                 "schedule_hash": schedule_hash.as_str(),
@@ -325,12 +324,12 @@ pub(super) fn chat_mls_policy_root(
 }
 
 pub(super) fn chat_message_revise_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     body: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.message.revise")
+    OperationBuilder::new(realm_id, actor, "ck.message.revise")
         .target_ref(event_id)
         .body(json!({
             "content": {
@@ -343,12 +342,12 @@ pub(super) fn chat_message_revise_operation(
 }
 
 pub(super) fn chat_message_redact_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     reason: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.message.redact")
+    OperationBuilder::new(realm_id, actor, "ck.message.redact")
         .target_ref(event_id)
         .body(json!({
             "reason": reason,
@@ -358,12 +357,12 @@ pub(super) fn chat_message_redact_operation(
 }
 
 pub(super) fn chat_reaction_add_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     key: &str,
 ) -> crate::operation::EventEnvelope {
-    OperationBuilder::new(space_id, actor, "ck.reaction.add")
+    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -377,7 +376,7 @@ pub(super) fn chat_reaction_add_operation(
 /// OR-Set dedup / rate-limit without learning the emoji; the real emoji
 /// travels inside `encrypted_payload`.
 pub(super) fn chat_reaction_add_operation_encrypted(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     event_id: &str,
     routing_tag: &str,
@@ -385,7 +384,7 @@ pub(super) fn chat_reaction_add_operation_encrypted(
 ) -> crate::operation::EventEnvelope {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    OperationBuilder::new(space_id, actor, "ck.reaction.add")
+    OperationBuilder::new(realm_id, actor, "ck.reaction.add")
         .target_ref(event_id)
         .body(json!({
             "target_ref": event_id,
@@ -402,7 +401,7 @@ pub(super) fn chat_reaction_add_operation_encrypted(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_chat_reaction_add_operation(
     mut state_store: Signal<LocalStateStore>,
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     device_id: &str,
     event_id: &str,
@@ -411,10 +410,10 @@ pub(super) fn build_chat_reaction_add_operation(
 ) -> Option<crate::operation::EventEnvelope> {
     if !channel_encrypted {
         return Some(chat_reaction_add_operation(
-            space_id, actor, event_id, emoji,
+            realm_id, actor, event_id, emoji,
         ));
     }
-    let realm_id = scope_id_as_realm_id(space_id);
+    let realm_id = trim_realm_id(realm_id);
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
         &mut state_store.write(),
@@ -425,7 +424,7 @@ pub(super) fn build_chat_reaction_add_operation(
         emoji,
     ) {
         Ok(sealed) => Some(chat_reaction_add_operation_encrypted(
-            space_id,
+            &realm_id,
             actor,
             event_id,
             &sealed.routing_tag,
@@ -1252,7 +1251,7 @@ pub(super) fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
 }
 
 pub(super) fn chat_message_create_operation(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     flow_id: &str,
     _channel_kind: &str,
@@ -1278,7 +1277,7 @@ pub(super) fn chat_message_create_operation(
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         payload = payload.with_reply_to(reply_to);
     }
-    OperationBuilder::new(space_id, actor, "ck.message.create")
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(flow_id)
         .body(sdk_payload_value(
             payload.to_value(),
@@ -1292,10 +1291,10 @@ pub(super) fn chat_send_error_message(error: &anyhow::Error) -> String {
         "Session expired while sending. Refresh the session or sign in again, then retry."
             .to_owned()
     } else if is_plaintext_visibility_policy_error(error) {
-        "Plaintext is not enabled for this Space on the current service. Send Secure or update Space plaintext visibility."
+        "Plaintext is not enabled for this Realm on the current service. Send Secure or update Realm plaintext visibility."
             .to_owned()
     } else if is_space_membership_denied_error(error) {
-        "This account is not a member of this Space. Join the Space or switch to an account that is a member before sending."
+        "This account is not a member of this Realm. Join the Realm or switch to an account that is a member before sending."
             .to_owned()
     } else {
         error.to_string()
@@ -1516,8 +1515,8 @@ pub(super) fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
     })
 }
 
-pub(super) fn chat_message_from_event(space_id: &str, event: &Value) -> Option<ChatMessage> {
-    chat_message_from_event_with_sidecar(space_id, event, None, None)
+pub(super) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<ChatMessage> {
+    chat_message_from_event_with_sidecar(realm_id, event, None, None)
 }
 
 /// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
@@ -1535,7 +1534,7 @@ pub(super) fn chat_message_from_event(space_id: &str, event: &Value) -> Option<C
 /// state instead of presenting an undecrypted body.
 pub(super) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     device_id: &str,
     encrypted_content: &Value,
@@ -1548,7 +1547,7 @@ pub(super) fn decrypt_chat_encrypted_content(
     };
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         state_store,
-        space_id,
+        realm_id,
         actor_did,
         device_id,
         &payload_value,
@@ -1572,7 +1571,7 @@ pub(super) fn decrypt_chat_encrypted_content(
 /// rather than "No messages". The sidecar lookup mirrors kanban's
 /// `private_flow_field_text`.
 pub(super) fn chat_message_from_event_with_sidecar(
-    space_id: &str,
+    realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
@@ -1584,7 +1583,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
     {
         return None;
     }
-    let message_space = first_string_in_candidates(&candidates, &["space_id"]).unwrap_or(space_id);
+    let message_realm = first_string_in_candidates(&candidates, &["realm_id"]).unwrap_or(realm_id);
     // T7.4: locate the canonical `encrypted_content` envelope (if any) up front
     // so the read path can BOTH surface the decryption state AND attempt a real
     // decrypt-on-read for remote members below.
@@ -1604,7 +1603,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
     let sidecar_body = state_store.and_then(|store| {
         let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
         let flow_id = first_string_in_candidates(&candidates, &["flow_id", "thread_id"])?;
-        store.private_plaintext_for(message_space, flow_id, &format!("message:{message_id}"))
+        store.private_plaintext_for(message_realm, flow_id, &format!("message:{message_id}"))
     });
     let body_from_sidecar = sidecar_body.is_some();
     // P0 decrypt-on-read: a remote member's message carries ciphertext but no
@@ -1617,7 +1616,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
             state_store,
             encrypted_content_value.as_ref(),
         ) {
-        decrypt_chat_encrypted_content(store, message_space, actor_did, device_id, encrypted)
+        decrypt_chat_encrypted_content(store, message_realm, actor_did, device_id, encrypted)
     } else {
         None
     };
@@ -1707,8 +1706,8 @@ pub(super) fn chat_message_from_event_with_sidecar(
         MessageCryptoState::Plaintext
     };
     Some(ChatMessage {
-        realm_id: first_string_in_candidates(&candidates, &["space_id"])
-            .unwrap_or(space_id)
+        realm_id: first_string_in_candidates(&candidates, &["realm_id"])
+            .unwrap_or(realm_id)
             .to_owned(),
         id: event_id,
         sender: first_string_in_candidates(
@@ -1747,7 +1746,7 @@ pub(super) fn chat_message_from_event_with_sidecar(
 }
 
 pub(super) fn chat_messages_from_events_with_sidecar(
-    space_id: &str,
+    realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
@@ -1755,7 +1754,7 @@ pub(super) fn chat_messages_from_events_with_sidecar(
     events
         .iter()
         .filter_map(|event| {
-            chat_message_from_event_with_sidecar(space_id, event, state_store, decrypt_identity)
+            chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
         })
         .collect()
 }
@@ -2475,7 +2474,7 @@ pub(super) fn merge_poll_cards(
 
 pub(super) async fn submit_chat_operation_with_plaintext_retry(
     api: &CokretApi,
-    space_id: &str,
+    realm_id: &str,
     actor_did: &str,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
@@ -2496,7 +2495,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
                 return Err(error);
             }
             api.update_realm_metadata(
-                space_id,
+                realm_id,
                 actor_did,
                 json!({"plaintext_visible_services": services}),
             )
@@ -2526,7 +2525,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
 pub(super) async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
     actor_did: &str,
-    space_id: &str,
+    realm_id: &str,
     access_token: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
@@ -2535,7 +2534,7 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(
         &api,
-        space_id,
+        realm_id,
         actor_did,
         plaintext_visible_services,
         operation,
@@ -2550,7 +2549,7 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
                         authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;
                     submit_chat_operation_with_plaintext_retry(
                         &retry_api,
-                        space_id,
+                        realm_id,
                         actor_did,
                         plaintext_visible_services,
                         operation,

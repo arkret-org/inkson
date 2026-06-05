@@ -111,25 +111,24 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// Flow.
 ///
 /// CKP-0007 P3B.2.8 — the link routes through the dioxus router via
-/// the optional `target_space_id`. When the relation projection
-/// carries the parent Flow's home Space id the link is built as a
-/// `Route::TimelineSpace { realm_id }` navigation; when it doesn't,
-/// the anchor falls back to a `#flow:<id>` hash so the in-Space
+/// the optional `target_realm_id`. When the relation projection
+/// carries the parent Flow's home Realm id the link is built as a
+/// `Route::TimelineRealm { realm_id }` navigation; when it doesn't,
+/// the anchor falls back to a `#flow:<id>` hash so the current Realm
 /// timeline can still scroll to the parent Flow.
 #[component]
 pub fn ConfidentialDiscussionOfBanner(
     target_flow_id: String,
     target_title: String,
-    /// Parent Flow's home Space id. When supplied the link routes via
-    /// the dioxus router's `Route::TimelineSpace` (with a flow anchor
-    /// in the URL hash). Defaults to `None` so legacy callers still
-    /// compile.
+    /// Parent Flow's home Realm id. When supplied the link routes via
+    /// the dioxus router's `Route::TimelineRealm` (with a flow anchor
+    /// in the URL hash).
     #[props(default)]
-    target_space_id: Option<String>,
+    target_realm_id: Option<String>,
 ) -> Element {
-    let href = match target_space_id.as_deref() {
-        Some(space_id) if !space_id.trim().is_empty() => {
-            format!("/timeline/{space_id}#flow:{target_flow_id}")
+    let href = match target_realm_id.as_deref() {
+        Some(realm_id) if !realm_id.trim().is_empty() => {
+            format!("/timeline/{realm_id}#flow:{target_flow_id}")
         }
         _ => format!("#flow:{target_flow_id}"),
     };
@@ -145,7 +144,7 @@ pub fn ConfidentialDiscussionOfBanner(
                     a {
                         href: "{href}",
                         "data-testid": "confidential-discussion-of-link",
-                        "data-target-space-id": "{target_space_id.clone().unwrap_or_default()}",
+                        "data-target-realm-id": "{target_realm_id.clone().unwrap_or_default()}",
                         "{target_title}"
                     }
                 }

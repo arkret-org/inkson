@@ -175,23 +175,23 @@ pub use native::LocalMlsDevice;
 pub fn compose_local_encrypted_message(
     principal_id: &str,
     device_id: &str,
-    space_id: &str,
+    realm_id: &str,
     message_id: &str,
     body: &str,
 ) -> anyhow::Result<ClientEncryptedMessage> {
-    compose_local_encrypted_message_inner(principal_id, device_id, space_id, message_id, body)
+    compose_local_encrypted_message_inner(principal_id, device_id, realm_id, message_id, body)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn compose_local_encrypted_message_inner(
     principal_id: &str,
     device_id: &str,
-    space_id: &str,
+    realm_id: &str,
     message_id: &str,
     body: &str,
 ) -> anyhow::Result<ClientEncryptedMessage> {
     let mut device = LocalMlsDevice::new(principal_id, device_id)?;
-    device.create_group(space_id.as_bytes())?;
+    device.create_group(realm_id.as_bytes())?;
     // Cokret canonical content shape (models/content-types.md §2.2 / §4.1):
     // the E2EE plaintext is the same `payload.content` Content Block the
     // active-write path emits, so a decrypting client parses it with the
@@ -218,7 +218,7 @@ fn compose_local_encrypted_message_inner(
 fn compose_local_encrypted_message_inner(
     _principal_id: &str,
     _device_id: &str,
-    _space_id: &str,
+    _realm_id: &str,
     _message_id: &str,
     _body: &str,
 ) -> anyhow::Result<ClientEncryptedMessage> {
@@ -249,7 +249,7 @@ mod tests {
         .unwrap();
         let bob_keys = bob.key_package_record().unwrap();
 
-        alice.create_group(b"ck:space:local-e2ee").unwrap();
+        alice.create_group(b"ck:realm:local-e2ee").unwrap();
         let welcome = alice.add_member(&bob_keys).unwrap().welcome;
         bob.join_from_welcome(&welcome).unwrap();
 
@@ -304,7 +304,7 @@ mod tests {
         let bob_keys = bob.key_package_record().unwrap();
         let carol_keys = carol.key_package_record().unwrap();
 
-        alice.create_group(b"ck:space:local-e2ee-remove").unwrap();
+        alice.create_group(b"ck:realm:local-e2ee-remove").unwrap();
         let bob_add = alice.add_member(&bob_keys).unwrap();
         bob.join_from_welcome(&bob_add.welcome).unwrap();
 
@@ -363,7 +363,7 @@ mod tests {
         let encrypted = compose_local_encrypted_message(
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000001",
-            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
             "ck:message:local-2",
             "encrypted hello",
         )

@@ -86,6 +86,10 @@ pub mod perf;
 pub mod presence_rx;
 pub mod push;
 pub mod rank;
+/// R28-B — pure realm-tree / projection / field-extraction helpers
+/// extracted out of the (formerly 12k-line) `app` module so the
+/// hierarchy + projection-parsing logic is unit-testable in isolation.
+pub(crate) mod realm_tree;
 pub mod recovery_crypto;
 pub mod recovery_flow;
 pub mod recovery_proof;
@@ -95,10 +99,6 @@ pub mod security_state;
 pub mod session;
 pub mod session_refresh;
 pub mod snapshot;
-/// R28-B — pure space-tree / projection / field-extraction helpers
-/// extracted out of the (formerly 12k-line) `app` module so the
-/// hierarchy + projection-parsing logic is unit-testable in isolation.
-pub(crate) mod realm_tree;
 pub mod sync_engine;
 pub mod telemetry;
 pub mod views;

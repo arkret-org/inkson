@@ -18,7 +18,7 @@ use crate::views::helpers::short_protocol_id;
 #[derive(Clone, Debug, PartialEq)]
 struct AuditRow {
     kind: String,
-    space_id: Option<String>,
+    realm_id: Option<String>,
     target_event_id: Option<String>,
     reader_device: Option<String>,
     operation_id: String,
@@ -38,7 +38,7 @@ fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     }
     Some(AuditRow {
         kind,
-        space_id: extract_string(body, "space_id"),
+        realm_id: extract_string(body, "realm_id"),
         target_event_id: extract_string(body, "target_event_id")
             .or_else(|| extract_string(body, "source_event_id")),
         reader_device: extract_string(body, "reader_device"),
@@ -65,10 +65,10 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
 
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel", role: "region", "aria-label": "Audit log",
-            div { class: "event",
-                div { class: "event-head",
-                    span { "Audit log" }
-                    HelpTip { text: "Attested-audit Spaces require every successful decrypt to emit a ck.audit.accessed event. Disclosed-audit Spaces require every write to emit a ck.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
+                div { class: "event",
+                    div { class: "event-head",
+                        span { "Audit log" }
+                    HelpTip { text: "Attested-audit Realms require every successful decrypt to emit a ck.audit.accessed event. Disclosed-audit Realms require every write to emit a ck.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -93,7 +93,7 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
                     title: "Audit".to_owned(),
                     kind: EmptyStateKind::Empty,
                     message: Some(
-                        "No audit events recorded yet. Audit emission depends on the active Space policy; if no Space you are in is under an attested or disclosed audit profile, nothing will show up here."
+                        "No audit events recorded yet. Audit emission depends on the active Realm policy; if no Realm you are in is under an attested or disclosed audit profile, nothing will show up here."
                             .to_owned(),
                     ),
                     test_id: Some("audit-empty".to_owned()),
@@ -106,15 +106,15 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
                             div { class: "event", "data-testid": "audit-row",
                                 div { class: "event-head",
                                     span { class: "badge", "{row.kind}" }
-                                    if let Some(space) = &row.space_id {
+                                    if let Some(realm) = &row.realm_id {
                                         {
-                                            let space_label = short_protocol_id(space);
+                                            let realm_label = short_protocol_id(realm);
                                             rsx! {
                                                 span {
                                                     class: "mono",
-                                                    "data-testid": "audit-row-space",
-                                                    title: "{space}",
-                                                    "{space_label}"
+                                                    "data-testid": "audit-row-realm",
+                                                    title: "{realm}",
+                                                    "{realm_label}"
                                                 }
                                             }
                                         }
@@ -154,14 +154,14 @@ mod tests {
             "op-1",
             &json!({
                 "kind": "ck.audit.accessed",
-                "space_id": "ck:space:s1",
+                "realm_id": "ck:realm:s1",
                 "target_event_id": "ck:event:abc",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "ck.audit.accessed");
-        assert_eq!(row.space_id.as_deref(), Some("ck:space:s1"));
+        assert_eq!(row.realm_id.as_deref(), Some("ck:realm:s1"));
         assert_eq!(row.target_event_id.as_deref(), Some("ck:event:abc"));
     }
 
@@ -185,7 +185,7 @@ mod tests {
             "op-3",
             &json!({
                 "kind": "ck.message.create",
-                "space_id": "ck:space:s1",
+                "realm_id": "ck:realm:s1",
             }),
         );
         assert!(none.is_none());

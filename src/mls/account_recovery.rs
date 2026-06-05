@@ -165,7 +165,7 @@ pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
 /// Mirrors [`build_mls_account_secret_backup_body_with_kek_and_version`] but
 /// with the sidecar identifiers and the sidecar JSON bytes as the encrypted
 /// payload. `sidecar_json` is the serialized `mls_private_plaintext` map
-/// (`serde_json::to_vec` of `space -> flow -> field -> plaintext`); only its
+/// (`serde_json::to_vec` of `realm -> flow -> field -> plaintext`); only its
 /// ciphertext, salt and nonce travel on the wire. The caller derives `kek` from
 /// the account secret (`derive_vault_kek(account_secret.as_bytes())`), so the
 /// restore path — which imports the account secret first — can decrypt with no
@@ -887,7 +887,7 @@ fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
 /// `restore_mls_history_backup_with_device_snapshot`), so any old history left
 /// behind loses its now-deleted old account secret and becomes permanently
 /// undecryptable on a fresh device — and it stays readable by whoever holds the
-/// rotated-out (compromised) old secret. History for a space not held locally is
+/// rotated-out (compromised) old secret. History for a realm not held locally is
 /// re-recoverable via MLS Welcome / re-sync; leaving compromised,
 /// soon-to-be-orphaned ciphertext on the server is not acceptable. Anything in
 /// `keep_backup_ids` (the freshly uploaded new series) is never selected.
@@ -1011,7 +1011,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     // Phase 4 (§9.1 / §12.2): delete ALL superseded OLD account-secret + history
     // backups now that the new series is confirmed uploaded. Best-effort: a
     // delete failure leaves stale-but-harmless old ciphertext, never blocks the
-    // rotation. We delete all old history (not just rewrapped spaces) — see
+    // rotation. We delete all old history (not just rewrapped Realms) — see
     // `select_superseded_backup_ids` for why leaving half would orphan history
     // under the deleted old secret while keeping it readable by the compromised
     // old secret.
@@ -1386,7 +1386,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "stale-local-secret").unwrap();
         let state = temp_state_store("prompt-missing-history");
-        let envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let envelope = history_envelope("ck:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&envelope)]
         });
@@ -1401,7 +1401,7 @@ mod tests {
         let store = MemorySecureKeyStore::new();
         crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
         let mut state = temp_state_store("prompt-current-history");
-        let envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let envelope = history_envelope("ck:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
         state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&envelope)]
@@ -1471,12 +1471,12 @@ mod tests {
             .unwrap();
         let mut state = temp_state_store("prompt-forked-secret");
         // Server backup is encrypted under the real account secret...
-        let server_envelope = history_envelope("ck:space:prompt", "group-a", 7, ACCOUNT_SECRET);
+        let server_envelope = history_envelope("ck:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
         // ...but the local snapshot was saved under the forked random secret at
         // the same (or higher) epoch, so it self-decrypts and passes the old
         // epoch/group gates.
         let local_envelope =
-            history_envelope("ck:space:prompt", "group-a", 7, "forked-random-secret");
+            history_envelope("ck:realm:prompt", "group-a", 7, "forked-random-secret");
         state.save_mls_snapshot(local_envelope.realm_id.clone(), local_envelope);
         let payload = serde_json::json!({
             "backups": [wrap(), history_body(&server_envelope)]
@@ -1498,17 +1498,17 @@ mod tests {
         use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
-        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let realm = "ck:realm:01964137-0000-7000-8000-0000000000ab";
         let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         // Device A's history is encrypted under the account secret.
         let history = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),
@@ -1559,7 +1559,7 @@ mod tests {
             .expect("account secret now local");
         assert_eq!(loaded.secret, ACCOUNT_SECRET);
         assert!(
-            state.mls_snapshot_for(space).is_some(),
+            state.mls_snapshot_for(realm).is_some(),
             "snapshot decryptable"
         );
 
@@ -1587,16 +1587,16 @@ mod tests {
         use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
-        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let realm = "ck:realm:01964137-0000-7000-8000-0000000000ab";
         let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),
@@ -1632,7 +1632,7 @@ mod tests {
             crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
         );
         assert_eq!(loaded.secret, ACCOUNT_SECRET);
-        assert!(state.mls_snapshot_for(space).is_some());
+        assert!(state.mls_snapshot_for(realm).is_some());
     }
 
     #[test]
@@ -1668,19 +1668,19 @@ mod tests {
     #[test]
     fn select_superseded_picks_all_old_account_and_history() {
         // Phase 4: after rotation, delete EVERY old account-secret + EVERY old
-        // history backup (not just rewrapped spaces) — leaving any behind would
+        // history backup (not just rewrapped Realms) — leaving any behind would
         // orphan it under the deleted old secret while keeping it readable by the
         // compromised old secret. Only the freshly-uploaded `keep` ids survive.
         let mut old_account = wrap();
         old_account["backup_id"] = serde_json::json!("ck:backup:old-account");
-        let env_a = history_envelope("ck:space:a", "g-a", 1, ACCOUNT_SECRET);
+        let env_a = history_envelope("ck:realm:a", "g-a", 1, ACCOUNT_SECRET);
         let mut hist_a = history_body(&env_a);
         hist_a["backup_id"] = serde_json::json!("ck:backup:old-hist-a");
-        // A server-only space (not rewrapped locally) — MUST still be deleted.
-        let env_b = history_envelope("ck:space:b", "g-b", 1, ACCOUNT_SECRET);
+        // A server-only realm (not rewrapped locally) — MUST still be deleted.
+        let env_b = history_envelope("ck:realm:b", "g-b", 1, ACCOUNT_SECRET);
         let mut hist_b = history_body(&env_b);
         hist_b["backup_id"] = serde_json::json!("ck:backup:old-hist-b");
-        // The just-uploaded new history for space a (in keep) must NOT be deleted.
+        // The just-uploaded new history for realm a (in keep) must NOT be deleted.
         let mut new_hist_a = history_body(&env_a);
         new_hist_a["backup_id"] = serde_json::json!("ck:backup:new-hist-a");
         let payload = serde_json::json!({ "backups": [old_account, hist_a, hist_b, new_hist_a] });
@@ -1758,9 +1758,9 @@ mod tests {
         fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
         let mut flows = std::collections::BTreeMap::new();
         flows.insert("ck:flow:alpha".to_owned(), fields);
-        let mut spaces = std::collections::BTreeMap::new();
-        spaces.insert("ck:realm:demo".to_owned(), flows);
-        spaces
+        let mut realms = std::collections::BTreeMap::new();
+        realms.insert("ck:realm:demo".to_owned(), flows);
+        realms
     }
 
     fn wrap_sidecar() -> (Vec<u8>, Value) {
@@ -1854,16 +1854,16 @@ mod tests {
         // Build a real, decryptable account-secret + history backup so Step 1/2
         // succeed and the account secret is local for the sidecar KEK source.
         let device_a = "ck:device:01964137-0000-7000-8000-00000000000a";
-        let space = "ck:space:01964137-0000-7000-8000-0000000000ab";
+        let realm = "ck:realm:01964137-0000-7000-8000-0000000000ab";
         let identity = CokretMlsIdentity::new_basic(
             Did::new(ACTOR.to_owned()).unwrap(),
             DeviceId::new(device_a.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(space.as_bytes()).unwrap();
+        let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
         let history = crate::mls::persistence::encrypt_state(
-            space,
+            realm,
             &record.group_id,
             record.epoch,
             &serde_json::to_vec(&record).unwrap(),

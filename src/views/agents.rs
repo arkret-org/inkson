@@ -343,11 +343,11 @@ pub fn AgentsPanel(
     let mut incoming_last_poll_at = use_signal(String::new);
     {
         let base = base_url.clone();
-        let space = selected_realm_id.clone();
+        let realm = selected_realm_id.clone();
         let token_for_fetch = token;
         use_future(move || {
             let base = base.clone();
-            let space = space.clone();
+            let realm = realm.clone();
             async move {
                 let mut ticks: u32 = 0;
                 loop {
@@ -359,15 +359,15 @@ pub fn AgentsPanel(
                         break;
                     }
                     ticks += 1;
-                    if token_for_fetch().trim().is_empty() || space.trim().is_empty() {
+                    if token_for_fetch().trim().is_empty() || realm.trim().is_empty() {
                         crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
                         continue;
                     }
                     let api_token = token_for_fetch();
                     let base_for_call = base.clone();
-                    let space_for_call = space.clone();
+                    let realm_for_call = realm.clone();
                     let resp = match with_authed_api(&base_for_call, api_token, |api| async move {
-                        api.backfill(&space_for_call).await
+                        api.backfill(&realm_for_call).await
                     })
                     .await
                     {
@@ -542,11 +542,11 @@ pub fn AgentsPanel(
                             "data-testid": "agent-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_realm_id.clone();
+                                let realm = selected_realm_id.clone();
                                 let actor = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let actor = actor.clone();
                                     let did = agent_id().trim().to_owned();
                                     let proto = protocol().trim().to_owned();
@@ -564,7 +564,7 @@ pub fn AgentsPanel(
                                     spawn(async move {
                                         let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
                                         let op = crate::operation::cx_ops::agent_endpoint(
-                                            &space, &actor, &did, &proto, &caps_refs,
+                                            &realm, &actor, &did, &proto, &caps_refs,
                                         )
                                         .build("yougen");
                                         match with_authed_api(&base, api_token, |api| async move {
@@ -805,11 +805,11 @@ pub fn AgentsPanel(
                                 "data-testid": "agent-protocol-handoff-confirm-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let actor = actor.clone();
                                         let target = handoff_target_did();
                                         let target_label = short_protocol_id(&target);
@@ -828,7 +828,7 @@ pub fn AgentsPanel(
                                                 crate::operation::uuid_v7()
                                             );
                                             let op = crate::operation::cx_ops::agent_protocol_session_start(
-                                                &space,
+                                                &realm,
                                                 &actor,
                                                 &target,
                                                 &session_id,

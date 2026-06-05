@@ -2,8 +2,8 @@ use super::*;
 
 impl CokretApi {
     /// Query durable events through the current `/_cokret/self/events` surface.
-    pub async fn backfill(&self, space_id: &str) -> anyhow::Result<BackfillResBody> {
-        self.get_json(&events_query_path(space_id)).await
+    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillResBody> {
+        self.get_json(&events_query_path(realm_id)).await
     }
 
     /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and
@@ -24,7 +24,7 @@ impl CokretApi {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn events_subscribe_ndjson<F>(
         &self,
-        space_id: &str,
+        realm_id: &str,
         after: Option<&str>,
         include_history: Option<bool>,
         mut on_frame: F,
@@ -37,7 +37,7 @@ impl CokretApi {
         }
         let request = self
             .http
-            .get(self.endpoint(&events_subscribe_path(space_id, after, include_history))?)
+            .get(self.endpoint(&events_subscribe_path(realm_id, after, include_history))?)
             .header(ACCEPT, "application/x-ndjson");
         let mut response = self
             .send_with_retry(self.prepare_request(request), Method::GET, true)
@@ -70,12 +70,12 @@ impl CokretApi {
     /// through `ck.self.events.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor: &str,
         device_id: Option<&str>,
         typing: bool,
     ) -> anyhow::Result<TypingResponse> {
-        let envelope = build_typing_envelope(space_id, actor, device_id, typing)?;
+        let envelope = build_typing_envelope(realm_id, actor, device_id, typing)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(TypingResponse {
             ok: response.accepted,
@@ -88,7 +88,7 @@ impl CokretApi {
     /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor: &str,
         event_id: &str,
         receipt_type: &str,
@@ -99,7 +99,7 @@ impl CokretApi {
         if receipt_type != "ck.receipt.read" {
             anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
-        let envelope = build_receipt_read_envelope(space_id, actor, event_id)?;
+        let envelope = build_receipt_read_envelope(realm_id, actor, event_id)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(ReceiptResponse {
             ok: response.accepted,

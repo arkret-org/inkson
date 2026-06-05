@@ -139,18 +139,18 @@ mod tests {
         // counted: starts with ck.call.
         store.append_raw_operation(
             "op-1".to_owned(),
-            Some("ck:space:s".to_owned()),
+            Some("ck:realm:s".to_owned()),
             json!({"kind": "ck.call.signal"}),
         );
         store.append_raw_operation(
             "op-2".to_owned(),
-            Some("ck:space:s".to_owned()),
+            Some("ck:realm:s".to_owned()),
             json!({"kind": "ck.call.state"}),
         );
         // NOT counted
         store.append_raw_operation(
             "op-3".to_owned(),
-            Some("ck:space:s".to_owned()),
+            Some("ck:realm:s".to_owned()),
             json!({"kind": "ck.message.create"}),
         );
 

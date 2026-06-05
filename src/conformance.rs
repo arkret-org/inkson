@@ -131,7 +131,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         ClientProfileDeclaration {
             profile_id: PROFILE_FULL_CLIENT,
             label: "full_client",
-            description: "Full client: setup workflows, space lifecycle, audit, notifications, app views, and admin surfaces.",
+            description: "Full client: setup workflows, Realm lifecycle, audit, notifications, app views, and admin surfaces.",
             local_supported: true,
             degradation_path: "Fall back to minimal, chat-only, and kanban-only surfaces.",
             tier: ConformanceTier::V1Core,
@@ -364,19 +364,15 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.session.grant",
         // Sovereign deployment (sync/sovereign-deployment)
         "ck.sovereign.did_policy",
-        // Realm (security boundary) — R1.7 inversion renamed the former
-        // `ck.space.*` security events to `ck.realm.*` and freed the
-        // `ck.space.*` namespace for the container lifecycle below.
+        // Realm (security boundary).
         // T2.3 history: ck.space.lifecycle.set / ck.space.policy.set were
         // removed by spec 0a5ab85 — they have no realm successor.
-        "ck.realm.child",
         "ck.realm.create",
         "ck.realm.organization",
-        "ck.realm.parent",
         "ck.realm.update",
         "ck.realm.upgrade",
-        // Space (navigation container, post-R1.7) — former `ck.place.*`
-        // verbs over Board / List / Section containers.
+        // Space (navigation container) verbs over Board / List / Section
+        // containers.
         "ck.space.archive",
         "ck.space.create",
         "ck.space.restore",
@@ -588,7 +584,7 @@ impl PlaintextBoundary {
     /// Check if sending plaintext to a service is allowed.
     pub fn can_send_plaintext(&self, service_did: &str) -> bool {
         if self.is_e2ee {
-            // E2EE spaces: plaintext must not leave the client
+            // E2EE Realms: plaintext must not leave the client
             return false;
         }
         self.allowed_services.iter().any(|s| s == service_did)
@@ -632,17 +628,28 @@ fn validate_event_schema(value: &Value) -> Result<(), ValidationError> {
         return Err(ValidationError::ExpectedObject("event".into()));
     }
     let obj = value.as_object().unwrap();
-    for field in &["operation_id", "space_id", "actor", "type", "causal"] {
+    for field in &[
+        "event_id",
+        "kind",
+        "realm_id",
+        "actor_id",
+        "actor_seq",
+        "created_at",
+        "prev_refs",
+        "refs",
+        "payload",
+        "proofs",
+    ] {
         if !obj.contains_key(*field) {
             return Err(ValidationError::MissingField(field.to_string()));
         }
     }
     // F-PROFILE-1: enforce the conformance profile by rejecting any
-    // `type` (canonical event kind) outside `known_event_kinds()`.
-    // The schema-level shape check above already guarantees `type` is
+    // `kind` outside `known_event_kinds()`.
+    // The schema-level shape check above already guarantees `kind` is
     // present; here we ensure it's also a kind yougen is qualified
     // to apply.
-    if let Some(kind) = obj.get("type").and_then(|v| v.as_str()) {
+    if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
         require_known_event_kind(kind)?;
     }
     Ok(())
@@ -691,7 +698,7 @@ pub enum ValidationError {
     MissingField(String),
     #[error("invalid value for {field}, expected: {expected}")]
     InvalidValue { field: String, expected: String },
-    /// F-PROFILE-1: the event's `type` is not in the conformance profile
+    /// F-PROFILE-1: the event's `kind` is not in the conformance profile
     /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
     /// rejection at event ingest so a profile-drift attack / spec bump
     /// can't smuggle an unknown reducer kind into local state.
@@ -699,9 +706,9 @@ pub enum ValidationError {
     UnknownEventKind(String),
 }
 
-/// Space discovery state per cokret-spec section 9.2.
+/// Realm discovery state per cokret-spec section 9.2.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceDiscovery {
+pub struct RealmDiscovery {
     pub discoverability: Discoverability,
     pub directory_visibility: String,
     #[serde(default)]
@@ -833,26 +840,36 @@ mod tests {
     #[test]
     fn validate_event_schema_ok() {
         let event = json!({
-            "operation_id": "op1",
-            "space_id": "ck:space:s1",
-            "actor": "did:web:alice",
-            "type": "ck.message.create",
-            "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.message.create",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice",
+            "actor_seq": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {},
+            "proofs": []
         });
         assert!(validate_structure(&event, "event").is_ok());
     }
 
-    /// F-PROFILE-1: an otherwise well-formed event whose `type` falls
+    /// F-PROFILE-1: an otherwise well-formed event whose `kind` falls
     /// outside `known_event_kinds()` must be rejected at the validate
     /// boundary instead of being treated as a "default" branch later.
     #[test]
     fn validate_event_schema_rejects_unknown_kind() {
         let event = json!({
-            "operation_id": "op1",
-            "space_id": "ck:space:s1",
-            "actor": "did:web:alice",
-            "type": "ck.bogus.kind",
-            "causal": {"hlc": "0000018ef01234-0001-deadbeef", "actor_seq": 1}
+            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "kind": "ck.bogus.kind",
+            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice",
+            "actor_seq": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {},
+            "proofs": []
         });
         match validate_structure(&event, "event") {
             Err(ValidationError::UnknownEventKind(kind)) => {
@@ -907,7 +924,8 @@ mod tests {
         // and pruned to ck.flow.track.{enable,disable,update,set_primary}
         // (4 kinds; spec dropped member/history_visibility/policy_components
         // because tracks no longer carry independent membership/visibility/
-        // policy — see Flow.discussion_realm_ref). Net -3 from prior 110.
+        // policy; Flow.scope_circle_id owns the Flow-wide effective scope.
+        // Net -3 from prior 110.
         // Follow-on wire-break (spec dc01ad7, 2026-05-18): the four track
         // events above unified into a single `ck.flow.tracks.update` carrying
         // a `ck.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
@@ -923,10 +941,8 @@ mod tests {
         // T2.3 wire-break: ck.space.lifecycle.set and ck.space.policy.set
         // were removed (artifacts/registry/removed-event-kinds.json,
         // hard_reject); net -2 from prior 107.
-        // R1.7 realm/space inversion: 6 former `ck.space.*` security events
-        // were renamed to `ck.realm.*`, and 5 new `ck.space.*` container
-        // lifecycle kinds (archive/create/restore/tombstone/update) were
-        // added — net +5 from prior 105.
+        // Realm/Space split: security-boundary events live under `ck.realm.*`,
+        // and container lifecycle events live under `ck.space.*`.
         assert_eq!(known_event_kinds().len(), 110);
     }
 
@@ -965,12 +981,10 @@ mod tests {
         // per-component cells / typed lifecycle events.
         assert!(!kinds.contains(&"ck.space.lifecycle.set"));
         assert!(!kinds.contains(&"ck.space.policy.set"));
-        // R1.7 realm/space inversion: security-boundary events live in
-        // ck.realm.*; container lifecycle events live in ck.space.*.
+        // Realm/Space split: security-boundary events live in ck.realm.*;
+        // container lifecycle events live in ck.space.*.
         assert!(kinds.contains(&"ck.realm.create"));
         assert!(kinds.contains(&"ck.realm.update"));
-        assert!(kinds.contains(&"ck.realm.child"));
-        assert!(kinds.contains(&"ck.realm.parent"));
         assert!(kinds.contains(&"ck.space.archive"));
         assert!(kinds.contains(&"ck.space.restore"));
         assert!(kinds.contains(&"ck.space.tombstone"));
@@ -1008,12 +1022,11 @@ mod tests {
     #[test]
     fn known_event_kinds_meet_registry_floor() {
         let kinds = known_event_kinds();
-        // R1.7 realm/space inversion raised the floor from 102 to 107:
-        // the 6 renamed `ck.space.*` → `ck.realm.*` are net-zero, and the
-        // 5 new container lifecycle kinds add a stable floor of 107.
+        // Realm/Space split keeps a stable floor of 107 by including the
+        // Space container lifecycle kinds used by the kanban workflow.
         assert!(
             kinds.len() >= 107,
-            "yougen surfaces {} event kinds; floor 107 set after R1.7 added ck.space.{{archive,create,restore,tombstone,update}} on top of the realm/space inversion.",
+            "yougen surfaces {} event kinds; floor 107 includes ck.space.{{archive,create,restore,tombstone,update}} container lifecycle kinds.",
             kinds.len()
         );
     }

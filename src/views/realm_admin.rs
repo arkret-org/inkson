@@ -143,7 +143,7 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> RealmTre
                 &[&["parent_space_id"], &["summary", "parent_space_id"]],
             )
             .is_some();
-            if subject_id.starts_with("ck:space:") && has_parent {
+            if subject_id.starts_with("ck:realm:") && has_parent {
                 RealmTreeNodeKind::Space
             } else {
                 RealmTreeNodeKind::Realm
@@ -158,15 +158,15 @@ fn projection_home_realm_for_admin(
     body: Option<&Value>,
 ) -> String {
     if kind == RealmTreeNodeKind::Realm {
-        return crate::operation::scope_id_as_realm_id(subject_id);
+        return crate::operation::trim_realm_id(subject_id);
     }
     body.and_then(|body| projection_string(body, &[&["realm_id"], &["summary", "realm_id"]]))
-        .unwrap_or_else(|| crate::operation::scope_id_as_realm_id(subject_id))
+        .unwrap_or_else(|| crate::operation::trim_realm_id(subject_id))
 }
 
 fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSubject {
     let state = store.load();
-    let body = state.space_projections.get(subject_id);
+    let body = state.realm_tree_projections.get(subject_id);
     let kind = projection_kind_for_admin(subject_id, body);
     let title = body
         .and_then(|body| {
@@ -201,7 +201,7 @@ fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSu
 fn projected_members_for_realm(store: &LocalStateStore, realm_id: &str) -> Vec<String> {
     store
         .load()
-        .space_projections
+        .realm_tree_projections
         .get(realm_id)
         .and_then(|proj| {
             proj.get("members").or_else(|| {
@@ -238,8 +238,8 @@ pub fn RealmAdminPanel(
     state_store: Signal<LocalStateStore>,
     active_section: Option<String>,
 ) -> Element {
-    let mut space_name = use_signal(String::new);
-    let mut space_description = use_signal(String::new);
+    let mut metadata_title = use_signal(String::new);
+    let mut metadata_summary = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut history_visibility = use_signal(|| "shared".to_owned());
@@ -250,7 +250,7 @@ pub fn RealmAdminPanel(
     // block-this-user confirmation modal is open for that DID; resets
     // to `None` on cancel or confirm.
     let mut block_confirm_did = use_signal(|| Option::<String>::None);
-    let mut space_invites = use_signal(Vec::<InviteRecord>::new);
+    let mut realm_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
@@ -269,7 +269,7 @@ pub fn RealmAdminPanel(
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
     let mut covered_frontier_threshold = use_signal(|| DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD);
-    // Read-only anchorer cell value fetched from /_soland/admin/spaces/{id}/anchorer.
+    // Read-only anchorer cell value fetched from /_soland/admin/realms/{id}/anchorer.
     // The endpoint may 404 in dev — surface that inline rather than blocking the page.
     let mut anchorer_cell_status = use_signal(String::new);
     let mut anchorer_cell_value = use_signal(String::new);
@@ -297,11 +297,11 @@ pub fn RealmAdminPanel(
     let mut device_revoke_target = use_signal(String::new);
     let device_revoke_status = use_signal(String::new);
 
-    // Read the local anchor view for this space once per render. Surfaces:
+    // Read the local anchor view for this realm once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
-    let anchor_view = state_store.read().anchor_view_for(&selected_realm_id);
+    let anchor_view = state_store.read().anchor_view_for_realm(&selected_realm_id);
     let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = anchor_view
         .bottom_cells
         .iter()
@@ -352,26 +352,26 @@ pub fn RealmAdminPanel(
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
     // per-Realm Move submission tracker. Drives the state-pill list +
-    // the Space-wide anchorer_paused banner.
+    // the Realm-wide anchorer_paused banner.
     let move_submissions = state_store
         .read()
-        .move_submissions_for_space(&selected_realm_id);
-    let space_paused = state_store
+        .move_submissions_for_realm(&selected_realm_id);
+    let realm_paused = state_store
         .read()
-        .space_has_paused_anchorer(&selected_realm_id);
-    let space_pending_mls_binding = state_store
+        .realm_has_paused_anchorer(&selected_realm_id);
+    let realm_pending_mls_binding = state_store
         .read()
-        .space_has_pending_mls_binding(&selected_realm_id);
+        .realm_has_pending_mls_binding(&selected_realm_id);
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     {
-        let selected_space_for_hydration = selected_realm_id.clone();
+        let selected_realm_for_hydration = selected_realm_id.clone();
         let should_hydrate_members = active_section == RealmAdminSection::Members;
         use_effect(move || {
             if !should_hydrate_members {
                 return;
             }
             let next =
-                projected_members_for_realm(&state_store.read(), &selected_space_for_hydration);
+                projected_members_for_realm(&state_store.read(), &selected_realm_for_hydration);
             if members() != next {
                 members.set(next);
             }
@@ -379,8 +379,8 @@ pub fn RealmAdminPanel(
     }
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
     if metadata_loaded_for() != selected_realm_id {
-        space_name.set(metadata_subject.title.clone());
-        space_description.set(metadata_subject.summary.clone());
+        metadata_title.set(metadata_subject.title.clone());
+        metadata_summary.set(metadata_subject.summary.clone());
         metadata_loaded_for.set(selected_realm_id.clone());
     }
     let metadata_subject_label = match metadata_subject.kind {
@@ -389,10 +389,10 @@ pub fn RealmAdminPanel(
     };
     let metadata_event_kind = match metadata_subject.kind {
         RealmTreeNodeKind::Realm => "ck.realm.update",
-        RealmTreeNodeKind::Space => "ck.space.update",
+        RealmTreeNodeKind::Space => "ck.realm.update",
     };
-    let alert_count = usize::from(space_paused)
-        + usize::from(space_pending_mls_binding)
+    let alert_count = usize::from(realm_paused)
+        + usize::from(realm_pending_mls_binding)
         + usize::from(!bottom_cells.is_empty())
         + usize::from(covered_frontier_alert);
 
@@ -513,19 +513,19 @@ pub fn RealmAdminPanel(
                     }
                 }
             }
-            // Space-wide anchorer-paused banner. Fires whenever any tracked
-            // Move for this Space has surfaced `AnchorerPaused`. The Space
+            // Realm-wide anchorer-paused banner. Fires whenever any tracked
+            // Move for this Realm has surfaced `AnchorerPaused`. The Space
             // cannot advance until ops rotate the recovery anchorer.
-            if space_paused {
+            if realm_paused {
                 div {
                     class: "event error-banner",
                     "data-testid": "anchorer-paused-banner",
                     div { class: "event-head",
-                        span { "Space halted, waiting for the recovery anchorer" }
+                        span { "Realm halted, waiting for the recovery anchorer" }
                         span { class: "badge red", "anchorer_paused" }
                     }
                     div { class: "muted",
-                        "soland's anchorer signing pipeline is offline for this Space — Moves remain in MoveStore but no Anchor batch will close until ops rotate the recovery anchorer (sodmin H'8). All write attempts surface state=anchorer_paused."
+                        "soland's anchorer signing pipeline is offline for this Realm — Moves remain in MoveStore but no Anchor batch will close until ops rotate the recovery anchorer (sodmin H'8). All write attempts surface state=anchorer_paused."
                     }
                 }
             }
@@ -533,7 +533,7 @@ pub fn RealmAdminPanel(
             // asserts a covered_frontier the local
             // MLS view has not yet acknowledged. Stays up until the
             // user clears the underlying Move record.
-            if space_pending_mls_binding {
+            if realm_pending_mls_binding {
                 div {
                     class: "event",
                     "data-testid": "pending-mls-binding-toast",
@@ -642,7 +642,7 @@ pub fn RealmAdminPanel(
                         span { class: "badge red", "bottom/conflict" }
                     }
                     div { class: "muted",
-                        "One or more cells in this Space's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a recovery repair Event before downstream queries return a definitive value."
+                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. An admin / moderator must resolve each conflict by submitting a recovery repair Event before downstream queries return a definitive value."
                     }
                     for (cell_ref, info) in &bottom_cells {
                         {
@@ -770,11 +770,11 @@ pub fn RealmAdminPanel(
                             "data-testid": "repair-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_realm_id.clone();
+                                let realm = selected_realm_id.clone();
                                 let actor_account_did = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let actor_did = actor_account_did.trim().to_owned();
                                     let api_token = token();
                                     let cell = repair_target_cell().trim().to_owned();
@@ -810,7 +810,7 @@ pub fn RealmAdminPanel(
                                     }
                                     let heads = vec![head_a, head_b];
                                     let envelope = crate::operation::cx_ops::conflict_repair(
-                                        &space,
+                                        &realm,
                                         &actor_did,
                                         &cell,
                                         &heads,
@@ -930,7 +930,7 @@ pub fn RealmAdminPanel(
                     }
                 }
                 // Anchorer cell (read-only, P0 M4) — fetches from
-                // /_soland/admin/spaces/{id}/anchorer; surfaces the
+                // /_soland/admin/realms/{id}/anchorer; surfaces the
                 // recovery-anchorer mode (single_did / threshold / open_set /
                 // mixed) on this admin page. A separate agent is implementing
                 // the endpoint on soland; on 404 we fall back to a clear
@@ -941,7 +941,7 @@ pub fn RealmAdminPanel(
                         span { "ck.component.anchorer.v1" }
                     }
                     div { class: "muted",
-                        "Recovery anchorer mode for this Space — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
+                        "Recovery anchorer mode for this Realm — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
                     }
                     div { class: "actions",
                         button {
@@ -949,17 +949,17 @@ pub fn RealmAdminPanel(
                             "data-testid": "anchorer-cell-refresh",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_realm_id.clone();
+                                let realm = selected_realm_id.clone();
                                 move |_| {
                                     let base = base.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let api_token = token();
                                     spawn(async move {
                                         match crate::views::helpers::with_authed_api(
                                             &base,
                                             api_token,
                                             |api| async move {
-                                                api.admin_anchorer_describe(&space).await
+                                                api.admin_anchorer_describe(&realm).await
                                             },
                                         )
                                         .await
@@ -975,7 +975,7 @@ pub fn RealmAdminPanel(
                                                 // data.
                                                 anchorer_cell_status.set(format!(
                                                     "anchorer endpoint unavailable ({}); \
-                                                     expected /_soland/admin/spaces/{{id}}/anchorer \
+                                                     expected /_soland/admin/realms/{{id}}/anchorer \
                                                      (separate agent shipping)",
                                                     err.display()
                                                 ));
@@ -1003,7 +1003,7 @@ pub fn RealmAdminPanel(
             // Realm / Space metadata editor. Spec fields are `title` and
             // optional `summary`; access policy is handled by the facet
             // controls below rather than by generic metadata fields.
-            div { class: "event", "data-testid": "space-metadata",
+            div { class: "event", "data-testid": "realm-metadata",
                 div { class: "event-head",
                     span { "{metadata_subject_label} Metadata" }
                     span { "{metadata_event_kind}" }
@@ -1022,17 +1022,17 @@ pub fn RealmAdminPanel(
                 div { class: "workflow-form",
                     label { "Title" }
                     input {
-                        "data-testid": "space-name-input",
-                        value: "{space_name}",
+                        "data-testid": "realm-name-input",
+                        value: "{metadata_title}",
                         placeholder: "{metadata_subject_label} title",
-                        oninput: move |evt| space_name.set(evt.value()),
+                        oninput: move |evt| metadata_title.set(evt.value()),
                     }
                     label { "Summary" }
                     textarea {
-                        "data-testid": "space-description-input",
-                        value: "{space_description}",
+                        "data-testid": "realm-description-input",
+                        value: "{metadata_summary}",
                         placeholder: "Optional summary",
-                        oninput: move |evt| space_description.set(evt.value()),
+                        oninput: move |evt| metadata_summary.set(evt.value()),
                     }
                     div { class: "actions",
                         button {
@@ -1048,8 +1048,8 @@ pub fn RealmAdminPanel(
                                     let subject_id = subject_id.clone();
                                     let home_realm_id = home_realm_id.clone();
                                     let api_token = token();
-                                    let title = space_name().trim().to_owned();
-                                    let summary = space_description().trim().to_owned();
+                                    let title = metadata_title().trim().to_owned();
+                                    let summary = metadata_summary().trim().to_owned();
                                     if title.is_empty() {
                                         status_msg.set("metadata update failed: title is required by spec".to_owned());
                                         return;
@@ -1162,11 +1162,11 @@ pub fn RealmAdminPanel(
                         "data-testid": "apply-policy-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let actor = actor.clone();
                                 let api_token = token();
                                 let rule = join_rule();
@@ -1176,7 +1176,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.set_realm_policy_events(&space, &actor, &rule, &vis).await
+                                            api.set_realm_policy_events(&realm, &actor, &rule, &vis).await
                                         },
                                     )
                                     .await
@@ -1245,11 +1245,11 @@ pub fn RealmAdminPanel(
                             onclick: {
                                 let base = base_url.clone();
                                 let actor = account_did.clone();
-                                let space = selected_realm_id.clone();
+                                let realm = selected_realm_id.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let actor = actor.clone();
-                                    let space = space.clone();
+                                    let realm = realm.clone();
                                     let api_token = token();
                                     let target = invite_target().trim().to_owned();
                                     if target.is_empty() {
@@ -1270,7 +1270,7 @@ pub fn RealmAdminPanel(
                                                 let invitee_did = match api
                                                     .resolve_invitee_did_for_invite(
                                                         &target,
-                                                        &space,
+                                                        &realm,
                                                         &actor,
                                                     )
                                                     .await
@@ -1287,7 +1287,7 @@ pub fn RealmAdminPanel(
                                                     format!("{target} -> {invitee_did}")
                                                 };
                                                 let op = cx_ops::invite_create_structured(
-                                                    &space,
+                                                    &realm,
                                                     &actor,
                                                     &invite_id,
                                                     &invitee_did,
@@ -1297,7 +1297,7 @@ pub fn RealmAdminPanel(
                                                 let op_id = op.local_operation_id().to_owned();
                                                 match api.submit_event_envelope(&op).await {
                                                     Ok(submitted) => {
-                                                        space_invites.write().push(InviteRecord {
+                                                        realm_invites.write().push(InviteRecord {
                                                             invite_id: invite_id.clone(),
                                                             target: invitee_did.clone(),
                                                             role: None,
@@ -1314,7 +1314,7 @@ pub fn RealmAdminPanel(
                                                             // poisons the next /account/subscribe after= call.
                                                             store.append_raw_operation(
                                                                 op_id.clone(),
-                                                                Some(space.clone()),
+                                                                Some(realm.clone()),
                                                                 json!({
                                                                     "kind": "ck.invite.create",
                                                                     "invite_id": invite_id,
@@ -1377,14 +1377,14 @@ pub fn RealmAdminPanel(
                         class: "secondary",
                         "data-testid": "refresh-members-button",
                         onclick: {
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 // Spec-canonical read path is the local sync
                                 // projection (driven by ck.self.events.subscribe).
                                 // Members appear as the local store applies
                                 // ck.member.state events.
                                 let store = state_store.read();
-                                let next = projected_members_for_realm(&store, &space);
+                                let next = projected_members_for_realm(&store, &realm);
                                 let count = next.len();
                                 members.set(next);
                                 status_msg.set(format!(
@@ -1472,18 +1472,18 @@ pub fn RealmAdminPanel(
                                 "data-testid": "kick-member-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let m = member.clone();
                                     let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let m = m.clone();
                                         let api_token = token();
                                         let actor_did = actor_account_did.clone();
                                         spawn(async move {
                                             let m_for_msg = m.clone();
-                                            let space_for_api = space.clone();
+                                            let realm_for_api = realm.clone();
                                             // Spec-canonical "kick" = `join → leave` member-state
                                             // transition (no separate kick FSM verb).
                                             match crate::views::helpers::with_authed_api(
@@ -1491,7 +1491,7 @@ pub fn RealmAdminPanel(
                                                 api_token,
                                                 |api| async move {
                                                     api.transition_member_state(
-                                                        &space_for_api,
+                                                        &realm_for_api,
                                                         &actor_did,
                                                         &m,
                                                         Some("join"),
@@ -1506,12 +1506,12 @@ pub fn RealmAdminPanel(
                                                 Ok(resp) => {
                                                     let mls_encrypted = state_store
                                                         .read()
-                                                        .space_projection_is_mls_encrypted(&space);
+                                                        .realm_projection_is_mls_encrypted(&realm);
                                                     if mls_encrypted {
                                                         state_store.write().record_move_submission_with_event_id(
                                                             resp.event_id.clone(),
                                                             Some(resp.event_id.clone()),
-                                                            space.clone(),
+                                                            realm.clone(),
                                                             "mls_member_remove",
                                                             MoveSubmissionState::PendingMlsBinding,
                                                             Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
@@ -1543,23 +1543,23 @@ pub fn RealmAdminPanel(
                                 "data-testid": "ban-member-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let m = member.clone();
                                     let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let m = m.clone();
                                         let api_token = token();
                                         let actor_did = actor_account_did.clone();
                                         spawn(async move {
                                             let m_for_msg = m.clone();
-                                            let space_for_api = space.clone();
+                                            let realm_for_api = realm.clone();
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    api.ban_member(&space_for_api, &actor_did, &m).await
+                                                    api.ban_member(&realm_for_api, &actor_did, &m).await
                                                 },
                                             )
                                             .await
@@ -1567,12 +1567,12 @@ pub fn RealmAdminPanel(
                                                 Ok(resp) => {
                                                     let mls_encrypted = state_store
                                                         .read()
-                                                        .space_projection_is_mls_encrypted(&space);
+                                                        .realm_projection_is_mls_encrypted(&realm);
                                                     if mls_encrypted {
                                                         state_store.write().record_move_submission_with_event_id(
                                                             resp.event_id.clone(),
                                                             Some(resp.event_id.clone()),
-                                                            space.clone(),
+                                                            realm.clone(),
                                                             "mls_member_remove",
                                                             MoveSubmissionState::PendingMlsBinding,
                                                             Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
@@ -1621,7 +1621,7 @@ pub fn RealmAdminPanel(
                             div {
                                 class: "event",
                                 "data-testid": "block-user-confirm-modal",
-                                div { class: "space-title", {crate::i18n::tr("member.block_confirm.title")} }
+                                div { class: "entity-title", {crate::i18n::tr("member.block_confirm.title")} }
                                 div { class: "muted", title: "{member}", "{member_label}" }
                                 div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
                                 div { class: "actions",
@@ -1677,7 +1677,7 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Space invites — sync/third-party-invites.md + invite event family
+            // Realm invites — sync/third-party-invites.md + invite event family
             // 6 canonical events drive the invite lifecycle:
             //   ck.invite.create        — create an invite (proactively invite a known DID)
             //   ck.invite.third_party   — invite a 3PID (email / phone) when the DID is unknown
@@ -1703,10 +1703,10 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Space invites
-            div { class: "event", "data-testid": "space-invites",
+            // Realm invites
+            div { class: "event", "data-testid": "realm-invites",
                 div { class: "event-head", span { "Invites" } span { "lifecycle" } }
-                for invite in space_invites() {
+                for invite in realm_invites() {
                     {
                         let invite_target_label = short_protocol_id(&invite.target);
                         let invite_id_label = short_protocol_id(&invite.invite_id);
@@ -1744,23 +1744,23 @@ pub fn RealmAdminPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let actor = actor.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
                                         let wait_for = active_sync_token(sync_cursor());
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => {
-                                                    let op = cx_ops::invite_accept(&space, &actor, &invite_id).build("yougen");
+                                                    let op = cx_ops::invite_accept(&realm, &actor, &invite_id).build("yougen");
                                                     let op_id = op.local_operation_id().to_owned();
                                                     match api.submit_event_envelope(&op).await {
                                                         Ok(submitted) => {
-                                                            for row in space_invites.write().iter_mut() {
+                                                            for row in realm_invites.write().iter_mut() {
                                                                 if row.invite_id == invite_id {
                                                                     row.state = "accepted".to_owned();
                                                                     row.operation_id = Some(op_id.clone());
@@ -1773,7 +1773,7 @@ pub fn RealmAdminPanel(
                                                                 let mut store = state_store.write();
                                                                 store.append_raw_operation(
                                                                     op_id.clone(),
-                                                                    Some(space.clone()),
+                                                                    Some(realm.clone()),
                                                                     json!({
                                                                         "kind": "ck.invite.accept",
                                                                         "invite_id": invite_id,
@@ -1803,12 +1803,12 @@ pub fn RealmAdminPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_realm_id.clone();
+                                    let realm = selected_realm_id.clone();
                                     let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let actor = actor.clone();
-                                        let space = space.clone();
+                                        let realm = realm.clone();
                                         let invite_id = invite_id.clone();
                                         let api_token = token();
                                         let wait_for = active_sync_token(sync_cursor());
@@ -1816,7 +1816,7 @@ pub fn RealmAdminPanel(
                                             match authed_api_with_sync(&base, api_token, wait_for) {
                                                 Ok(api) => {
                                                     let op = cx_ops::invite_cancel(
-                                                        &space,
+                                                        &realm,
                                                         &actor,
                                                         &invite_id,
                                                         Some("declined"),
@@ -1825,7 +1825,7 @@ pub fn RealmAdminPanel(
                                                     let op_id = op.local_operation_id().to_owned();
                                                     match api.submit_event_envelope(&op).await {
                                                         Ok(submitted) => {
-                                                            for row in space_invites.write().iter_mut() {
+                                                            for row in realm_invites.write().iter_mut() {
                                                                 if row.invite_id == invite_id {
                                                                     row.state = "canceled".to_owned();
                                                                     row.operation_id = Some(op_id.clone());
@@ -1838,7 +1838,7 @@ pub fn RealmAdminPanel(
                                                                 let mut store = state_store.write();
                                                                 store.append_raw_operation(
                                                                     op_id.clone(),
-                                                                    Some(space.clone()),
+                                                                    Some(realm.clone()),
                                                                     json!({
                                                                         "kind": "ck.invite.cancel",
                                                                         "invite_id": invite_id,
@@ -1867,12 +1867,12 @@ pub fn RealmAdminPanel(
                         }
                     }
                 }
-                if space_invites().is_empty() {
+                if realm_invites().is_empty() {
                     div { class: "muted", "No pending invites." }
                 }
             }
 
-            // Space discovery toggle
+            // Realm discovery toggle
             div { class: "event", "data-testid": "discovery-toggle",
                 div { class: "event-head", span { "Discovery" } span { "visibility" } }
                 label {
@@ -1898,7 +1898,7 @@ pub fn RealmAdminPanel(
                     span { "audit_disclosure policy" }
                 }
                 div { class: "muted",
-                    "v1 core splits audited E2EE into two hardening profiles: attested and disclosed. Space policy is declared with an audit_disclosure object plus an audit_assurance enum; join warnings and external materials follow the normative classification and forbidden-marketing wording in audited-e2ee.md §3.1.1 and §3.5."
+                    "v1 core splits audited E2EE into two hardening profiles: attested and disclosed. Realm policy is declared with an audit_disclosure object plus an audit_assurance enum; join warnings and external materials follow the normative classification and forbidden-marketing wording in audited-e2ee.md §3.1.1 and §3.5."
                 }
                 div { class: "metric-grid", "data-testid": "audited-e2ee-tiers",
                     div { class: "metric",
@@ -1939,20 +1939,20 @@ pub fn RealmAdminPanel(
                 div { class: "actions",
                     button {
                         class: "secondary",
-                        "data-testid": "rotate-space-epoch",
+                        "data-testid": "rotate-realm-epoch",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.rotate_mls_epoch(&space).await
+                                            api.rotate_mls_epoch(&realm).await
                                         },
                                     )
                                     .await
@@ -1981,12 +1981,12 @@ pub fn RealmAdminPanel(
                         "data-testid": "leave-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             let mut state_store = state_store;
                             let mut sync_cursor = sync_cursor;
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let actor_did = match state_store.write().ensure_local_identity() {
                                     Ok(id) => id.device_did.as_str().to_owned(),
@@ -1996,21 +1996,21 @@ pub fn RealmAdminPanel(
                                     }
                                 };
                                 spawn(async move {
-                                    let space_for_msg = space.clone();
+                                    let realm_for_msg = realm.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.leave_realm(&space, &actor_did).await
+                                            api.leave_realm(&realm, &actor_did).await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(_) => {
-                                            state_store.write().forget_space(&space_for_msg);
+                                            state_store.write().forget_realm_tree_projection(&realm_for_msg);
                                             sync_cursor.set("-".to_owned());
                                             status_msg.set(format!(
-                                                "left {space_for_msg}; local cache cleared"
+                                                "left {realm_for_msg}; local cache cleared"
                                             ));
                                         }
                                         Err(err) => status_msg.set(format!(
@@ -2178,10 +2178,10 @@ pub fn RealmAdminPanel(
                         "data-testid": "cap-grant-submit-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let grant_val = cap_grant_id().trim().to_owned();
                                 let tag_val = cap_tag().trim().to_owned();
@@ -2240,7 +2240,7 @@ pub fn RealmAdminPanel(
                                         serde_json::Value::Null
                                     };
                                 let envelope = crate::operation::cx_ops::capability_grant(
-                                    &space,
+                                    &realm,
                                     &actor_did,
                                     &grant_val,
                                     &tag_val,
@@ -2277,10 +2277,10 @@ pub fn RealmAdminPanel(
                         "data-testid": "cap-revoke-submit-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let grant_val = cap_grant_id().trim().to_owned();
                                 let tag_val = cap_tag().trim().to_owned();
@@ -2307,7 +2307,7 @@ pub fn RealmAdminPanel(
                                         }
                                     };
                                 let envelope = crate::operation::cx_ops::capability_revoke(
-                                    &space,
+                                    &realm,
                                     &actor_did,
                                     &grant_val,
                                     &tag_val,
@@ -2472,10 +2472,10 @@ pub fn RealmAdminPanel(
                         "data-testid": "archive-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let actor_did = match state_store.write().ensure_local_identity() {
                                     Ok(id) => id.device_did.as_str().to_owned(),
@@ -2484,19 +2484,19 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let space_for_msg = space.clone();
+                                let realm_for_msg = realm.clone();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.archive_realm(&space, &actor_did).await
+                                            api.archive_realm(&realm, &actor_did).await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(_) => status_msg.set(format!(
-                                            "archive event submitted ({space_for_msg})"
+                                            "archive event submitted ({realm_for_msg})"
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "archive failed: {}", err.display()
@@ -2512,10 +2512,10 @@ pub fn RealmAdminPanel(
                         "data-testid": "destroy-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_realm_id.clone();
+                            let realm = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
-                                let space = space.clone();
+                                let realm = realm.clone();
                                 let api_token = token();
                                 let actor_did = match state_store.write().ensure_local_identity() {
                                     Ok(id) => id.device_did.as_str().to_owned(),
@@ -2525,19 +2525,19 @@ pub fn RealmAdminPanel(
                                     }
                                 };
                                 spawn(async move {
-                                    let space_for_msg = space.clone();
+                                    let realm_for_msg = realm.clone();
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.destroy_realm(&space, &actor_did, "operator_request").await
+                                            api.destroy_realm(&realm, &actor_did, "operator_request").await
                                         },
                                     )
                                     .await
                                     {
                                         Ok(_) => status_msg.set(format!(
                                             "destroyed {}",
-                                            short_protocol_id(&space_for_msg)
+                                            short_protocol_id(&realm_for_msg)
                                         )),
                                         Err(err) => status_msg.set(format!("delete failed: {}", err.display())),
                                     }
@@ -2573,7 +2573,7 @@ pub fn RealmAdminPanel(
                     let snapshot_banner = if !cfg_native {
                         "Web build cannot decrypt MLS snapshots — switch to the desktop client to revoke a device."
                     } else if !has_snapshot {
-                        "No MLS snapshot persisted for this Space yet. Send at least one Secure message (chat.rs) to seed one before revoking a device."
+                        "No MLS snapshot persisted for this Realm yet. Send at least one Secure message (chat.rs) to seed one before revoking a device."
                     } else {
                         "Snapshot found; enter the target device DID and click Build & submit."
                     };
@@ -2595,12 +2595,12 @@ pub fn RealmAdminPanel(
                                     title: crate::i18n::tr("realm_admin.mls_remove_button"),
                                     onclick: {
                                         let base = base_url.clone();
-                                        let space = selected_realm_id.clone();
+                                        let realm = selected_realm_id.clone();
                                         let actor = account_did.clone();
                                         let device = device_id.clone();
                                         move |_| {
                                             let base = base.clone();
-                                            let space = space.clone();
+                                            let realm = realm.clone();
                                             let actor = actor.clone();
                                             let device = device.clone();
                                             let api_token = token();
@@ -2610,7 +2610,7 @@ pub fn RealmAdminPanel(
                                                     base,
                                                     api_token,
                                                     state_store,
-                                                    space,
+                                                    realm,
                                                     actor,
                                                     device,
                                                     target,
@@ -2648,7 +2648,7 @@ pub fn RealmAdminPanel(
                 {
                     let submissions = state_store
                         .read()
-                        .move_submissions_for_space(&selected_realm_id);
+                        .move_submissions_for_realm(&selected_realm_id);
                     let commits: Vec<_> = submissions
                         .iter()
                         .filter(|r| r.kind == "mls_commit")
@@ -2701,7 +2701,7 @@ pub fn RealmAdminPanel(
                     rsx! {
                         if chains.is_empty() {
                             div { class: "muted", "data-testid": "mls-revoke-chain-empty",
-                                "No MLS revoke Move chains tracked for this Space yet. They appear here when a device-revoke handler enqueues an MLS commit + epoch-advance pair."
+                                "No MLS revoke Move chains tracked for this Realm yet. They appear here when a device-revoke handler enqueues an MLS commit + epoch-advance pair."
                             }
                         }
                         for chain in chains {
@@ -2824,7 +2824,7 @@ async fn run_device_revoke_from_snapshot(
         Some(env) => env,
         None => {
             status.set(format!(
-                "no persisted MLS snapshot for space {}; nothing to revoke against",
+                "no persisted MLS snapshot for realm {}; nothing to revoke against",
                 short_protocol_id(&realm_id)
             ));
             return;
