@@ -5,70 +5,57 @@
 //!
 //! ## (a) Where the device signing key lives at rest
 //!
-//! The per-device ed25519 signing key (and the derived `did:key`) is the
-//! canonical "I am this device" identity. Today its custody is:
+//! The durable EventProof signing seed is the active "this device can
+//! submit events" identity. Today its custody is:
 //!
-//! | Backend                       | At-rest representation                         |
-//! |-------------------------------|------------------------------------------------|
-//! | [`InMemoryKeyStore`]          | Plaintext seed inside `state.json` on disk.    |
-//! | [`MacOsKeychainKeyStore`] *   | macOS Keychain item (`security-framework`).    |
-//! | [`LinuxSecretServiceKeyStore`]* | freedesktop Secret Service / libsecret.      |
-//! | [`WindowsCredentialKeyStore`]*| Windows Credential Manager (`Cred*W`).         |
+//! | Target | At-rest representation |
+//! |--------|-------------------------|
+//! | macOS / Linux / Windows | [`crate::secure_key_store::KeyringSecureKeyStore`] (`keyring` crate: Keychain / Secret Service / Credential Manager). |
+//! | wasm32 | [`crate::secure_key_store::IndexedDbSecureKeyStore`] with a non-extractable SubtleCrypto AES-GCM wrapping key. LocalStorage seed read/write is refused and historical seed entries are deleted during upgrade. |
+//! | iOS / Android | [`crate::secure_key_store::HostBridgeSecureKeyStore`] when the embedding host registers a bridge. |
 //!
-//! `*` = stub today, the SDK lit up real backends in v0.5.1 and yougen will
-//! re-export them once the SDK [`KeyStore`] trait surfaces here.
-//!
-//! Crucially: on **wasm32 / browser** the seed lives in the browser's
-//! `localStorage` via [`crate::local_state::LocalStateStore`] /
-//! [`crate::config`]'s `web_sys::Storage` shim. There is **no**
-//! non-extractable `CryptoKey` path today — the seed is plaintext bytes
-//! the Rust runtime reads back when it ever needs to sign. Promoting it
-//! to an IndexedDB-backed non-extractable `CryptoKey` is a backlog item
-//! tracked by the platform-store native rollout; the trust model here is
-//! "the browser's same-origin storage is the same trust boundary as the
-//! Rust process running in the page".
+//! Browser Ed25519 signing still happens in Rust because the current
+//! supported WebCrypto surface is not a portable non-extractable Ed25519
+//! signer. The browser at-rest boundary is therefore a non-extractable
+//! AES-GCM wrapper around a Rust Ed25519 seed, not a WebCrypto Ed25519
+//! private key.
 //!
 //! ## (b) Plaintext vs. ciphertext touchpoints
 //!
-//! * `crate::crypto::LocalMlsDevice` (native) drives MLS via `MessageCrypto` from the SDK.
-//!   Plaintext message bytes only ever exist inside the Rust process — `encrypt_message` returns
-//!   ciphertext + AAD + payload digest.
-//! * `crate::crypto::compose_local_encrypted_message_inner` on wasm32 builds an opaque-shape
-//!   `EncryptedPayload` (still encryption-shape, no plaintext leak) until the WASM-side MLS engine
-//!   lands.
-//! * Move bodies (lattice ops, capability decisions) are NOT encrypted — they're canonical-JSON
-//!   public state. The signing operation hashes and signs canonical bytes; nothing here ever needs
-//!   WebCrypto's subtle interface for confidentiality of Move material.
-//! * Push payloads are blind-wakeup (privacy mode `e2ee_blind_wakeup`) from the chime gateway
-//!   describe — the body never leaves the device in plaintext.
+//! * Durable event signing goes through [`crate::event_signer`]:
+//!   `EventProofBuilder::canonical_bytes` canonicalizes the event and the proof-binding object;
+//!   `Ed25519DetachedJwsSigner` or an external `EventSigner` produces the detached JWS signature.
+//! * MLS payload encryption is owned by the MLS runtime and SDK/OpenMLS path (`crate::mls`,
+//!   `MessageCrypto`). Plaintext exists only inside the Rust process before encryption or after
+//!   decryption.
+//! * `LocalStorageSecureKeyStore` may still hold non-signing first-paint browser secrets, but it
+//!   refuses Ed25519 signing seed keys.
+//! * Push payloads are blind-wakeup metadata from chime; payload bodies are not exposed as
+//!   plaintext at the gateway boundary.
 //!
 //! ## (c) Does signing material ever cross an opaque-to-Rust boundary?
 //!
-//! **No.** All Ed25519 signing happens in `ed25519-dalek` inside the
-//! Rust process. The SDK's [`MoveSigner`] trait — including the wasm32
-//! build — keeps the seed bytes inside Rust's linear memory; the WebCrypto
-//! `SubtleCrypto.sign(...)` path is intentionally NOT used. That keeps
-//! the trust boundary uniform across native + browser:
+//! **No.** EventProof signing happens in Rust or in an explicitly
+//! installed external signer. The WebCrypto `SubtleCrypto.sign(...)`
+//! path is intentionally not used for Ed25519.
 //!
-//! * Sign / verify  : Rust (ed25519-dalek)         — never crosses to JS.
-//! * Encrypt / decrypt : MLS via Rust SDK on native; on WASM the [`WebCryptoBoundary`] below routes
-//!   through `SubtleCrypto.encrypt / decrypt` for AES-GCM bulk crypto **only when the caller
-//!   explicitly opts in** (a future MLS-on-WebCrypto experiment). The default [`RustSdkBoundary`]
-//!   keeps every byte inside Rust.
+//! * EventProof sign / verify: Rust SDK signer/verifier or external `EventSigner` boundary selected
+//!   by the host.
+//! * MLS encrypt / decrypt: Rust SDK/OpenMLS runtime.
+//! * Browser AES-GCM: [`WebCryptoBoundary`] is available only for explicit AES-GCM callers; it is
+//!   not the EventProof signer.
 //!
 //! # Trust-boundary trait
 //!
 //! The [`CryptoBoundary`] trait below codifies the four operations the
-//! UI layer cares about. Two implementations ship:
+//! UI layer cares about. Two low-level implementations ship:
 //!
-//! 1. [`RustSdkBoundary`] — current default. Sign / verify use `Ed25519MoveSigner` +
-//!    `verify_ed25519_move_signature`; encrypt / decrypt return
-//!    [`CryptoBoundaryError::Unsupported`] rather than rolling a synthetic cipher — bulk crypto is
-//!    handled out of band by the SDK's `MessageCrypto` (MLS) and never by this boundary.
+//! 1. [`RustSdkBoundary`] — raw Ed25519 sign / verify with `ed25519-dalek`. Encrypt / decrypt
+//!    return [`CryptoBoundaryError::Unsupported`] because bulk crypto is handled by MLS runtime
+//!    code, not this boundary.
 //! 2. [`WebCryptoBoundary`] — wasm32 only. Encrypt / decrypt go through
-//!    `window.crypto.subtle.encrypt(...)` with AES-GCM. Signing stays in Rust because the SDK's
-//!    [`MoveSigner`] trait is Rust-native and yougen explicitly does not cross the JS boundary for
-//!    signing material (see audit point (c) above).
+//!    `window.crypto.subtle.encrypt(...)` with AES-GCM. Signing stays in the wrapped
+//!    [`RustSdkBoundary`].
 
 use std::fmt;
 
@@ -139,16 +126,13 @@ pub trait CryptoBoundary {
 // RustSdkBoundary
 // ───────────────────────────────────────────────────────────────────────
 
-/// Default boundary: every operation runs in Rust. Sign / verify use
-/// `ed25519-dalek` (the same crate `Ed25519MoveSigner` wraps in the
-/// SDK); encrypt / decrypt use the `aes-gcm` crate directly so the
-/// trait shape mirrors what `SubtleCrypto` exposes.
+/// Default low-level boundary: sign / verify run in Rust with
+/// `ed25519-dalek`; encrypt / decrypt are unsupported because MLS bulk
+/// crypto is handled by the runtime / SDK path.
 ///
-/// The boundary holds the device signing seed because sign/verify
-/// against arbitrary canonical bytes is process-local. Callers who
-/// already hold a [`cokret_sdk::Ed25519MoveSigner`] should use that
-/// directly; this struct is for code paths that want to drive the
-/// trait surface uniformly across native + WASM.
+/// Durable event submission normally uses [`crate::event_signer`]
+/// instead, so EventProof canonicalization, domain/audience binding,
+/// and detached-JWS assembly stay in one place.
 pub struct RustSdkBoundary {
     signing_key: ed25519_dalek::SigningKey,
 }
@@ -259,9 +243,8 @@ impl CryptoBoundary for RustSdkBoundary {
 
 /// Browser boundary: encrypt / decrypt route through
 /// `window.crypto.subtle.encrypt(...)` with AES-GCM. Sign / verify
-/// **stay in Rust** because the SDK's [`MoveSigner`] trait is
-/// Rust-native; the boundary forwards them to a wrapped
-/// [`RustSdkBoundary`].
+/// stay in Rust; the boundary forwards them to a wrapped
+/// [`RustSdkBoundary`]. This is not the EventProof signer.
 ///
 /// On non-wasm targets the type still exists (so call sites can name
 /// it in conditional code) but every method returns

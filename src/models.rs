@@ -635,13 +635,8 @@ pub struct PushRegisterResponse {
     pub expires_at: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OkResBody {
-    pub ok: bool,
-}
-
 pub use cokret_sdk::model::{
-    DeviceMessagesSendResBody, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody,
+    DeviceMessagesSendResBody, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, OkResBody,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -845,7 +840,7 @@ pub struct VerifyDeviceResponse {
 pub struct MlsRotateResponse {
     pub ok: bool,
     pub epoch: u64,
-    pub group_id: String,
+    pub mls_group_ref: String,
 }
 
 // ── Policy Check ─────────────────────────────────────────────────

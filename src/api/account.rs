@@ -29,6 +29,12 @@ impl CokretApi {
         self.get_json("_cokret/describe").await
     }
 
+    pub async fn describe_cached(&self) -> anyhow::Result<&ServerDescription> {
+        self.service_describe_cache
+            .get_or_try_init(|| async { self.describe().await })
+            .await
+    }
+
     /// Resolve the principal server's auth-bridge describe document from a
     /// single bootstrap anchor. Prefers the canonical protocol-namespace path
     /// (`/_cokret/gate/auth/bridge/describe`) so the soland and coauth adapters

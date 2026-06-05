@@ -235,6 +235,9 @@ pub struct CokretApi {
     /// like `submit_events_batch` can consult `capabilities.batch_submit`
     /// without re-hitting the network on every batch.
     events_describe_cache: Arc<OnceCell<SolandEventsDescribeResBody>>,
+    /// Cached `GET /_cokret/describe` response used to bind durable
+    /// EventProof signatures to this service's trust domain and audience.
+    service_describe_cache: Arc<OnceCell<ServerDescription>>,
 }
 
 impl fmt::Debug for CokretApi {
@@ -260,6 +263,14 @@ impl fmt::Debug for CokretApi {
                 "events_describe_cache",
                 &self
                     .events_describe_cache
+                    .get()
+                    .map(|_| "<cached>")
+                    .unwrap_or("<empty>"),
+            )
+            .field(
+                "service_describe_cache",
+                &self
+                    .service_describe_cache
                     .get()
                     .map(|_| "<cached>")
                     .unwrap_or("<empty>"),
@@ -668,6 +679,7 @@ impl CokretApi {
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
             cancel_token: None,
             events_describe_cache: Arc::new(OnceCell::new()),
+            service_describe_cache: Arc::new(OnceCell::new()),
         })
     }
 

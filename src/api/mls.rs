@@ -81,9 +81,12 @@ impl CokretApi {
         Ok(Some(record))
     }
 
-    pub async fn rotate_mls_epoch(&self, group_id: &str) -> anyhow::Result<MlsRotateResponse> {
-        self.post_json("_cokret/self/mls/rotate", json!({"group_id": group_id}))
-            .await
+    pub async fn rotate_mls_epoch(&self, mls_group_ref: &str) -> anyhow::Result<MlsRotateResponse> {
+        self.post_json(
+            "_cokret/self/mls/rotate",
+            json!({"mls_group_ref": mls_group_ref}),
+        )
+        .await
     }
 
     // ── MIMI Provider Facade ─────────────────────────────────────

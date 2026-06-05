@@ -15,7 +15,7 @@
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
-//! | wasm32          | [`LocalStorageSecureKeyStore`] first paint, then [`IndexedDbSecureKeyStore`] after async upgrade | LocalStorage keeps the synchronous boot path working; IndexedDB + SubtleCrypto becomes the default once `upgrade_wasm_secure_key_store_async` completes. |
+//! | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
@@ -38,6 +38,42 @@ use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(target_arch = "wasm32")]
 static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore>> = OnceLock::new();
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_subtle_aes_gcm";
+
+#[cfg(target_arch = "wasm32")]
+const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
+
+#[cfg(target_arch = "wasm32")]
+const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds require IndexedDbSecureKeyStore with a non-extractable \
+     SubtleCrypto AES-GCM wrapping key; portable WebCrypto Ed25519 signing is not used, so \
+     localStorage seed read/write is disabled";
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
+    key == SIGNING_SEED_KEY || key == WASM_LOCAL_IDENTITY_SEED_KEY
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn require_wasm_indexeddb_ed25519_seed_store(
+    store: &dyn SecureKeyStore,
+) -> Result<(), SecureKeyStoreError> {
+    if store.backend_name() == WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND {
+        Ok(())
+    } else {
+        Err(SecureKeyStoreError::Unsupported(
+            WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+        ))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn require_wasm_indexeddb_ed25519_seed_store(
+    _store: &dyn SecureKeyStore,
+) -> Result<(), SecureKeyStoreError> {
+    Ok(())
+}
 
 /// AEAD-wrap a UTF-8 secret string with
 /// ChaCha20-Poly1305 + a 32-byte wrapping key. Returns a base64
@@ -714,7 +750,7 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 /// | macOS / Linux / Windows | [`KeyringSecureKeyStore`] |
 /// | Android         | [`AndroidKeystoreSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
 /// | iOS             | [`IosKeychainSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
-/// | wasm32          | [`MemorySecureKeyStore`] (no symmetric secret store available in the browser) |
+/// | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing sync fallback; [`IndexedDbSecureKeyStore`] after async upgrade |
 ///
 /// The returned trait object is `Arc`-shared so one selection can be
 /// installed process-wide. **Mobile app artifacts are not shipped in
@@ -723,11 +759,12 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
 /// They fall back to [`MemorySecureKeyStore`] with the usual "secrets
 /// in plaintext heap" UX warning.
 ///
-/// **wasm32 callers**: this returns the synchronous fallback
-/// [`LocalStorageSecureKeyStore`] for first-paint usability. Once the
-/// app reaches an async-capable boot phase, call
-/// [`upgrade_wasm_secure_key_store_async`] to promote the store to
-/// the IndexedDB + SubtleCrypto-non-extractable tier (H6).
+/// **wasm32 callers**: this returns the synchronous
+/// [`LocalStorageSecureKeyStore`] fallback until async upgrade, but
+/// that backend refuses Ed25519 signing seed keys. Call
+/// [`upgrade_wasm_secure_key_store_async`] to promote the process
+/// default to the IndexedDB + SubtleCrypto-non-extractable tier before
+/// signer bootstrap.
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -742,8 +779,8 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
         // The LocalStorage store remains the sync first-paint fallback;
         // the app upgrades to `IndexedDbSecureKeyStore` via
         // `upgrade_wasm_secure_key_store_async` once async init can run.
-        // Both stores share the same `SecureKeyStore` interface so callers
-        // don't care which tier they got.
+        // Both stores share the same `SecureKeyStore` interface. Ed25519
+        // seed callers still require the IndexedDB tier explicitly.
         match LocalStorageSecureKeyStore::new(service_name) {
             Ok(store) => return Arc::new(store),
             Err(err) => {
@@ -814,11 +851,11 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
 /// the localStorage blob (an actual attack the spec calls out in
 /// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
 ///
-/// A future IndexedDB + `crypto.subtle.deriveKey` upgrade can swap
-/// the wrapping-key bootstrap without changing the on-disk format
-/// because the storage key namespace stays
-/// `yougen.secret.<service_name>.<key>`. Until then this is the best
-/// the browser tier can offer without an OS keychain.
+/// This backend is only for non-signing first-paint secrets. Ed25519
+/// signing seeds and local identity seeds are refused so they cannot
+/// land in localStorage. The IndexedDB + non-extractable SubtleCrypto
+/// tier uses the same `yougen.secret.<service_name>.<key>` namespace
+/// after async upgrade.
 #[cfg(target_arch = "wasm32")]
 pub struct LocalStorageSecureKeyStore {
     service_name: String,
@@ -910,6 +947,11 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 #[cfg(target_arch = "wasm32")]
 impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        if is_wasm_ed25519_seed_key(key) {
+            return Err(SecureKeyStoreError::Unsupported(
+                WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+            ));
+        }
         let storage = Self::storage()?;
         let wrapped = wrap_secret(value, &self.wrapping_key)?;
         storage
@@ -918,6 +960,11 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     }
 
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        if is_wasm_ed25519_seed_key(key) {
+            return Err(SecureKeyStoreError::Unsupported(
+                WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
+            ));
+        }
         let storage = Self::storage()?;
         let Some(wrapped) = storage
             .get_item(&self.entry_key(key))
@@ -1925,9 +1972,10 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///        * `Ok(Some(store))` — a fully-initialised [`IndexedDbSecureKeyStore`] installed as the
 ///          process-wide default returned by [`default_secure_key_store`].
 ///        * `Ok(None)` — IndexedDB or SubtleCrypto were unavailable (private-mode Firefox, file://
-///          origin, Tor Browser hardened). Keep the LocalStorage store.
+///          origin, Tor Browser hardened). Keep the LocalStorage store only for non-signing
+///          secrets; signer bootstrap remains fail-closed.
 ///        * `Err(...)` — backend failure during init. Caller should log and keep the LocalStorage
-///          store.
+///          store only for non-signing secrets.
 ///   3. The first time an entry is written through the IndexedDB store,
 ///      [`migrate_localstorage_entries_to_indexeddb`] (also async) can be invoked to copy any
 ///      pre-existing wrapped secrets across, then drop the LocalStorage seed.
@@ -2035,11 +2083,21 @@ pub async fn migrate_localstorage_entries_to_indexeddb(
         candidates.push(key);
     }
     let mut migrated = 0usize;
+    let mut removed_sensitive = 0usize;
     for full_key in &candidates {
         let entry_name = full_key
             .strip_prefix(&prefix)
             .unwrap_or(full_key.as_str())
             .to_owned();
+        if is_wasm_ed25519_seed_key(&entry_name) {
+            let _ = storage.remove_item(full_key);
+            removed_sensitive += 1;
+            tracing::warn!(
+                key=%entry_name,
+                "H6 migrate: removed localStorage Ed25519 seed instead of decrypting or migrating it"
+            );
+            continue;
+        }
         let wrapped = match storage.get_item(full_key) {
             Ok(Some(v)) => v,
             _ => continue,
@@ -2062,8 +2120,13 @@ pub async fn migrate_localstorage_entries_to_indexeddb(
     }
     // Finally drop the wrapping seed too, so a future disk dump
     // only carries the IndexedDB's non-extractable CryptoKey.
-    if migrated > 0 {
+    if migrated > 0 || removed_sensitive > 0 {
         let _ = storage.remove_item(&seed_key);
+    }
+    if removed_sensitive > 0 {
+        tracing::warn!(
+            "H6 migration: removed {removed_sensitive} localStorage Ed25519 seed entry/entries"
+        );
     }
     Ok(migrated)
 }
@@ -2097,36 +2160,20 @@ fn indexeddb_and_subtle_available() -> bool {
 // lands in the OS keychain alongside the rest of the secrets instead of
 // in `state.json` plaintext.
 //
-// ## Phase C.7 #7: wasm32 signer storage tiers
+// ## wasm32 signing-seed storage
 //
-// On wasm32 the signing seed lands in the same store
-// `default_secure_key_store("yougen")` returns. That picker has two
-// tiers, both transparent to `ensure_signing_seed`:
+// Ed25519 signing remains in the Rust/SDK path. We do not rely on a
+// browser-native non-extractable Ed25519 `CryptoKey` because that is not
+// portable enough across the target browsers this client supports. The
+// at-rest seed boundary is therefore:
 //
-//   1. **First-paint sync path** — [`LocalStorageSecureKeyStore`] backed by `window.localStorage`.
-//      The wrapping key is a 32-byte seed stashed under `yougen.secret.<service>.wrap_seed.v1`.
-//      Pros: works synchronously, no async init needed before the dioxus mount. Cons: the seed
-//      lives next to the ciphertext in localStorage, so a backup dump / extension with full DOM
-//      access can recover plaintext offline. See the [`LocalStorageSecureKeyStore`] doc-comment
-//      §threat model.
-//   2. **Async-promoted path** — [`IndexedDbSecureKeyStore`] backed by IndexedDB + SubtleCrypto
-//      `deriveKey({ extractable: false })`. The wrapping key is a non-extractable `CryptoKey`
-//      handle persisted via structured clone; even `subtle.exportKey(...)` rejects on it. The app
-//      calls [`upgrade_wasm_secure_key_store_async`] from a `spawn_local` task after first paint;
-//      once that resolves, every subsequent `default_secure_key_store` call returns the IDB store
-//      automatically (`WASM_UPGRADED_SECURE_KEY_STORE` cache hit).
+//   * [`LocalStorageSecureKeyStore`] refuses Ed25519 seed keys.
+//   * [`load_signing_seed`] / [`store_signing_seed`] require [`IndexedDbSecureKeyStore`] on wasm32.
+//   * [`migrate_localstorage_entries_to_indexeddb`] deletes historical localStorage Ed25519 seed
+//     entries instead of decrypting or migrating them.
 //
-// The signing seed migrates transparently: the upgrade path runs
-// [`migrate_localstorage_entries_to_indexeddb`] which copies
-// `device.ed25519.signing_seed.v1` from LocalStorage to IndexedDB, then
-// removes the LocalStorage copy + the wrapping seed. A subsequent
-// `load_signing_seed` call reads from IDB without re-deriving the DID.
-//
-// **What this means for callers**: pre-upgrade, the wasm signer holds
-// the seed in localStorage-AEAD (lukewarm tier). Post-upgrade, it holds
-// the seed in IndexedDB behind a non-extractable AES-GCM wrap. Boot
-// timing matters: callers that need the strongest tier should wait on
-// the upgrade future before producing the first signed envelope.
+// Before the async IndexedDB/SubtleCrypto upgrade completes, browser
+// signer bootstrap fails closed and ProofMode remains Production.
 
 /// Canonical key name for the active-device Ed25519 signing seed in the
 /// secure-key store. Scoped by `service_name` (`"yougen"` in production)
@@ -2161,6 +2208,7 @@ impl std::fmt::Debug for SigningSeedMaterial {
 pub fn load_signing_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+    require_wasm_indexeddb_ed25519_seed_store(store)?;
     let Some(raw) = store.get_secret(SIGNING_SEED_KEY)? else {
         return Ok(None);
     };
@@ -2189,6 +2237,7 @@ pub fn store_signing_seed(
     store: &dyn SecureKeyStore,
     seed: &[u8; 32],
 ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    require_wasm_indexeddb_ed25519_seed_store(store)?;
     let encoded = STANDARD_NO_PAD.encode(seed);
     store.store_secret(SIGNING_SEED_KEY, &encoded)?;
     Ok(SigningSeedMaterial {

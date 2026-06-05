@@ -2821,6 +2821,13 @@ impl LocalStateStore {
     /// record was missing).
     pub fn set_local_identity_record(&mut self, record: Option<LocalIdentityRecord>) {
         self.ensure_cached_loaded();
+        #[cfg(target_arch = "wasm32")]
+        if record.is_some() && !plaintext_identity_seed_fallback_allowed() {
+            tracing::warn!("refusing to persist wasm local identity seed in plaintext local state");
+            self.cached.local_identity = None;
+            let _ = self.flush();
+            return;
+        }
         self.cached.local_identity = record;
         let _ = self.flush();
     }
@@ -2865,6 +2872,14 @@ impl LocalStateStore {
             return LocalIdentity::from_record(&record);
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if self.cached.local_identity.is_some() {
+            tracing::warn!("discarding wasm plaintext local identity seed instead of migrating it");
+            self.cached.local_identity = None;
+            let _ = self.flush();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(record) = self.cached.local_identity.clone() {
             let identity = LocalIdentity::from_record(&record)?;
             match store_identity_record_in_secure_store(secure_store, &record) {
@@ -3603,6 +3618,13 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
 fn load_identity_record_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<LocalIdentityRecord> {
+    #[cfg(target_arch = "wasm32")]
+    if let Err(error) =
+        crate::secure_key_store::require_wasm_indexeddb_ed25519_seed_store(secure_store)
+    {
+        tracing::warn!(?error, "secure identity read refused on wasm");
+        return None;
+    }
     match secure_store.get_secret(LocalStateStore::SECURE_IDENTITY_KEY) {
         Ok(Some(json)) => serde_json::from_str(&json).ok(),
         Ok(None) => None,
@@ -3617,6 +3639,7 @@ fn store_identity_record_in_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     record: &LocalIdentityRecord,
 ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    crate::secure_key_store::require_wasm_indexeddb_ed25519_seed_store(secure_store)?;
     let json = serde_json::to_string(record).map_err(|error| {
         crate::secure_key_store::SecureKeyStoreError::Backend(format!(
             "serialize identity record: {error}"
@@ -3652,10 +3675,17 @@ fn store_dpop_device_key_in_secure_store(
 }
 
 fn plaintext_identity_seed_fallback_allowed() -> bool {
-    cfg!(test)
-        || std::env::var("YOUGEN_ALLOW_PLAINTEXT_IDENTITY_SEED")
-            .ok()
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    #[cfg(target_arch = "wasm32")]
+    {
+        cfg!(test)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        cfg!(test)
+            || std::env::var("YOUGEN_ALLOW_PLAINTEXT_IDENTITY_SEED")
+                .ok()
+                .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    }
 }
 
 #[cfg(test)]

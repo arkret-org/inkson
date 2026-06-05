@@ -169,6 +169,17 @@ impl CokretApi {
             .await
     }
 
+    pub(crate) async fn event_proof_context(
+        &self,
+    ) -> anyhow::Result<crate::event_signer::EventProofContext> {
+        let describe = self.describe_cached().await?;
+        Ok(crate::event_signer::EventProofContext::new()
+            .with_domain(describe.trust_domain.to_string())
+            .with_audience(crate::operation::EventProofAudience::single(
+                describe.service_did.to_string(),
+            )))
+    }
+
     /// H1 — read `capabilities.batch_submit` off the cached
     /// `events_describe`. Conservative default: when the field is absent
     /// or the cache fetch fails, assume the server does NOT support batch
@@ -214,15 +225,19 @@ impl CokretApi {
 
         // Single signing path. No placeholder, no fallback.
         if signed.proofs.is_empty() {
-            crate::event_signer::sign_with_active(&mut signed).map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit unsigned event: {err}"
-                )
-            })?;
+            let proof_context = self.event_proof_context().await?;
+            crate::event_signer::sign_with_active_context(&mut signed, proof_context).map_err(
+                |err| {
+                    anyhow::anyhow!(
+                        "no active signer configured \u{2014} cannot submit unsigned event: {err}"
+                    )
+                },
+            )?;
         }
         if signed.proofs.is_empty() {
             anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
         }
+        ensure_event_proofs_are_domain_bound(&signed)?;
         validate_outgoing_registered_payload(&signed)?;
 
         let idempotency_key = signed
@@ -266,6 +281,7 @@ impl CokretApi {
                     envelope.kind
                 );
             }
+            ensure_event_proofs_are_domain_bound(envelope)?;
             validate_outgoing_registered_payload(envelope)?;
         }
 
@@ -375,4 +391,26 @@ impl CokretApi {
         )
         .await
     }
+}
+
+fn ensure_event_proofs_are_domain_bound(envelope: &EventEnvelope) -> anyhow::Result<()> {
+    for proof in &envelope.proofs {
+        if proof
+            .domain
+            .as_deref()
+            .is_none_or(|domain| domain.trim().is_empty())
+        {
+            anyhow::bail!(
+                "event proof for {} is missing domain binding",
+                envelope.event_id
+            );
+        }
+        if proof.audience.is_none() {
+            anyhow::bail!(
+                "event proof for {} is missing audience binding",
+                envelope.event_id
+            );
+        }
+    }
+    Ok(())
 }

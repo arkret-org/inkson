@@ -1630,10 +1630,9 @@ mod tests {
         overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
         state.save_mls_snapshot(realm, overdue);
 
-        let sealed = encrypt_reaction_with_device_snapshot(
-            &mut state, &secure, realm, realm, actor, device, "👍",
-        )
-        .unwrap();
+        let sealed =
+            encrypt_reaction_with_device_snapshot(&mut state, &secure, realm, actor, device, "👍")
+                .unwrap();
 
         // A commit was forced and surfaced for persist-on-accept; the stored
         // snapshot epoch did NOT advance yet (caller persists on accept).
@@ -1663,10 +1662,9 @@ mod tests {
         state.save_mls_snapshot(realm, overdue);
 
         assert!(!state.realm_projection_is_minimal_metadata(realm));
-        let sealed = encrypt_reaction_with_device_snapshot(
-            &mut state, &secure, realm, realm, actor, device, "👍",
-        )
-        .unwrap();
+        let sealed =
+            encrypt_reaction_with_device_snapshot(&mut state, &secure, realm, actor, device, "👍")
+                .unwrap();
         assert!(sealed.forced_commit.is_none());
         assert!(sealed.forced_commit_snapshot.is_none());
         // Same epoch persisted in place (no skew), epoch clock carried forward.

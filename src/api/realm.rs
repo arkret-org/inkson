@@ -73,12 +73,14 @@ impl CokretApi {
         // materialises the creator membership from the create event.
         // Sign every envelope before they reach the wire; the batch
         // submitter takes pre-signed typed envelopes.
+        let proof_context = self.event_proof_context().await?;
         for envelope in envelopes.iter_mut() {
-            crate::event_signer::sign_with_active(envelope).map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
-                )
-            })?;
+            crate::event_signer::sign_with_active_context(envelope, proof_context.clone())
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
+                    )
+                })?;
         }
         let idempotency_key = format!("ck:operation:{}", uuid_v7());
         self.submit_events_batch(&envelopes, Some(&idempotency_key))

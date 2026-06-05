@@ -60,7 +60,9 @@ use chrono::{DateTime, Utc};
 use cokret_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
 use serde_json::Value;
 
-use crate::operation::{EventEnvelope, EventProof, ProofMode, current_proof_mode};
+use crate::operation::{
+    EventEnvelope, EventProof, EventProofAudience, ProofMode, current_proof_mode,
+};
 
 /// Errors produced by the active-write signing pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +82,30 @@ pub enum EventSignerError {
     /// Canonical serialisation failed before reaching the signer.
     #[error("canonical encoding failed before signing: {0}")]
     Encoding(String),
+}
+
+/// Domain/audience binding carried by EventProof and included in the
+/// canonical proof-binding bytes that the detached JWS signs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EventProofContext {
+    pub domain: Option<String>,
+    pub audience: Option<EventProofAudience>,
+}
+
+impl EventProofContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_domain(mut self, domain: impl Into<String>) -> Self {
+        self.domain = Some(domain.into());
+        self
+    }
+
+    pub fn with_audience(mut self, audience: EventProofAudience) -> Self {
+        self.audience = Some(audience);
+        self
+    }
 }
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
@@ -195,8 +221,21 @@ impl YougenEventSigner {
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
     pub fn sign_envelope(&self, event: &mut EventEnvelope) -> Result<(), EventSignerError> {
+        self.sign_envelope_with_context(event, EventProofContext::default())
+    }
+
+    /// Sign `event` with an explicit EventProof domain/audience binding.
+    pub fn sign_envelope_with_context(
+        &self,
+        event: &mut EventEnvelope,
+        context: EventProofContext,
+    ) -> Result<(), EventSignerError> {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        if event.actor_id.trim().is_empty() {
+            event.actor_id = self.signer_did.clone();
+        }
 
         // Mirror EventEnvelope::sign_ed25519: strip proofs + unsigned
         // before canonicalising so the digest is stable across rounds.
@@ -215,12 +254,24 @@ impl YougenEventSigner {
 
         let verification_method = self.verification_method_for_event(event);
         let created_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let proof_binding = serde_json::json!({
+        let mut proof_binding = serde_json::json!({
             "event_digest": event_digest.as_str(),
             "actor_id": event.actor_id.as_str(),
             "verification_method": verification_method.as_str(),
             "created_at": created_at.as_str(),
         });
+        if let Value::Object(object) = &mut proof_binding {
+            if let Some(domain) = &context.domain {
+                object.insert("domain".to_owned(), Value::String(domain.clone()));
+            }
+            if let Some(audience) = &context.audience {
+                object.insert(
+                    "audience".to_owned(),
+                    serde_json::to_value(audience)
+                        .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
+                );
+            }
+        }
         let proof_binding_bytes = builder
             .canonical_bytes(&proof_binding)
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
@@ -232,13 +283,12 @@ impl YougenEventSigner {
             .sign(&proof_binding_bytes)
             .map_err(|err| EventSignerError::Backend(err.to_string()))?;
 
-        // Reassemble the detached JWS using the same header constant the
-        // SDK's Ed25519DetachedJwsSigner uses (`{"alg":"EdDSA","typ":"JWT"}`).
-        // Sourcing the algorithm name from the trait keeps non-Ed25519
-        // backends honest: an ES256 signer would still surface
-        // `alg=ES256` in the header.
-        let header = format!(r#"{{"alg":"{}","typ":"JWT"}}"#, self.algorithm());
-        let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
+        // Reassemble the detached JWS using the same alg-only protected
+        // header shape the SDK signer uses when deriving signing input.
+        let header = serde_json::json!({ "alg": self.algorithm() });
+        let header = serde_json::to_vec(&header)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
         let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
         let jws = format!("{header_b64}..{sig_b64}");
 
@@ -249,10 +299,9 @@ impl YougenEventSigner {
             event_digest,
             jws,
             created_at,
+            domain: context.domain,
+            audience: context.audience,
         }];
-        if event.actor_id.is_empty() {
-            event.actor_id = self.signer_did.clone();
-        }
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(Utc::now());
@@ -375,6 +424,17 @@ pub fn sign_with_active(event: &mut EventEnvelope) -> Result<(), EventSignerErro
     signer.sign_envelope(event)
 }
 
+/// Sign `event` with the active signer and explicit EventProof context.
+pub fn sign_with_active_context(
+    event: &mut EventEnvelope,
+    context: EventProofContext,
+) -> Result<(), EventSignerError> {
+    let signer = active_signer().ok_or(EventSignerError::MissingSigner {
+        mode: current_proof_mode().label_en(),
+    })?;
+    signer.sign_envelope_with_context(event, context)
+}
+
 /// UI-facing snapshot of the currently-installed signer. `None` when no
 /// signer is installed; the settings panel surfaces "—" for each field
 /// in that case.
@@ -409,7 +469,7 @@ pub fn signer_status() -> Option<SignerStatus> {
 /// Bootstrap the OS-keychain backed signer:
 ///
 /// 1. Pull the platform-default [`crate::secure_key_store::SecureKeyStore`]
-///    (`KeyringSecureKeyStore` on desktop, `LocalStorageSecureKeyStore` on wasm32,
+///    (`KeyringSecureKeyStore` on desktop, `IndexedDbSecureKeyStore` on wasm32 after async upgrade,
 ///    `HostBridgeSecureKeyStore` on mobile when a host bridge is installed).
 /// 2. [`crate::secure_key_store::ensure_signing_seed`] — loads the seed or generates and persists a
 ///    fresh one.
@@ -418,8 +478,10 @@ pub fn signer_status() -> Option<SignerStatus> {
 ///    to the real-signer path.
 ///
 /// Returns the installed signer for the caller to thread into the UI.
-/// On error the caller is expected to stay in [`ProofMode::Production`]
-/// (fail-closed) and surface the error to the user.
+/// On wasm32 this fails closed until the IndexedDB/SubtleCrypto
+/// upgrade has installed the non-extractable wrapping tier; localStorage
+/// signing seeds are refused. On error the caller is expected to stay in
+/// [`ProofMode::Production`] and surface the error to the user.
 pub fn bootstrap_default_signer(
     service_name: &str,
 ) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
@@ -438,7 +500,7 @@ mod tests {
 
     use super::*;
     use crate::canonical::canonical_json_bytes;
-    use crate::operation::{OperationBuilder, set_proof_mode};
+    use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
 
     /// Same per-process guard pattern operation.rs uses — proof-mode
     /// and active-signer state is global so concurrent tests would
@@ -499,6 +561,11 @@ mod tests {
         assert_eq!(parts.len(), 3);
         assert!(parts[1].is_empty()); // detached
         assert!(!parts[2].is_empty());
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64");
+        let header: Value = serde_json::from_slice(&header).expect("header json");
+        assert_eq!(header, json!({"alg": "EdDSA"}));
 
         assert!(signer.last_signed_at_snapshot().is_some());
     }
@@ -581,6 +648,75 @@ mod tests {
         verifier
             .verify(&proof_binding_bytes, &sig, &public_key)
             .expect("SDK verifier accepts the proof");
+    }
+
+    #[test]
+    fn sign_envelope_with_context_binds_domain_and_audience() {
+        use cokret_sdk::signatures::proof::{
+            Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
+        };
+        let _g = reset();
+        let seed = [6u8; 32];
+        let signer = build_ed25519_signer(seed, "did:web:carol.example");
+        let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, "did:web:carol.example#device");
+        let public_key = PublicKeyMaterial::Ed25519Raw {
+            bytes: sdk_signer.verifying_key().to_bytes().to_vec(),
+        };
+
+        let prior_mode = current_proof_mode();
+        set_proof_mode(ProofMode::RealEd25519);
+        let mut event =
+            OperationBuilder::new("ck:realm:t", "did:web:carol.example", "ck.message.create")
+                .body(json!({"body": "bound"}))
+                .build("test_node");
+        set_proof_mode(prior_mode);
+
+        let context = EventProofContext::new()
+            .with_domain("ck:trust_domain:server.example")
+            .with_audience(EventProofAudience::single("did:web:server.example"));
+        signer
+            .sign_envelope_with_context(&mut event, context)
+            .expect("sign");
+
+        let proof = event.proofs.first().unwrap();
+        assert_eq!(
+            proof.domain.as_deref(),
+            Some("ck:trust_domain:server.example")
+        );
+        assert_eq!(
+            proof.audience,
+            Some(EventProofAudience::Single(
+                "did:web:server.example".to_owned()
+            ))
+        );
+
+        let mut canonical = serde_json::to_value(&event).unwrap();
+        if let Value::Object(obj) = &mut canonical {
+            obj.remove("proofs");
+            obj.remove("unsigned");
+        }
+        let canonical_bytes = canonical_json_bytes(&canonical).unwrap();
+        assert_eq!(
+            proof.event_digest,
+            crate::canonical::sha256_digest(&canonical_bytes).as_str()
+        );
+        let proof_binding_bytes = canonical_json_bytes(&json!({
+            "event_digest": proof.event_digest.as_str(),
+            "actor_id": event.actor_id.as_str(),
+            "verification_method": proof.verification_method.as_str(),
+            "created_at": proof.created_at.as_str(),
+            "domain": "ck:trust_domain:server.example",
+            "audience": "did:web:server.example",
+        }))
+        .unwrap();
+
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let parts: Vec<&str> = proof.jws.split('.').collect();
+        let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");
+        Ed25519DetachedJwsVerifier::new()
+            .verify(&proof_binding_bytes, &sig, &public_key)
+            .expect("SDK verifier accepts domain/audience-bound proof");
     }
 
     #[test]

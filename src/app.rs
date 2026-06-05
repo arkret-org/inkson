@@ -518,6 +518,14 @@ pub fn RouterView() -> Element {
                             tracing::warn!(?error, "IndexedDB DPoP key load failed");
                         }
                     }
+                    match crate::event_signer::bootstrap_default_signer("yougen") {
+                        Ok(_) => {
+                            tracing::info!("IndexedDB signer bootstrap succeeded");
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "IndexedDB signer bootstrap failed");
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -4968,8 +4976,6 @@ fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     /// The App component installs a default push-token provider on

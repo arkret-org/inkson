@@ -242,7 +242,29 @@ pub struct EventProof {
     pub verification_method: String,
     pub event_digest: String,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<EventProofAudience>,
     pub jws: String,
+}
+
+/// EventProof `audience` accepts the v1 scalar and multi-audience shapes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EventProofAudience {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl EventProofAudience {
+    pub fn single(value: impl Into<String>) -> Self {
+        Self::Single(value.into())
+    }
+
+    pub fn multiple(values: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self::Multiple(values.into_iter().map(Into::into).collect())
+    }
 }
 
 /// Builder for creating typed event envelopes. Callers attach
@@ -2282,7 +2304,7 @@ mod tests {
             // inside flow_position_cas_update. It still must satisfy
             // object_patch_payload instead of leaking top-level `position`.
             cx_ops::flow_position_cas_update(
-                space_id,
+                realm_id,
                 actor,
                 "ck.flow.move",
                 board_space_id,
