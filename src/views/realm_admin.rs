@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use crate::device_revoke::{ChainMoveState, MlsRevokeMoveChain};
 use crate::hlc::Hlc;
 use crate::local_state::{LocalStateStore, MoveSubmissionState};
-use crate::models::SpacePreviewKind;
+use crate::models::RealmTreeNodeKind;
 use crate::operation::cx_ops;
 use crate::routes::Route;
 use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
@@ -95,7 +95,7 @@ impl RealmAdminSection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MetadataSubject {
-    kind: SpacePreviewKind,
+    kind: RealmTreeNodeKind,
     home_realm_id: String,
     title: String,
     summary: String,
@@ -123,20 +123,20 @@ fn projection_string(body: &Value, paths: &[&[&str]]) -> Option<String> {
     None
 }
 
-fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePreviewKind {
+fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> RealmTreeNodeKind {
     if subject_id.starts_with("ck:realm:") {
-        return SpacePreviewKind::Realm;
+        return RealmTreeNodeKind::Realm;
     }
     let Some(body) = body else {
-        return SpacePreviewKind::Realm;
+        return RealmTreeNodeKind::Realm;
     };
     match body
         .get("__kind")
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("ck.schema.space.v1") => SpacePreviewKind::Space,
-        Some("realm") | Some("ck.schema.realm.v1") => SpacePreviewKind::Realm,
+        Some("space") | Some("ck.schema.space.v1") => RealmTreeNodeKind::Space,
+        Some("realm") | Some("ck.schema.realm.v1") => RealmTreeNodeKind::Realm,
         _ => {
             let has_parent = projection_string(
                 body,
@@ -144,9 +144,9 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
             )
             .is_some();
             if subject_id.starts_with("ck:space:") && has_parent {
-                SpacePreviewKind::Space
+                RealmTreeNodeKind::Space
             } else {
-                SpacePreviewKind::Realm
+                RealmTreeNodeKind::Realm
             }
         }
     }
@@ -154,10 +154,10 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> SpacePre
 
 fn projection_home_realm_for_admin(
     subject_id: &str,
-    kind: SpacePreviewKind,
+    kind: RealmTreeNodeKind,
     body: Option<&Value>,
 ) -> String {
-    if kind == SpacePreviewKind::Realm {
+    if kind == RealmTreeNodeKind::Realm {
         return crate::operation::scope_id_as_realm_id(subject_id);
     }
     body.and_then(|body| projection_string(body, &[&["realm_id"], &["summary", "realm_id"]]))
@@ -384,12 +384,12 @@ pub fn RealmAdminPanel(
         metadata_loaded_for.set(selected_space.clone());
     }
     let metadata_subject_label = match metadata_subject.kind {
-        SpacePreviewKind::Realm => "Realm",
-        SpacePreviewKind::Space => "Space",
+        RealmTreeNodeKind::Realm => "Realm",
+        RealmTreeNodeKind::Space => "Space",
     };
     let metadata_event_kind = match metadata_subject.kind {
-        SpacePreviewKind::Realm => "ck.realm.update",
-        SpacePreviewKind::Space => "ck.space.update",
+        RealmTreeNodeKind::Realm => "ck.realm.update",
+        RealmTreeNodeKind::Space => "ck.space.update",
     };
     let alert_count = usize::from(space_paused)
         + usize::from(space_pending_mls_binding)
@@ -1010,7 +1010,7 @@ pub fn RealmAdminPanel(
                 }
                 div { class: "muted",
                     span { class: "mono", title: "{selected_space}", "{short_protocol_id(&selected_space)}" }
-                    if metadata_subject.kind == SpacePreviewKind::Space {
+                    if metadata_subject.kind == RealmTreeNodeKind::Space {
                         span { " · home Realm " }
                         span {
                             class: "mono",
@@ -1078,10 +1078,10 @@ pub fn RealmAdminPanel(
                                             api_token,
                                             |api| async move {
                                                 match subject_kind {
-                                                    SpacePreviewKind::Realm => {
+                                                    RealmTreeNodeKind::Realm => {
                                                         api.update_realm_metadata(&home_realm_id, &actor_did, patch).await
                                                     }
-                                                    SpacePreviewKind::Space => {
+                                                    RealmTreeNodeKind::Space => {
                                                         api.update_space_metadata(&home_realm_id, &subject_id, &actor_did, patch).await
                                                     }
                                                 }

@@ -104,7 +104,7 @@ fn yougen_accepts_server_contract_payloads() {
     let sync_describe = parse_sync_describe(json!({
         "service_did": "did:web:server.local",
         "supported_sync_profiles": ["initial", "incremental"],
-        "limits": {"max_spaces": 50, "max_timeline_events": 100},
+        "limits": {"max_realms": 50, "max_timeline_events": 100},
         "frontier": {"storage": "memory"}
     }))
     .unwrap();
@@ -116,11 +116,11 @@ fn yougen_accepts_server_contract_payloads() {
 
     let sync = parse_sync(json!({
         "cursor": "ck:cursor:contract-sync",
-        "spaces": {
-            "ck:space:0196419b-0000-7000-8000-000000000000": {
+        "realms": {
+            "ck:realm:0196419b-0000-7000-8000-000000000000": {
                 "summary": {
-                    "title": "Cokret Demo Space",
-                    "summary": "Shared demo Space served by server",
+                    "title": "Cokret Demo Realm",
+                    "summary": "Shared demo Realm served by server",
                     "tags": ["demo"],
                     "category": "collaboration"
                 },
@@ -130,15 +130,15 @@ fn yougen_accepts_server_contract_payloads() {
                 "unread": {"notification_count": 0, "highlight_count": 0}
             }
         },
-        "left_spaces": [],
+        "left_realms": [],
         "to_device": [],
         "account_data": [],
         "device_lists": {"changed": [], "left": []}
     }))
     .unwrap();
     assert!(
-        sync.spaces
-            .contains_key("ck:space:0196419b-0000-7000-8000-000000000000")
+        sync.realms
+            .contains_key("ck:realm:0196419b-0000-7000-8000-000000000000")
     );
 
     let directory = parse_directory_describe(json!({
@@ -152,9 +152,9 @@ fn yougen_accepts_server_contract_payloads() {
 
     let resolved = parse_resolve_realm(json!({
         "realm_preview": {
-            "space_id": "ck:space:0196419b-0000-7000-8000-000000000000",
-            "name": "Cokret Demo Space",
-            "description": "Shared demo Space served by server",
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "title": "Cokret Demo Realm",
+            "description": "Shared demo Realm served by server",
             "tags": ["demo"],
             "public": true,
             "category": "collaboration"
@@ -195,9 +195,9 @@ fn yougen_accepts_server_contract_payloads() {
     assert_eq!(submit.status, "accepted");
 
     let snapshot: yougen::models::SnapshotHeadResponse = serde_json::from_value(json!({
-        "snapshot_ref": "ck:snapshot:ck:space:0196419b-0000-7000-8000-000000000000:head",
+        "snapshot_ref": "ck:snapshot:ck:realm:0196419b-0000-7000-8000-000000000000:head",
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "frontier": {"space_id": "ck:space:0196419b-0000-7000-8000-000000000000"},
+        "frontier": {"realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000"},
         "signature": {"kid": "did:web:server.local#dev", "alg": "none", "sig": ""}
     }))
     .unwrap();
@@ -411,38 +411,38 @@ fn server_description_gates_event_envelope_write_plane() {
 #[test]
 fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     // Spec-aligned wire shape per `cokret-spec/.../client-sync.md §2`:
-    // flat `spaces` keyed by realm id, explicit top-level
-    // `left_spaces`, flat arrays for `to_device` / `account_data` /
+    // flat `realms` keyed by realm id, explicit top-level
+    // `left_realms`, flat arrays for `to_device` / `account_data` /
     // `presence`. The SDK's `SyncResBody` is the single source of
     // truth; yougen no longer owns a custom deserializer.
     let sync = parse_sync(json!({
         "cursor": "sx:v1-bucket",
-        "spaces": {
-            "ck:space:joined": {
-                "summary": {"title": "Joined Space"},
+        "realms": {
+            "ck:realm:joined": {
+                "summary": {"title": "Joined Realm"},
                 "timeline": {"events": [], "limited": false},
                 "state": [],
                 "ephemeral": [],
                 "unread": {"notification_count": 0, "highlight_count": 0}
             }
         },
-        "left_spaces": ["ck:space:left"],
+        "left_realms": ["ck:realm:left"],
         "to_device": [{"type": "ck.mls.welcome"}],
         "account_data": [{
             "data_type": "ck.push_rules",
             "content": {"global": {"enabled": true}}
         }],
         "device_lists": {"changed": [], "left": []},
-        "notifications": {"rooms": {"ck:space:joined": {"count": 1}}},
+        "notifications": {"rooms": {"ck:realm:joined": {"count": 1}}},
         "presence": [{"sender": "did:web:alice.example"}]
     }))
     .unwrap();
     assert_eq!(sync.cursor, "sx:v1-bucket");
-    assert!(sync.spaces.contains_key("ck:space:joined"));
-    assert_eq!(sync.left_spaces, vec!["ck:space:left".to_owned()]);
+    assert!(sync.realms.contains_key("ck:realm:joined"));
+    assert_eq!(sync.left_realms, vec!["ck:realm:left".to_owned()]);
     assert_eq!(sync.to_device.len(), 1);
     assert_eq!(sync.account_data.len(), 1);
-    assert_eq!(sync.notifications["rooms"]["ck:space:joined"]["count"], 1);
+    assert_eq!(sync.notifications["rooms"]["ck:realm:joined"]["count"], 1);
     assert_eq!(sync.presence[0]["sender"], "did:web:alice.example");
 
     let frames = parse_events_subscribe_ndjson_text(
@@ -555,8 +555,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = yougen::models::SearchSpacesResponse {
-        results: vec![yougen::models::SpacePreview {
+    let directory = yougen::models::SearchRealmsResponse {
+        results: vec![yougen::models::RealmTreeNode {
             space_id: space_remark.space_id,
             title: "Contract Space".to_owned(),
             description: Some("Public description".to_owned()),
@@ -565,7 +565,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             category: Some("collaboration".to_owned()),
             parent_space_id: None,
             child_space_ids: Vec::new(),
-            kind: yougen::models::SpacePreviewKind::Realm,
+            kind: yougen::models::RealmTreeNodeKind::Realm,
             realm_id: String::new(),
         }],
         next_cursor: None,
@@ -603,7 +603,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let bob_keys = bob.key_package_record().unwrap();
 
     alice
-        .create_group(b"ck:space:0196419b-0000-7000-8000-000000000000")
+        .create_group(b"ck:realm:0196419b-0000-7000-8000-000000000000")
         .unwrap();
     let add_result = alice.add_member(&bob_keys).unwrap();
     bob.join_from_welcome(&add_result.welcome).unwrap();

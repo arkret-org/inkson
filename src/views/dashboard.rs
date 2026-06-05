@@ -4,7 +4,7 @@ use dioxus_router::Link;
 use crate::components::{HelpTip, UiIcon};
 use crate::i18n::tr;
 use crate::local_state::{ClientLocalState, LocalStateStore};
-use crate::models::{SpacePreview, SpacePreviewKind, projection_realm_id_for_known_space};
+use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_space};
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -23,7 +23,7 @@ struct DashboardNotificationSummary {
 pub fn DashboardPanel(
     base_url: String,
     token: Signal<String>,
-    spaces: Signal<Vec<SpacePreview>>,
+    spaces: Signal<Vec<RealmTreeNode>>,
     selected_space: Signal<String>,
     view: Signal<super::View>,
     state_store: Signal<LocalStateStore>,
@@ -42,10 +42,10 @@ pub fn DashboardPanel(
     let spaces_snapshot = spaces();
     let has_realms = spaces_snapshot
         .iter()
-        .any(|space| space.kind == SpacePreviewKind::Realm);
+        .any(|space| space.kind == RealmTreeNodeKind::Realm);
     let has_spaces = spaces_snapshot
         .iter()
-        .any(|space| space.kind == SpacePreviewKind::Space);
+        .any(|space| space.kind == RealmTreeNodeKind::Space);
     let projection_label = projection_collection_label(has_realms, has_spaces);
     let recent_projection_label = recent_projection_collection_label(has_realms, has_spaces);
     let projection_browse_label = projection_collection_browse_label(has_realms, has_spaces);
@@ -564,10 +564,10 @@ fn default_notification_title(kind: &str) -> String {
     }
 }
 
-fn projection_kind_label(kind: SpacePreviewKind) -> &'static str {
+fn projection_kind_label(kind: RealmTreeNodeKind) -> &'static str {
     match kind {
-        SpacePreviewKind::Realm => "Realm",
-        SpacePreviewKind::Space => "Space",
+        RealmTreeNodeKind::Realm => "Realm",
+        RealmTreeNodeKind::Space => "Space",
     }
 }
 
@@ -624,12 +624,12 @@ mod tests {
     use super::{
         projection_collection_label, projection_kind_label, recent_projection_collection_label,
     };
-    use crate::models::SpacePreviewKind;
+    use crate::models::RealmTreeNodeKind;
 
     #[test]
     fn projection_labels_follow_realm_space_kind() {
-        assert_eq!(projection_kind_label(SpacePreviewKind::Realm), "Realm");
-        assert_eq!(projection_kind_label(SpacePreviewKind::Space), "Space");
+        assert_eq!(projection_kind_label(RealmTreeNodeKind::Realm), "Realm");
+        assert_eq!(projection_kind_label(RealmTreeNodeKind::Space), "Space");
         assert_eq!(projection_collection_label(true, false), "Realms");
         assert_eq!(
             recent_projection_collection_label(true, false),

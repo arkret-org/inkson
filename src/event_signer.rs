@@ -479,7 +479,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:bob.example", "ck.message.create")
+            OperationBuilder::new("ck:realm:t", "did:web:bob.example", "ck.message.create")
                 .body(json!({"body": "hi"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -511,7 +511,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:alice.example", "ck.message.create")
+            OperationBuilder::new("ck:realm:t", "did:web:alice.example", "ck.message.create")
                 .body(json!({"body": "actor-rooted"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -541,7 +541,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:carol.example", "ck.message.create")
+            OperationBuilder::new("ck:realm:t", "did:web:carol.example", "ck.message.create")
                 .body(json!({"body": "verifiable"}))
                 .build("test_node");
         set_proof_mode(prior_mode);
@@ -611,7 +611,7 @@ mod tests {
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:dave.example", "ck.message.create")
+            OperationBuilder::new("ck:realm:t", "did:web:dave.example", "ck.message.create")
                 .body(json!({"body": "auto"}))
                 .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
@@ -629,7 +629,7 @@ mod tests {
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
         let mut event =
-            OperationBuilder::new("ck:space:t", "did:web:eve.example", "ck.message.create")
+            OperationBuilder::new("ck:realm:t", "did:web:eve.example", "ck.message.create")
                 .body(json!({"body": "no"}))
                 .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();

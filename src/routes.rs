@@ -486,10 +486,10 @@ mod tests {
     fn test_setup_section_extraction() {
         assert_eq!(
             Route::SetupSection {
-                section: "spaces".to_owned()
+                section: "realms".to_owned()
             }
             .setup_section(),
-            Some("spaces")
+            Some("realms")
         );
         assert_eq!(Route::Setup.setup_section(), None);
     }

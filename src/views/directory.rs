@@ -46,7 +46,7 @@ pub fn DirectoryPanel(
     // was the original reason the SyncEngine's reconcile couldn't be
     // trusted (any directory search would resurrect ghost results
     // until the next sync). Keeping the buffer local closes that hole.
-    let mut spaces = use_signal(Vec::<SpacePreview>::new);
+    let mut spaces = use_signal(Vec::<RealmTreeNode>::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);

@@ -548,9 +548,9 @@ pub(super) fn board_space_options_from_projection(
             view.kind == "board" || (view.kind.trim().is_empty() && view.parent_space_id.is_none())
         })
         .map(|view| BoardSpaceOption {
-            id: view.container_space_id.clone(),
+            id: view.space_id.clone(),
             title: if view.title.trim().is_empty() {
-                view.container_space_id.clone()
+                view.space_id.clone()
             } else {
                 view.title.clone()
             },
@@ -665,18 +665,18 @@ pub(super) fn containers_with_local_space_creates(
     for local_create in local_space_create_records(raw_operations, realm_id) {
         if let Some(existing) = merged
             .iter_mut()
-            .find(|view| view.container_space_id == local_create.id)
+            .find(|view| view.space_id == local_create.id)
         {
             if should_replace_projected_container_title(
                 &existing.title,
-                &existing.container_space_id,
+                &existing.space_id,
             ) {
                 existing.title = local_create.title;
             }
             continue;
         }
         merged.push(crate::api::SpaceContainerProjectionView {
-            container_space_id: local_create.id,
+            space_id: local_create.id,
             realm_id: local_create
                 .realm_id
                 .unwrap_or_else(|| scope_id_as_realm_id(realm_id)),
@@ -921,9 +921,9 @@ pub(super) fn columns_from_lifecycle_projection(
             view.kind == "list" && view.parent_space_id.as_deref() == Some(board_id.as_str())
         })
         .map(|view| KanbanColumn {
-            id: view.container_space_id.clone(),
+            id: view.space_id.clone(),
             title: if view.title.trim().is_empty() {
-                view.container_space_id.clone()
+                view.space_id.clone()
             } else {
                 view.title.clone()
             },
@@ -1975,7 +1975,7 @@ pub(super) fn local_space_create_from_raw_operation(
     let object = body.get("object").unwrap_or(body);
     let id = json_path_string(Some(object), &["id"])
         .or_else(|| json_path_string(Some(body), &["space_id"]))
-        .or_else(|| json_path_string(Some(body), &["container_space_id"]))?;
+        .or_else(|| json_path_string(Some(body), &["space_id"]))?;
     let space_kind = json_path_string(Some(object), &["kind"])
         .or_else(|| json_path_string(Some(body), &["space_kind"]))?;
     if space_kind != "board" && space_kind != "list" {

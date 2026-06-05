@@ -21,17 +21,17 @@ use crate::local_state::{
     ClientLocalState, LocalStateStore, OidcTokenBundle, PersistedSessionGrant,
 };
 use crate::models::{
-    ServerDescription, ServerDescriptionExt, SpacePreview, SpacePreviewKind,
+    ServerDescription, ServerDescriptionExt, RealmTreeNode, RealmTreeNodeKind,
     projection_realm_id_for_known_space,
 };
 use crate::routes::Route;
 // R28-B — space-tree / projection / field-extraction helpers moved to
-// `crate::space_tree`. Re-export the two `pub` entry points used by
+// `crate::realm_tree`. Re-export the two `pub` entry points used by
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
-pub(crate) use crate::space_tree::{
+pub(crate) use crate::realm_tree::{
     descendant_space_ids, full_sync_projection_keep_set, realm_projection_is_encrypted,
-    space_previews_from_sync_realms, space_tree_items,
+    realm_tree_nodes_from_sync_realms, realm_tree_items,
 };
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
@@ -142,7 +142,7 @@ impl SpaceScopeMode {
 }
 
 fn scoped_space_ids(
-    spaces: &[SpacePreview],
+    spaces: &[RealmTreeNode],
     root_space_id: &str,
     scope_mode: SpaceScopeMode,
 ) -> Vec<String> {
@@ -406,7 +406,7 @@ pub fn RouterView() -> Element {
         &initial_session_token,
         initial_can_restore_session || initial_can_reissue_development_session,
     );
-    let initial_spaces = space_previews_from_sync_realms(&initial_local_state.space_projections);
+    let initial_spaces = realm_tree_nodes_from_sync_realms(&initial_local_state.space_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_space_scope_mode = load_space_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
@@ -746,7 +746,7 @@ pub fn RouterView() -> Element {
     // vice versa) and the two slid out of sync.
     use_effect(move || {
         let projections = state_store.read().load().space_projections;
-        let next = space_previews_from_sync_realms(&projections);
+        let next = realm_tree_nodes_from_sync_realms(&projections);
         // Perf (P1): this effect re-runs on *any* `state_store` write (drafts,
         // theme, notifications, read receipts, …), not just projection changes.
         // Skip the `set` when the derived list is unchanged so unrelated writes
@@ -1274,7 +1274,7 @@ pub fn RouterView() -> Element {
             active_space_scope_count
         )
     };
-    let space_tree = space_tree_items(&loaded_spaces);
+    let realm_tree = realm_tree_items(&loaded_spaces);
     let space_projections = state_store.read().load().space_projections;
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()
@@ -1681,7 +1681,7 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_spaces.is_empty() {
-                    div { class: "muted", "{crate::i18n::tr(\"command_palette.spaces\")} ({space_tree.len()})" }
+                    div { class: "muted", "{crate::i18n::tr(\"command_palette.spaces\")} ({realm_tree.len()})" }
                     input {
                         class: "mobile-space-filter",
                         "data-testid": "mobile-space-filter",
@@ -1693,7 +1693,7 @@ pub fn RouterView() -> Element {
                         {
                             let q = mobile_space_query();
                             let q_lc = q.trim().to_lowercase();
-                            let filtered: Vec<_> = space_tree
+                            let filtered: Vec<_> = realm_tree
                                 .iter()
                                 .filter(|item| {
                                     q_lc.is_empty()
@@ -1953,7 +1953,7 @@ pub fn RouterView() -> Element {
                             }
                         }
                     } else {
-                        for item in space_tree.iter() {
+                        for item in realm_tree.iter() {
                             {
                                 let item_space = item.space.clone();
                                 let depth_px = item.depth * 14;
@@ -1983,11 +1983,11 @@ pub fn RouterView() -> Element {
                                     .as_ref()
                                     .is_some_and(|r| !r.local_name.trim().is_empty());
                                 let add_child_title = match item_space.kind {
-                                    SpacePreviewKind::Realm => "Create a new Space at the root of this Realm",
-                                    SpacePreviewKind::Space => "Create a new Space under this one (this Space becomes the parent)",
+                                    RealmTreeNodeKind::Realm => "Create a new Space at the root of this Realm",
+                                    RealmTreeNodeKind::Space => "Create a new Space under this one (this Space becomes the parent)",
                                 };
                                 let (icon_name, icon_class, icon_title) = match item_space.kind {
-                                    SpacePreviewKind::Realm => {
+                                    RealmTreeNodeKind::Realm => {
                                         let is_encrypted = space_projections
                                             .get(&item_space.space_id)
                                             .is_some_and(realm_projection_is_encrypted);
@@ -2005,7 +2005,7 @@ pub fn RouterView() -> Element {
                                             )
                                         }
                                     }
-                                    SpacePreviewKind::Space => (
+                                    RealmTreeNodeKind::Space => (
                                         "folder",
                                         "sidebar-nav-icon",
                                         "Space",
@@ -2043,11 +2043,11 @@ pub fn RouterView() -> Element {
                                 // Realm has descendants, show the count
                                 // instead of the kind tag so the user
                                 // sees the tree structure at a glance.
-                                if item.descendant_count > 0 && item_space.kind == SpacePreviewKind::Realm {
+                                if item.descendant_count > 0 && item_space.kind == RealmTreeNodeKind::Realm {
                                     span { class: "pill muted xs", "{item.descendant_count}" }
                                 } else {
                                     match item_space.kind {
-                                        SpacePreviewKind::Realm => rsx! {
+                                        RealmTreeNodeKind::Realm => rsx! {
                                             span {
                                                 class: "pill muted xs",
                                                 "data-testid": "space-kind-realm",
@@ -2055,7 +2055,7 @@ pub fn RouterView() -> Element {
                                                 "Realm"
                                             }
                                         },
-                                        SpacePreviewKind::Space => rsx! {
+                                        RealmTreeNodeKind::Space => rsx! {
                                             span {
                                                 class: "pill muted xs",
                                                 "data-testid": "space-kind-space",
@@ -3281,7 +3281,7 @@ fn palette_filter(query: &str, haystack: &str) -> bool {
 #[component]
 fn CommandPalette(
     query: String,
-    spaces: Vec<SpacePreview>,
+    spaces: Vec<RealmTreeNode>,
     on_navigate: EventHandler<Route>,
     on_pick_space: EventHandler<String>,
     on_close: EventHandler<()>,
@@ -3292,7 +3292,7 @@ fn CommandPalette(
         .filter(|(label, hint, _)| palette_filter(&query, &format!("{label} {hint}")))
         .cloned()
         .collect();
-    let matched_spaces: Vec<SpacePreview> = spaces
+    let matched_spaces: Vec<RealmTreeNode> = spaces
         .iter()
         .filter(|space| palette_filter(&query, &format!("{} {}", space.title, space.space_id)))
         .take(10)
@@ -3614,7 +3614,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Directory => "Search",
         Route::Setup => "New Realm",
         Route::SetupSection { section } => match section.as_str() {
-            "realms" | "spaces" => "New Realm",
+            "realms" => "New Realm",
             "new-space" => "New Space",
             _ => "Setup",
         },
@@ -3830,7 +3830,7 @@ struct ServerSelectionContext {
     token: Signal<String>,
     sync_cursor: Signal<String>,
     selected_space: Signal<String>,
-    spaces: Signal<Vec<SpacePreview>>,
+    spaces: Signal<Vec<RealmTreeNode>>,
     timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
     frontier_state: Signal<String>,
@@ -4122,7 +4122,7 @@ struct ConnectContext {
     token: Signal<String>,
     account_did: Signal<String>,
     selected_space: Signal<String>,
-    spaces: Signal<Vec<SpacePreview>>,
+    spaces: Signal<Vec<RealmTreeNode>>,
     timeline: Signal<Vec<TimelineEvent>>,
     device_queue: Signal<usize>,
     frontier_state: Signal<String>,
@@ -4642,7 +4642,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
                         // and selected_space bookkeeping only.
-                        let reconciled = space_previews_from_sync_realms(
+                        let reconciled = realm_tree_nodes_from_sync_realms(
                             &state_store.read().load().space_projections,
                         );
                         if reconciled.is_empty() {
@@ -4695,7 +4695,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         // derive effect; just refresh status text and
                         // make sure selected_space points at something
                         // still in scope.
-                        let fallback = space_previews_from_sync_realms(
+                        let fallback = realm_tree_nodes_from_sync_realms(
                             &state_store.read().load().space_projections,
                         );
                         if fallback.is_empty() {
@@ -5386,8 +5386,8 @@ mod tests {
         );
     }
 
-    fn preview(id: &str, name: &str, parent: Option<&str>) -> SpacePreview {
-        SpacePreview {
+    fn preview(id: &str, name: &str, parent: Option<&str>) -> RealmTreeNode {
+        RealmTreeNode {
             space_id: id.to_owned(),
             title: name.to_owned(),
             description: None,
@@ -5396,7 +5396,7 @@ mod tests {
             category: None,
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
-            kind: SpacePreviewKind::Realm,
+            kind: RealmTreeNodeKind::Realm,
             realm_id: String::new(),
         }
     }

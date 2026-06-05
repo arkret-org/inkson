@@ -49,13 +49,13 @@ impl CallState {
 
 /// Build a `ck.call.state` event — durable call lifecycle transition.
 pub fn build_call_state(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     call_id: &str,
     state: CallState,
     reason: Option<&str>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.call.state")
+    OperationBuilder::new(realm_id, actor, "ck.call.state")
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
@@ -151,13 +151,13 @@ impl Default for CallSignalReceiver {
 /// The spec REQUIRES this be written before any recording stream begins so
 /// participants have an auditable signal.
 pub fn build_call_recording_start(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     call_id: &str,
     recording_id: &str,
     consent_actors: Vec<String>,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.call.recording.start")
+    OperationBuilder::new(realm_id, actor, "ck.call.recording.start")
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn call_state_emits_canonical_kind() {
         let op = build_call_state(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:call:c1",
             CallState::Connected,
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn call_recording_start_lists_consents() {
         let op = build_call_recording_start(
-            "ck:space:s1",
+            "ck:realm:s1",
             "did:web:alice",
             "ck:call:c1",
             "ck:recording:r1",

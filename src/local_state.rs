@@ -1047,7 +1047,7 @@ pub struct ClientLocalState {
     /// `/sync` `account_data[]` projection (entries with
     /// `data_type == "ck.contacts.space.<space_id>"`) and from user edits
     /// in settings. Keyed by Space id so the sidebar / dashboard can join
-    /// it against the public `SpacePreview.name` at render time and prefer
+    /// it against the public `RealmTreeNode.name` at render time and prefer
     /// `local_name` when set.
     #[serde(default)]
     pub space_remarks: BTreeMap<String, crate::account_data::SpaceRemark>,

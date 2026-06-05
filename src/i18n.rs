@@ -442,10 +442,10 @@ pub fn english_translations() -> TranslationDict {
         "Unread and approvals",
     );
     dict.set("dashboard.notifications_delta_signin", "Sign in required");
-    dict.set("dashboard.spaces_label", "Spaces");
-    dict.set("dashboard.spaces_delta_search", "Search or join a Space");
-    dict.set("dashboard.spaces_delta_signin", "Sign in to load spaces");
-    dict.set("dashboard.current_space", "Current Space");
+    dict.set("dashboard.spaces_label", "Realms");
+    dict.set("dashboard.spaces_delta_search", "Search or join a Realm");
+    dict.set("dashboard.spaces_delta_signin", "Sign in to load realms");
+    dict.set("dashboard.current_space", "Current Realm");
     dict.set("dashboard.workspace_setup", "Realm Setup");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -458,14 +458,14 @@ pub fn english_translations() -> TranslationDict {
         "Identity, device, and recovery setup",
     );
     dict.set("dashboard.recent_realms", "Recent Realms");
-    dict.set("dashboard.no_spaces", "No spaces loaded");
+    dict.set("dashboard.no_spaces", "No realms loaded");
     dict.set(
         "dashboard.no_spaces_help",
-        "The connected server did not return spaces yet.",
+        "The connected server did not return realms yet.",
     );
     dict.set(
         "dashboard.no_session_help",
-        "The client is not showing placeholder spaces.",
+        "The client is not showing placeholder realms.",
     );
     // F-I18N-CLEAN-1: en strings previously hard-coded in dashboard / chat /
     // kanban / settings / realm_admin views.
@@ -516,16 +516,16 @@ pub fn english_translations() -> TranslationDict {
         "Plaintext messages may be visible to the configured server.",
     );
 
-    dict.set("command_palette.spaces", "Spaces");
+    dict.set("command_palette.spaces", "Realms");
     dict.set("command_palette.jump_to", "Jump to");
     dict.set(
         "command_palette.empty",
-        "No matching spaces or views. Press Esc to close.",
+        "No matching realms or views. Press Esc to close.",
     );
     dict.set("command_palette.close", "Close (Esc)");
 
-    dict.set("mobile.filter_spaces", "Filter spaces…");
-    dict.set("mobile.no_match", "No spaces match.");
+    dict.set("mobile.filter_spaces", "Filter realms...");
+    dict.set("mobile.no_match", "No realms match.");
 
     // Kanban / Board view (header + section labels)
     dict.set("kanban.board_header", "Board");
@@ -1449,7 +1449,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.reconnecting", "重连中");
 
     // R-i18n-002 mirrored keys.
-    dict.set("topbar.search_placeholder", "跳转到空间、视图或操作…");
+    dict.set("topbar.search_placeholder", "跳转到 Realm、视图或操作...");
     dict.set("topbar.notifications", "通知");
     dict.set("topbar.new_space", "新建空间");
     dict.set("topbar.account_menu", "账号菜单");
@@ -1462,10 +1462,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.notifications_label", "通知");
     dict.set("dashboard.notifications_delta_unread", "未读与待审批");
     dict.set("dashboard.notifications_delta_signin", "需要登录");
-    dict.set("dashboard.spaces_label", "空间");
-    dict.set("dashboard.spaces_delta_search", "搜索或加入空间");
-    dict.set("dashboard.spaces_delta_signin", "登录后加载空间");
-    dict.set("dashboard.current_space", "当前空间");
+    dict.set("dashboard.spaces_label", "Realm");
+    dict.set("dashboard.spaces_delta_search", "搜索或加入 Realm");
+    dict.set("dashboard.spaces_delta_signin", "登录后加载 Realm");
+    dict.set("dashboard.current_space", "当前 Realm");
     dict.set("dashboard.workspace_setup", "Realm 设置");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -1475,9 +1475,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.onboarding_steps", "4 步");
     dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
     dict.set("dashboard.recent_realms", "最近 Realm");
-    dict.set("dashboard.no_spaces", "暂无空间");
-    dict.set("dashboard.no_spaces_help", "服务器尚未返回空间列表。");
-    dict.set("dashboard.no_session_help", "客户端不会展示占位空间。");
+    dict.set("dashboard.no_spaces", "暂无 Realm");
+    dict.set("dashboard.no_spaces_help", "服务器尚未返回 Realm 列表。");
+    dict.set("dashboard.no_session_help", "客户端不会展示占位 Realm。");
     // F-I18N-CLEAN-1: 与 en dict 同步的新 keys。
     dict.set("dashboard.resume_context", "回到当前上下文");
     dict.set("dashboard.no_notifications", "暂无通知");
@@ -1520,16 +1520,16 @@ pub fn chinese_translations() -> TranslationDict {
         "明文消息对所配置的服务器可见。",
     );
 
-    dict.set("command_palette.spaces", "空间");
+    dict.set("command_palette.spaces", "Realm");
     dict.set("command_palette.jump_to", "跳转到");
     dict.set(
         "command_palette.empty",
-        "未找到匹配的空间或视图。按 Esc 关闭。",
+        "未找到匹配的 Realm 或视图。按 Esc 关闭。",
     );
     dict.set("command_palette.close", "关闭 (Esc)");
 
-    dict.set("mobile.filter_spaces", "筛选空间…");
-    dict.set("mobile.no_match", "未找到匹配空间。");
+    dict.set("mobile.filter_spaces", "筛选 Realm...");
+    dict.set("mobile.no_match", "未找到匹配 Realm。");
 
     // Kanban / Board view
     dict.set("kanban.board_header", "看板");

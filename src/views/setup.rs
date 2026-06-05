@@ -212,9 +212,8 @@ const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetupSection {
     Overview,
-    /// Realm bootstrap flow (legacy slug `spaces` for URL stability —
-    /// the form actually creates a Realm; the wire event is
-    /// `ck.realm.create`).
+    /// Realm bootstrap flow; the form creates a Realm and emits
+    /// `ck.realm.create`.
     Spaces,
     /// Phase 3 — `ck.space.create` form: pick a Realm, pick a kind,
     /// optionally pick a parent Space. The Space lives inside the
@@ -227,12 +226,7 @@ impl SetupSection {
         match slug.unwrap_or_default() {
             "" => Self::Spaces,
             "overview" => Self::Overview,
-            // Canonical slug for the Realm bootstrap surface — the
-            // form actually creates a Realm (ck.realm.create), so the
-            // URL should say "realms". `spaces` is kept as a legacy
-            // alias for any bookmark / external link that was minted
-            // before the rename and would otherwise 404.
-            "realms" | "spaces" => Self::Spaces,
+            "realms" => Self::Spaces,
             "new-space" => Self::NewSpace,
             _ => Self::Overview,
         }

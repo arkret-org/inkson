@@ -112,7 +112,7 @@ use crate::models::{
     ModerationReportResBody, OkResBody, PolicyCheckResBody, PushRegisterResponse,
     RealmCreateResponse, RealmJoinCandidate, RealmPolicyResponse, ReceiptResponse,
     ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse,
-    SearchSpacesResponse, ServerDescription, SnapshotHeadResponse, SolandDirectoryDescribeResBody,
+    SearchRealmsResponse, ServerDescription, SnapshotHeadResponse, SolandDirectoryDescribeResBody,
     SolandEventsDescribeResBody, SpaceCreateResponse, SubmitDidOperationResBody,
     SubmitEventResponse, SyncDescribeResBody, TypingResponse, UpdateProfileResponse,
     VerifyDeviceResponse, WebrtcSignalResponse,
@@ -138,8 +138,7 @@ pub fn sidecar_home_policy_default() -> &'static str {
 /// `/_cokret/self/projection/{spaces|flows}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck projection rows with the same code. The decoder
-/// normalizes spec `spaces` / `flows` / `morphs` collection keys plus
-/// soland's legacy `space_containers` key into `items`.
+/// normalizes spec `spaces` / `flows` / `morphs` collection keys into `items`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LifecycleProjectionResponse<T> {
     pub realm_id: String,
@@ -148,7 +147,6 @@ pub struct LifecycleProjectionResponse<T> {
     #[serde(
         default = "Vec::new",
         alias = "spaces",
-        alias = "space_containers",
         alias = "flows",
         alias = "morphs"
     )]
@@ -161,8 +159,7 @@ pub struct LifecycleProjectionResponse<T> {
 /// `GET /_cokret/self/projection/spaces`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SpaceContainerProjectionView {
-    #[serde(alias = "space_id")]
-    pub container_space_id: String,
+    pub space_id: String,
     pub realm_id: String,
     #[serde(default)]
     pub kind: String,
@@ -181,7 +178,6 @@ pub struct SpaceContainerProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct FlowProjectionView {
     pub flow_id: String,
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub title: String,
@@ -214,7 +210,6 @@ pub struct FlowProjectionView {
 #[derive(Clone, Debug, Deserialize)]
 pub struct MorphProjectionView {
     pub morph_id: String,
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub morph_type: String,
@@ -3096,23 +3091,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_projection_response_accepts_soland_legacy_keys() {
-        let spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
-            serde_json::from_value(json!({
-                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-                "total": 1,
-                "space_containers": [{
-                    "container_space_id": "ck:space:01904100-0000-7000-8000-f10dc0000001",
-                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-                    "kind": "board",
-                    "title": "Launch board",
-                    "state": "active"
-                }]
-            }))
-            .unwrap();
-        assert_eq!(spaces.items.len(), 1);
-        assert_eq!(spaces.items[0].kind, "board");
-
+    fn lifecycle_projection_response_accepts_spec_keys() {
         let canonical_spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
             serde_json::from_value(json!({
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
@@ -3127,7 +3106,7 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(
-            canonical_spaces.items[0].container_space_id,
+            canonical_spaces.items[0].space_id,
             "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
@@ -3158,7 +3137,7 @@ mod tests {
     #[test]
     fn typing_envelope_uses_spec_ephemeral_shape() {
         let envelope = build_typing_envelope(
-            "ck:space:0196419b-0000-7000-8000-000000000000",
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
             Some("ck:device:01904100-0000-7000-8000-a11ce0000001"),
             true,

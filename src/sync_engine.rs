@@ -43,7 +43,7 @@ use crate::api::{
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
-use crate::models::{ClientSyncResponse, SpacePreview};
+use crate::models::{ClientSyncResponse, RealmTreeNode};
 
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
@@ -72,7 +72,7 @@ pub struct SyncEngineContext {
     pub base_url: Signal<String>,
     pub token: Signal<String>,
     pub state_store: Signal<LocalStateStore>,
-    pub spaces: Signal<Vec<SpacePreview>>,
+    pub spaces: Signal<Vec<RealmTreeNode>>,
     pub timeline: Signal<Vec<crate::views::timeline::TimelineEvent>>,
     pub sync_cursor: Signal<String>,
     pub status: Signal<String>,
@@ -398,7 +398,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     // bookkeeping.
     let _ = spaces; // suppress unused capture; consumed by the derive effect
     let reconciled =
-        crate::app::space_previews_from_sync_realms(&state_store.read().load().space_projections);
+        crate::app::realm_tree_nodes_from_sync_realms(&state_store.read().load().space_projections);
     if reconciled.is_empty() {
         status.set(crate::views::ConnectionState::Empty.label().to_owned());
     } else {

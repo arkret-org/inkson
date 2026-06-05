@@ -291,8 +291,8 @@ pub struct SyncDescribeResBody {
 pub use cokret_sdk::model::SyncResBody as ClientSyncResponse;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchSpacesResponse {
-    pub results: Vec<SpacePreview>,
+pub struct SearchRealmsResponse {
+    pub results: Vec<RealmTreeNode>,
     pub next_cursor: Option<String>,
 }
 
@@ -311,7 +311,7 @@ pub struct SolandDirectoryDescribeResBody {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveRealmResponse {
-    pub realm_preview: SpacePreview,
+    pub realm_preview: RealmTreeNode,
     #[serde(default)]
     pub stripped_state: Vec<Value>,
     pub join_rule: String,
@@ -344,17 +344,13 @@ pub struct RealmJoinCandidate {
     pub proofs: Vec<Value>,
 }
 
-/// Sidebar tag distinguishing a security-boundary Realm from a
-/// product-organisation Space. Wire signal is either the
-/// `ck.schema.{realm,space}.v1` `schema` field on the projection
-/// body, or a yougen-local `__kind` tag used by the optimistic
-/// post-create save.
-// Default tag is `Realm` because legacy projections (no schema marker) were
-// always Realms — yougen had no UI to create real Spaces before
-// M-SPACE-CREATE-1. Default tag keeps them visible.
+/// Sidebar tag distinguishing a security-boundary Realm from a product
+/// Space. Wire signal is either the `ck.schema.{realm,space}.v1` schema
+/// field on a projection body, or a yougen-local `__kind` tag used by
+/// optimistic post-create state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SpacePreviewKind {
+pub enum RealmTreeNodeKind {
     /// `ck:realm:*` — security / sync / E2EE boundary.
     #[default]
     Realm,
@@ -362,15 +358,14 @@ pub enum SpacePreviewKind {
     Space,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct SpacePreview {
-    pub space_id: String,
+#[derive(Clone, Debug, PartialEq)]
+pub struct RealmTreeNode {
+    /// Navigation node id. Realm nodes hold `ck:realm:*`; Space nodes hold
+    /// `ck:space:*`. Do not put Realm ids in a `space_id` field.
+    pub id: String,
     /// Canonical display name. Spec `realm.schema.json` / `space.schema.json`
     /// both make `title` the required display field; `name` is reserved for
-    /// external protocol / algorithm / service labels. We accept the legacy
-    /// `name` wire key via `#[serde(alias = "name")]` for transitional
-    /// compatibility with older servers (R8).
-    #[serde(alias = "name")]
+    /// external protocol / algorithm / service labels.
     pub title: String,
     pub description: Option<String>,
     #[serde(default)]
@@ -384,14 +379,41 @@ pub struct SpacePreview {
     /// Realm vs Space classification used by the sidebar to render
     /// the two as separate tiers. Spec realm-and-space.md §1 / §3.
     #[serde(default)]
-    pub kind: SpacePreviewKind,
-    /// Home Realm of this entry. Empty for Realms (they are their
-    /// own home); set to the parent Realm id for Spaces.
+    pub kind: RealmTreeNodeKind,
+    /// Home Realm of this entry. For Realm nodes this equals `id`; for Space
+    /// nodes this is the containing Realm id.
     #[serde(default)]
     pub realm_id: String,
 }
 
-impl<'de> Deserialize<'de> for SpacePreview {
+impl Serialize for RealmTreeNode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("RealmTreeNode", 10)?;
+        match self.kind {
+            RealmTreeNodeKind::Realm => state.serialize_field("realm_id", &self.id)?,
+            RealmTreeNodeKind::Space => {
+                state.serialize_field("space_id", &self.id)?;
+                state.serialize_field("realm_id", &self.realm_id)?;
+            }
+        }
+        state.serialize_field("title", &self.title)?;
+        state.serialize_field("description", &self.description)?;
+        state.serialize_field("tags", &self.tags)?;
+        state.serialize_field("public", &self.public)?;
+        state.serialize_field("category", &self.category)?;
+        state.serialize_field("parent_space_id", &self.parent_space_id)?;
+        state.serialize_field("child_space_ids", &self.child_space_ids)?;
+        state.serialize_field("kind", &self.kind)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RealmTreeNode {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -402,9 +424,6 @@ impl<'de> Deserialize<'de> for SpacePreview {
             space_id: Option<String>,
             #[serde(default)]
             realm_id: Option<String>,
-            // R8: canonical key is `title`; accept legacy `name` for
-            // transitional compatibility with older servers.
-            #[serde(alias = "name")]
             title: String,
             description: Option<String>,
             #[serde(default)]
@@ -416,16 +435,28 @@ impl<'de> Deserialize<'de> for SpacePreview {
             #[serde(default)]
             child_space_ids: Vec<String>,
             #[serde(default)]
-            kind: SpacePreviewKind,
+            kind: RealmTreeNodeKind,
         }
 
         let wire = Wire::deserialize(deserializer)?;
-        let space_id = wire
-            .space_id
-            .or_else(|| wire.realm_id.clone())
-            .ok_or_else(|| serde::de::Error::missing_field("space_id"))?;
+        let id = match wire.kind {
+            RealmTreeNodeKind::Realm => wire
+                .realm_id
+                .clone()
+                .ok_or_else(|| serde::de::Error::missing_field("realm_id"))?,
+            RealmTreeNodeKind::Space => wire
+                .space_id
+                .clone()
+                .ok_or_else(|| serde::de::Error::missing_field("space_id"))?,
+        };
+        let realm_id = match wire.kind {
+            RealmTreeNodeKind::Realm => id.clone(),
+            RealmTreeNodeKind::Space => wire
+                .realm_id
+                .ok_or_else(|| serde::de::Error::missing_field("realm_id"))?,
+        };
         Ok(Self {
-            space_id,
+            id,
             title: wire.title,
             description: wire.description,
             tags: wire.tags,
@@ -434,48 +465,48 @@ impl<'de> Deserialize<'de> for SpacePreview {
             parent_space_id: wire.parent_space_id,
             child_space_ids: wire.child_space_ids,
             kind: wire.kind,
-            realm_id: wire.realm_id.unwrap_or_default(),
+            realm_id,
         })
     }
 }
 
-impl SpacePreview {
+impl RealmTreeNode {
     pub fn projection_realm_id(&self) -> &str {
-        if self.kind == SpacePreviewKind::Space && !self.realm_id.trim().is_empty() {
+        if self.kind == RealmTreeNodeKind::Space && !self.realm_id.trim().is_empty() {
             self.realm_id.trim()
         } else {
-            self.space_id.as_str()
+            self.id.as_str()
         }
     }
 }
 
-pub fn projection_realm_id_for_space(spaces: &[SpacePreview], space_id: &str) -> String {
-    let requested = space_id.trim();
-    projection_realm_id_for_known_space(spaces, requested).unwrap_or_else(|| requested.to_owned())
+pub fn projection_realm_id_for_node(nodes: &[RealmTreeNode], node_id: &str) -> String {
+    let requested = node_id.trim();
+    projection_realm_id_for_known_node(nodes, requested).unwrap_or_else(|| requested.to_owned())
 }
 
-pub fn projection_realm_id_for_known_space(
-    spaces: &[SpacePreview],
-    space_id: &str,
+pub fn projection_realm_id_for_known_node(
+    nodes: &[RealmTreeNode],
+    node_id: &str,
 ) -> Option<String> {
-    let requested = space_id.trim();
+    let requested = node_id.trim();
     if requested.is_empty() {
         return Some(String::new());
     }
-    let by_id: std::collections::BTreeMap<&str, &SpacePreview> = spaces
+    let by_id: std::collections::BTreeMap<&str, &RealmTreeNode> = spaces
         .iter()
-        .map(|space| (space.space_id.as_str(), space))
+        .map(|node| (node.id.as_str(), node))
         .collect();
     let mut current = requested;
     let mut visited = std::collections::BTreeSet::new();
 
     while visited.insert(current.to_owned()) {
-        let space = by_id.get(current).copied()?;
-        let projection_realm_id = space.projection_realm_id();
-        if projection_realm_id != space.space_id || space.kind == SpacePreviewKind::Realm {
+        let node = by_id.get(current).copied()?;
+        let projection_realm_id = node.projection_realm_id();
+        if projection_realm_id != node.id || node.kind == RealmTreeNodeKind::Realm {
             return Some(projection_realm_id.to_owned());
         }
-        if let Some(parent) = space
+        if let Some(parent) = node
             .parent_space_id
             .as_deref()
             .map(str::trim)
@@ -493,17 +524,17 @@ pub fn projection_realm_id_for_known_space(
 #[cfg(test)]
 mod tests {
     use super::{
-        SpacePreview, SpacePreviewKind, projection_realm_id_for_known_space,
+        RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_space,
         projection_realm_id_for_space,
     };
 
     fn preview(
         id: &str,
-        kind: SpacePreviewKind,
+        kind: RealmTreeNodeKind,
         realm_id: &str,
         parent: Option<&str>,
-    ) -> SpacePreview {
-        SpacePreview {
+    ) -> RealmTreeNode {
+        RealmTreeNode {
             space_id: id.to_owned(),
             title: id.to_owned(),
             description: None,
@@ -520,10 +551,10 @@ mod tests {
     #[test]
     fn projection_realm_id_uses_space_home_realm() {
         let spaces = vec![
-            preview("ck:realm:root", SpacePreviewKind::Realm, "", None),
+            preview("ck:realm:root", RealmTreeNodeKind::Realm, "", None),
             preview(
                 "ck:space:child",
-                SpacePreviewKind::Space,
+                RealmTreeNodeKind::Space,
                 "ck:realm:root",
                 Some("ck:realm:root"),
             ),
@@ -538,10 +569,10 @@ mod tests {
     #[test]
     fn projection_realm_id_climbs_parent_links_to_realm() {
         let spaces = vec![
-            preview("ck:realm:root", SpacePreviewKind::Realm, "", None),
+            preview("ck:realm:root", RealmTreeNodeKind::Realm, "", None),
             preview(
                 "ck:space:child",
-                SpacePreviewKind::Space,
+                RealmTreeNodeKind::Space,
                 "",
                 Some("ck:realm:root"),
             ),
@@ -896,7 +927,6 @@ pub struct EphemeralSubmitResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceConfigResponse {
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
@@ -920,7 +950,6 @@ pub struct IceServer {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IceConfigRequest {
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
@@ -932,7 +961,6 @@ pub struct IceConfigRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CreateWebrtcSessionResponse {
     pub session_id: String,
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub participants: Vec<String>,
@@ -963,7 +991,6 @@ pub struct CallRecordingStartResponse {
     #[serde(default)]
     pub ok: bool,
     pub call_id: String,
-    #[serde(alias = "space_id")]
     pub realm_id: String,
     #[serde(default)]
     pub recording_policy: String,

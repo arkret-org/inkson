@@ -5,7 +5,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchSpacesResponse> {
+    ) -> anyhow::Result<SearchRealmsResponse> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }

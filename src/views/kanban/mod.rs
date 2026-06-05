@@ -1054,7 +1054,7 @@ pub fn KanbanPanel(
                 } else {
                     let mut cols = columns.write();
                     for view in &container_items {
-                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.container_space_id)
+                        if let Some(col) = cols.iter_mut().find(|c| c.id == view.space_id)
                         {
                             let new_state = space_container_state_from_wire(&view.state);
                             if col.state != new_state {
@@ -1243,7 +1243,7 @@ pub fn KanbanPanel(
         selected_scope_security_encrypted.unwrap_or(true);
     let projected_space_container_ids = lifecycle_container_projection()
         .into_iter()
-        .map(|view| view.container_space_id)
+        .map(|view| view.space_id)
         .collect::<BTreeSet<_>>();
     let projected_flow_ids = lifecycle_flow_projection()
         .into_iter()
@@ -7173,7 +7173,7 @@ mod tests {
     fn board_space_options_pick_board_spaces_from_projection() {
         let options = board_space_options_from_projection(&[
             crate::api::SpaceContainerProjectionView {
-                container_space_id: "ck:space:0196419b-0000-7000-8000-000000000001".to_owned(),
+                space_id: "ck:space:0196419b-0000-7000-8000-000000000001".to_owned(),
                 realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "board".to_owned(),
                 title: "Release".to_owned(),
@@ -7182,7 +7182,7 @@ mod tests {
                 parent_space_id: None,
             },
             crate::api::SpaceContainerProjectionView {
-                container_space_id: "ck:space:0196419b-0000-7000-8000-000000000002".to_owned(),
+                space_id: "ck:space:0196419b-0000-7000-8000-000000000002".to_owned(),
                 realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "list".to_owned(),
                 title: "Todo".to_owned(),
@@ -7289,7 +7289,7 @@ mod tests {
         })];
         let remote_operations = space_create_operations_from_events(&events);
         let containers = vec![crate::api::SpaceContainerProjectionView {
-            container_space_id: list_id.to_owned(),
+            space_id: list_id.to_owned(),
             realm_id: realm_id.to_owned(),
             kind: "list".to_owned(),
             title: "Todos".to_owned(),
@@ -7362,7 +7362,7 @@ mod tests {
         let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
         let containers = vec![
             crate::api::SpaceContainerProjectionView {
-                container_space_id: board_id.to_owned(),
+                space_id: board_id.to_owned(),
                 realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "board".to_owned(),
                 title: "Release".to_owned(),
@@ -7371,7 +7371,7 @@ mod tests {
                 parent_space_id: None,
             },
             crate::api::SpaceContainerProjectionView {
-                container_space_id: list_id.to_owned(),
+                space_id: list_id.to_owned(),
                 realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
                 kind: "list".to_owned(),
                 title: "Todo".to_owned(),
@@ -7425,7 +7425,7 @@ mod tests {
         let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
         let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
         let containers = vec![crate::api::SpaceContainerProjectionView {
-            container_space_id: list_id.to_owned(),
+            space_id: list_id.to_owned(),
             realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
