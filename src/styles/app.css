@@ -27,7 +27,7 @@ button, input, textarea, select { font: inherit; }
 .shell.rtl .panel { grid-column: 1; border-left: 0; border-right: 1px solid #d8e0e8; }
 .shell.rtl .actions { direction: rtl; }
 .shell.rtl .event-head, .shell.rtl .topbar { flex-direction: row-reverse; }
-.shell.rtl .space-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
+.shell.rtl .realm-tree-node-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
 .sidebar { background: #192330; color: #f7fafc; padding: 22px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 18px; }
 .brand { font-size: 24px; font-weight: 700; }
 .status { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: #cbd5e1; overflow-wrap: anywhere; }
@@ -37,9 +37,9 @@ button, input, textarea, select { font: inherit; }
 .settings select, .workflow-form select { width: 100%; }
 .composer label, .settings label, .workflow-form label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text, #4e5b6b); }
 .composer label > input[type="checkbox"], .composer label > input[type="radio"], .settings label > input[type="checkbox"], .settings label > input[type="radio"], .workflow-form label > input[type="checkbox"], .workflow-form label > input[type="radio"] { width: auto; margin: 0; padding: 0; }
-.space-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
-.space-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
-.space-button.active { border-color: #5cc8a7; background: #284252; }
+.realm-tree-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
+.realm-tree-node-button { border: 1px solid #314255; border-radius: 8px; padding: 12px; color: white; background: #223247; text-align: left; cursor: pointer; }
+.realm-tree-node-button.active { border-color: #5cc8a7; background: #284252; }
 .space-title { font-weight: 700; }
 .space-meta, .muted { color: #6b7787; font-size: 13px; }
 .sidebar .space-meta, .sidebar .muted { color: #cbd5e1; }
@@ -158,9 +158,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   .panel { display: none; }
   .mobile-shellbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: #101827; color: white; }
   .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: #172033; max-height: calc(100vh - 60px); overflow-y: auto; }
-  .mobile-space-filter { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3a52; background: #0f172a; color: #e5edf7; }
-  .mobile-space-filter::placeholder { color: #6b7a90; }
-  .mobile-space-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
+  .mobile-realm-tree-filter { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3a52; background: #0f172a; color: #e5edf7; }
+  .mobile-realm-tree-filter::placeholder { color: #6b7a90; }
+  .mobile-realm-tree-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
   .main { min-height: 100vh; padding: 16px; }
   .title { font-size: 22px; }
   .actions { flex-direction: column; }
@@ -273,12 +273,12 @@ body {
   background: rgba(255, 255, 255, 0.055);
   box-shadow: var(--ck-shadow-sm);
 }
-.space-button {
+.realm-tree-node-button {
   border-color: #334155;
   border-radius: 12px;
   background: var(--ck-nav-soft);
 }
-.space-button.active {
+.realm-tree-node-button.active {
   border-color: rgba(113, 181, 143, 0.48);
   background: rgba(43, 107, 79, 0.18);
 }

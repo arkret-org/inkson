@@ -414,9 +414,7 @@ mod tests {
             Route::Directory,
             Route::Setup,
             Route::SetupSection {
-                // Canonical Realm bootstrap slug (post Realm/Space
-                // inversion). `spaces` is still accepted as a legacy
-                // alias by SetupPanel::SetupSection::from_slug.
+                // Canonical Realm bootstrap slug.
                 section: "realms".to_owned(),
             },
             Route::Settings,

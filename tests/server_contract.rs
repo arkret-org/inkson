@@ -557,8 +557,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 
     let directory = yougen::models::SearchRealmsResponse {
         results: vec![yougen::models::RealmTreeNode {
-            space_id: space_remark.space_id,
-            title: "Contract Space".to_owned(),
+            id: "ck:realm:contract".to_owned(),
+            title: "Contract Realm".to_owned(),
             description: Some("Public description".to_owned()),
             tags: BTreeSet::from(["contract".to_owned()]),
             public: true,
@@ -566,7 +566,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             parent_space_id: None,
             child_space_ids: Vec::new(),
             kind: yougen::models::RealmTreeNodeKind::Realm,
-            realm_id: String::new(),
+            realm_id: "ck:realm:contract".to_owned(),
         }],
         next_cursor: None,
     };

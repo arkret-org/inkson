@@ -356,7 +356,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("directory.search_placeholder", "Search...");
     dict.set("directory.search", "Search");
     dict.set("directory.load_more", "Load More");
-    dict.set("directory.tab.spaces", "Spaces");
+    dict.set("directory.tab.realms", "Realms");
     dict.set("directory.tab.organizations", "Organizations");
     dict.set("directory.tab.actors", "Actors");
     dict.set("directory.tab.objects", "Objects");
@@ -425,7 +425,7 @@ pub fn english_translations() -> TranslationDict {
     // R-i18n-002 extra keys for the highest-visibility surfaces.
     dict.set(
         "topbar.search_placeholder",
-        "Jump to a space, view or action…",
+        "Jump to a Realm, view or action...",
     );
     dict.set("topbar.notifications", "Notifications");
     dict.set("topbar.new_space", "New Space");
@@ -442,9 +442,9 @@ pub fn english_translations() -> TranslationDict {
         "Unread and approvals",
     );
     dict.set("dashboard.notifications_delta_signin", "Sign in required");
-    dict.set("dashboard.spaces_label", "Realms");
-    dict.set("dashboard.spaces_delta_search", "Search or join a Realm");
-    dict.set("dashboard.spaces_delta_signin", "Sign in to load realms");
+    dict.set("dashboard.realms_label", "Realms");
+    dict.set("dashboard.realms_delta_search", "Search or join a Realm");
+    dict.set("dashboard.realms_delta_signin", "Sign in to load realms");
     dict.set("dashboard.current_space", "Current Realm");
     dict.set("dashboard.workspace_setup", "Realm Setup");
     dict.set(
@@ -458,9 +458,9 @@ pub fn english_translations() -> TranslationDict {
         "Identity, device, and recovery setup",
     );
     dict.set("dashboard.recent_realms", "Recent Realms");
-    dict.set("dashboard.no_spaces", "No realms loaded");
+    dict.set("dashboard.no_realms", "No realms loaded");
     dict.set(
-        "dashboard.no_spaces_help",
+        "dashboard.no_realms_help",
         "The connected server did not return realms yet.",
     );
     dict.set(
@@ -487,7 +487,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.settings.shared_history", "Shared history");
     dict.set(
         "chat.settings.shared_history_hint",
-        "Space-scoped policy — managed under Space admin.",
+        "Realm-scoped policy - managed under Realm admin.",
     );
     dict.set(
         "settings.muted_realms_empty",
@@ -502,7 +502,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.showing", "Showing");
     dict.set("notifications.load_more", "Load more");
     dict.set("directory.loading_more", "Loading...");
-    dict.set("directory.load_more_spaces", "Load More Spaces");
+    dict.set("directory.load_more_realms", "Load More Realms");
     dict.set(
         "directory.load_more_organizations",
         "Load More Organizations",
@@ -516,7 +516,7 @@ pub fn english_translations() -> TranslationDict {
         "Plaintext messages may be visible to the configured server.",
     );
 
-    dict.set("command_palette.spaces", "Realms");
+    dict.set("command_palette.realms", "Realms");
     dict.set("command_palette.jump_to", "Jump to");
     dict.set(
         "command_palette.empty",
@@ -524,7 +524,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("command_palette.close", "Close (Esc)");
 
-    dict.set("mobile.filter_spaces", "Filter realms...");
+    dict.set("mobile.filter_realms", "Filter realms...");
     dict.set("mobile.no_match", "No realms match.");
 
     // Kanban / Board view (header + section labels)
@@ -621,11 +621,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.subtitle", "account MLS secret");
     dict.set(
         "mls_unlock.description",
-        "This device doesn't have your account MLS history secret yet. Enter your recovery passphrase to restore encrypted spaces from your account backup.",
+        "This device doesn't have your account MLS history secret yet. Enter your recovery passphrase to restore encrypted realms from your account backup.",
     );
     dict.set(
         "mls_unlock.loading_hint",
-        "Deriving the recovery key and restoring multiple encrypted spaces can take a few seconds. Keep this tab open.",
+        "Deriving the recovery key and restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
     );
     dict.set("mls_unlock.placeholder", "Recovery passphrase");
     dict.set("mls_unlock.button_idle", "Unlock history");
@@ -932,10 +932,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.error", "Avatar upload failed");
     // A6.1 — global cross-space message search.
     dict.set("search.title", "Search messages");
-    dict.set("search.placeholder", "Search across all your spaces…");
+    dict.set("search.placeholder", "Search across all your realms...");
     dict.set(
         "search.results.empty",
-        "Type a query to search across your spaces.",
+        "Type a query to search across your realms.",
     );
     dict.set("search.results.loading", "Searching…");
     dict.set("search.results.error", "Search failed");
@@ -1462,9 +1462,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.notifications_label", "通知");
     dict.set("dashboard.notifications_delta_unread", "未读与待审批");
     dict.set("dashboard.notifications_delta_signin", "需要登录");
-    dict.set("dashboard.spaces_label", "Realm");
-    dict.set("dashboard.spaces_delta_search", "搜索或加入 Realm");
-    dict.set("dashboard.spaces_delta_signin", "登录后加载 Realm");
+    dict.set("dashboard.realms_label", "Realm");
+    dict.set("dashboard.realms_delta_search", "搜索或加入 Realm");
+    dict.set("dashboard.realms_delta_signin", "登录后加载 Realm");
     dict.set("dashboard.current_space", "当前 Realm");
     dict.set("dashboard.workspace_setup", "Realm 设置");
     dict.set(
@@ -1475,8 +1475,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.onboarding_steps", "4 步");
     dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
     dict.set("dashboard.recent_realms", "最近 Realm");
-    dict.set("dashboard.no_spaces", "暂无 Realm");
-    dict.set("dashboard.no_spaces_help", "服务器尚未返回 Realm 列表。");
+    dict.set("dashboard.no_realms", "暂无 Realm");
+    dict.set("dashboard.no_realms_help", "服务器尚未返回 Realm 列表。");
     dict.set("dashboard.no_session_help", "客户端不会展示占位 Realm。");
     // F-I18N-CLEAN-1: 与 en dict 同步的新 keys。
     dict.set("dashboard.resume_context", "回到当前上下文");
@@ -1509,7 +1509,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.showing", "已显示");
     dict.set("notifications.load_more", "加载更多");
     dict.set("directory.loading_more", "加载中…");
-    dict.set("directory.load_more_spaces", "加载更多 Space");
+    dict.set("directory.load_more_realms", "加载更多 Realm");
     dict.set("directory.load_more_organizations", "加载更多组织");
     dict.set("directory.load_more_actors", "加载更多用户");
 
@@ -1520,7 +1520,7 @@ pub fn chinese_translations() -> TranslationDict {
         "明文消息对所配置的服务器可见。",
     );
 
-    dict.set("command_palette.spaces", "Realm");
+    dict.set("command_palette.realms", "Realm");
     dict.set("command_palette.jump_to", "跳转到");
     dict.set(
         "command_palette.empty",
@@ -1528,7 +1528,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("command_palette.close", "关闭 (Esc)");
 
-    dict.set("mobile.filter_spaces", "筛选 Realm...");
+    dict.set("mobile.filter_realms", "筛选 Realm...");
     dict.set("mobile.no_match", "未找到匹配 Realm。");
 
     // Kanban / Board view

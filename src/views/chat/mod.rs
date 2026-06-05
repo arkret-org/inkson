@@ -108,7 +108,7 @@ pub fn ChatPanel(
     account_did: String,
     device_id: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     selected_space_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
@@ -117,8 +117,8 @@ pub fn ChatPanel(
     embedded: bool,
 ) -> Element {
     let navigator = use_navigator();
-    let initial_default_channel = (!selected_space.trim().is_empty())
-        .then(|| discussion_channel_for_flow(&selected_space, &initial_flow_id));
+    let initial_default_channel = (!selected_realm_id.trim().is_empty())
+        .then(|| discussion_channel_for_flow(&selected_realm_id, &initial_flow_id));
     let initial_selected_channel = initial_default_channel
         .as_ref()
         .map(|channel| channel.flow_id.clone())
@@ -131,7 +131,7 @@ pub fn ChatPanel(
     });
     let mut selected_channel = use_signal(move || initial_selected_channel.clone());
     {
-        let selected_space_for_initial_flow = selected_space.clone();
+        let selected_space_for_initial_flow = selected_realm_id.clone();
         let initial_flow_id_for_effect = initial_flow_id.clone();
         use_effect(move || {
             if selected_space_for_initial_flow.trim().is_empty() {
@@ -281,7 +281,7 @@ pub fn ChatPanel(
         let state = state_store.read().load();
         crate::security_state::security_projection_for_scope_id(
             &state.space_projections,
-            &selected_space,
+            &selected_realm_id,
         )
         .map(crate::security_state::realm_projection_is_encrypted)
         .unwrap_or(false)
@@ -350,7 +350,7 @@ pub fn ChatPanel(
         // ephemeral channel; local marker state keeps the rendered
         // testid surface stable while server projection catches up.
         let base = base_url.clone();
-        let space = selected_space.clone();
+        let space = selected_realm_id.clone();
         let event_id = top_event.clone();
         let actor = account_did.clone();
         let api_token = token();
@@ -380,7 +380,7 @@ pub fn ChatPanel(
         .read()
         .load()
         .space_projections
-        .get(&selected_space)
+        .get(&selected_realm_id)
         .cloned();
     let mut participants = space_participants(participant_projection.as_ref(), &account_did);
     // Mark agent endpoints registered in this space so the @mention
@@ -390,7 +390,7 @@ pub fn ChatPanel(
     {
         let agent_ids = agent_ids_from_raw_operations(
             &state_store.read().load().raw_operations,
-            &selected_space,
+            &selected_realm_id,
         );
         annotate_agent_participants(&mut participants, &agent_ids);
     }
@@ -409,18 +409,18 @@ pub fn ChatPanel(
         .any(|did| did != &account_did);
     let poll_key = format!(
         "{}|{}",
-        selected_space,
+        selected_realm_id,
         participant_dids_for_presence.join(",")
     );
     if !token().trim().is_empty()
-        && !selected_space.trim().is_empty()
+        && !selected_realm_id.trim().is_empty()
         && has_remote_presence
         && presence_poll_key() != poll_key
     {
         presence_poll_key.set(poll_key.clone());
         let base = base_url.clone();
         let api_token = token();
-        let space = selected_space.clone();
+        let space = selected_realm_id.clone();
         let actor = account_did.clone();
         let participants_for_poll = participant_dids_for_presence.clone();
         let mut typing_actors_for_poll = typing_actors;
@@ -513,7 +513,7 @@ pub fn ChatPanel(
         let base = base_url.clone();
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
-        let selected_space_for_load = selected_space.clone();
+        let selected_space_for_load = selected_realm_id.clone();
         let selected_scope_for_load = selected_space_scope.clone();
         let account_did_for_load = account_did.clone();
         // P0 decrypt-on-read identity: this device's actor + device id let the
@@ -621,7 +621,7 @@ pub fn ChatPanel(
     // when no MLS snapshot is saved for the Space so the user sees a clear
     // "waiting for Welcome" indicator instead of a spinner forever.
     {
-        let space_for_crypto = selected_space.clone();
+        let space_for_crypto = selected_realm_id.clone();
         let mut messages_sig = messages;
         use_effect(move || {
             let snapshot_missing = state_store
@@ -818,7 +818,7 @@ pub fn ChatPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     move |_| {
                                         let title = new_channel_name().trim().to_owned();
                                         if title.is_empty() {
@@ -968,7 +968,7 @@ pub fn ChatPanel(
                             let menu_open = watch_level_menu_open();
                             let level_label = crate::i18n::tr(watch_level_label_key(level_now));
                             let flow_id_for_watch = selected_channel_value.clone();
-                            let space_for_watch = selected_space.clone();
+                            let space_for_watch = selected_realm_id.clone();
                             let actor_for_watch = account_did.clone();
                             let watch_disabled = flow_id_for_watch.trim().is_empty();
                             rsx! {
@@ -1952,7 +1952,7 @@ pub fn ChatPanel(
                                                 class: "secondary emoji-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_space.clone();
+                                                    let space = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let device = device_id.clone();
                                                     let msg_id = msg.id.clone();
@@ -2020,7 +2020,7 @@ pub fn ChatPanel(
                                                 "data-testid": "chat-save-edit-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_space.clone();
+                                                    let space = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
                                                     move |_| {
@@ -2092,7 +2092,7 @@ pub fn ChatPanel(
                                                 "data-testid": "chat-confirm-redact-button",
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_space.clone();
+                                                    let space = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let msg_id = msg.id.clone();
                                                     move |_| {
@@ -2339,12 +2339,12 @@ pub fn ChatPanel(
                 // `checked: true`). The first two are now wired to the
                 // same actor-private account_data that /settings already
                 // edits, so a change here mirrors immediately into the
-                // global view. "Shared history" is a Space-scoped policy
+                // global view. "Shared history" is a Realm-scoped policy
                 // event (`ck.realm.history_visibility`) — it's not a
                 // client-side per-discussion toggle, so the third row
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.
-                let space_id_for_mute = selected_space.clone();
+                let space_id_for_mute = selected_realm_id.clone();
                 let flow_id_for_rr = selected_channel_value.clone();
                 let muted_realms_now = state_store.read().muted_realms();
                 let realm_is_muted = muted_realms_now.contains(&space_id_for_mute);
@@ -2473,7 +2473,7 @@ pub fn ChatPanel(
                                 disabled: !promote_discussion_draft.read().is_submittable(),
                                 onclick: {
                                     let base = base_url.clone();
-                                    let parent_space = selected_space.clone();
+                                    let parent_space = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     let selected_flow = selected_channel_value.clone();
                                     move |_| {
@@ -2623,7 +2623,7 @@ pub fn ChatPanel(
                     ondragleave: move |_| compose_dragover.set(false),
                     ondrop: {
                         let base = base_url.clone();
-                        let space = selected_space.clone();
+                        let space = selected_realm_id.clone();
                         move |evt| {
                             evt.prevent_default();
                             compose_dragover.set(false);
@@ -2723,7 +2723,7 @@ pub fn ChatPanel(
                         placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
                         oninput: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |evt: Event<FormData>| {
                                 let value = evt.value();
@@ -3015,7 +3015,7 @@ pub fn ChatPanel(
                                 disabled: !draft.is_sendable(),
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     let selected_flow = selected_channel_value.clone();
                                     move |_| {
@@ -3112,7 +3112,7 @@ pub fn ChatPanel(
                                 "data-testid": "send-poll-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     let selected_flow = selected_channel_value.clone();
                                     move |_| {
@@ -3214,7 +3214,7 @@ pub fn ChatPanel(
                         onclick: {
                             let base = base_url.clone();
                             let service_did = plaintext_service_did.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |_| {
                                 let body = chat_draft().trim().to_owned();
@@ -3448,7 +3448,7 @@ pub fn ChatPanel(
                         "data-testid": send_secure_testid,
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let selected_flow = selected_channel_value.clone();
                             move |_| {

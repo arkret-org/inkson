@@ -156,13 +156,13 @@ pub fn VerifyDevicePanel(
     token: Signal<String>,
     device_id: String,
     account_did: String,
-    selected_space: String,
+    selected_realm_id: String,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     // B2e wires `state_store` to persist the cross-signing publish content;
-    // `selected_space` is kept on the prop list so the route binding in
+    // `selected_realm_id` is kept on the prop list so the route binding in
     // `app.rs` stays uniform with other panel signatures.
-    let _ = (&selected_space,);
+    let _ = (&selected_realm_id,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(String::new);

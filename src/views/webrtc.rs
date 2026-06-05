@@ -110,7 +110,7 @@ pub fn WebrtcCallPanel(
     base_url: String,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
-    selected_space: String,
+    selected_realm_id: String,
     account_did: String,
     device_id: String,
 ) -> Element {
@@ -129,7 +129,7 @@ pub fn WebrtcCallPanel(
         })
         .count();
 
-    let selected_space_seed = selected_space.clone();
+    let selected_space_seed = selected_realm_id.clone();
     let mut stage = use_signal(|| CallStage::Idle);
     let mut mic_muted = use_signal(|| false);
     let mut camera_on = use_signal(|| true);

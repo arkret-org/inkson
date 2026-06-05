@@ -214,7 +214,7 @@ enum SetupSection {
     Overview,
     /// Realm bootstrap flow; the form creates a Realm and emits
     /// `ck.realm.create`.
-    Spaces,
+    Realms,
     /// Phase 3 — `ck.space.create` form: pick a Realm, pick a kind,
     /// optionally pick a parent Space. The Space lives inside the
     /// Realm and inherits all security semantics from it.
@@ -224,9 +224,9 @@ enum SetupSection {
 impl SetupSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
-            "" => Self::Spaces,
+            "" => Self::Realms,
             "overview" => Self::Overview,
-            "realms" => Self::Spaces,
+            "realms" => Self::Realms,
             "new-space" => Self::NewSpace,
             _ => Self::Overview,
         }
@@ -235,7 +235,7 @@ impl SetupSection {
     fn slug(self) -> &'static str {
         match self {
             Self::Overview => "overview",
-            Self::Spaces => "realms",
+            Self::Realms => "realms",
             Self::NewSpace => "new-space",
         }
     }
@@ -403,7 +403,8 @@ pub fn SetupPanel(
     device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
-    mut selected_space: Signal<String>,
+    mut selected_realm_id: Signal<String>,
+    new_space_context_node: Signal<String>,
     mut status: Signal<String>,
     section: Option<String>,
 ) -> Element {
@@ -449,8 +450,8 @@ pub fn SetupPanel(
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_realm_id = use_signal(String::new);
 
-    let selected_space_id = selected_space();
-    let has_selected_space = !selected_space_id.trim().is_empty();
+    let selected_realm_value = selected_realm_id();
+    let has_selected_realm = !selected_realm_value.trim().is_empty();
     let active_create_step = create_step();
     let title_value = realm_title();
     let summary_value = realm_summary();
@@ -464,13 +465,13 @@ pub fn SetupPanel(
     let digest_algorithm_value = realm_digest_algorithm();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
     // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
-    // `selected_space` to the clicked Realm / Space and routes to
-    // the NewSpace section. When the user lands here with an empty
+    // `new_space_context_node` to the clicked Realm / Space and routes
+    // to the NewSpace section. When the user lands here with an empty
     // form AND a selected row, pre-fill realm_id (always) and
     // parent_space_id (when the source row is a Space). Guarded by
     // "form realm_id is empty" so subsequent edits aren't clobbered.
     if active_section == SetupSection::NewSpace && new_space_realm_id().is_empty() {
-        let selected = selected_space();
+        let selected = new_space_context_node();
         let selected = selected.trim();
         if !selected.is_empty()
             && let Some(body) = state_store
@@ -609,7 +610,7 @@ pub fn SetupPanel(
                             span { "security-boundary bootstrap" }
                             Link {
                                 class: "secondary",
-                                to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
+                                to: Route::SetupSection { section: SetupSection::Realms.slug().to_owned() },
                                 "Open New Realm"
                             }
                         }
@@ -632,17 +633,17 @@ pub fn SetupPanel(
                         }
                         div { class: "metric",
                             strong { "Search" }
-                            span { "actors / handles / spaces" }
+                            span { "actors / handles / realms" }
                             Link { class: "secondary", to: Route::Directory, "Open Search" }
                         }
                         div { class: "metric",
-                            strong { "Space timeline" }
+                            strong { "Realm timeline" }
                             span { "after bootstrap" }
-                            if has_selected_space {
+                            if has_selected_realm {
                                 Link {
                                     class: "secondary",
-                                    to: Route::Realm { realm_id: selected_space_id.clone() },
-                                    "Open Current Space"
+                                    to: Route::Realm { realm_id: selected_realm_value.clone() },
+                                    "Open Current Realm"
                                 }
                             } else {
                                 Link { class: "secondary", to: Route::Timeline, "Open Timeline" }
@@ -665,7 +666,7 @@ pub fn SetupPanel(
                 }
             }
 
-            if active_section == SetupSection::Spaces {
+            if active_section == SetupSection::Realms {
                 div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-flow",
                     div { class: "setup-column",
                         div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
@@ -1105,11 +1106,11 @@ pub fn SetupPanel(
                                                                 // RealmCreateResponse with the new
                                                                 // `ck:realm:*` id under `realm_id`.
                                                                 let realm_id = realm.realm_id.clone();
-                                                                selected_space.set(realm_id.clone());
+                                                                selected_realm_id.set(realm_id.clone());
                                                                 created_realm_id.set(realm_id.clone());
                                                                 // Optimistic sidebar update goes
                                                                 // through the canonical store —
-                                                                // the `spaces` Signal is derived
+                                                                // the Realm tree Signal is derived
                                                                 // from `state_store.space_projections`
                                                                 // by RouterView's derive effect, so
                                                                 // the `save_space_projection`
@@ -1479,7 +1480,7 @@ pub fn SetupPanel(
                                                 strong { "No Realms yet — create one first" }
                                                 " Use "
                                                 Link {
-                                                    to: Route::SetupSection { section: SetupSection::Spaces.slug().to_owned() },
+                                                    to: Route::SetupSection { section: SetupSection::Realms.slug().to_owned() },
                                                     "New Realm"
                                                 }
                                                 " then come back."

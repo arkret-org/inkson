@@ -321,7 +321,7 @@ pub fn KanbanPanel(
     token: Signal<String>,
     account_did: String,
     device_id: String,
-    selected_space: String,
+    selected_realm_id: String,
     projection_realm_id: String,
     selected_space_scope: Vec<String>,
     sync_cursor: Signal<String>,
@@ -348,7 +348,7 @@ pub fn KanbanPanel(
     });
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    let local_realm_id = local_projection_realm_id(&selected_space, &projection_realm_id);
+    let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<flow>` extension). Seeding `selected_board_space_id`
     // from the route — instead of always `board_options.first()` — is
@@ -513,7 +513,7 @@ pub fn KanbanPanel(
     {
         let routed_board_id = route_board_id(&route);
         let route_local_realm_id = local_realm_id.clone();
-        let decrypt_space_id = selected_space.clone();
+        let decrypt_space_id = selected_realm_id.clone();
         let decrypt_actor = account_did.clone();
         let decrypt_device = device_id.clone();
         use_effect(move || {
@@ -579,7 +579,7 @@ pub fn KanbanPanel(
     {
         let routed_flow_id = route_card_flow_id(&route);
         let route_local_realm_id = local_realm_id.clone();
-        let decrypt_space_id = selected_space.clone();
+        let decrypt_space_id = selected_realm_id.clone();
         let decrypt_actor = account_did.clone();
         let decrypt_device = device_id.clone();
         use_effect(move || {
@@ -655,7 +655,7 @@ pub fn KanbanPanel(
     let auto_seed_fallback_allowed = seed_fallback_allowed;
     let auto_board_view_id = board_view_id;
     let auto_lifecycle_realm_id = local_realm_id.clone();
-    let auto_decrypt_space_id = selected_space.clone();
+    let auto_decrypt_space_id = selected_realm_id.clone();
     let auto_decrypt_actor = account_did.clone();
     let auto_decrypt_device = device_id.clone();
     use_future(move || {
@@ -756,7 +756,7 @@ pub fn KanbanPanel(
     let live_board_view_id = board_view_id;
     let live_lifecycle_realm_id = local_realm_id.clone();
     let live_lifecycle_local_realm_id = local_realm_id.clone();
-    let live_decrypt_space_id = selected_space.clone();
+    let live_decrypt_space_id = selected_realm_id.clone();
     let live_decrypt_actor = account_did.clone();
     let live_decrypt_device = device_id.clone();
     use_future(move || {
@@ -939,7 +939,7 @@ pub fn KanbanPanel(
         let lifecycle_token = token;
         let lifecycle_routed_flow_id = lifecycle_routed_flow_id.clone();
         let lifecycle_local_realm_id = local_realm_id.clone();
-        let decrypt_space_id = selected_space.clone();
+        let decrypt_space_id = selected_realm_id.clone();
         let decrypt_actor = account_did.clone();
         let decrypt_device = device_id.clone();
         spawn(async move {
@@ -1089,7 +1089,7 @@ pub fn KanbanPanel(
     // reverse lookup and cache the result locally with a short TTL.
     {
         let handle_base_url = base_url.clone();
-        let handle_space_id = selected_space.clone();
+        let handle_space_id = selected_realm_id.clone();
         let handle_projection_realm_id = projection_realm_id.clone();
         let handle_token = token;
         use_effect(move || {
@@ -1211,7 +1211,7 @@ pub fn KanbanPanel(
     // Pre-wrapped Realm id for building board / card URLs inside event
     // handlers (the raw selected Realm String can't be moved into more
     // than one closure).
-    let board_route_realm_id = card_detail_route_realm_id(&selected_space);
+    let board_route_realm_id = card_detail_route_realm_id(&selected_realm_id);
     // R4 (fail-closed): three-state security signal. `Some(true/false)` means
     // the Realm security projection IS known (encrypted / plaintext); `None`
     // means the projection is missing / not yet synced. We deliberately drop
@@ -1222,7 +1222,7 @@ pub fn KanbanPanel(
     let selected_scope_security_encrypted: Option<bool> = {
         let state = state_store.read().load();
         let scope_id = if projection_realm_id.trim().is_empty() {
-            selected_space.as_str()
+            selected_realm_id.as_str()
         } else {
             projection_realm_id.as_str()
         };
@@ -1230,7 +1230,7 @@ pub fn KanbanPanel(
             .or_else(|| {
                 crate::security_state::security_projection_for_scope_id(
                     &state.space_projections,
-                    &selected_space,
+                    &selected_realm_id,
                 )
             })
             .map(crate::security_state::realm_projection_is_encrypted)
@@ -1444,7 +1444,7 @@ pub fn KanbanPanel(
                                         // visible immediately but remains in sending/failed state
                                         // until `ck.self.events.submit` returns.
                                         let base = base_url.clone();
-                                        let space = selected_space.clone();
+                                        let space = selected_realm_id.clone();
                                         let actor = account_did.clone();
                                         move |_| {
                                             let title = new_column_title().trim().to_owned();
@@ -1533,7 +1533,7 @@ pub fn KanbanPanel(
                                         "data-testid": "create-board-space-button",
                                         onclick: {
                                             let base = base_url.clone();
-                                            let space = selected_space.clone();
+                                            let space = selected_realm_id.clone();
                                             let actor = account_did.clone();
                                             move |_| {
                                                 let title = new_board_title().trim().to_owned();
@@ -1629,7 +1629,7 @@ pub fn KanbanPanel(
                                             // opt-in so normal boards never show fake cards.
                                             let base = base_url.clone();
                                             let onclick_lifecycle_realm_id = local_realm_id.clone();
-                                            let onclick_decrypt_space_id = selected_space.clone();
+                                            let onclick_decrypt_space_id = selected_realm_id.clone();
                                             let onclick_decrypt_actor = account_did.clone();
                                             let onclick_decrypt_device = device_id.clone();
                                             move |_| {
@@ -1899,7 +1899,7 @@ pub fn KanbanPanel(
                             let target_column_id = column.id.clone();
                             let last_rank = column.cards.last().map(|c| c.rank.clone());
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |event| {
                                 event.prevent_default();
@@ -1943,7 +1943,7 @@ pub fn KanbanPanel(
                             ondrop: {
                                 let target_column_id = column_id.clone();
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 let actor = account_did.clone();
                                 move |event| {
                                     event.prevent_default();
@@ -2053,7 +2053,7 @@ pub fn KanbanPanel(
                                         Some(column.cards[card_index - 1].rank.clone())
                                     };
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     move |event| {
                                         event.prevent_default();
@@ -2107,7 +2107,7 @@ pub fn KanbanPanel(
                                 ondragend: move |_| dragging_card.set(None),
                                 onclick: {
                                     let c = card.clone();
-                                    let route_realm_id = card_detail_route_realm_id(&selected_space);
+                                    let route_realm_id = card_detail_route_realm_id(&selected_realm_id);
                                     move |_| {
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
@@ -2157,7 +2157,7 @@ pub fn KanbanPanel(
                                         let gate = capability_gate_for_flow(
                                             &capability_engine,
                                             &account_did,
-                                            &selected_space,
+                                            &selected_realm_id,
                                             &card.id,
                                             "ck.flow.archive",
                                         );
@@ -2177,7 +2177,7 @@ pub fn KanbanPanel(
                                                 title: title_text,
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let space = selected_space.clone();
+                                                    let space = selected_realm_id.clone();
                                                     let actor = account_did.clone();
                                                     let flow_id = card.id.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
@@ -2252,7 +2252,7 @@ pub fn KanbanPanel(
                                             // materialise it in this column.
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
-                                            let space = selected_space.clone();
+                                            let space = selected_realm_id.clone();
                                             let actor = account_did.clone();
                                             move |_| {
                                                 let title = new_card_title().trim().to_owned();
@@ -2347,7 +2347,7 @@ pub fn KanbanPanel(
                             let gate = capability_gate_for_space_container(
                                 &capability_engine,
                                 &account_did,
-                                &selected_space,
+                                &selected_realm_id,
                                 &column.id,
                                 "ck.space.archive",
                             );
@@ -2367,7 +2367,7 @@ pub fn KanbanPanel(
                                     title: title_text,
                                     onclick: {
                                         let base = base_url.clone();
-                                        let space = selected_space.clone();
+                                        let space = selected_realm_id.clone();
                                         let actor = account_did.clone();
                                         let space_container_id = column.id.clone();
                                         move |_| {
@@ -2427,7 +2427,7 @@ pub fn KanbanPanel(
                                             let gate = capability_gate_for_space_container(
                                                 &capability_engine,
                                                 &account_did,
-                                                &selected_space,
+                                                &selected_realm_id,
                                                 &column.id,
                                                 "ck.space.restore",
                                             );
@@ -2447,7 +2447,7 @@ pub fn KanbanPanel(
                                                     title: title_text,
                                                     onclick: {
                                                         let base = base_url.clone();
-                                                        let space = selected_space.clone();
+                                                        let space = selected_realm_id.clone();
                                                         let actor = account_did.clone();
                                                         let space_container_id = column.id.clone();
                                                         move |_| {
@@ -2533,7 +2533,7 @@ pub fn KanbanPanel(
                                             let gate = capability_gate_for_flow(
                                                 &capability_engine,
                                                 &account_did,
-                                                &selected_space,
+                                                &selected_realm_id,
                                                 &row.card.id,
                                                 "ck.flow.restore",
                                             );
@@ -2553,7 +2553,7 @@ pub fn KanbanPanel(
                                                     title: title_text,
                                                     onclick: {
                                                         let base = base_url.clone();
-                                                        let space = selected_space.clone();
+                                                        let space = selected_realm_id.clone();
                                                         let actor = account_did.clone();
                                                         let flow_id = row.card.id.clone();
                                                         move |_| {
@@ -2587,9 +2587,9 @@ pub fn KanbanPanel(
             if let Some(ref card) = selected_card() {
                 {
                     let card_id_label = short_protocol_id(&card.id);
-                    let card_link_path = flow_detail_deep_link_path(&selected_space, &card.id);
+                    let card_link_path = flow_detail_deep_link_path(&selected_realm_id, &card.id);
                     let board_route_after_close =
-                        kanban_card_detail_board_route(&selected_space, &selected_board_space_id());
+                        kanban_card_detail_board_route(&selected_realm_id, &selected_board_space_id());
                     let route_is_card_detail = matches!(
                         route,
                         Route::KanbanTask { .. } | Route::KanbanBoardTask { .. }
@@ -2895,7 +2895,7 @@ pub fn KanbanPanel(
                                                             let gate = capability_gate_for_flow(
                                                                 &capability_engine,
                                                                 &account_did,
-                                                                &selected_space,
+                                                                &selected_realm_id,
                                                                 &card.id,
                                                                 action,
                                                             );
@@ -2927,7 +2927,7 @@ pub fn KanbanPanel(
                                                                     title: title_text,
                                                                     onclick: {
                                                                         let base = base_url.clone();
-                                                                        let space = selected_space.clone();
+                                                                        let space = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
                                                                         let flow_id = card.id.clone();
                                                                         move |_| {
@@ -3030,7 +3030,7 @@ pub fn KanbanPanel(
                                                                 value: card_edit_description(),
                                                                 base_url: base_url.clone(),
                                                                 token: token(),
-                                                                space_id: selected_space.clone(),
+                                                                space_id: selected_realm_id.clone(),
                                                                 on_change: move |value| card_edit_description.set(value),
                                                                 slot: "summary".to_owned(),
                                                             }
@@ -3039,7 +3039,7 @@ pub fn KanbanPanel(
                                                             status: card_detail_edit_status(),
                                                             on_save: {
                                                                 let base = base_url.clone();
-                                                                let space = selected_space.clone();
+                                                                let space = selected_realm_id.clone();
                                                                 let actor = account_did.clone();
                                                                 let device = device_id.clone();
                                                                 let current = card.clone();
@@ -3163,7 +3163,7 @@ pub fn KanbanPanel(
                                                                         value: card_edit_body(),
                                                                         base_url: base_url.clone(),
                                                                         token: token(),
-                                                                        space_id: selected_space.clone(),
+                                                                        space_id: selected_realm_id.clone(),
                                                                         on_change: move |value| card_edit_body.set(value),
                                                                         slot: "description".to_owned(),
                                                                     }
@@ -3172,7 +3172,7 @@ pub fn KanbanPanel(
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
-                                                                        let space = selected_space.clone();
+                                                                        let space = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
                                                                         let device = device_id.clone();
                                                                         let current = card.clone();
@@ -3508,7 +3508,7 @@ pub fn KanbanPanel(
                                                                                                 value: card_edit_synthesis(),
                                                                                                 base_url: base_url.clone(),
                                                                                                 token: token(),
-                                                                                                space_id: selected_space.clone(),
+                                                                                                space_id: selected_realm_id.clone(),
                                                                                                 on_change: move |value| card_edit_synthesis.set(value),
                                                                                                 slot: "synthesis".to_owned(),
                                                                                             }
@@ -3517,7 +3517,7 @@ pub fn KanbanPanel(
                                                                                             status: card_detail_edit_status(),
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
-                                                                                                let space = selected_space.clone();
+                                                                                                let space = selected_realm_id.clone();
                                                                                                 let actor = account_did.clone();
                                                                                                 let device = device_id.clone();
                                                                                                 let current = card.clone();
@@ -3597,7 +3597,7 @@ pub fn KanbanPanel(
                                                                         value: card_edit_synthesis(),
                                                                         base_url: base_url.clone(),
                                                                         token: token(),
-                                                                        space_id: selected_space.clone(),
+                                                                        space_id: selected_realm_id.clone(),
                                                                         on_change: move |value| card_edit_synthesis.set(value),
                                                                         slot: "synthesis".to_owned(),
                                                                     }
@@ -3606,7 +3606,7 @@ pub fn KanbanPanel(
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
-                                                                        let space = selected_space.clone();
+                                                                        let space = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
                                                                         let device = device_id.clone();
                                                                         let current = card.clone();
@@ -3707,7 +3707,7 @@ pub fn KanbanPanel(
                                                             account_did: account_did.clone(),
                                                             device_id: device_id.clone(),
                                                             token,
-                                                            selected_space: selected_space.clone(),
+                                                            selected_realm_id: selected_realm_id.clone(),
                                                             selected_space_scope: selected_space_scope.clone(),
                                                             sync_cursor,
                                                             frontier_state,
@@ -3724,9 +3724,9 @@ pub fn KanbanPanel(
                                         aside { class: "card-detail-sidebar",
                                             {
                                                 let store = state_store.read().load();
-                                                let projection = store.space_projections.get(&selected_space);
+                                                let projection = store.space_projections.get(&selected_realm_id);
                                                 let realm_context = member_roster_realm_context(
-                                                    &selected_space,
+                                                    &selected_realm_id,
                                                     &projection_realm_id,
                                                     projection,
                                                 );
@@ -4112,7 +4112,7 @@ fn member_handle_lookup_subject(
 }
 
 fn member_roster_realm_context(
-    selected_space: &str,
+    selected_realm_id: &str,
     projection_realm_id: &str,
     projection: Option<&Value>,
 ) -> String {
@@ -4125,7 +4125,7 @@ fn member_roster_realm_context(
             let trimmed = projection_realm_id.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_owned())
         })
-        .unwrap_or_else(|| selected_space.to_owned());
+        .unwrap_or_else(|| selected_realm_id.to_owned());
     scope_id_as_realm_id(&raw)
 }
 

@@ -113,13 +113,13 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
   await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
-  await expect(page.getByTestId("space-list")).toContainText("Cokret Demo Space");
-  await expect(page.getByTestId("space-list")).toContainText("Launch Child Space");
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Space");
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Launch Child Space");
   await expect(
-    page.getByTestId("space-button").filter({ hasText: "Cokret Demo Space" }).locator(".sidebar-nav-icon"),
+    page.getByTestId("realm-tree-node-button").filter({ hasText: "Cokret Demo Space" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
   await expect(
-    page.getByTestId("space-button").filter({ hasText: "Launch Child Space" }).locator(".sidebar-nav-icon"),
+    page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Child Space" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Space");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
@@ -130,18 +130,18 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("spaces-summary")).toContainText("Recent Realms & Spaces");
   await expect(
-    page.getByTestId("dashboard-space-card").filter({ hasText: "Cokret Demo Space" }).locator(".pill.muted.xs"),
+    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Cokret Demo Space" }).locator(".pill.muted.xs"),
   ).toHaveText("Realm");
   await expect(
-    page.getByTestId("dashboard-space-card").filter({ hasText: "Launch Child Space" }).locator(".pill.muted.xs"),
+    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Launch Child Space" }).locator(".pill.muted.xs"),
   ).toHaveText("Space");
 
-  await page.getByTestId("space-button").first().click();
+  await page.getByTestId("realm-tree-node-button").first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();
-  await expect(page.getByTestId("space-context-bar")).not.toContainText("Current + descendants");
-  await expect(page.getByTestId("space-context-bar")).not.toContainText("Space views");
-  await expect(page.getByTestId("space-context-bar")).not.toContainText("Discussion");
-  await expect(page.getByTestId("space-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
+  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Current + descendants");
+  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Space views");
+  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
+  await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Space served by mocked server");
 });
 

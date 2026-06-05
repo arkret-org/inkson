@@ -591,10 +591,10 @@ pub(super) struct LocalSpaceCreate {
     pub(super) rank: Option<String>,
 }
 
-pub(super) fn local_projection_realm_id(selected_space: &str, projection_realm_id: &str) -> String {
+pub(super) fn local_projection_realm_id(selected_realm_id: &str, projection_realm_id: &str) -> String {
     let candidate = projection_realm_id.trim();
     if candidate.is_empty() {
-        scope_id_as_realm_id(selected_space)
+        scope_id_as_realm_id(selected_realm_id)
     } else {
         scope_id_as_realm_id(candidate)
     }

@@ -84,7 +84,7 @@ pub fn AppletsPanel(
     base_url: String,
     account_did: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut service_did = use_signal(String::new);
@@ -279,7 +279,7 @@ pub fn AppletsPanel(
                             "data-testid": "applet-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 let actor = account_did.clone();
                                 move |_| {
                                     let base = base.clone();

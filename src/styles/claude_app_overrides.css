@@ -1738,10 +1738,10 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--nav-text);
 }
-.space-tree-item {
+.realm-tree-item {
   min-height: 36px;
 }
-.space-tree-item.is-scope-member:not(.is-active) {
+.realm-tree-item.is-scope-member:not(.is-active) {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--nav-border));
   background: color-mix(in srgb, var(--accent) 8%, var(--nav-soft));
 }
@@ -1970,21 +1970,21 @@
   color: var(--accent);
 }
 
-.space-context-bar {
+.realm-context-bar {
   grid-column: 2;
   justify-self: center;
   flex: 0 0 auto;
   min-width: 0;
 }
 
-.space-nav-inline {
+.realm-nav-inline {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
 }
 
-.space-nav-inline .primary,
-.space-nav-inline .secondary {
+.realm-nav-inline .primary,
+.realm-nav-inline .secondary {
   min-height: 34px;
   padding: 0 12px;
   display: inline-flex;
@@ -1994,7 +1994,7 @@
   white-space: nowrap;
 }
 
-.space-nav-inline .ui-icon {
+.realm-nav-inline .ui-icon {
   width: 16px;
   height: 16px;
 }
@@ -2107,7 +2107,7 @@
 }
 
 @container workspace-header (max-width: 940px) {
-  .workspace-header .space-nav-inline {
+  .workspace-header .realm-nav-inline {
     display: none;
   }
 
@@ -2916,7 +2916,7 @@
   gap: 8px;
 }
 
-.space-button.home-space-card {
+.realm-tree-node-button.home-space-card {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -2925,7 +2925,7 @@
   display: block;
 }
 
-.space-button.home-space-card.active {
+.realm-tree-node-button.home-space-card.active {
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--accent-ink);
@@ -3022,12 +3022,12 @@
 }
 
 .status,
-.space-button,
+.realm-tree-node-button,
 .sidebar-nav-item {
   border-color: color-mix(in srgb, var(--nav-border) 74%, rgba(255, 255, 255, 0.06));
 }
 
-.space-button,
+.realm-tree-node-button,
 .sidebar-nav-item {
   color: var(--nav-text);
   background: var(--nav-soft);
@@ -3039,7 +3039,7 @@
   color: var(--nav-text);
 }
 
-.space-button.active,
+.realm-tree-node-button.active,
 .sidebar-nav-item:hover,
 .sidebar-nav-item.is-active {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));

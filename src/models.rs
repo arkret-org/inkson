@@ -493,7 +493,7 @@ pub fn projection_realm_id_for_known_node(
     if requested.is_empty() {
         return Some(String::new());
     }
-    let by_id: std::collections::BTreeMap<&str, &RealmTreeNode> = spaces
+    let by_id: std::collections::BTreeMap<&str, &RealmTreeNode> = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect();
@@ -524,8 +524,8 @@ pub fn projection_realm_id_for_known_node(
 #[cfg(test)]
 mod tests {
     use super::{
-        RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_space,
-        projection_realm_id_for_space,
+        RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node,
+        projection_realm_id_for_node,
     };
 
     fn preview(
@@ -535,7 +535,7 @@ mod tests {
         parent: Option<&str>,
     ) -> RealmTreeNode {
         RealmTreeNode {
-            space_id: id.to_owned(),
+            id: id.to_owned(),
             title: id.to_owned(),
             description: None,
             tags: Default::default(),
@@ -544,7 +544,11 @@ mod tests {
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
             kind,
-            realm_id: realm_id.to_owned(),
+            realm_id: if kind == RealmTreeNodeKind::Realm && realm_id.is_empty() {
+                id.to_owned()
+            } else {
+                realm_id.to_owned()
+            },
         }
     }
 
@@ -561,7 +565,7 @@ mod tests {
         ];
 
         assert_eq!(
-            projection_realm_id_for_space(&spaces, "ck:space:child"),
+            projection_realm_id_for_node(&spaces, "ck:space:child"),
             "ck:realm:root"
         );
     }
@@ -579,7 +583,7 @@ mod tests {
         ];
 
         assert_eq!(
-            projection_realm_id_for_space(&spaces, "ck:space:child"),
+            projection_realm_id_for_node(&spaces, "ck:space:child"),
             "ck:realm:root"
         );
     }
@@ -587,7 +591,7 @@ mod tests {
     #[test]
     fn known_projection_realm_id_waits_for_unknown_routes() {
         assert_eq!(
-            projection_realm_id_for_known_space(&[], "ck:space:child"),
+            projection_realm_id_for_known_node(&[], "ck:space:child"),
             None
         );
     }

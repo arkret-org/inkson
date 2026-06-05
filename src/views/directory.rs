@@ -13,7 +13,7 @@ use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
     ProtocolObjects,
-    Spaces,
+    Realms,
     Organizations,
     Actors,
     Handles,
@@ -21,7 +21,7 @@ enum DirectoryTab {
 
 #[derive(Clone, Debug, Default)]
 struct PaginationState {
-    spaces_cursor: Option<String>,
+    realms_cursor: Option<String>,
     orgs_cursor: Option<String>,
     actors_cursor: Option<String>,
     loading_more: bool,
@@ -30,7 +30,7 @@ struct PaginationState {
 #[component]
 pub fn DirectoryPanel(
     base_url: String,
-    selected_space: Signal<String>,
+    selected_realm_id: Signal<String>,
     status: Signal<String>,
     token: Signal<String>,
     view: Signal<super::View>,
@@ -38,7 +38,7 @@ pub fn DirectoryPanel(
     // actor-private ContactRemark.local_name over the raw DID.
     state_store: Signal<LocalStateStore>,
 ) -> Element {
-    let mut active_tab = use_signal(|| DirectoryTab::Spaces);
+    let mut active_tab = use_signal(|| DirectoryTab::Realms);
     let mut query = use_signal(String::new);
     // Local search-results scratch. Previously this view borrowed the
     // global `spaces` Signal as a write target — that overloaded the
@@ -46,7 +46,7 @@ pub fn DirectoryPanel(
     // was the original reason the SyncEngine's reconcile couldn't be
     // trusted (any directory search would resurrect ghost results
     // until the next sync). Keeping the buffer local closes that hole.
-    let mut spaces = use_signal(Vec::<RealmTreeNode>::new);
+    let mut realm_results = use_signal(Vec::<RealmTreeNode>::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
@@ -61,15 +61,15 @@ pub fn DirectoryPanel(
     let base_url_key = base_url.clone();
 
     rsx! {
-        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search realms and spaces",
+        div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search realms and people",
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
                 button {
-                    class: if active_tab() == DirectoryTab::Spaces { "primary" } else { "secondary" },
-                    "data-testid": "tab-spaces",
+                    class: if active_tab() == DirectoryTab::Realms { "primary" } else { "secondary" },
+                    "data-testid": "tab-realms",
                     role: "tab",
-                    "aria-selected": if active_tab() == DirectoryTab::Spaces { "true" } else { "false" },
-                    onclick: move |_| active_tab.set(DirectoryTab::Spaces),
+                    "aria-selected": if active_tab() == DirectoryTab::Realms { "true" } else { "false" },
+                    onclick: move |_| active_tab.set(DirectoryTab::Realms),
                     "Realms"
                 }
                 button {
@@ -160,7 +160,7 @@ pub fn DirectoryPanel(
                     span { "entity discovery only" }
                 }
                 div { class: "muted",
-                    "Search stays focused on spaces, organizations, actors, handles, and protocol-level lookups. The old directory shortcut has been folded into the global search entrypoint."
+                    "Search stays focused on Realms, organizations, actors, handles, and protocol-level lookups. The old directory shortcut has been folded into the global search entrypoint."
                 }
                 details { class: "advanced-diagnostics", "data-testid": "directory-advanced-diagnostics",
                     summary { "data-testid": "directory-advanced-diagnostics-toggle",
@@ -326,7 +326,7 @@ pub fn DirectoryPanel(
                     span { "Search" }
                     span { match active_tab() {
                         DirectoryTab::ProtocolObjects => "developer objects",
-                        DirectoryTab::Spaces => "realms",
+                        DirectoryTab::Realms => "realms",
                         DirectoryTab::Organizations => "organizations",
                         DirectoryTab::Actors => "actors",
                         DirectoryTab::Handles => "handles",
@@ -338,14 +338,14 @@ pub fn DirectoryPanel(
                         value: "{query}",
                         "aria-label": match active_tab() {
                             DirectoryTab::ProtocolObjects => "Search protocol objects for developer diagnostics",
-                            DirectoryTab::Spaces => "Search realms",
+                            DirectoryTab::Realms => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Resolve handle",
                         },
                         placeholder: match active_tab() {
                             DirectoryTab::ProtocolObjects => "Search Cards, Discussions, Actors, Spaces (diagnostic lookup)",
-                            DirectoryTab::Spaces => "Search realms",
+                            DirectoryTab::Realms => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Enter handle (e.g. alice:example.com)",
@@ -357,7 +357,7 @@ pub fn DirectoryPanel(
                                 let q = query();
                                 let tab = active_tab();
                                 let api_token = token();
-                                pagination.write().spaces_cursor = None;
+                                pagination.write().realms_cursor = None;
                                 pagination.write().orgs_cursor = None;
                                 pagination.write().actors_cursor = None;
                                 spawn(async move {
@@ -367,12 +367,12 @@ pub fn DirectoryPanel(
                                                 object_results.set(protocol_object_results(&q));
                                                 status.set("loaded protocol object diagnostic results".to_owned());
                                             }
-                                            DirectoryTab::Spaces => {
+                                            DirectoryTab::Realms => {
                                                 match api.search_realms(&q, None).await {
                                                     Ok(search) => {
-                                                        pagination.write().spaces_cursor = search.next_cursor.clone();
+                                                        pagination.write().realms_cursor = search.next_cursor.clone();
                                                         let count = search.results.len();
-                                                        spaces.set(search.results);
+                                                        realm_results.set(search.results);
                                                         status.set(format!("loaded {count} realm result(s)"));
                                                     }
                                                     Err(error) => status.set(format!("search failed: {error}")),
@@ -421,7 +421,7 @@ pub fn DirectoryPanel(
                                     let q = query();
                                     let tab = active_tab();
                                     let api_token = token();
-                                    pagination.write().spaces_cursor = None;
+                                    pagination.write().realms_cursor = None;
                                     pagination.write().orgs_cursor = None;
                                     pagination.write().actors_cursor = None;
                                     spawn(async move {
@@ -431,12 +431,12 @@ pub fn DirectoryPanel(
                                                     object_results.set(protocol_object_results(&q));
                                                     status.set("loaded protocol object diagnostic results".to_owned());
                                                 }
-                                                DirectoryTab::Spaces => {
+                                                DirectoryTab::Realms => {
                                                     match api.search_realms(&q, None).await {
                                                         Ok(search) => {
-                                                            pagination.write().spaces_cursor = search.next_cursor.clone();
+                                                            pagination.write().realms_cursor = search.next_cursor.clone();
                                                             let count = search.results.len();
-                                                            spaces.set(search.results);
+                                                            realm_results.set(search.results);
                                                             status.set(format!("loaded {count} realm result(s)"));
                                                         }
                                                         Err(error) => status.set(format!("search failed: {error}")),
@@ -475,7 +475,7 @@ pub fn DirectoryPanel(
                             },
                             {crate::i18n::tr("directory.search_button")}
                         }
-                        if active_tab() == DirectoryTab::Spaces {
+                        if active_tab() == DirectoryTab::Realms {
                             button {
                                 class: "secondary",
                                 "data-testid": "resolve-selected-button",
@@ -483,7 +483,7 @@ pub fn DirectoryPanel(
                                     let base = base_url.clone();
                                     move |_| {
                                         let base = base.clone();
-                                        let id = selected_space();
+                                        let id = selected_realm_id();
                                         let api_token = token();
                                         spawn(async move {
                                             match with_authed_api(&base, api_token, |api| async move {
@@ -492,7 +492,7 @@ pub fn DirectoryPanel(
                                             .await
                                             {
                                                 Ok(resolved) => {
-                                                    selected_space.set(resolved.realm_preview.space_id);
+                                                    selected_realm_id.set(resolved.realm_preview.id);
                                                     status.set(format!("resolved {}", resolved.join_rule));
                                                 }
                                                 Err(err) => status.set(format!(
@@ -599,24 +599,24 @@ pub fn DirectoryPanel(
             }
 
             // Realm directory results
-            if active_tab() == DirectoryTab::Spaces {
-                for space in spaces() {
+            if active_tab() == DirectoryTab::Realms {
+                for realm in realm_results() {
                     div { class: "event", "data-testid": "directory-result",
                         div { class: "event-head",
-                            span { "{space.category.clone().unwrap_or_else(|| \"space\".to_owned())}" }
-                            span { if space.public { "public" } else { "private" } }
+                            span { "{realm.category.clone().unwrap_or_else(|| \"realm\".to_owned())}" }
+                            span { if realm.public { "public" } else { "private" } }
                         }
-                        div { class: "space-title", "{space.title}" }
-                        div { class: "muted", "{space.description.clone().unwrap_or_default()}" }
+                        div { class: "space-title", "{realm.title}" }
+                        div { class: "muted", "{realm.description.clone().unwrap_or_default()}" }
                         div { class: "actions",
                             Link {
                                 class: "primary",
-                                "data-testid": "open-space-button",
-                                to: Route::Realm { realm_id: space.space_id.clone() },
+                                "data-testid": "open-realm-button",
+                                to: Route::Realm { realm_id: realm.id.clone() },
                                 onclick: {
-                                    let id = space.space_id.clone();
+                                    let id = realm.id.clone();
                                     move |_| {
-                                        selected_space.set(id.clone());
+                                        selected_realm_id.set(id.clone());
                                         view.set(super::View::Timeline);
                                     }
                                 },
@@ -626,33 +626,33 @@ pub fn DirectoryPanel(
                                 class: "secondary",
                                 "data-testid": "directory-select-button",
                                 onclick: {
-                                    let id = space.space_id.clone();
-                                    move |_| selected_space.set(id.clone())
+                                    let id = realm.id.clone();
+                                    move |_| selected_realm_id.set(id.clone())
                                 },
                                 "Select"
                             }
                         }
                     }
                 }
-                if !spaces().is_empty() {
+                if !realm_results().is_empty() {
                     div { class: "event", "data-testid": "index-query-results",
-                        div { class: "event-head", span { "Index Projection" } span { "{spaces().len()} result(s)" } }
-                        for space in spaces() {
+                        div { class: "event-head", span { "Index Projection" } span { "{realm_results().len()} result(s)" } }
+                        for realm in realm_results() {
                             GenericEntityCard {
-                                title: space.title.clone(),
-                                summary: space.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
+                                title: realm.title.clone(),
+                                summary: realm.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
                                 entity_type: "realm".to_owned(),
                             }
                         }
                     }
                 }
-                if pagination().spaces_cursor.is_some() {
+                if pagination().realms_cursor.is_some() {
                     div { class: "event",
                         div { class: "actions",
-                            if pagination().spaces_cursor.is_some() {
+                            if pagination().realms_cursor.is_some() {
                                 button {
                                     class: "secondary",
-                                    "data-testid": "load-more-spaces",
+                                    "data-testid": "load-more-realms",
                                     disabled: pagination().loading_more,
                                     onclick: {
                                         let base = base_url.clone();
@@ -660,7 +660,7 @@ pub fn DirectoryPanel(
                                             let base = base.clone();
                                             let q = query();
                                             let api_token = token();
-                                            let cursor = pagination.read().spaces_cursor.clone();
+                                            let cursor = pagination.read().realms_cursor.clone();
                                             pagination.write().loading_more = true;
                                             spawn(async move {
                                                 match with_authed_api(&base, api_token, |api| async move {
@@ -669,10 +669,10 @@ pub fn DirectoryPanel(
                                                 .await
                                                 {
                                                     Ok(search) => {
-                                                        pagination.write().spaces_cursor = search.next_cursor.clone();
-                                                        let mut current = spaces();
+                                                        pagination.write().realms_cursor = search.next_cursor.clone();
+                                                        let mut current = realm_results();
                                                         current.extend(search.results);
-                                                        spaces.set(current);
+                                                        realm_results.set(current);
                                                     }
                                                     Err(err) => status.set(format!(
                                                         "load more failed: {}", err.display()
@@ -685,7 +685,7 @@ pub fn DirectoryPanel(
                                     if pagination().loading_more {
                                         {crate::i18n::tr("directory.loading_more")}
                                     } else {
-                                        {crate::i18n::tr("directory.load_more_spaces")}
+                                        {crate::i18n::tr("directory.load_more_realms")}
                                     }
                                 }
                             }

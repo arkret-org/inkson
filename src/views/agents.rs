@@ -315,7 +315,7 @@ pub fn AgentsPanel(
     base_url: String,
     account_did: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut agent_id = use_signal(String::new);
@@ -343,7 +343,7 @@ pub fn AgentsPanel(
     let mut incoming_last_poll_at = use_signal(String::new);
     {
         let base = base_url.clone();
-        let space = selected_space.clone();
+        let space = selected_realm_id.clone();
         let token_for_fetch = token;
         use_future(move || {
             let base = base.clone();
@@ -542,7 +542,7 @@ pub fn AgentsPanel(
                             "data-testid": "agent-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 let actor = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
@@ -805,7 +805,7 @@ pub fn AgentsPanel(
                                 "data-testid": "agent-protocol-handoff-confirm-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let actor = account_did.clone();
                                     move |_| {
                                         let base = base.clone();

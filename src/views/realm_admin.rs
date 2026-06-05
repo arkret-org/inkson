@@ -232,7 +232,7 @@ pub fn RealmAdminPanel(
     account_did: String,
     device_id: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -301,7 +301,7 @@ pub fn RealmAdminPanel(
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
-    let anchor_view = state_store.read().anchor_view_for(&selected_space);
+    let anchor_view = state_store.read().anchor_view_for(&selected_realm_id);
     let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = anchor_view
         .bottom_cells
         .iter()
@@ -355,16 +355,16 @@ pub fn RealmAdminPanel(
     // the Space-wide anchorer_paused banner.
     let move_submissions = state_store
         .read()
-        .move_submissions_for_space(&selected_space);
+        .move_submissions_for_space(&selected_realm_id);
     let space_paused = state_store
         .read()
-        .space_has_paused_anchorer(&selected_space);
+        .space_has_paused_anchorer(&selected_realm_id);
     let space_pending_mls_binding = state_store
         .read()
-        .space_has_pending_mls_binding(&selected_space);
+        .space_has_pending_mls_binding(&selected_realm_id);
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     {
-        let selected_space_for_hydration = selected_space.clone();
+        let selected_space_for_hydration = selected_realm_id.clone();
         let should_hydrate_members = active_section == RealmAdminSection::Members;
         use_effect(move || {
             if !should_hydrate_members {
@@ -377,11 +377,11 @@ pub fn RealmAdminPanel(
             }
         });
     }
-    let metadata_subject = metadata_subject_for(&state_store.read(), &selected_space);
-    if metadata_loaded_for() != selected_space {
+    let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
+    if metadata_loaded_for() != selected_realm_id {
         space_name.set(metadata_subject.title.clone());
         space_description.set(metadata_subject.summary.clone());
-        metadata_loaded_for.set(selected_space.clone());
+        metadata_loaded_for.set(selected_realm_id.clone());
     }
     let metadata_subject_label = match metadata_subject.kind {
         RealmTreeNodeKind::Realm => "Realm",
@@ -409,7 +409,7 @@ pub fn RealmAdminPanel(
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
                             to: Route::RealmAdminSection {
-                                realm_id: selected_space.clone(),
+                                realm_id: selected_realm_id.clone(),
                                 section: slug.to_owned(),
                             },
                             "{section.label()}"
@@ -418,7 +418,7 @@ pub fn RealmAdminPanel(
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
                             to: Route::RealmAdmin {
-                                realm_id: selected_space.clone(),
+                                realm_id: selected_realm_id.clone(),
                             },
                             "{section.label()}"
                         }
@@ -429,7 +429,7 @@ pub fn RealmAdminPanel(
                 div { class: "event", "data-testid": "realm-admin-overview",
                     div { class: "event-head",
                         span { "Admin Map" }
-                        span { "{selected_space}" }
+                        span { "{selected_realm_id}" }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -439,7 +439,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "members".to_owned(),
                                 },
                                 "Open Members"
@@ -452,7 +452,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "access".to_owned(),
                                 },
                                 "Open Access"
@@ -465,7 +465,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "security".to_owned(),
                                 },
                                 "Open Security"
@@ -478,7 +478,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "governance".to_owned(),
                                 },
                                 "Open Governance"
@@ -491,7 +491,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "federation".to_owned(),
                                 },
                                 "Open Federation"
@@ -504,7 +504,7 @@ pub fn RealmAdminPanel(
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
-                                    realm_id: selected_space.clone(),
+                                    realm_id: selected_realm_id.clone(),
                                     section: "repair".to_owned(),
                                 },
                                 "Open Repair"
@@ -770,7 +770,7 @@ pub fn RealmAdminPanel(
                             "data-testid": "repair-submit-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 let actor_account_did = account_did.clone();
                                 move |_| {
                                     let base = base.clone();
@@ -949,7 +949,7 @@ pub fn RealmAdminPanel(
                             "data-testid": "anchorer-cell-refresh",
                             onclick: {
                                 let base = base_url.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let space = space.clone();
@@ -1009,7 +1009,7 @@ pub fn RealmAdminPanel(
                     span { "{metadata_event_kind}" }
                 }
                 div { class: "muted",
-                    span { class: "mono", title: "{selected_space}", "{short_protocol_id(&selected_space)}" }
+                    span { class: "mono", title: "{selected_realm_id}", "{short_protocol_id(&selected_realm_id)}" }
                     if metadata_subject.kind == RealmTreeNodeKind::Space {
                         span { " · home Realm " }
                         span {
@@ -1040,7 +1040,7 @@ pub fn RealmAdminPanel(
                             "data-testid": "update-metadata-button",
                             onclick: {
                                 let base = base_url.clone();
-                                let subject_id = selected_space.clone();
+                                let subject_id = selected_realm_id.clone();
                                 let subject_kind = metadata_subject.kind;
                                 let home_realm_id = metadata_subject.home_realm_id.clone();
                                 move |_| {
@@ -1162,7 +1162,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "apply-policy-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let actor = account_did.clone();
                             move |_| {
                                 let base = base.clone();
@@ -1245,7 +1245,7 @@ pub fn RealmAdminPanel(
                             onclick: {
                                 let base = base_url.clone();
                                 let actor = account_did.clone();
-                                let space = selected_space.clone();
+                                let space = selected_realm_id.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let actor = actor.clone();
@@ -1377,7 +1377,7 @@ pub fn RealmAdminPanel(
                         class: "secondary",
                         "data-testid": "refresh-members-button",
                         onclick: {
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 // Spec-canonical read path is the local sync
                                 // projection (driven by ck.self.events.subscribe).
@@ -1444,7 +1444,7 @@ pub fn RealmAdminPanel(
                                             == Some("ck.agent.endpoint")
                                             && r.realm_id
                                                 .as_deref()
-                                                .map(|s| s == selected_space)
+                                                .map(|s| s == selected_realm_id)
                                                 .unwrap_or(true)
                                             && r.payload
                                                 .get("body")
@@ -1472,7 +1472,7 @@ pub fn RealmAdminPanel(
                                 "data-testid": "kick-member-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let m = member.clone();
                                     let actor_account_did = account_did.clone();
                                     move |_| {
@@ -1543,7 +1543,7 @@ pub fn RealmAdminPanel(
                                 "data-testid": "ban-member-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let m = member.clone();
                                     let actor_account_did = account_did.clone();
                                     move |_| {
@@ -1744,7 +1744,7 @@ pub fn RealmAdminPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
@@ -1803,7 +1803,7 @@ pub fn RealmAdminPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
-                                    let space = selected_space.clone();
+                                    let space = selected_realm_id.clone();
                                     let invite_id = invite.invite_id.clone();
                                     move |_| {
                                         let base = base.clone();
@@ -1942,7 +1942,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "rotate-space-epoch",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -1981,7 +1981,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "leave-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             let mut state_store = state_store;
                             let mut sync_cursor = sync_cursor;
                             move |_| {
@@ -2178,7 +2178,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "cap-grant-submit-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -2277,7 +2277,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "cap-revoke-submit-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -2472,7 +2472,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "archive-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -2512,7 +2512,7 @@ pub fn RealmAdminPanel(
                         "data-testid": "destroy-realm-button",
                         onclick: {
                             let base = base_url.clone();
-                            let space = selected_space.clone();
+                            let space = selected_realm_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let space = space.clone();
@@ -2567,7 +2567,7 @@ pub fn RealmAdminPanel(
                 {
                     let has_snapshot = state_store
                         .read()
-                        .mls_snapshot_for(&selected_space)
+                        .mls_snapshot_for(&selected_realm_id)
                         .is_some();
                     let cfg_native = cfg!(not(target_arch = "wasm32"));
                     let snapshot_banner = if !cfg_native {
@@ -2595,7 +2595,7 @@ pub fn RealmAdminPanel(
                                     title: crate::i18n::tr("realm_admin.mls_remove_button"),
                                     onclick: {
                                         let base = base_url.clone();
-                                        let space = selected_space.clone();
+                                        let space = selected_realm_id.clone();
                                         let actor = account_did.clone();
                                         let device = device_id.clone();
                                         move |_| {
@@ -2648,7 +2648,7 @@ pub fn RealmAdminPanel(
                 {
                     let submissions = state_store
                         .read()
-                        .move_submissions_for_space(&selected_space);
+                        .move_submissions_for_space(&selected_realm_id);
                     let commits: Vec<_> = submissions
                         .iter()
                         .filter(|r| r.kind == "mls_commit")
@@ -2689,7 +2689,7 @@ pub fn RealmAdminPanel(
                                 },
                             };
                             MlsRevokeMoveChain {
-                                group_id: selected_space.clone(),
+                                group_id: selected_realm_id.clone(),
                                 commit_move_id: Some(commit.move_id.clone()),
                                 epoch_advance_move_id: epoch.map(|e| e.move_id.clone()),
                                 commit_state,

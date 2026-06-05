@@ -455,12 +455,12 @@ fn save_draft(
 pub fn DocumentPanel(
     base_url: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     document_ref: Option<String>,
     state_store: Signal<LocalStateStore>,
     account_did: String,
 ) -> Element {
-    let space_id = selected_space.clone();
+    let space_id = selected_realm_id.clone();
     let actor_key = account_did.clone();
     let initial = load_draft(&state_store, &actor_key, &space_id);
     let initial_title = initial

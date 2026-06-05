@@ -1,10 +1,10 @@
-//! Pure space-tree / projection / field-extraction helpers.
+//! Pure realm-tree / projection / field-extraction helpers.
 //!
 //! R28-B extracted this cluster out of `crate::app` (which was a single
 //! 12k-line module). Everything here is UI-free: no Dioxus signals, no
 //! `rsx!`, no component dependencies — just `serde_json::Value` parsing
 //! and [`RealmTreeNode`] hierarchy math. Keeping it in its own module
-//! makes the projection/space-tree logic unit-testable in isolation
+//! makes the projection/realm-tree logic unit-testable in isolation
 //! (see the `tests` submodule below).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,10 +13,10 @@ use serde_json::Value;
 
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
 
-/// A flattened, depth-annotated row in the rendered space tree.
+/// A flattened, depth-annotated row in the rendered Realm tree.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmTreeItem {
-    pub(crate) space: RealmTreeNode,
+    pub(crate) node: RealmTreeNode,
     pub(crate) depth: usize,
     pub(crate) descendant_count: usize,
 }
@@ -266,76 +266,76 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
         .collect()
 }
 
-pub(crate) fn realm_tree_parent_id(space: &RealmTreeNode) -> Option<&str> {
-    space
+pub(crate) fn realm_tree_parent_id(node: &RealmTreeNode) -> Option<&str> {
+    node
         .parent_space_id
         .as_deref()
         .filter(|parent| !parent.trim().is_empty())
         .or_else(|| {
-            (space.kind == RealmTreeNodeKind::Space)
-                .then(|| space.realm_id.trim())
+            (node.kind == RealmTreeNodeKind::Space)
+                .then(|| node.realm_id.trim())
                 .filter(|realm_id| !realm_id.is_empty())
         })
 }
 
-pub(crate) fn normalize_realm_tree_hierarchy(spaces: &mut [RealmTreeNode]) {
-    let known: BTreeSet<String> = spaces.iter().map(|space| space.space_id.clone()).collect();
+pub(crate) fn normalize_realm_tree_hierarchy(nodes: &mut [RealmTreeNode]) {
+    let known: BTreeSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
     let mut child_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
-    for space in spaces.iter() {
-        if let Some(parent) = realm_tree_parent_id(space)
-            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
+    for node in nodes.iter() {
+        if let Some(parent) = realm_tree_parent_id(node)
+            .filter(|parent| known.contains(*parent) && *parent != node.id.as_str())
         {
             child_map
                 .entry(parent.to_owned())
                 .or_default()
-                .insert(space.space_id.clone());
+                .insert(node.id.clone());
         }
 
-        for child in space
+        for child in node
             .child_space_ids
             .iter()
-            .filter(|child| known.contains(*child) && *child != &space.space_id)
+            .filter(|child| known.contains(*child) && *child != &node.id)
         {
             child_map
-                .entry(space.space_id.clone())
+                .entry(node.id.clone())
                 .or_default()
                 .insert(child.clone());
         }
     }
 
-    for space in spaces.iter_mut() {
-        space.child_space_ids = child_map
-            .remove(&space.space_id)
+    for node in nodes.iter_mut() {
+        node.child_space_ids = child_map
+            .remove(&node.id)
             .map(|children| children.into_iter().collect())
             .unwrap_or_default();
     }
 }
 
-pub(crate) fn descendant_space_ids(spaces: &[RealmTreeNode], root_space_id: &str) -> Vec<String> {
-    if root_space_id.trim().is_empty() {
+pub(crate) fn descendant_node_ids(nodes: &[RealmTreeNode], root_node_id: &str) -> Vec<String> {
+    if root_node_id.trim().is_empty() {
         return Vec::new();
     }
 
-    let known: BTreeSet<&str> = spaces.iter().map(|space| space.space_id.as_str()).collect();
+    let known: BTreeSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
     let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for space in spaces {
-        if let Some(parent) = realm_tree_parent_id(space)
-            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
+    for node in nodes {
+        if let Some(parent) = realm_tree_parent_id(node)
+            .filter(|parent| known.contains(*parent) && *parent != node.id.as_str())
         {
             child_map
                 .entry(parent)
                 .or_default()
-                .push(space.space_id.as_str());
+                .push(node.id.as_str());
         }
-        for child in space
+        for child in node
             .child_space_ids
             .iter()
             .map(String::as_str)
-            .filter(|child| known.contains(*child) && *child != space.space_id.as_str())
+            .filter(|child| known.contains(*child) && *child != node.id.as_str())
         {
             child_map
-                .entry(space.space_id.as_str())
+                .entry(node.id.as_str())
                 .or_default()
                 .push(child);
         }
@@ -346,13 +346,13 @@ pub(crate) fn descendant_space_ids(spaces: &[RealmTreeNode], root_space_id: &str
     }
     let mut result = Vec::new();
     let mut visited = BTreeSet::new();
-    let mut stack = vec![root_space_id];
-    while let Some(space_id) = stack.pop() {
-        if !visited.insert(space_id.to_owned()) {
+    let mut stack = vec![root_node_id];
+    while let Some(node_id) = stack.pop() {
+        if !visited.insert(node_id.to_owned()) {
             continue;
         }
-        result.push(space_id.to_owned());
-        if let Some(children) = child_map.get(space_id) {
+        result.push(node_id.to_owned());
+        if let Some(children) = child_map.get(node_id) {
             for child in children.iter().rev() {
                 stack.push(child);
             }
@@ -361,35 +361,35 @@ pub(crate) fn descendant_space_ids(spaces: &[RealmTreeNode], root_space_id: &str
     result
 }
 
-pub(crate) fn realm_tree_items(spaces: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
-    let order: BTreeMap<&str, usize> = spaces
+pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
+    let order: BTreeMap<&str, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, space)| (space.space_id.as_str(), idx))
+        .map(|(idx, node)| (node.id.as_str(), idx))
         .collect();
-    let known: BTreeSet<&str> = spaces.iter().map(|space| space.space_id.as_str()).collect();
-    let by_id: BTreeMap<&str, &RealmTreeNode> = spaces
+    let known: BTreeSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
+    let by_id: BTreeMap<&str, &RealmTreeNode> = nodes
         .iter()
-        .map(|space| (space.space_id.as_str(), space))
+        .map(|node| (node.id.as_str(), node))
         .collect();
     let mut child_map: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for space in spaces {
-        if let Some(parent) = realm_tree_parent_id(space)
-            .filter(|parent| known.contains(*parent) && *parent != space.space_id.as_str())
+    for node in nodes {
+        if let Some(parent) = realm_tree_parent_id(node)
+            .filter(|parent| known.contains(*parent) && *parent != node.id.as_str())
         {
             child_map
                 .entry(parent)
                 .or_default()
-                .push(space.space_id.as_str());
+                .push(node.id.as_str());
         }
-        for child in space
+        for child in node
             .child_space_ids
             .iter()
             .map(String::as_str)
-            .filter(|child| known.contains(*child) && *child != space.space_id.as_str())
+            .filter(|child| known.contains(*child) && *child != node.id.as_str())
         {
             child_map
-                .entry(space.space_id.as_str())
+                .entry(node.id.as_str())
                 .or_default()
                 .push(child);
         }
@@ -398,14 +398,14 @@ pub(crate) fn realm_tree_items(spaces: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
         children.sort_by_key(|child| order.get(child).copied().unwrap_or(usize::MAX));
         children.dedup();
     }
-    let mut roots: Vec<&str> = spaces
+    let mut roots: Vec<&str> = nodes
         .iter()
-        .filter(|space| {
-            realm_tree_parent_id(space)
+        .filter(|node| {
+            realm_tree_parent_id(node)
                 .map(|parent| !known.contains(parent))
                 .unwrap_or(true)
         })
-        .map(|space| space.space_id.as_str())
+        .map(|node| node.id.as_str())
         .collect();
     roots.sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
 
@@ -421,13 +421,13 @@ pub(crate) fn realm_tree_items(spaces: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
         if !visited.insert(id.to_owned()) {
             return;
         }
-        let Some(space) = by_id.get(id).copied() else {
+        let Some(node) = by_id.get(id).copied() else {
             return;
         };
         items.push(RealmTreeItem {
-            space: space.clone(),
+            node: node.clone(),
             depth,
-            descendant_count: descendant_space_ids(
+            descendant_count: descendant_node_ids(
                 &by_id.values().copied().cloned().collect::<Vec<_>>(),
                 id,
             )
@@ -454,10 +454,10 @@ pub(crate) fn realm_tree_items(spaces: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
             &mut items,
         );
     }
-    for space in spaces {
-        if !visited.contains(&space.space_id) {
+    for node in nodes {
+        if !visited.contains(&node.id) {
             push_item(
-                &space.space_id,
+                &node.id,
                 0,
                 &by_id,
                 &child_map,
@@ -505,12 +505,12 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
                 .unwrap_or_default();
             let kind = projection_tree_node_kind(id, body);
             let realm_id = match kind {
-                RealmTreeNodeKind::Realm => String::new(),
+                RealmTreeNodeKind::Realm => id.clone(),
                 RealmTreeNodeKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
             let parent_space_id = extract_parent_space_id(id, body);
             RealmTreeNode {
-                space_id: id.clone(),
+                id: id.clone(),
                 title,
                 description,
                 tags,
@@ -538,9 +538,7 @@ pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNode
     // Classify Realm vs Space. Wire signals:
     // - `__kind` (yougen-local tag from optimistic save)
     // - `schema` (server projection — ck.schema.realm.v1 vs ck.schema.space.v1)
-    // - parent links on legacy nested Space projections
-    // Anything else (legacy) defaults to Realm because
-    // pre-M-SPACE-CREATE-1 yougen could only create Realms.
+    // - id prefix (`ck:realm:*` vs `ck:space:*`)
     match body
         .get("__kind")
         .and_then(Value::as_str)
@@ -548,9 +546,8 @@ pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNode
     {
         Some("space") | Some("ck.schema.space.v1") => RealmTreeNodeKind::Space,
         Some("realm") | Some("ck.schema.realm.v1") => RealmTreeNodeKind::Realm,
-        _ if id.starts_with("ck:space:") && extract_parent_space_id(id, body).is_some() => {
-            RealmTreeNodeKind::Space
-        }
+        _ if id.starts_with("ck:space:") => RealmTreeNodeKind::Space,
+        _ if id.starts_with("ck:realm:") => RealmTreeNodeKind::Realm,
         _ => RealmTreeNodeKind::Realm,
     }
 }
@@ -603,12 +600,12 @@ pub fn should_retain_projection_after_full_sync(
 }
 
 pub(crate) fn projection_looks_like_flow(body: &Value) -> bool {
-    // Real-Space projections embed their primary flow under
+    // Real Space projections embed their primary flow under
     // `summary.flow` (with `flow_id` etc. inside it) — so peeking into
     // `summary` to spot a flow is a false positive. Only the body's own
     // top-level `flow_id` / `flow` / `tracks` / `kind`, or a
     // `summary.category` that is itself a flow category, identify a
-    // flow-as-space projection.
+    // flow-as-node projection.
     body.get("flow_id").is_some()
         || body.get("flow").is_some()
         || body.get("tracks").is_some()
@@ -631,8 +628,13 @@ mod tests {
     use super::*;
 
     fn preview(id: &str, name: &str, parent: Option<&str>) -> RealmTreeNode {
+        let kind = if id.starts_with("ck:space:") {
+            RealmTreeNodeKind::Space
+        } else {
+            RealmTreeNodeKind::Realm
+        };
         RealmTreeNode {
-            space_id: id.to_owned(),
+            id: id.to_owned(),
             title: name.to_owned(),
             description: None,
             tags: Default::default(),
@@ -640,44 +642,51 @@ mod tests {
             category: None,
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
-            kind: RealmTreeNodeKind::Realm,
-            realm_id: String::new(),
+            kind,
+            realm_id: if kind == RealmTreeNodeKind::Realm {
+                id.to_owned()
+            } else {
+                "ck:realm:root".to_owned()
+            },
         }
     }
 
     #[test]
-    fn space_tree_uses_parent_links_for_nested_menu() {
+    fn realm_tree_uses_parent_links_for_nested_spaces() {
         let spaces = vec![
-            preview("ck:space:root", "Root", None),
-            preview("ck:space:child", "Child", Some("ck:space:root")),
+            preview("ck:realm:root", "Root", None),
+            preview("ck:space:child", "Child", None),
             preview("ck:space:deep", "Deep", Some("ck:space:child")),
         ];
 
         let items = realm_tree_items(&spaces);
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].space.space_id, "ck:space:root");
+        assert_eq!(items[0].node.id, "ck:realm:root");
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].descendant_count, 2);
-        assert_eq!(items[1].space.space_id, "ck:space:child");
+        assert_eq!(items[1].node.id, "ck:space:child");
         assert_eq!(items[1].depth, 1);
-        assert_eq!(items[2].space.space_id, "ck:space:deep");
+        assert_eq!(items[2].node.id, "ck:space:deep");
         assert_eq!(items[2].depth, 2);
     }
 
     #[test]
-    fn descendant_space_ids_walks_full_subtree_and_ignores_unknown_root() {
+    fn descendant_node_ids_walks_full_subtree_and_ignores_unknown_root() {
         let spaces = vec![
-            preview("ck:space:root", "Root", None),
-            preview("ck:space:child", "Child", Some("ck:space:root")),
+            preview("ck:realm:root", "Root", None),
+            preview("ck:space:child", "Child", None),
             preview("ck:space:deep", "Deep", Some("ck:space:child")),
-            preview("ck:space:other", "Other", None),
+            RealmTreeNode {
+                realm_id: "ck:realm:other".to_owned(),
+                ..preview("ck:realm:other", "Other", None)
+            },
         ];
 
         assert_eq!(
-            descendant_space_ids(&spaces, "ck:space:root"),
+            descendant_node_ids(&spaces, "ck:realm:root"),
             vec![
-                "ck:space:root".to_owned(),
+                "ck:realm:root".to_owned(),
                 "ck:space:child".to_owned(),
                 "ck:space:deep".to_owned(),
             ]
@@ -685,18 +694,18 @@ mod tests {
         // An unknown (but non-blank) root has no descendants, so the walk
         // is just the root id itself.
         assert_eq!(
-            descendant_space_ids(&spaces, "ck:space:missing"),
+            descendant_node_ids(&spaces, "ck:space:missing"),
             vec!["ck:space:missing".to_owned()]
         );
         // A blank root short-circuits to an empty walk.
-        assert!(descendant_space_ids(&spaces, "   ").is_empty());
+        assert!(descendant_node_ids(&spaces, "   ").is_empty());
     }
 
     #[test]
-    fn normalize_space_hierarchy_rebuilds_children_from_parent_links() {
+    fn normalize_realm_tree_hierarchy_rebuilds_children_from_parent_links() {
         let mut spaces = vec![
-            preview("ck:space:root", "Root", None),
-            preview("ck:space:child", "Child", Some("ck:space:root")),
+            preview("ck:realm:root", "Root", None),
+            preview("ck:space:child", "Child", None),
             preview("ck:space:deep", "Deep", Some("ck:space:child")),
             // Parent points at an unknown id — must be dropped, not panic.
             preview("ck:space:orphan", "Orphan", Some("ck:space:ghost")),
@@ -706,15 +715,15 @@ mod tests {
 
         let root = spaces
             .iter()
-            .find(|s| s.space_id == "ck:space:root")
+            .find(|s| s.id == "ck:realm:root")
             .expect("root");
         let child = spaces
             .iter()
-            .find(|s| s.space_id == "ck:space:child")
+            .find(|s| s.id == "ck:space:child")
             .expect("child");
         let orphan = spaces
             .iter()
-            .find(|s| s.space_id == "ck:space:orphan")
+            .find(|s| s.id == "ck:space:orphan")
             .expect("orphan");
 
         assert_eq!(root.child_space_ids, vec!["ck:space:child".to_owned()]);
@@ -745,7 +754,7 @@ mod tests {
             ),
             Some("ck:space:root".to_owned())
         );
-        // Self-reference and non-space ids are rejected.
+        // Self-reference and non-Space ids are rejected.
         assert_eq!(
             extract_parent_space_id(
                 "ck:space:child",
@@ -787,25 +796,26 @@ mod tests {
     }
 
     #[test]
-    fn sync_projection_parses_space_hierarchy_fields() {
+    fn sync_projection_parses_realm_and_space_hierarchy_fields() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ck:space:root".to_owned(),
+            "ck:realm:root".to_owned(),
             json!({
+                "schema": "ck.schema.realm.v1",
                 "summary": {
                     "title": "Root",
-                    "summary": "Root Space",
-                    "child_space_ids": ["ck:space:child"]
+                    "summary": "Root Realm"
                 }
             }),
         );
         spaces.insert(
             "ck:space:child".to_owned(),
             json!({
+                "schema": "ck.schema.space.v1",
+                "realm_id": "ck:realm:root",
                 "summary": {
                     "title": "Child",
-                    "summary": "Child Space",
-                    "parent_space_id": "ck:space:root"
+                    "summary": "Child Space"
                 }
             }),
         );
@@ -813,15 +823,15 @@ mod tests {
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
         let root = previews
             .iter()
-            .find(|space| space.space_id == "ck:space:root")
+            .find(|node| node.id == "ck:realm:root")
             .expect("root preview");
         let child = previews
             .iter()
-            .find(|space| space.space_id == "ck:space:child")
+            .find(|node| node.id == "ck:space:child")
             .expect("child preview");
 
         assert_eq!(root.child_space_ids, vec!["ck:space:child".to_owned()]);
-        assert_eq!(child.parent_space_id.as_deref(), Some("ck:space:root"));
+        assert_eq!(child.parent_space_id, None);
         assert_eq!(root.kind, RealmTreeNodeKind::Realm);
         assert_eq!(child.kind, RealmTreeNodeKind::Space);
     }
@@ -848,7 +858,7 @@ mod tests {
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
         let child = previews
             .iter()
-            .find(|space| space.space_id == "ck:space:child")
+            .find(|node| node.id == "ck:space:child")
             .expect("child preview");
 
         assert_eq!(child.kind, RealmTreeNodeKind::Space);
@@ -858,20 +868,21 @@ mod tests {
         let items = realm_tree_items(&previews);
         let child_item = items
             .iter()
-            .find(|item| item.space.space_id == "ck:space:child")
+            .find(|item| item.node.id == "ck:space:child")
             .expect("child tree item");
         assert_eq!(child_item.depth, 1);
     }
 
     #[test]
-    fn sync_projection_filters_flow_entries_out_of_space_list() {
+    fn sync_projection_filters_flow_entries_out_of_realm_tree() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ck:space:root".to_owned(),
+            "ck:realm:root".to_owned(),
             json!({
+                "schema": "ck.schema.realm.v1",
                 "summary": {
                     "title": "Root",
-                    "summary": "Root Space"
+                    "summary": "Root Realm"
                 }
             }),
         );
@@ -880,7 +891,7 @@ mod tests {
             json!({
                 "flow_id": "ck:flow:discussion",
                 "summary": {
-                    "title": "Should not be a Space"
+                    "title": "Should not be a node"
                 }
             }),
         );
@@ -898,13 +909,13 @@ mod tests {
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].space_id, "ck:space:root");
+        assert_eq!(previews[0].id, "ck:realm:root");
     }
 
     /// Regression: soland inlines the primary flow under `summary.flow`
     /// for legitimate Spaces (so the client can render the room title
     /// without joining a separate fanout). A previous filter treated
-    /// any `summary.flow` as a flow-as-space projection and dropped the
+    /// any `summary.flow` as a flow-as-tree-node projection and dropped the
     /// Space from the sidebar entirely. Only top-level `flow*`/`tracks`
     /// or a flow-shaped `summary.category` should reject a `ck:space:`.
     #[test]
@@ -914,6 +925,7 @@ mod tests {
             "ck:space:0196419b-0000-7000-8000-000000000000".to_owned(),
             json!({
                 "ephemeral": [],
+                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
                 "flows": [{
                     "flow_id": "ck:flow:0196419b-0000-7000-8000-000000000000",
                     "title": "Cokret Demo Space",
@@ -938,7 +950,7 @@ mod tests {
 
         assert_eq!(previews.len(), 1);
         assert_eq!(
-            previews[0].space_id,
+            previews[0].id,
             "ck:space:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(previews[0].title, "Cokret Demo Space");
@@ -986,7 +998,7 @@ mod tests {
 
         assert_eq!(previews.len(), 1);
         assert_eq!(
-            previews[0].space_id,
+            previews[0].id,
             "ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729"
         );
         assert_eq!(previews[0].title, "Test");
@@ -1028,9 +1040,8 @@ mod tests {
     }
 
     #[test]
-    fn space_previews_from_sync_realms_filters_flow_like_projections() {
-        // Replacement for the old `merge_space_previews_filters_flow_like_search_results`
-        // test. The sync engine relies on `realm_tree_nodes_from_sync_realms`
+    fn realm_tree_nodes_from_sync_realms_filters_flow_like_projections() {
+        // The sync engine relies on `realm_tree_nodes_from_sync_realms`
         // (rather than the retired client-side merge filter) to keep
         // flow-like projections out of the sidebar — verify that here.
         let mut spaces = BTreeMap::new();
@@ -1043,12 +1054,16 @@ mod tests {
         );
         spaces.insert(
             "ck:space:real".to_owned(),
-            json!({"summary": {"title": "Real Space"}}),
+            json!({
+                "schema": "ck.schema.space.v1",
+                "realm_id": "ck:realm:root",
+                "summary": {"title": "Real Space"}
+            }),
         );
 
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].space_id, "ck:space:real");
+        assert_eq!(previews[0].id, "ck:space:real");
     }
 }

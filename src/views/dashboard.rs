@@ -4,7 +4,7 @@ use dioxus_router::Link;
 use crate::components::{HelpTip, UiIcon};
 use crate::i18n::tr;
 use crate::local_state::{ClientLocalState, LocalStateStore};
-use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_space};
+use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -23,8 +23,8 @@ struct DashboardNotificationSummary {
 pub fn DashboardPanel(
     base_url: String,
     token: Signal<String>,
-    spaces: Signal<Vec<RealmTreeNode>>,
-    selected_space: Signal<String>,
+    realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
+    selected_realm_id: Signal<String>,
     view: Signal<super::View>,
     state_store: Signal<LocalStateStore>,
     device_queue: usize,
@@ -39,26 +39,26 @@ pub fn DashboardPanel(
     let has_session = !token().trim().is_empty();
     let sync_cursor_label = short_protocol_id(&sync_cursor);
     let frontier_state_label = short_protocol_id(&frontier_state);
-    let spaces_snapshot = spaces();
-    let has_realms = spaces_snapshot
+    let realm_tree_snapshot = realm_tree_nodes();
+    let has_realms = realm_tree_snapshot
         .iter()
         .any(|space| space.kind == RealmTreeNodeKind::Realm);
-    let has_spaces = spaces_snapshot
+    let has_product_spaces = realm_tree_snapshot
         .iter()
         .any(|space| space.kind == RealmTreeNodeKind::Space);
-    let projection_label = projection_collection_label(has_realms, has_spaces);
-    let recent_projection_label = recent_projection_collection_label(has_realms, has_spaces);
-    let projection_browse_label = projection_collection_browse_label(has_realms, has_spaces);
-    let projection_signin_label = projection_collection_signin_label(has_realms, has_spaces);
-    let projection_empty_label = projection_collection_empty_label(has_realms, has_spaces);
+    let projection_label = projection_collection_label(has_realms, has_product_spaces);
+    let recent_projection_label = recent_projection_collection_label(has_realms, has_product_spaces);
+    let projection_browse_label = projection_collection_browse_label(has_realms, has_product_spaces);
+    let projection_signin_label = projection_collection_signin_label(has_realms, has_product_spaces);
+    let projection_empty_label = projection_collection_empty_label(has_realms, has_product_spaces);
     let projection_empty_help_label =
-        projection_collection_empty_help_label(has_realms, has_spaces);
-    let active_space = spaces_snapshot
+        projection_collection_empty_help_label(has_realms, has_product_spaces);
+    let active_node = realm_tree_snapshot
         .iter()
-        .find(|space| space.space_id == selected_space())
+        .find(|space| space.id == selected_realm_id())
         .cloned()
-        .or_else(|| spaces_snapshot.first().cloned());
-    let active_projection_kind_label = active_space
+        .or_else(|| realm_tree_snapshot.first().cloned());
+    let active_projection_kind_label = active_node
         .as_ref()
         .map(|space| projection_kind_label(space.kind))
         .unwrap_or("Realm");
@@ -72,18 +72,18 @@ pub fn DashboardPanel(
         .filter(|notification| !notification.read)
         .count();
 
-    let active_space_id = active_space
+    let active_node_id = active_node
         .as_ref()
-        .map(|space| space.space_id.clone())
-        .unwrap_or_else(|| selected_space());
+        .map(|space| space.id.clone())
+        .unwrap_or_else(|| selected_realm_id());
     let active_projection_realm_id =
-        projection_realm_id_for_known_space(&spaces_snapshot, &active_space_id).unwrap_or_default();
+        projection_realm_id_for_known_node(&realm_tree_snapshot, &active_node_id).unwrap_or_default();
     if has_session
-        && !active_space_id.trim().is_empty()
+        && !active_node_id.trim().is_empty()
         && !active_projection_realm_id.trim().is_empty()
-        && recent_flows_loaded_for() != active_space_id
+        && recent_flows_loaded_for() != active_node_id
     {
-        recent_flows_loaded_for.set(active_space_id.clone());
+        recent_flows_loaded_for.set(active_node_id.clone());
         let base = base_url.clone();
         let api_token = token();
         let realm_id = active_projection_realm_id.clone();
@@ -142,17 +142,17 @@ pub fn DashboardPanel(
                     to: Route::Directory,
                     onclick: move |_| view.set(super::View::Directory),
                     div { class: "lbl", "{projection_label}" }
-                    div { class: "val", "{spaces_snapshot.len()}" }
+                    div { class: "val", "{realm_tree_snapshot.len()}" }
                     div { class: "delta", if has_session { "{projection_browse_label}" } else { "{projection_signin_label}" } }
                 }
-                if let Some(space) = active_space.as_ref() {
+                if let Some(space) = active_node.as_ref() {
                     Link {
                         class: "metric",
-                        to: Route::Realm { realm_id: space.space_id.clone() },
+                        to: Route::Realm { realm_id: space.id.clone() },
                         onclick: {
-                            let id = space.space_id.clone();
+                            let id = space.id.clone();
                             move |_| {
-                                selected_space.set(id.clone());
+                                selected_realm_id.set(id.clone());
                                 view.set(super::View::Timeline);
                             }
                         },
@@ -162,11 +162,11 @@ pub fn DashboardPanel(
                     }
                     Link {
                         class: "metric",
-                        to: Route::KanbanSpace { realm_id: space.space_id.clone() },
+                        to: Route::KanbanSpace { realm_id: space.id.clone() },
                         onclick: {
-                            let id = space.space_id.clone();
+                            let id = space.id.clone();
                             move |_| {
-                                selected_space.set(id.clone());
+                                selected_realm_id.set(id.clone());
                                 view.set(super::View::Kanban);
                             }
                         },
@@ -196,7 +196,7 @@ pub fn DashboardPanel(
 
             div { class: "dashboard-two-col",
                 div { class: "stack",
-                    div { class: "surface", "data-testid": "spaces-summary",
+                    div { class: "surface", "data-testid": "realm-tree-summary",
                         div { class: "row surface-head",
                             strong { "{recent_projection_label}" }
                             Link {
@@ -209,10 +209,10 @@ pub fn DashboardPanel(
                             }
                         }
                         div { class: "stack-sm", style: "padding: 10px 14px 14px;",
-                            if spaces_snapshot.is_empty() {
+                            if realm_tree_snapshot.is_empty() {
                                 div {
                                     class: "m-list-item",
-                                    "data-testid": "dashboard-spaces-empty",
+                                    "data-testid": "dashboard-realm-tree-empty",
                                     span { class: "avatar", "0" }
                                     span { class: "grow",
                                         span { class: "title",
@@ -224,7 +224,7 @@ pub fn DashboardPanel(
                                     }
                                 }
                             } else {
-                                for space in spaces_snapshot.iter() {
+                                for space in realm_tree_snapshot.iter() {
                                     {
                                         // Spec client-preferences.md §3.7:
                                         // prefer the actor-private Space
@@ -232,7 +232,7 @@ pub fn DashboardPanel(
                                         // `Space.title` when set.
                                         let remark = state_store
                                             .read()
-                                            .space_remark(&space.space_id);
+                                            .space_remark(&space.id);
                                         let display_name = remark
                                             .as_ref()
                                             .map(|r| r.display_name(&space.title).to_owned())
@@ -248,13 +248,13 @@ pub fn DashboardPanel(
                                         rsx! {
                                         Link {
                                             class: "m-list-item",
-                                            "data-testid": "dashboard-space-card",
+                                            "data-testid": "dashboard-realm-tree-card",
                                             title: "{space.title}",
-                                            to: Route::Realm { realm_id: space.space_id.clone() },
+                                            to: Route::Realm { realm_id: space.id.clone() },
                                             onclick: {
-                                                let id = space.space_id.clone();
+                                                let id = space.id.clone();
                                                 move |_| {
-                                                    selected_space.set(id.clone());
+                                                    selected_realm_id.set(id.clone());
                                                     view.set(super::View::Timeline);
                                                 }
                                             },
@@ -268,7 +268,7 @@ pub fn DashboardPanel(
                                             if has_remark {
                                                 span {
                                                     class: "pill muted xs",
-                                                    "data-testid": "dashboard-space-remark-badge",
+                                                    "data-testid": "dashboard-realm-tree-space-remark-badge",
                                                     "备注"
                                                 }
                                             }
@@ -571,50 +571,50 @@ fn projection_kind_label(kind: RealmTreeNodeKind) -> &'static str {
     }
 }
 
-fn projection_collection_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
+fn projection_collection_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
         (true, true) => "Realms & Spaces",
         (false, true) => "Spaces",
         _ => "Realms",
     }
 }
 
-fn recent_projection_collection_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
+fn recent_projection_collection_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
         (true, true) => "Recent Realms & Spaces",
         (false, true) => "Recent Spaces",
         _ => "Recent Realms",
     }
 }
 
-fn projection_collection_browse_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
+fn projection_collection_browse_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
         (true, true) => "Search or join a Realm or Space",
         (false, true) => "Search or join a Space",
         _ => "Search or join a Realm",
     }
 }
 
-fn projection_collection_signin_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
-        (true, true) => "Sign in to load realms and spaces",
-        (false, true) => "Sign in to load spaces",
+fn projection_collection_signin_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
+        (true, true) => "Sign in to load realms and Spaces",
+        (false, true) => "Sign in to load Spaces",
         _ => "Sign in to load realms",
     }
 }
 
-fn projection_collection_empty_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
-        (true, true) => "No realms or spaces loaded",
-        (false, true) => "No spaces loaded",
+fn projection_collection_empty_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
+        (true, true) => "No realms or Spaces loaded",
+        (false, true) => "No Spaces loaded",
         _ => "No realms loaded",
     }
 }
 
-fn projection_collection_empty_help_label(has_realms: bool, has_spaces: bool) -> &'static str {
-    match (has_realms, has_spaces) {
-        (true, true) => "The connected server did not return realms or spaces yet.",
-        (false, true) => "The connected server did not return spaces yet.",
+fn projection_collection_empty_help_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
+    match (has_realms, has_product_spaces) {
+        (true, true) => "The connected server did not return realms or Spaces yet.",
+        (false, true) => "The connected server did not return Spaces yet.",
         _ => "The connected server did not return realms yet.",
     }
 }

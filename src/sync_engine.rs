@@ -43,7 +43,7 @@ use crate::api::{
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
-use crate::models::{ClientSyncResponse, RealmTreeNode};
+use crate::models::{ClientSyncResponse, RealmTreeNode, RealmTreeNodeKind};
 
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
@@ -72,7 +72,7 @@ pub struct SyncEngineContext {
     pub base_url: Signal<String>,
     pub token: Signal<String>,
     pub state_store: Signal<LocalStateStore>,
-    pub spaces: Signal<Vec<RealmTreeNode>>,
+    pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub timeline: Signal<Vec<crate::views::timeline::TimelineEvent>>,
     pub sync_cursor: Signal<String>,
     pub status: Signal<String>,
@@ -81,7 +81,7 @@ pub struct SyncEngineContext {
     pub device_queue: Signal<usize>,
     pub theme: Signal<String>,
     pub account_did: Signal<String>,
-    pub selected_space: Signal<String>,
+    pub selected_realm_id: Signal<String>,
     /// CKP-0007 P3B.4.3 — the active multi-profile configuration. The
     /// engine reads `active_profile_id` at the top of every iteration
     /// and exits early when it differs from the profile id captured
@@ -320,7 +320,7 @@ async fn run_iteration(
 
 /// Apply an account subscribe response: persist projections (server-authoritatively
 /// reconciled when full-sync), hydrate Anchor views + account-data, and
-/// publish derived UI signals (spaces / timeline / device queue /
+/// publish derived UI signals (realm tree nodes / timeline / device queue /
 /// status / cursor).
 ///
 /// Exposed at module scope so tests can drive it without spinning up
@@ -331,7 +331,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     // Local mutable handles for the signals we touch — Signal<T> is
     // Copy so this is cheap.
     let mut state_store = ctx.state_store;
-    let spaces = ctx.spaces;
+    let realm_tree_nodes = ctx.realm_tree_nodes;
     let mut timeline = ctx.timeline;
     let mut sync_cursor = ctx.sync_cursor;
     let mut status = ctx.status;
@@ -339,7 +339,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
     let mut last_error = ctx.last_error;
     let mut device_queue = ctx.device_queue;
     let mut theme = ctx.theme;
-    let mut selected_space = ctx.selected_space;
+    let mut selected_realm_id = ctx.selected_realm_id;
     let account_did = ctx.account_did.read().clone();
 
     {
@@ -392,30 +392,33 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
         }); // store.batch — single coalesced flush happens here
     }
 
-    // The `spaces` Signal is derived from `state_store.space_projections`
+    // The `realm_tree_nodes` Signal is derived from `state_store.space_projections`
     // via a use_effect in `RouterView` — we don't `set` it here. We do
-    // still need a reconciled snapshot for status text + selected_space
+    // still need a reconciled snapshot for status text + selected_realm_id
     // bookkeeping.
-    let _ = spaces; // suppress unused capture; consumed by the derive effect
+    let _ = realm_tree_nodes; // suppress unused capture; consumed by the derive effect
     let reconciled =
         crate::app::realm_tree_nodes_from_sync_realms(&state_store.read().load().space_projections);
     if reconciled.is_empty() {
         status.set(crate::views::ConnectionState::Empty.label().to_owned());
     } else {
         status.set(format!(
-            "{}: synced {} space(s)",
+            "{}: synced {} realm-tree node(s)",
             crate::views::ConnectionState::Online.label(),
             reconciled.len()
         ));
     }
     network_state.set("online".to_owned());
-    let first_space = reconciled.first().map(|space| space.space_id.clone());
+    let first_realm = reconciled
+        .iter()
+        .find(|node| node.kind == RealmTreeNodeKind::Realm)
+        .map(|node| node.id.clone());
     {
-        let current = selected_space.read().clone();
+        let current = selected_realm_id.read().clone();
         let trimmed = current.trim();
-        let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|s| s.space_id == trimmed);
+        let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|node| node.id == trimmed);
         if needs_reset {
-            selected_space.set(first_space.unwrap_or_default());
+            selected_realm_id.set(first_realm.unwrap_or_default());
         }
     }
 

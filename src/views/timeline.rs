@@ -400,7 +400,7 @@ pub fn TimelinePanel(
     account_did: String,
     device_id: String,
     token: Signal<String>,
-    selected_space: String,
+    selected_realm_id: String,
     selected_space_scope: Vec<String>,
     timeline: Signal<Vec<TimelineEvent>>,
     draft: Signal<String>,
@@ -454,11 +454,11 @@ pub fn TimelinePanel(
         .collect();
     let account_did_c = account_did.clone();
     let device_id_c = device_id.clone();
-    let selected_space_c = selected_space.clone();
+    let selected_space_c = selected_realm_id.clone();
     let account_did_key = account_did.clone();
     let device_id_key = device_id.clone();
-    let selected_space_key = selected_space.clone();
-    let latest_read_cursor = state_store.read().latest_read_cursor(&selected_space);
+    let selected_space_key = selected_realm_id.clone();
+    let latest_read_cursor = state_store.read().latest_read_cursor(&selected_realm_id);
     let latest_read_cursor_event_id = latest_read_cursor
         .as_ref()
         .map(|marker| marker.body.position.event_id.clone());
@@ -539,7 +539,7 @@ pub fn TimelinePanel(
     {
         let base_a = base_url.clone();
         let token_a = token;
-        let space_a = selected_space.clone();
+        let space_a = selected_realm_id.clone();
         let actor_a = account_did.clone();
         let device_a = device_id.clone();
         let mut emitted_sig = audit_accessed_emitted;
@@ -604,10 +604,10 @@ pub fn TimelinePanel(
     // composer / send box. `realm_is_destroyed` reads the local
     // `realm_lifecycle_state` cache maintained as raw operations are
     // appended, so the render path stays constant-time.
-    let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_space);
+    let realm_is_destroyed = state_store.read().realm_is_destroyed(&selected_realm_id);
     let epoch_update_required = state_store
         .read()
-        .space_has_pending_mls_binding(&selected_space);
+        .space_has_pending_mls_binding(&selected_realm_id);
     let composer_blocked = realm_is_destroyed || epoch_update_required;
 
     rsx! {
@@ -841,11 +841,11 @@ pub fn TimelinePanel(
                                 button {
                                     class: "secondary",
                                     "data-testid": "mark-read-button",
-                                    disabled: event.pending || selected_space.trim().is_empty(),
+                                    disabled: event.pending || selected_realm_id.trim().is_empty(),
                                     onclick: {
                                         let base = base_url.clone();
                                         let event_id = event.id.clone();
-                                        let space = selected_space.clone();
+                                        let space = selected_realm_id.clone();
                                         let topic_id = event.thread_id.clone();
                                         let actor = account_did.clone();
                                         let device = device_id.clone();
@@ -979,7 +979,7 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_space.clone();
+                                                let space = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 let emoji = emoji.to_string();
                                                 move |_| {
@@ -1018,7 +1018,7 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_space.clone();
+                                                let space = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 move |_| {
                                                     let base = base.clone();
@@ -1132,7 +1132,7 @@ pub fn TimelinePanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let eid = event.id.clone();
-                                                let space = selected_space.clone();
+                                                let space = selected_realm_id.clone();
                                                 let actor = account_did.clone();
                                                 move |_| {
                                                     let base = base.clone();
