@@ -106,7 +106,7 @@ fn maybe_setup_peer_connection() -> bool {
 }
 
 #[component]
-pub fn WebRtcCallPanel(
+pub fn WebrtcCallPanel(
     base_url: String,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,

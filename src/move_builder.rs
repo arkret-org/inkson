@@ -8,12 +8,11 @@
 //! envelope. Only the few standalone helpers that other modules still
 //! depend on survive here:
 //!
-//! - [`encode_ed25519_did_key_multibase`] / [`did_key_from_verifying_key`] — did:key multibase
-//!   encoding used by `cross_signing.rs`.
 //! - [`FlowPositionEffect`] / [`FlowPositionExpectation`] / [`flow_position_cell_id`] —
 //!   flow-position cell helpers used by the kanban board (`views/kanban`).
-
-use ed25519_dalek::VerifyingKey;
+//!
+//! The did:key multibase encoding helpers previously defined here now live
+//! in [`crate::did_key`] (shared with `local_state` / `cross_signing`).
 
 /// Identifies the cas-register cell that holds a Flow's position inside
 /// a given Board. Per
@@ -62,30 +61,8 @@ pub enum FlowPositionEffect {
     Remove,
 }
 
-/// Encode an Ed25519 public key as the multibase form did:key DID URLs
-/// and DID Document `verificationMethod` entries use:
-/// `z<base58btc(0xed 0x01 || pubkey32)>`. Mirrors the SDK's internal
-/// helper so yougen can build did:key DIDs locally.
-pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String {
-    let mut bytes = Vec::with_capacity(34);
-    bytes.push(0xed);
-    bytes.push(0x01);
-    bytes.extend_from_slice(verifying_key.as_bytes());
-    format!("z{}", bs58::encode(bytes).into_string())
-}
-
-/// Compose a did:key DID URL from a verifying key (`did:key:z<...>`).
-pub fn did_key_from_verifying_key(verifying_key: &VerifyingKey) -> String {
-    format!(
-        "did:key:{}",
-        encode_ed25519_did_key_multibase(verifying_key)
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use ed25519_dalek::SigningKey;
-
     use super::*;
 
     /// spec/v1/zh/models/realm-and-space.md §3.6: the position cell key is
@@ -101,18 +78,6 @@ mod tests {
         assert_eq!(
             cell,
             "ck:cell:ck.component.flow.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:flow:01abcd"
-        );
-    }
-
-    #[test]
-    fn did_key_encoding_round_trips_multibase_prefix() {
-        let signing = SigningKey::from_bytes(&[19u8; 32]);
-        let verifying = signing.verifying_key();
-        let mb = encode_ed25519_did_key_multibase(&verifying);
-        assert!(mb.starts_with('z'));
-        assert_eq!(
-            did_key_from_verifying_key(&verifying),
-            format!("did:key:{mb}")
         );
     }
 }

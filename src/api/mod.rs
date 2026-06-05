@@ -103,8 +103,8 @@ use crate::models::{
     CallRecordingStartResponse, ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse,
     ContactResponse, ContactsResponse, CreateWebrtcSessionResponse, DevLoginResponse,
     DeviceMessagesReceiveResBody, DeviceMessagesSendResBody, DeviceTrustResponse,
-    DirectoryDescribeResBody, EffectiveGrantsResBody, EphemeralSubmitResponse,
-    EventsDescribeResBody, HealthResponse, IceConfigRequest, IceConfigResponse,
+    EffectiveGrantsResBody, EphemeralSubmitResponse,
+    HealthResponse, IceConfigRequest, IceConfigResponse,
     IdentityDescribeResBody, IdentityResolveResBody, IndexSearchResponse, InvitesResponse,
     KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, LogoutResponse, MimiConsentResBody,
     MimiGroupInfoResBody, MimiIdentifierQueryResBody, MimiKeyMaterialResBody, MimiNotifyResBody,
@@ -113,9 +113,9 @@ use crate::models::{
     OkResBody, PolicyCheckResBody, PushRegisterResponse, RealmCreateResponse, RealmJoinCandidate,
     ReceiptResponse, ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse,
     SearchOrganizationsResponse, SearchSpacesResponse, ServerDescription, SnapshotHeadResponse,
-    SpaceCreateResponse, SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse,
-    SyncDescribeResBody, TypingResponse, UpdateProfileResponse, VerifyDeviceResponse,
-    WebrtcSignalResponse,
+    SolandDirectoryDescribeResBody, SolandEventsDescribeResBody, SpaceCreateResponse,
+    SpacePolicyResponse, SubmitDidOperationResBody, SubmitEventResponse, SyncDescribeResBody,
+    TypingResponse, UpdateProfileResponse, VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -239,7 +239,7 @@ pub struct CokretApi {
     /// H1 — cached `GET /_cokret/self/events/describe` response. Used so callers
     /// like `submit_events_batch` can consult `capabilities.batch_submit`
     /// without re-hitting the network on every batch.
-    events_describe_cache: Arc<OnceCell<EventsDescribeResBody>>,
+    events_describe_cache: Arc<OnceCell<SolandEventsDescribeResBody>>,
 }
 
 impl fmt::Debug for CokretApi {
@@ -2582,7 +2582,7 @@ pub fn parse_sync_describe(value: Value) -> anyhow::Result<SyncDescribeResBody> 
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescribeResBody> {
+pub fn parse_directory_describe(value: Value) -> anyhow::Result<SolandDirectoryDescribeResBody> {
     Ok(serde_json::from_value(value)?)
 }
 

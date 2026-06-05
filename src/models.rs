@@ -295,8 +295,13 @@ pub struct SearchSpacesResponse {
     pub next_cursor: Option<String>,
 }
 
+/// soland's directory `describe` wire body. Named distinctly from the SDK
+/// core `cokret_sdk::model::DirectoryDescribeResBody` (which wraps a typed
+/// `DirectoryDescription`) because this soland surface has a different,
+/// flat shape; sharing the SDK name would mislead readers into expecting
+/// the same wire contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DirectoryDescribeResBody {
+pub struct SolandDirectoryDescribeResBody {
     pub service_did: String,
     pub resource_types: Vec<String>,
     pub discovery_profiles: Vec<String>,
@@ -835,8 +840,13 @@ pub struct SubmitDidOperationResBody {
     pub status: String,
 }
 
+/// soland's events `describe` wire body. Named distinctly from the SDK
+/// core `cokret_sdk::model::EventsDescribeResBody` (which has a different
+/// field set: supported_event_schemas/supported_reducer_profiles/...)
+/// because this soland surface emits a different shape; sharing the SDK
+/// name would mislead readers into expecting the same wire contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EventsDescribeResBody {
+pub struct SolandEventsDescribeResBody {
     pub service_did: String,
     #[serde(default)]
     pub supported_profiles: Vec<String>,

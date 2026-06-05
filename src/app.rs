@@ -3001,7 +3001,7 @@ pub fn RouterView() -> Element {
                     Route::Call => rsx! {
                         crate::views::call::CallPanel { state_store }
                         if crate::views::webrtc::live_media_enabled() {
-                            crate::views::webrtc::WebRtcCallPanel {
+                            crate::views::webrtc::WebrtcCallPanel {
                                 base_url: base_url(),
                                 token,
                                 state_store,

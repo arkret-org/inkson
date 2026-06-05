@@ -62,9 +62,9 @@
 //! UI layer cares about. Two implementations ship:
 //!
 //! 1. [`RustSdkBoundary`] — current default. Sign / verify use `Ed25519MoveSigner` +
-//!    `verify_ed25519_move_signature`; encrypt / decrypt use the SDK's `MessageCrypto` / a
-//!    deterministic ChaCha20 placeholder for the simple AEAD shape (the production AEAD is selected
-//!    by the caller when wiring real MLS / Megolm bytes).
+//!    `verify_ed25519_move_signature`; encrypt / decrypt return
+//!    [`CryptoBoundaryError::Unsupported`] rather than rolling a synthetic cipher — bulk crypto is
+//!    handled out of band by the SDK's `MessageCrypto` (MLS) and never by this boundary.
 //! 2. [`WebCryptoBoundary`] — wasm32 only. Encrypt / decrypt go through
 //!    `window.crypto.subtle.encrypt(...)` with AES-GCM. Signing stays in Rust because the SDK's
 //!    [`MoveSigner`] trait is Rust-native and yougen explicitly does not cross the JS boundary for

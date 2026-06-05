@@ -32,7 +32,7 @@ use cokret_sdk::{
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
-use crate::move_builder::encode_ed25519_did_key_multibase;
+use crate::did_key::encode_ed25519_did_key_multibase;
 use crate::operation::{EventEnvelope, OperationBuilder};
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 

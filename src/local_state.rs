@@ -304,17 +304,10 @@ impl LocalIdentity {
     }
 }
 
-/// Encode an ed25519 verifying key as a `did:key:z<multibase>` DID. Mirror
-/// of `move_builder::did_key_from_verifying_key` — duplicated here to keep
-/// `local_state` independent of `move_builder` (which depends on this
-/// module via the new identity accessor).
+/// Encode an ed25519 signing key's public half as a `did:key:z<multibase>`
+/// DID. Thin wrapper over the shared [`crate::did_key`] encoder.
 fn encode_did_key(signing_key: &SigningKey) -> String {
-    let verifying = signing_key.verifying_key();
-    let mut bytes = Vec::with_capacity(34);
-    bytes.push(0xed);
-    bytes.push(0x01);
-    bytes.extend_from_slice(verifying.as_bytes());
-    format!("did:key:z{}", bs58::encode(bytes).into_string())
+    crate::did_key::did_key_from_verifying_key(&signing_key.verifying_key())
 }
 
 /// Lifecycle state of a locally-submitted Move. Mirrors the states

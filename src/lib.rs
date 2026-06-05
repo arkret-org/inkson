@@ -40,6 +40,7 @@ pub mod crypto_boundary;
 pub mod cursor;
 pub mod device_name;
 pub mod device_revoke;
+pub mod did_key;
 pub mod did_resolver;
 pub mod discovery;
 pub mod dpop;

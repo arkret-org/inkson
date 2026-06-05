@@ -154,7 +154,7 @@ impl CokretApi {
         Ok(frontier)
     }
 
-    pub async fn events_describe(&self) -> anyhow::Result<EventsDescribeResBody> {
+    pub async fn events_describe(&self) -> anyhow::Result<SolandEventsDescribeResBody> {
         self.get_json("_cokret/self/events/describe").await
     }
 
@@ -163,7 +163,7 @@ impl CokretApi {
     /// `capabilities.batch_submit` flag is read off this body by
     /// [`Self::submit_events_batch`] to decide whether to send a real
     /// batch or fall back to per-envelope submits.
-    pub async fn events_describe_cached(&self) -> anyhow::Result<&EventsDescribeResBody> {
+    pub async fn events_describe_cached(&self) -> anyhow::Result<&SolandEventsDescribeResBody> {
         self.events_describe_cache
             .get_or_try_init(|| async { self.events_describe().await })
             .await
@@ -172,7 +172,7 @@ impl CokretApi {
     /// H1 — read `capabilities.batch_submit` off the cached
     /// `events_describe`. Conservative default: when the field is absent
     /// or the cache fetch fails, assume the server does NOT support batch
-    /// and fall back to per-envelope submits. `EventsDescribeResBody`
+    /// and fall back to per-envelope submits. `SolandEventsDescribeResBody`
     /// surfaces server capabilities under the canonical `capabilities`
     /// JSON blob on soland.
     async fn batch_submit_supported(&self) -> bool {
