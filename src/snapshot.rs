@@ -153,9 +153,8 @@ mod tests {
         ReducerSnapshotManifest {
             schema: cokret_sdk::REDUCER_SNAPSHOT_SCHEMA.to_owned(),
             reducer_profile: cokret_sdk::REDUCER_SNAPSHOT_PROFILE.to_owned(),
-            space_id: RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned())
+            realm_id: RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned())
                 .unwrap(),
-            space_version: "0".to_owned(),
             frontier: Vec::new(),
             state_digest: canonical::sha256_digest(b"empty"),
             merkle_root: canonical::sha256_digest(b"empty"),

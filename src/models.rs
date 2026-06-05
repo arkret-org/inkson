@@ -368,21 +368,16 @@ pub struct RealmTreeNode {
     /// external protocol / algorithm / service labels.
     pub title: String,
     pub description: Option<String>,
-    #[serde(default)]
     pub tags: std::collections::BTreeSet<String>,
     pub public: bool,
     pub category: Option<String>,
-    #[serde(default)]
     pub parent_space_id: Option<String>,
-    #[serde(default)]
     pub child_space_ids: Vec<String>,
     /// Realm vs Space classification used by the sidebar to render
     /// the two as separate tiers. Spec realm-and-space.md §1 / §3.
-    #[serde(default)]
     pub kind: RealmTreeNodeKind,
     /// Home Realm of this entry. For Realm nodes this equals `id`; for Space
     /// nodes this is the containing Realm id.
-    #[serde(default)]
     pub realm_id: String,
 }
 
