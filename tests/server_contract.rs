@@ -447,7 +447,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 
     let frames = parse_events_subscribe_ndjson_text(
         r#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
-{"kind":"frontier","frontier":{"ck:space:demo":["ck:event:01"]}}
+{"kind":"frontier","frontier":{"ck:realm:demo":["ck:event:01"]}}
 {"kind":"catchup_complete"}
 "#,
     )

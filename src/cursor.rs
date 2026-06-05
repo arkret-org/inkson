@@ -6,28 +6,28 @@
 //! caller that previously hand-rolled an `h` field MUST switch to that
 //! helper so the minimum-length floor stays enforced.
 //!
-//! P3B.9.2: re-export `SpacePosition` and add the small UI-facing
+//! P3B.9.2: re-export `RealmPosition` and add the small UI-facing
 //! helpers ([`flow_position_label`], [`flow_position_hlc`]) that consume
 //! the new Flow position projection fields shipped on `cokret-service-api`.
 //! UI callers (kanban move arrow, timeline scroll-to-position) should
 //! prefer these over decoding the raw JSON.
 
 pub use cokret_sdk::cursor::{
-    CURSOR_HANDLE_MIN_LEN, Cursor, CursorPurpose, CursorTarget, SpacePosition, SyncPositions,
+    CURSOR_HANDLE_MIN_LEN, Cursor, CursorPurpose, CursorTarget, RealmPosition, SyncPositions,
     SyncTracker, generate_cursor_handle,
 };
 
-/// Compact label for a [`SpacePosition`] used by the timeline jump-to
+/// Compact label for a [`RealmPosition`] used by the timeline jump-to
 /// indicator and the kanban move arrow. Returns a string of the form
 /// `"@<hlc-short> ⇢ <frontier-count> tip(s)"`, optionally suffixed
 /// with `" · last read <rfc3339>"` when the caller supplies the
 /// `last_read_at` value.
 ///
 /// `last_read_at` is sourced from the raw account-subscribe projection
-/// for now (the SDK's `SpacePosition` struct has no field for it yet —
+/// for now (the SDK's `RealmPosition` struct has no field for it yet —
 /// when the SDK promotes the field, callers should switch to reading
 /// it directly off the struct and pass the value in here).
-pub fn flow_position_label(position: &SpacePosition, last_read_at: Option<&str>) -> String {
+pub fn flow_position_label(position: &RealmPosition, last_read_at: Option<&str>) -> String {
     // HLC format is `<rfc3339>-<seq>`. We strip the trailing `-<seq>`
     // chunk so the label fits in a chip; if there's no hyphen at all
     // (legacy / future format) we fall back to the full value.
@@ -51,7 +51,7 @@ pub fn flow_position_label(position: &SpacePosition, last_read_at: Option<&str>)
 /// absent or non-string (older soland builds / SDK projections).
 ///
 /// Spec field name registered on `cokret-service-api/openapi.yaml`.
-/// Once the SDK promotes it onto [`SpacePosition`] directly, replace
+/// Once the SDK promotes it onto [`RealmPosition`] directly, replace
 /// the JSON lookup with a struct field read.
 pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
     raw.get("last_read_at")
@@ -67,7 +67,7 @@ pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
 /// `order` for now. Callers should use this helper rather than touching
 /// `position.order` so the rename lands in a single place when it
 /// arrives in the SDK.
-pub fn flow_position_hlc(position: &SpacePosition) -> &str {
+pub fn flow_position_hlc(position: &RealmPosition) -> &str {
     position.order.as_str()
 }
 
@@ -75,8 +75,8 @@ pub fn flow_position_hlc(position: &SpacePosition) -> &str {
 mod tests {
     use super::*;
 
-    fn sample_position() -> SpacePosition {
-        SpacePosition {
+    fn sample_position() -> RealmPosition {
+        RealmPosition {
             p: vec!["ck:event:tip-1".to_owned(), "ck:event:tip-2".to_owned()],
             order: "2026-05-26T00:00:00Z-0001".to_owned(),
             h: "sha256:abcd".to_owned(),

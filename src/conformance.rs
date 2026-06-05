@@ -209,7 +209,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// Canonical event kinds that yougen claims to emit / consume.
 ///
 /// This list is used by:
-/// - The explanatory panels in `views/audit.rs` / `views/space_admin.rs`.
+/// - The explanatory panels in `views/audit.rs` / `views/realm_admin.rs`.
 /// - Cross-references in `claude-design/` and `_todos.md`.
 /// - Fixture anchors for upcoming `tests/` end-to-end flows.
 ///
@@ -236,7 +236,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.account_data.set",
         "ck.profile.create",
         "ck.profile.update",
-        "ck.profile.space_override",
+        "ck.profile.realm_override",
         // Agent (extensions/agent-protocol-interop — v1.1+ but kinds are core)
         "ck.agent.endpoint",
         "ck.agent.protocol_session.result",

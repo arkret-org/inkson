@@ -143,16 +143,7 @@ pub fn projection_for_scope_id<'a>(
     if scope_id.is_empty() {
         return None;
     }
-    projections.get(scope_id).or_else(|| {
-        scope_id
-            .strip_prefix("ck:space:")
-            .and_then(|suffix| projections.get(&format!("ck:realm:{suffix}")))
-            .or_else(|| {
-                scope_id
-                    .strip_prefix("ck:realm:")
-                    .and_then(|suffix| projections.get(&format!("ck:space:{suffix}")))
-            })
-    })
+    projections.get(scope_id)
 }
 
 fn projection_home_realm_id(body: &Value) -> Option<String> {

@@ -1,10 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { mockCokretApi } from "./mockCokretApi";
 
-const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
-const DEMO_REALM = DEMO_SPACE.replace(/^ck:space:/, "ck:realm:");
-const CHILD_SPACE = "ck:space:01launchchild0000000000000";
-const CHILD_REALM = CHILD_SPACE.replace(/^ck:space:/, "ck:realm:");
+const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
+const CHILD_REALM = "ck:realm:01launchchild0000000000000";
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -30,7 +28,7 @@ async function openSettings(page: import("@playwright/test").Page) {
 }
 
 async function openTimeline(page: import("@playwright/test").Page) {
-  await page.goto(`/timeline/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/timeline/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("timeline")).toBeVisible();
 }
 
@@ -45,7 +43,7 @@ async function openDiscussion(page: import("@playwright/test").Page) {
 
 async function openKanban(page: import("@playwright/test").Page) {
   await refreshServer(page);
-  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
 }
 
@@ -460,7 +458,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     });
   });
 
-  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("kanban-empty-board")).toContainText("No board selected");
   await expect(page.getByTestId("add-column-button")).toHaveCount(0);
@@ -752,7 +750,7 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
   assertWorkspaceLayout(await measureLayout());
 });
 
-test("notifications are derived from index projections and respect per-space mute rules", async ({ page }) => {
+test("notifications are derived from index projections and respect per-realm mute rules", async ({ page }) => {
   await refreshServer(page);
   await page.getByTestId("topbar-notifications-button").click();
 
@@ -763,14 +761,14 @@ test("notifications are derived from index projections and respect per-space mut
   await page
     .getByTestId("notification-item")
     .filter({ hasText: "Alice sent a message in Demo Space" })
-    .getByTestId("mute-space-button")
+    .getByTestId("mute-realm-button")
     .click();
   await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Space");
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
-  await expect(page.getByTestId("settings-muted-space-row").locator("span")).toHaveAttribute("title", DEMO_SPACE);
-  await page.getByTestId("notifications-settings-unmute-space").click();
+  await expect(page.getByTestId("settings-muted-realm-row").locator("span")).toHaveAttribute("title", DEMO_REALM);
+  await page.getByTestId("notifications-settings-unmute-realm").click();
   await expect(page.getByTestId("status-label")).toContainText("Unmuted");
 
   await page.getByTestId("topbar-notifications-button").click();
@@ -1070,7 +1068,7 @@ test("chat retries plaintext sends after granting current service visibility", a
 
 test("kanban card drag queues a flow move", async ({ page }) => {
   await refreshServer(page);
-  await page.goto(`/kanban/${DEMO_SPACE}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
 
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
@@ -1090,7 +1088,7 @@ test("kanban projections use home Realm for nested Spaces", async ({ page }) => 
     }
   });
 
-  await page.goto(`/kanban/${CHILD_SPACE}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/kanban/${CHILD_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
 
   await expect.poll(() => projectionRealmIds, { timeout: 20_000 }).toContain(DEMO_REALM);
@@ -1159,7 +1157,7 @@ test("timeline mark-read sends public receipt and stores private marker", async 
   expect(receiptBody.realm_id).toBe("ck:realm:0196419b-0000-7000-8000-000000000000");
   expect(receiptBody.payload.receipt_type).toBe("read");
   expect(receiptBody.payload.schema).toBe("ck.schema.read_receipt.v1");
-  expect(receiptBody.payload.event_id).toContain("summary-ck:space");
+  expect(receiptBody.payload.event_id).toContain("summary-ck:realm");
   await expect(page.getByTestId("read-receipt-status")).toContainText("ck.receipt.read");
   await expect(page.getByTestId("read-cursor-status")).toContainText("Read marker:");
   await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
@@ -1223,7 +1221,7 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("space admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
-  await page.goto("/space/ck:space:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
+  await page.goto("/space/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("space-admin-panel")).toBeVisible();
   await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
   await page.getByTestId("queue-discussion-admission").click();

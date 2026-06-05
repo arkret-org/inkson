@@ -543,14 +543,14 @@ mod tests {
     fn persist_restore_round_trip_recovers_group_state() {
         let bytes = fake_state_record_bytes("aabbccdd", 7);
         let envelope = encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "aabbccdd",
             7,
             &bytes,
             "correct horse battery staple",
             &fixed_salt(),
         );
-        assert_eq!(envelope.space_id, "ck:space:demo");
+        assert_eq!(envelope.space_id, "ck:realm:demo");
         assert_eq!(envelope.group_id, "aabbccdd");
         assert_eq!(envelope.epoch, 7);
         // Ciphertext is not the plaintext — encryption did something.
@@ -565,7 +565,7 @@ mod tests {
     fn snapshot_secret_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
         let envelope = encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "dead",
             1,
             &bytes,
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn outdated_snapshot_is_rejected_via_epoch_check() {
         let bytes = fake_state_record_bytes("beef", 3);
-        let envelope = encrypt_state("ck:space:demo", "beef", 3, &bytes, "p1", &fixed_salt());
+        let envelope = encrypt_state("ck:realm:demo", "beef", 3, &bytes, "p1", &fixed_salt());
 
         // current_epoch_floor == 3 → still acceptable (>=).
         let ok = decrypt_with_epoch_check(&envelope, "p1", 3);
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn malformed_hex_surfaces_typed_error() {
-        let mut envelope = encrypt_state("ck:space:demo", "feed", 1, b"abc", "p", &fixed_salt());
+        let mut envelope = encrypt_state("ck:realm:demo", "feed", 1, b"abc", "p", &fixed_salt());
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn key_backup_body_carries_envelope_meta_and_blob() {
         let envelope = encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "aaaa",
             42,
             b"placeholder",
@@ -667,7 +667,7 @@ mod tests {
             Some(crate::key_backup::KeyBackupClass::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
-        assert_eq!(body["envelope_meta"]["space_ref"], "ck:space:demo");
+        assert_eq!(body["envelope_meta"]["space_ref"], "ck:realm:demo");
         assert_eq!(body["envelope_meta"]["epoch"], 42);
         // The ciphertext is a base64url-encoded JSON envelope — it
         // round-trips back to the same struct without exposing plaintext
@@ -675,7 +675,7 @@ mod tests {
         let blob = body["ciphertext"].as_str().unwrap();
         let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
         let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.space_id, "ck:space:demo");
+        assert_eq!(parsed.space_id, "ck:realm:demo");
         assert_eq!(parsed.epoch, 42);
     }
 
@@ -735,7 +735,7 @@ mod tests {
         // inner bytes don't parse as `MlsGroupStateRecord`. The error
         // is `InvalidStateRecord`, distinct from `SecretMismatch`.
         let envelope = encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "z",
             0,
             b"this is not json",

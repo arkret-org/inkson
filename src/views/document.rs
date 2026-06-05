@@ -3,7 +3,7 @@
 //! - Every edit is mirrored to `LocalStateStore.private_data` so the draft survives navigation and
 //!   offline use.
 //! - Save Version emits a real `ck.morph.create` (first time) or `ck.morph.update` (subsequent
-//!   saves). The morph_id is persisted per-Space so subsequent saves target the same Morph.
+//!   saves). The morph_id is persisted per-Realm so subsequent saves target the same Morph.
 //! - The header sync badge reports the result of the most recent submit: `Synced` / `Pending sync`
 //!   / `Local draft`. Failed submits fall back to local draft without losing the user's edits.
 //!

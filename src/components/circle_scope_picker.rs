@@ -113,7 +113,7 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// CKP-0007 P3B.2.8 — the link routes through the dioxus router via
 /// the optional `target_space_id`. When the relation projection
 /// carries the parent Flow's home Space id the link is built as a
-/// `Route::TimelineSpace { space_id }` navigation; when it doesn't,
+/// `Route::TimelineSpace { realm_id }` navigation; when it doesn't,
 /// the anchor falls back to a `#flow:<id>` hash so the in-Space
 /// timeline can still scroll to the parent Flow.
 #[component]

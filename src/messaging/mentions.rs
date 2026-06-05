@@ -113,7 +113,7 @@ impl MentionPickerState {
 /// hashes (`content.mention_sidecar_hash`) it can match against per-actor
 /// inbox subscriptions without learning the mentioned DID.
 ///
-/// `salt` is the per-Space mention salt issued by soland; until that
+/// `salt` is the per-Realm mention salt issued by soland; until that
 /// projection exists, callers pass the space_id as a stand-in (the
 /// hash is still collision-resistant against random DIDs; the privacy
 /// guarantee just degrades to "server already knew the space_id").

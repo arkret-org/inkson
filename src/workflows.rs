@@ -100,8 +100,8 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "space.delete",
             name: "Leave, archive, and delete space",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Realm / Space setup + Space Admin destructive flows (`views/space_admin.rs` Leave + Delete buttons)",
-            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): leave-space wired through views/space_admin.rs:2046 (`api.leave_space(space_id)` + `forget_space` + sync-cursor reset); delete-space wired through views/space_admin.rs:2566 (`api.delete_space(space_id)`). Both surfaces report success/failure via `status_msg` so the operator sees what landed. Tombstone policy + history retention enforcement remain server-side concerns.",
+            client_surface: "Realm / Space setup + Space Admin destructive flows (`views/realm_admin.rs` Leave + Delete buttons)",
+            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): leave-space wired through views/realm_admin.rs:2046 (`api.leave_space(space_id)` + `forget_space` + sync-cursor reset); delete-space wired through views/realm_admin.rs:2566 (`api.delete_space(space_id)`). Both surfaces report success/failure via `status_msg` so the operator sees what landed. Tombstone policy + history retention enforcement remain server-side concerns.",
         },
         ClientWorkflow {
             id: "message.create",
@@ -148,7 +148,7 @@ mod tests {
         );
         // F-SPACE-LIFECYCLE-1 (2026-05-19): space.create + space.delete
         // moved from Blocked → ClientReady because the corresponding UI
-        // wiring (`views/setup.rs` create flow + `views/space_admin.rs`
+        // wiring (`views/setup.rs` create flow + `views/realm_admin.rs`
         // Leave / Delete buttons) was already shipped — the workflow
         // ledger had drifted. Explicitly negate them here so a future
         // regression that reintroduces the gap fails this test.
@@ -158,7 +158,7 @@ mod tests {
         );
         assert!(
             !blocked.iter().any(|workflow| workflow.id == "space.delete"),
-            "space.delete should be ClientReady — UI wired via views/space_admin.rs Leave + Delete buttons"
+            "space.delete should be ClientReady — UI wired via views/realm_admin.rs Leave + Delete buttons"
         );
         // space.membership remains Blocked: MLS Welcome / Commit
         // delivery + removal epoch rotation are still server gaps.

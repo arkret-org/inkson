@@ -19,20 +19,20 @@ pub enum Route {
     #[route("/timeline", crate::app::RouterView)]
     Timeline,
 
-    #[route("/spaces/:space_id", SpacePage)]
-    Space { space_id: String },
+    #[route("/realms/:realm_id", RealmPage)]
+    Realm { realm_id: String },
 
-    #[route("/timeline/:space_id", TimelineSpacePage)]
-    TimelineSpace { space_id: String },
+    #[route("/timeline/:realm_id", TimelineSpacePage)]
+    TimelineSpace { realm_id: String },
 
-    #[route("/timeline/:space_id/message/:message_id", TimelineMessagePage)]
+    #[route("/timeline/:realm_id/message/:message_id", TimelineMessagePage)]
     TimelineMessage {
-        space_id: String,
+        realm_id: String,
         message_id: String,
     },
 
-    #[route("/chat/:space_id", ChatSpacePage)]
-    Chat { space_id: String },
+    #[route("/chat/:realm_id", ChatSpacePage)]
+    Chat { realm_id: String },
 
     #[route("/directory", crate::app::RouterView)]
     Directory,
@@ -92,11 +92,14 @@ pub enum Route {
     #[route("/devices/verify", crate::app::RouterView)]
     VerifyDevice,
 
-    #[route("/space/:space_id/admin", SpaceAdminPage)]
-    SpaceAdmin { space_id: String },
+    #[route("/realms/:realm_id/admin", RealmAdminPage)]
+    RealmAdmin { realm_id: String },
 
-    #[route("/space/:space_id/admin/:section", SpaceAdminSectionPage)]
-    SpaceAdminSection { space_id: String, section: String },
+    #[route("/realms/:realm_id/admin/:section", RealmAdminSectionPage)]
+    RealmAdminSection {
+        realm_id: String,
+        section: String,
+    },
 
     #[route("/audit", crate::app::RouterView)]
     Audit,
@@ -110,24 +113,27 @@ pub enum Route {
     #[route("/kanban", crate::app::RouterView)]
     Kanban,
 
-    #[route("/kanban/:space_id", KanbanSpacePage)]
-    KanbanSpace { space_id: String },
+    #[route("/kanban/:realm_id", KanbanSpacePage)]
+    KanbanSpace { realm_id: String },
 
     /// CKP board-persistence — the selected Board id is part of the URL
     /// so a page refresh (or a deep link) restores the exact board the
     /// user was looking at instead of falling back to
-    /// `board_options.first()`. `space_id` is the Realm id; `board_id`
+    /// `board_options.first()`. `realm_id` is the Realm id; `board_id`
     /// is the board Space-container id.
-    #[route("/kanban/:space_id/board/:board_id", KanbanBoardPage)]
-    KanbanBoard { space_id: String, board_id: String },
+    #[route("/kanban/:realm_id/board/:board_id", KanbanBoardPage)]
+    KanbanBoard {
+        realm_id: String,
+        board_id: String,
+    },
 
     /// Board + card-detail deep link. Carries the board id alongside the
     /// flow id so a refresh on an open card restores the right board
     /// even when the card is a locally-queued draft the server
     /// projection does not yet know about.
-    #[route("/kanban/:space_id/board/:board_id/task/:task_id", KanbanBoardTaskPage)]
+    #[route("/kanban/:realm_id/board/:board_id/task/:task_id", KanbanBoardTaskPage)]
     KanbanBoardTask {
-        space_id: String,
+        realm_id: String,
         board_id: String,
         task_id: String,
     },
@@ -135,8 +141,11 @@ pub enum Route {
     /// Board-less card deep link. Retained for share links / global
     /// search results that only know the flow id; the board is resolved
     /// from the projection (or local queue) on arrival.
-    #[route("/kanban/:space_id/task/:task_id", KanbanTaskPage)]
-    KanbanTask { space_id: String, task_id: String },
+    #[route("/kanban/:realm_id/task/:task_id", KanbanTaskPage)]
+    KanbanTask {
+        realm_id: String,
+        task_id: String,
+    },
 
     #[route("/notifications", crate::app::RouterView)]
     Notifications,
@@ -150,8 +159,8 @@ pub enum Route {
     #[route("/document/new", crate::app::RouterView)]
     DocumentNew,
 
-    #[route("/document/:space_id", DocumentSpacePage)]
-    DocumentSpace { space_id: String },
+    #[route("/document/:realm_id", DocumentSpacePage)]
+    DocumentSpace { realm_id: String },
 
     #[route("/call", crate::app::RouterView)]
     Call,
@@ -180,26 +189,26 @@ pub enum Route {
 }
 
 #[component]
-fn TimelineSpacePage(space_id: String) -> Element {
-    let _ = space_id;
+fn TimelineSpacePage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn TimelineMessagePage(space_id: String, message_id: String) -> Element {
-    let _ = (space_id, message_id);
+fn TimelineMessagePage(realm_id: String, message_id: String) -> Element {
+    let _ = (realm_id, message_id);
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn ChatSpacePage(space_id: String) -> Element {
-    let _ = space_id;
+fn ChatSpacePage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn SpacePage(space_id: String) -> Element {
-    let _ = space_id;
+fn RealmPage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
@@ -216,44 +225,44 @@ fn SetupSectionPage(section: String) -> Element {
 }
 
 #[component]
-fn SpaceAdminPage(space_id: String) -> Element {
-    let _ = space_id;
+fn RealmAdminPage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn SpaceAdminSectionPage(space_id: String, section: String) -> Element {
-    let _ = (space_id, section);
+fn RealmAdminSectionPage(realm_id: String, section: String) -> Element {
+    let _ = (realm_id, section);
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn KanbanSpacePage(space_id: String) -> Element {
-    let _ = space_id;
+fn KanbanSpacePage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn KanbanTaskPage(space_id: String, task_id: String) -> Element {
-    let _ = (space_id, task_id);
+fn KanbanTaskPage(realm_id: String, task_id: String) -> Element {
+    let _ = (realm_id, task_id);
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn KanbanBoardPage(space_id: String, board_id: String) -> Element {
-    let _ = (space_id, board_id);
+fn KanbanBoardPage(realm_id: String, board_id: String) -> Element {
+    let _ = (realm_id, board_id);
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn KanbanBoardTaskPage(space_id: String, board_id: String, task_id: String) -> Element {
-    let _ = (space_id, board_id, task_id);
+fn KanbanBoardTaskPage(realm_id: String, board_id: String, task_id: String) -> Element {
+    let _ = (realm_id, board_id, task_id);
     rsx! { crate::app::RouterView {} }
 }
 
 #[component]
-fn DocumentSpacePage(space_id: String) -> Element {
-    let _ = space_id;
+fn DocumentSpacePage(realm_id: String) -> Element {
+    let _ = realm_id;
     rsx! { crate::app::RouterView {} }
 }
 
@@ -268,7 +277,7 @@ impl Route {
         match self {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
-            Route::Space { .. } => View::Timeline,
+            Route::Realm { .. } => View::Timeline,
             Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
                 View::Timeline
             }
@@ -289,7 +298,7 @@ impl Route {
             Route::SettingsSecurity => View::SettingsSecurity,
             Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
-            Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => View::SpaceAdmin,
+            Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => View::RealmAdmin,
             // Audit / Call / Applets routes still render their own panels
             // (see `Route::Audit`/`Route::Call`/`Route::Applets` arms in
             // `app.rs`) but no longer have dedicated `View` enum variants —
@@ -312,21 +321,21 @@ impl Route {
         }
     }
 
-    /// Extract space_id from routes that carry one.
-    pub fn space_id(&self) -> Option<&str> {
+    /// Extract realm_id from routes that carry a Realm context.
+    pub fn realm_id(&self) -> Option<&str> {
         match self {
-            Route::Space { space_id }
-            | Route::TimelineSpace { space_id }
-            | Route::TimelineMessage { space_id, .. }
-            | Route::Chat { space_id }
-            | Route::KanbanSpace { space_id }
-            | Route::KanbanBoard { space_id, .. }
-            | Route::KanbanBoardTask { space_id, .. }
-            | Route::KanbanTask { space_id, .. }
-            | Route::SpaceAdmin { space_id }
-            | Route::SpaceAdminSection { space_id, .. } => Some(space_id.as_str()),
-            Route::DocumentSpace { space_id } if !space_id.starts_with("ck:morph:") => {
-                Some(space_id.as_str())
+            Route::Realm { realm_id }
+            | Route::TimelineSpace { realm_id }
+            | Route::TimelineMessage { realm_id, .. }
+            | Route::Chat { realm_id }
+            | Route::KanbanSpace { realm_id }
+            | Route::KanbanBoard { realm_id, .. }
+            | Route::KanbanBoardTask { realm_id, .. }
+            | Route::KanbanTask { realm_id, .. }
+            | Route::RealmAdmin { realm_id }
+            | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
+            Route::DocumentSpace { realm_id } if !realm_id.starts_with("ck:morph:") => {
+                Some(realm_id.as_str())
             }
             _ => None,
         }
@@ -349,10 +358,10 @@ impl Route {
         }
     }
 
-    /// Extract space admin section from routes that carry one.
-    pub fn space_admin_section(&self) -> Option<&str> {
+    /// Extract Realm admin section from routes that carry one.
+    pub fn realm_admin_section(&self) -> Option<&str> {
         match self {
-            Route::SpaceAdminSection { section, .. } => Some(section.as_str()),
+            Route::RealmAdminSection { section, .. } => Some(section.as_str()),
             _ => None,
         }
     }
@@ -366,7 +375,7 @@ impl From<View> for Route {
             View::Login => Route::Login,
             View::Timeline => Route::Timeline,
             View::Chat => Route::Chat {
-                space_id: String::new(),
+                realm_id: String::new(),
             },
             View::Contacts => Route::Contacts,
             View::Directory => Route::Directory,
@@ -377,8 +386,8 @@ impl From<View> for Route {
             View::SettingsSecurity => Route::SettingsSecurity,
             View::Recover => Route::Recover,
             View::VerifyDevice => Route::VerifyDevice,
-            View::SpaceAdmin => Route::SpaceAdmin {
-                space_id: String::new(),
+            View::RealmAdmin => Route::RealmAdmin {
+                realm_id: String::new(),
             },
             View::Kanban => Route::Kanban,
             View::Notifications => Route::Notifications,
@@ -407,8 +416,8 @@ mod tests {
         let routes = vec![
             Route::Dashboard,
             Route::Login,
-            Route::Space {
-                space_id: "ck:space:roundtrip".to_owned(),
+            Route::Realm {
+                realm_id: "ck:realm:roundtrip".to_owned(),
             },
             Route::Timeline,
             Route::Directory,
@@ -421,8 +430,8 @@ mod tests {
             },
             Route::Settings,
             Route::VerifyDevice,
-            Route::SpaceAdminSection {
-                space_id: "ck:space:roundtrip".to_owned(),
+            Route::RealmAdminSection {
+                realm_id: "ck:realm:roundtrip".to_owned(),
                 section: "members".to_owned(),
             },
             // NOTE: Route::Audit / Route::Call / Route::Applets are
@@ -456,29 +465,29 @@ mod tests {
     }
 
     #[test]
-    fn test_space_id_extraction() {
+    fn test_realm_id_extraction() {
         assert_eq!(
-            Route::Space {
-                space_id: "ck:space:home".to_owned()
+            Route::Realm {
+                realm_id: "ck:realm:home".to_owned()
             }
-            .space_id(),
-            Some("ck:space:home")
+            .realm_id(),
+            Some("ck:realm:home")
         );
         assert_eq!(
             Route::TimelineSpace {
-                space_id: "ck:space:abc".to_owned()
+                realm_id: "ck:realm:abc".to_owned()
             }
-            .space_id(),
-            Some("ck:space:abc")
+            .realm_id(),
+            Some("ck:realm:abc")
         );
-        assert_eq!(Route::Timeline.space_id(), None);
+        assert_eq!(Route::Timeline.realm_id(), None);
         assert_eq!(
-            Route::SpaceAdminSection {
-                space_id: "ck:space:admin".to_owned(),
+            Route::RealmAdminSection {
+                realm_id: "ck:realm:admin".to_owned(),
                 section: "members".to_owned(),
             }
-            .space_id(),
-            Some("ck:space:admin")
+            .realm_id(),
+            Some("ck:realm:admin")
         );
     }
 
@@ -507,20 +516,20 @@ mod tests {
     }
 
     #[test]
-    fn test_space_admin_section_extraction() {
+    fn test_realm_admin_section_extraction() {
         assert_eq!(
-            Route::SpaceAdminSection {
-                space_id: "ck:space:ops".to_owned(),
+            Route::RealmAdminSection {
+                realm_id: "ck:realm:ops".to_owned(),
                 section: "repair".to_owned(),
             }
-            .space_admin_section(),
+            .realm_admin_section(),
             Some("repair")
         );
         assert_eq!(
-            Route::SpaceAdmin {
-                space_id: "ck:space:ops".to_owned()
+            Route::RealmAdmin {
+                realm_id: "ck:realm:ops".to_owned()
             }
-            .space_admin_section(),
+            .realm_admin_section(),
             None
         );
     }

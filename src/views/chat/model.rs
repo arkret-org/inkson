@@ -873,15 +873,15 @@ pub(super) fn upsert_participant(
 
 /// Scan the local store's raw_operations for `ck.agent.endpoint`
 /// rows and return the set of agent DIDs that were registered in
-/// `space_id`. Used to mark `SpaceParticipant::is_agent` so member /
-/// mention / sender rows can render a 🤖 badge.
+/// `realm_id`. Used to mark `SpaceParticipant::is_agent` so member /
+/// mention / sender rows can render an agent badge.
 ///
 /// Reads the agent DID from `payload.body.agent_id` (per
 /// `crate::operation::cx_ops::agent_endpoint`). Returns an empty Vec
 /// when no agent endpoints are registered.
 pub(super) fn agent_ids_from_raw_operations(
     raw_operations: &[crate::local_state::RawOperationRecord],
-    space_id: &str,
+    realm_id: &str,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for record in raw_operations {
@@ -893,12 +893,8 @@ pub(super) fn agent_ids_from_raw_operations(
         if kind != "ck.agent.endpoint" {
             continue;
         }
-        // Filter by space_id when the record carries one; the
-        // `ck.agent.endpoint` builder always stamps `space_id` on the
-        // payload, but tolerate older rows by also accepting records
-        // with `space_id = None`.
-        if let Some(record_space) = record.space_id.as_deref()
-            && record_space != space_id
+        if let Some(record_realm) = record.realm_id.as_deref()
+            && record_realm != realm_id
         {
             continue;
         }
@@ -1871,15 +1867,11 @@ pub(super) fn poll_cards_from_sync_spaces(
 }
 
 pub(super) fn normalize_sync_space_id(space_id: &str) -> String {
-    let trimmed = space_id.trim();
-    trimmed
-        .strip_prefix("ck:space:")
-        .map(|suffix| format!("ck:realm:{suffix}"))
-        .unwrap_or_else(|| trimmed.to_owned())
+    space_id.trim().to_owned()
 }
 
 pub(super) fn sync_space_ids_match(left: &str, right: &str) -> bool {
-    left.trim() == right.trim() || normalize_sync_space_id(left) == normalize_sync_space_id(right)
+    normalize_sync_space_id(left) == normalize_sync_space_id(right)
 }
 
 pub(super) fn typing_actors_from_sync_spaces(
@@ -2028,7 +2020,7 @@ pub(super) fn chat_messages_from_local_state_with_sidecar(
         .iter()
         .filter_map(|record| {
             chat_message_from_event_with_sidecar(
-                record.space_id.as_deref().unwrap_or_default(),
+                record.realm_id.as_deref().unwrap_or_default(),
                 &record.payload,
                 state_store,
                 decrypt_identity,
@@ -2077,12 +2069,10 @@ pub(super) fn first_string_in_candidate_paths<'a>(
 
 pub(super) fn default_discussion_flow_id(space_id: &str) -> String {
     let trimmed = space_id.trim();
-    if let Some(suffix) = trimmed.strip_prefix("ck:space:") {
-        format!("ck:flow:{suffix}")
-    } else if let Some(suffix) = trimmed.strip_prefix("space:") {
-        format!("ck:flow:{suffix}")
-    } else if trimmed.starts_with("ck:flow:") {
+    if trimmed.starts_with("ck:flow:") {
         trimmed.to_owned()
+    } else if let Some(suffix) = trimmed.strip_prefix("ck:realm:") {
+        format!("ck:flow:{suffix}")
     } else {
         format!("ck:flow:{}", trimmed.trim_start_matches("ck:"))
     }
@@ -2440,7 +2430,7 @@ pub(super) fn channels_from_local_state(state: &ClientLocalState) -> Vec<Channel
         .iter()
         .filter_map(|record| {
             channel_from_flow_event(
-                record.space_id.as_deref().unwrap_or_default(),
+                record.realm_id.as_deref().unwrap_or_default(),
                 &record.payload,
             )
         })

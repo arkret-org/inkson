@@ -8,7 +8,7 @@
 //! The view is pure projection — writes go out through
 //! [`crate::api::CokretApi`] handlers that are wired up by the
 //! follow-up P3B.2 commits. The Realm-detail entry point lives in
-//! [`crate::views::space_admin`] (see the "create Circle" modal section
+//! [`crate::views::realm_admin`] (see the "create Circle" modal section
 //! at the bottom).
 
 use dioxus::prelude::*;

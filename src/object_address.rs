@@ -261,21 +261,21 @@ impl OpenedLink {
     /// route to be navigable; an alias-only address routes to the directory so
     /// the user can resolve it there.
     ///
-    /// yougen models a Realm/Flow as a "space" route (`/spaces/:space_id`,
-    /// `/timeline/:space_id`) and a Message as
-    /// `/timeline/:space_id/message/:message_id`. We route flow targets to the
+    /// yougen routes a Realm/Flow through the Realm timeline
+    /// (`/realms/:realm_id`, `/timeline/:realm_id`) and a Message as
+    /// `/timeline/:realm_id/message/:message_id`. We route flow targets to the
     /// flow's timeline and message targets to the message anchor.
     pub fn route_for(&self, target_kind: TargetKind) -> Route {
         match target_kind {
             TargetKind::Realm => match &self.address.realm {
-                RealmRef::RealmId(uuid) => Route::Space {
-                    space_id: typed_realm(uuid),
+                RealmRef::RealmId(uuid) => Route::Realm {
+                    realm_id: typed_realm(uuid),
                 },
                 RealmRef::Alias(_) => Route::Directory,
             },
             TargetKind::Flow => match self.address.flow.as_deref() {
                 Some(flow) => Route::TimelineSpace {
-                    space_id: typed_flow(flow),
+                    realm_id: typed_flow(flow),
                 },
                 None => Route::Directory,
             },
@@ -284,7 +284,7 @@ impl OpenedLink {
                 self.address.message.as_deref(),
             ) {
                 (Some(flow), Some(message)) => Route::TimelineMessage {
-                    space_id: typed_flow(flow),
+                    realm_id: typed_flow(flow),
                     message_id: typed_message(message),
                 },
                 _ => Route::Directory,
@@ -426,10 +426,10 @@ mod tests {
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
             Route::TimelineMessage {
-                space_id,
+                realm_id,
                 message_id,
             } => {
-                assert_eq!(space_id, format!("ck:flow:{F}"));
+                assert_eq!(realm_id, format!("ck:flow:{F}"));
                 assert_eq!(message_id, format!("ck:message:{M}"));
             }
             other => panic!("expected TimelineMessage route, got {other:?}"),
@@ -437,11 +437,11 @@ mod tests {
     }
 
     #[test]
-    fn realm_target_routes_to_space() {
+    fn realm_target_routes_to_realm() {
         let opened = OpenedLink::parse(&format!("web+cokret:realm/{R}")).unwrap();
         match opened.route_for(TargetKind::Realm) {
-            Route::Space { space_id } => assert_eq!(space_id, format!("ck:realm:{R}")),
-            other => panic!("expected Space route, got {other:?}"),
+            Route::Realm { realm_id } => assert_eq!(realm_id, format!("ck:realm:{R}")),
+            other => panic!("expected Realm route, got {other:?}"),
         }
     }
 

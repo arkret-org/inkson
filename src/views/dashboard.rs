@@ -148,7 +148,7 @@ pub fn DashboardPanel(
                 if let Some(space) = active_space.as_ref() {
                     Link {
                         class: "metric",
-                        to: Route::Space { space_id: space.space_id.clone() },
+                        to: Route::Realm { realm_id: space.space_id.clone() },
                         onclick: {
                             let id = space.space_id.clone();
                             move |_| {
@@ -162,7 +162,7 @@ pub fn DashboardPanel(
                     }
                     Link {
                         class: "metric",
-                        to: Route::KanbanSpace { space_id: space.space_id.clone() },
+                        to: Route::KanbanSpace { realm_id: space.space_id.clone() },
                         onclick: {
                             let id = space.space_id.clone();
                             move |_| {
@@ -250,7 +250,7 @@ pub fn DashboardPanel(
                                             class: "m-list-item",
                                             "data-testid": "dashboard-space-card",
                                             title: "{space.title}",
-                                            to: Route::Space { space_id: space.space_id.clone() },
+                                            to: Route::Realm { realm_id: space.space_id.clone() },
                                             onclick: {
                                                 let id = space.space_id.clone();
                                                 move |_| {

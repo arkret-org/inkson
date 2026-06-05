@@ -308,7 +308,6 @@ pub(crate) fn message_create_operation(
 fn default_flow_id_for_scope(scope_id: &str) -> String {
     scope_id
         .strip_prefix("ck:realm:")
-        .or_else(|| scope_id.strip_prefix("ck:space:"))
         .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| scope_id.to_owned())
 }
@@ -515,7 +514,7 @@ pub fn TimelinePanel(
                 })
                 .await
             {
-                let events = timeline_events_from_sync_spaces(&sync.spaces);
+                let events = timeline_events_from_sync_spaces(&sync.realms);
                 if !events.is_empty() {
                     let current = timeline();
                     timeline.set(crate::app::merge_timeline_events(&current, events));
@@ -869,7 +868,7 @@ pub fn TimelinePanel(
                                             ));
 
                                             // Resolve effective send preference per spec
-                                            // discovery/client-preferences.md §3.6 (flow → space →
+                                            // discovery/client-preferences.md §3.6 (flow → realm →
                                             // default). Server-side Realm `ck.realm.read_receipt_policy`
                                             // is not yet exposed to the client; until it is, treat
                                             // policy as `Optional` (no override) and defer to user pref.

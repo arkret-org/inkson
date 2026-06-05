@@ -539,7 +539,7 @@ fn render_revoke_modal(
                 p {
                     "This will write "
                     code { "ck.device.revoke" }
-                    " to your principal control space, remove the device from any E2EE space it participates in, and rotate the account MLS history secret. The action cannot be undone."
+                    " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
                 }
                 p { class: "muted", "data-testid": "device-revoke-threat-note",
                     "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."

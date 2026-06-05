@@ -1494,7 +1494,7 @@ mod tests {
     #[test]
     fn mls_history_accepts_secret_storage_key() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "group-a",
             3,
             b"opaque sdk state",
@@ -1562,7 +1562,7 @@ mod tests {
     #[test]
     fn mls_history_rejects_obvious_plaintext_fields() {
         let envelope = crate::mls::persistence::encrypt_state(
-            "ck:space:demo",
+            "ck:realm:demo",
             "group-a",
             3,
             b"not real sdk state",

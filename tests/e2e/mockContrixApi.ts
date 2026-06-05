@@ -1,10 +1,10 @@
 import type { Page, Route } from "@playwright/test";
 import { mockCokretContract } from "./mockCokretContract";
 
-const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
-const SETUP_SPACE = "ck:space:01js0setupflow000000000000";
-const CHILD_SPACE = "ck:space:01launchchild0000000000000";
-const GRANDCHILD_SPACE = "ck:space:01launchdeep00000000000000";
+const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
+const SETUP_REALM = "ck:realm:01js0setupflow000000000000";
+const CHILD_REALM = "ck:realm:01launchchild0000000000000";
+const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
 const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
 const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
@@ -43,25 +43,25 @@ export async function mockCokretApi(page: Page) {
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
   const eventRealmId = (event: Record<string, unknown>) =>
-    String(event.realm_id ?? event.space_id ?? "");
+    String(event.realm_id ?? "");
   const boardSpaceContainers: SpaceContainerProjection[] = [
     {
       container_space_id: DEMO_BOARD_SPACE,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "board",
       title: "Persisted demo board",
       state: "active",
     },
     {
       container_space_id: DEMO_SECOND_BOARD_SPACE,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "board",
       title: "Secondary planning board",
       state: "active",
     },
     {
       container_space_id: DEMO_TODO_LIST,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "list",
       title: "To Do",
       state: "active",
@@ -70,7 +70,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       container_space_id: DEMO_PROGRESS_LIST,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "list",
       title: "In Progress",
       state: "active",
@@ -79,7 +79,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       container_space_id: DEMO_DONE_LIST,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "list",
       title: "Done",
       state: "active",
@@ -88,7 +88,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       container_space_id: DEMO_SECOND_LIST,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       kind: "list",
       title: "Selected Backlog",
       state: "active",
@@ -99,7 +99,7 @@ export async function mockCokretApi(page: Page) {
   const boardFlowProjections: FlowProjection[] = [
     {
       flow_id: DEMO_FLOW_LEGAL_REVIEW,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       title: "Legal review for public beta",
       summary: "Finalize external processor wording before launch checklist can move.",
       state: "active",
@@ -117,7 +117,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       flow_id: DEMO_FLOW_ONBOARDING_COPY,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       title: "Onboarding copy",
       summary: "Waiting on discussion-scoped feedback from support and docs reviewers.",
       state: "active",
@@ -128,7 +128,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       flow_id: DEMO_FLOW_SECURITY_SIGNOFF,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       title: "Security sign-off",
       summary: "Projection detected a stale column head after an offline move.",
       state: "active",
@@ -139,7 +139,7 @@ export async function mockCokretApi(page: Page) {
     },
     {
       flow_id: DEMO_FLOW_SECONDARY_CARD,
-      realm_id: DEMO_SPACE,
+      realm_id: DEMO_REALM,
       title: "Secondary board card",
       summary: "Only visible after the Board selector switches projection scope.",
       state: "active",
@@ -368,7 +368,7 @@ export async function mockCokretApi(page: Page) {
     }
 
     if (url.pathname === "/_cokret/self/projection/spaces") {
-      const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
+      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
         total: boardSpaceContainers.length,
@@ -377,7 +377,7 @@ export async function mockCokretApi(page: Page) {
     }
 
     if (url.pathname === "/_cokret/self/projection/flows") {
-      const realmId = url.searchParams.get("realm_id") ?? DEMO_SPACE;
+      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
         total: boardFlowProjections.length,
@@ -417,11 +417,10 @@ export async function mockCokretApi(page: Page) {
         const raw = JSON.stringify(event);
         const id =
           event.realm_id ??
-          event.space_id ??
           event.payload?.realm_id ??
           event.payload?.object?.realm_id ??
           raw.match(/ck:realm:[0-9a-f-]+/)?.[0] ??
-          SETUP_SPACE;
+          SETUP_REALM;
         const title =
           event.payload?.object?.title ??
           event.payload?.title ??
@@ -447,7 +446,7 @@ export async function mockCokretApi(page: Page) {
         if (typeof containerId === "string" && !boardSpaceContainers.some((row) => row.container_space_id === containerId)) {
           boardSpaceContainers.push({
             container_space_id: containerId,
-            realm_id: object.realm_id ?? body.realm_id ?? DEMO_SPACE,
+            realm_id: object.realm_id ?? body.realm_id ?? DEMO_REALM,
             kind: object.kind ?? "list",
             title: object.title ?? containerId,
             state: "active",
@@ -459,8 +458,7 @@ export async function mockCokretApi(page: Page) {
       if (body.kind === "ck.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
-        const legacyRealmId = body.space_id;
-        const realmId = body.realm_id ?? legacyRealmId ?? DEMO_SPACE;
+        const realmId = body.realm_id ?? DEMO_REALM;
         timelineEvents.push({
           ...(body.payload ?? {}),
           event_id: body.event_id,
@@ -486,7 +484,7 @@ export async function mockCokretApi(page: Page) {
           const fields = object.fields ?? {};
           const nextProjection: FlowProjection = {
             flow_id: flowId,
-            realm_id: object.realm_id ?? body.realm_id ?? DEMO_SPACE,
+            realm_id: object.realm_id ?? body.realm_id ?? DEMO_REALM,
             title: object.title ?? body.payload?.title ?? flowId,
             summary: object.summary,
             state: "active",
@@ -506,7 +504,7 @@ export async function mockCokretApi(page: Page) {
           ...(body.payload ?? {}),
           event_id: body.event_id,
           kind: body.kind,
-          space_id: body.space_id ?? DEMO_SPACE,
+          realm_id: body.realm_id ?? DEMO_REALM,
           actor_id: body.actor_id ?? "did:web:alice.example",
           actor_seq: body.actor_seq,
           created_at: body.created_at ?? "2026-04-28T12:00:00Z",
@@ -715,7 +713,7 @@ export async function mockCokretApi(page: Page) {
     }
 
     if (url.pathname === "/_cokret/self/account/subscribe") {
-      const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_SPACE);
+      const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
       const frame = {
         kind: "delta",
         cursor: "ck:cursor:e2e-2",
@@ -729,7 +727,7 @@ export async function mockCokretApi(page: Page) {
                     title: realm.title,
                     summary: realm.summary,
                     encryption_profile: realm.encryption_profile,
-                    child_space_ids: [],
+                    child_realm_ids: [],
                   },
                   timeline: {
                     events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
@@ -741,35 +739,35 @@ export async function mockCokretApi(page: Page) {
                 },
               ]),
             ),
-            [DEMO_SPACE]: {
+            [DEMO_REALM]: {
               summary: {
                 title: "Cokret Demo Space",
                 summary: "Shared demo Space served by mocked server",
                 encryption_profile: "mls_rfc9420",
-                child_space_ids: [CHILD_SPACE],
+                child_realm_ids: [CHILD_REALM],
               },
               timeline: { events: demoTimelineEvents, limited: false },
               state: { events: [] },
               ephemeral: { events: [] },
               unread: { notification_count: 0, highlight_count: 0 },
             },
-            [CHILD_SPACE]: {
+            [CHILD_REALM]: {
               summary: {
                 title: "Launch Child Space",
                 summary: "Nested board and discussion scope",
-                parent_space_id: DEMO_SPACE,
-                child_space_ids: [GRANDCHILD_SPACE],
+                parent_realm_id: DEMO_REALM,
+                child_realm_ids: [GRANDCHILD_REALM],
               },
               timeline: { events: [], limited: false },
               state: { events: [] },
               ephemeral: { events: [] },
               unread: { notification_count: 0, highlight_count: 0 },
             },
-            [GRANDCHILD_SPACE]: {
+            [GRANDCHILD_REALM]: {
               summary: {
                 title: "Launch Deep Space",
                 summary: "Grandchild scope fixture",
-                parent_space_id: CHILD_SPACE,
+                parent_realm_id: CHILD_REALM,
               },
               timeline: { events: [], limited: false },
               state: { events: [] },
@@ -788,7 +786,7 @@ export async function mockCokretApi(page: Page) {
             notification_id: "notif-msg-1",
             title: "New message",
             body: "Alice sent a message in Demo Space",
-            space_id: DEMO_SPACE,
+            realm_id: DEMO_REALM,
             notification_kind: "message",
             type: "message",
             timestamp: "2026-04-28T12:01:00Z",
@@ -800,7 +798,7 @@ export async function mockCokretApi(page: Page) {
             invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
             title: "New invite",
             body: "You were invited to review Demo Space",
-            space_id: DEMO_SPACE,
+            realm_id: DEMO_REALM,
             notification_kind: "invite",
             type: "invite",
             timestamp: "2026-04-28T12:02:00Z",
@@ -820,7 +818,7 @@ export async function mockCokretApi(page: Page) {
 
     if (url.pathname === "/_cokret/find/directory/search-realms") {
       return json(route, {
-        results: [spacePreview()],
+        results: [realmPreview()],
         next_cursor: null,
       });
     }
@@ -889,7 +887,7 @@ export async function mockCokretApi(page: Page) {
 
     if (url.pathname === "/_cokret/find/directory/resolve-realm") {
       return json(route, {
-        realm_preview: spacePreview(),
+        realm_preview: realmPreview(),
         stripped_state: [],
         join_rule: "public",
         join_candidates: [joinCandidate()],
@@ -906,21 +904,21 @@ export async function mockCokretApi(page: Page) {
     }
 
     if (url.pathname === "/_cokret/self/events/query") {
-      const requestedSpaces = (url.searchParams.get("spaces") ?? "")
+      const requestedRealms = (url.searchParams.get("realms") ?? "")
         .split(",")
-        .map((space) => space.trim())
+        .map((realm) => realm.trim())
         .filter(Boolean);
-      const events = requestedSpaces.length
-        ? timelineEvents.filter((event) => requestedSpaces.includes(eventRealmId(event)))
+      const events = requestedRealms.length
+        ? timelineEvents.filter((event) => requestedRealms.includes(eventRealmId(event)))
         : timelineEvents;
       return json(route, { events, next_cursor: null, frontier: {} });
     }
 
     if (url.pathname === "/_cokret/self/snapshot/head") {
       return json(route, {
-        snapshot_ref: `ck:snapshot:${DEMO_SPACE}:head`,
+        snapshot_ref: `ck:snapshot:${DEMO_REALM}:head`,
         state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        frontier: { space_id: DEMO_SPACE },
+        frontier: { realm_id: DEMO_REALM },
         signature: { alg: "none" },
       });
     }
@@ -980,7 +978,7 @@ export async function mockCokretApi(page: Page) {
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
-            resource_selectors: ["space:ck:space:0196419b-0000-7000-8000-000000000000/**"],
+            resource_selectors: [`realm:${DEMO_REALM}`],
             constraints: [
               { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
               {
@@ -1058,7 +1056,7 @@ export async function mockCokretApi(page: Page) {
     if (url.pathname === "/_cokret/self/rtc/ice-config") {
       const body = await route.request().postDataJSON();
       return json(route, {
-        space_id: body.space_id ?? "ck:space:0196419b-0000-7000-8000-000000000000",
+        realm_id: body.realm_id ?? DEMO_REALM,
         call_id: body.call_id ?? "ck:call:01964137-0000-7000-8000-000000000001",
         actor_id: body.actor_id ?? "did:web:alice.example",
         device_id: body.device_id ?? "ck:device:01904100-0000-7000-8000-a11ce0000001",
@@ -1145,11 +1143,11 @@ async function contractRequestBody(route: Route) {
   }
 }
 
-function spacePreview() {
+function realmPreview() {
   return {
-    space_id: DEMO_SPACE,
-    name: "Cokret Demo Space",
-    description: "Shared demo Space served by mocked server",
+    realm_id: DEMO_REALM,
+    title: "Cokret Demo Realm",
+    description: "Shared demo Realm served by mocked server",
     tags: ["demo"],
     public: true,
     category: "collaboration",
@@ -1158,7 +1156,7 @@ function spacePreview() {
 
 function joinCandidate() {
   return {
-    realm_id: DEMO_SPACE.replace(/^ck:space:/, "ck:realm:"),
+    realm_id: DEMO_REALM,
     service_did: "did:web:server.local",
     service_type: "principal_server",
     role: "primary",

@@ -1,8 +1,8 @@
 use super::*;
 
 #[derive(Debug, serde::Deserialize)]
-struct PrincipalSpaceLookupResponse {
-    space_id: String,
+struct PrincipalRealmLookupResponse {
+    realm_id: String,
 }
 
 /// Canonical, protocol-namespace location of the auth-bridge describe
@@ -249,19 +249,19 @@ impl CokretApi {
     /// Submit a per-account `ck.account_data.set` event so settings UIs can
     /// push preferences (for example `ck.read_receipt.preferences`) to soland
     /// for cross-device sync. If the current server cannot resolve the
-    /// principal control Space yet, 404 / 501 / 405 still degrade to
+    /// principal control Realm yet, 404 / 501 / 405 still degrade to
     /// `Unsupported` and local state remains authoritative.
     pub async fn set_account_data(
         &self,
         type_key: &str,
         content: Value,
     ) -> anyhow::Result<AccountDataSetOutcome> {
-        let (actor, principal_space_id) = match self.account_data_actor_scope().await {
+        let (actor, principal_realm_id) = match self.account_data_actor_scope().await {
             Ok(scope) => scope,
             Err(error) => {
                 if let Some(status) = unsupported_status(&error) {
                     tracing::warn!(
-                        "principal-space lookup for account_data returned {status}; \
+                        "principal-realm lookup for account_data returned {status}; \
                          keeping local state authoritative"
                     );
                     return Ok(AccountDataSetOutcome::Unsupported { status });
@@ -271,7 +271,7 @@ impl CokretApi {
         };
         let key = crate::account_data::AccountDataKey::from_wire(type_key);
         let event =
-            crate::account_data::build_account_data_set(&principal_space_id, &actor, &key, content)
+            crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
                 .build("yougen-account-data");
         let result = self.submit_event_envelope(&event).await;
         match result {
@@ -295,7 +295,7 @@ impl CokretApi {
     /// `tombstone: true`. Same graceful-degradation contract as
     /// [`Self::set_account_data`].
     pub async fn delete_account_data(&self, type_key: &str) -> anyhow::Result<()> {
-        let (actor, principal_space_id) = match self.account_data_actor_scope().await {
+        let (actor, principal_realm_id) = match self.account_data_actor_scope().await {
             Ok(scope) => scope,
             Err(error) => {
                 if unsupported_status(&error).is_some() {
@@ -306,7 +306,7 @@ impl CokretApi {
         };
         let key = crate::account_data::AccountDataKey::from_wire(type_key);
         let event =
-            crate::account_data::build_account_data_tombstone(&principal_space_id, &actor, &key)
+            crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
                 .build("yougen-account-data");
         match self.submit_event_envelope(&event).await {
             Ok(_) => Ok(()),
@@ -364,13 +364,13 @@ impl CokretApi {
 
     async fn account_data_actor_scope(&self) -> anyhow::Result<(String, String)> {
         let account = self.account_me().await?;
-        let lookup: PrincipalSpaceLookupResponse = self
+        let lookup: PrincipalRealmLookupResponse = self
             .get_json(&format!(
-                "_soland/self/account/{}/principal-space",
+                "_soland/self/account/{}/principal-realm",
                 path_component(&account.did)
             ))
             .await?;
-        Ok((account.did, lookup.space_id))
+        Ok((account.did, lookup.realm_id))
     }
 
     pub async fn sync_describe(&self) -> anyhow::Result<SyncDescribeResBody> {

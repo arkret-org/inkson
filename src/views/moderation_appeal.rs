@@ -17,7 +17,7 @@
 //!    submits the `ck.moderation.appeal.submit` event via the durable event channel.
 //!
 //! The full reviewer surface (Review/Decision/Close authoring) is admin
-//! scope and lives in `space_admin.rs` once wired. See
+//! scope and lives in `realm_admin.rs` once wired. See
 //! `// TODO(round23-T06)` markers below for the deferred pieces.
 
 use chrono::Utc;

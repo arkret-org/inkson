@@ -16,7 +16,7 @@
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
-// | space_admin        | desktop/space-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ck.policy.{rule,action,set}, ck.capability.{grant,revoke,delegate}  |
+// | realm_admin        | desktop/realm-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ck.policy.{rule,action,set}, ck.capability.{grant,revoke,delegate}  |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ck.profile.update, ck.account.status, ck.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
@@ -82,7 +82,7 @@ pub mod recovery;
 /// settings/mod.rs head comment for the territory split (G3.Y1 vs G3.Y3).
 pub mod settings;
 pub mod setup;
-pub mod space_admin;
+pub mod realm_admin;
 pub mod timeline;
 pub mod verify_device;
 /// G3.Y4 — real WebRTC call surface (1:1 + group + mute + screen
@@ -102,7 +102,7 @@ pub enum View {
     Setup,
     Settings,
     VerifyDevice,
-    SpaceAdmin,
+    RealmAdmin,
     Kanban,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.

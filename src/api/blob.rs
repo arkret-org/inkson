@@ -61,17 +61,17 @@ impl CokretApi {
             .await
     }
 
-    /// Upload owned bytes with optional Space and filename metadata.
+    /// Upload owned bytes with optional Realm and filename metadata.
     ///
-    /// Message / task attachments should pass the current `space_id` so
+    /// Message / task attachments should pass the current `realm_id` so
     /// soland can enforce membership, plaintext-visibility policy and
-    /// per-Space quota on the authoritative blob record. Avatar and other
+    /// per-Realm quota on the authoritative blob record. Avatar and other
     /// actor-private uploads intentionally leave it unset.
     pub async fn upload_blob_bytes_scoped(
         &self,
         bytes: Vec<u8>,
         content_type: &str,
-        space_id: Option<&str>,
+        realm_id: Option<&str>,
         filename: Option<&str>,
     ) -> anyhow::Result<BlobUploadResBody> {
         let content_type = if content_type.trim().is_empty() {
@@ -84,8 +84,8 @@ impl CokretApi {
             .post(self.endpoint("_cokret/self/blob/upload")?)
             .header("content-type", content_type)
             .body(bytes);
-        if let Some(space_id) = space_id.filter(|value| !value.trim().is_empty()) {
-            request = request.header("x-cokret-space-id", space_id.trim());
+        if let Some(realm_id) = realm_id.filter(|value| !value.trim().is_empty()) {
+            request = request.header("x-cokret-realm-id", realm_id.trim());
         }
         if let Some(filename) = filename.and_then(safe_blob_filename_header) {
             request = request.header("x-cokret-filename", filename);
@@ -96,7 +96,7 @@ impl CokretApi {
 
     pub async fn upload_encrypted_mls_attachment_asset(
         &self,
-        space_id: &str,
+        realm_id: &str,
         asset: &crate::blob::EncryptedClientAsset,
     ) -> anyhow::Result<BlobUploadResBody> {
         let envelope = serde_json::to_string(&asset.envelope)?;
@@ -104,7 +104,7 @@ impl CokretApi {
             .http
             .post(self.endpoint("_cokret/self/blob/upload")?)
             .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
-            .header("x-cokret-space-id", space_id)
+            .header("x-cokret-realm-id", realm_id)
             .header("x-cokret-blob-encrypted", "true")
             .header("x-cokret-attachment-envelope", envelope)
             .header("x-cokret-content-digest", &asset.ciphertext_digest)

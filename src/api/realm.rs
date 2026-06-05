@@ -12,7 +12,7 @@ impl CokretApi {
     /// (`ck.realm.join_rule` / `ck.realm.history_visibility` /
     /// `ck.realm.discovery` / `ck.realm.plaintext_visible_services` /
     /// invitee `ck.member.state` invites) all pass the regular
-    /// `space_has_member` authz check naturally.
+    /// `realm_has_member` authz check naturally.
     ///
     /// All five create-locked fields per spec §2.3 (`encryption_profile`,
     /// `security_class`, `federation_policy`, `anchor_profile`,
@@ -48,11 +48,10 @@ impl CokretApi {
             return Err(anyhow::anyhow!("title is required for ck.realm.create"));
         }
 
-        // R1.7: the security boundary (formerly Space) is now Realm.
-        let space_id = format!("ck:realm:{}", uuid_v7());
+        let realm_id = format!("ck:realm:{}", uuid_v7());
         let join_rule = canonical_space_join_rule_v1(join_rule);
         let mut envelopes = build_realm_bootstrap_events(
-            &space_id,
+            &realm_id,
             actor_id,
             title,
             summary,
@@ -96,7 +95,7 @@ impl CokretApi {
 
         Ok(RealmCreateResponse {
             ok: true,
-            realm_id: space_id,
+            realm_id,
             owner: actor_id.to_owned(),
             members,
             state: "active".to_owned(),

@@ -888,7 +888,7 @@ pub fn RouterView() -> Element {
 
     // D1: detect the account-MLS unlock requirement as soon as a logged-in
     // session finishes bootstrap, without waiting for the user to enter a
-    // Space/Board/Document route that runs the per-space Welcome bootstrap.
+    // Space/Board/Document route that runs the per-Realm Welcome bootstrap.
     {
         let mut seen_detection_key = mls_unlock_detection_key_seen;
         let mut needs_mls_unlock = needs_mls_unlock;
@@ -997,20 +997,20 @@ pub fn RouterView() -> Element {
         });
     }
 
-    let routed_space_id = route.space_id().map(str::to_owned);
-    let remembered_space_id = selected_space();
-    let effective_space_id = routed_space_id.clone().or_else(|| {
-        if remembered_space_id.trim().is_empty() {
+    let routed_realm_id = route.realm_id().map(str::to_owned);
+    let remembered_realm_id = selected_space();
+    let effective_realm_id = routed_realm_id.clone().or_else(|| {
+        if remembered_realm_id.trim().is_empty() {
             None
         } else {
-            Some(remembered_space_id.clone())
+            Some(remembered_realm_id.clone())
         }
     });
-    let active_space_id = effective_space_id.clone().unwrap_or_default();
-    if let Some(route_space_id) = routed_space_id.as_deref()
-        && remembered_space_id != route_space_id
+    let active_realm_id = effective_realm_id.clone().unwrap_or_default();
+    if let Some(route_realm_id) = routed_realm_id.as_deref()
+        && remembered_realm_id != route_realm_id
     {
-        selected_space.set(route_space_id.to_owned());
+        selected_space.set(route_realm_id.to_owned());
     }
 
     let active_server_description = server_description();
@@ -1060,15 +1060,15 @@ pub fn RouterView() -> Element {
         .as_ref()
         .map(|description| description.supports_event_envelope_write_plane())
         .unwrap_or(false);
-    let route_uses_space_context = route_uses_space_context(&route);
-    let context_space_id = if route_uses_space_context {
-        effective_space_id.clone()
+    let route_uses_realm_context = route_uses_realm_context(&route);
+    let context_realm_id = if route_uses_realm_context {
+        effective_realm_id.clone()
     } else {
         None
     };
     {
-        let bootstrap_route_uses_space_context = route_uses_space_context;
-        let bootstrap_context_space_id = context_space_id.clone();
+        let bootstrap_route_uses_realm_context = route_uses_realm_context;
+        let bootstrap_context_realm_id = context_realm_id.clone();
         let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
         let state_store_for_bootstrap = state_store;
         let crypto_state_for_bootstrap = crypto_state;
@@ -1078,10 +1078,10 @@ pub fn RouterView() -> Element {
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         use_effect(move || {
             let selected = selected_space();
-            if !bootstrap_route_uses_space_context {
+            if !bootstrap_route_uses_realm_context {
                 return;
             }
-            let bootstrap_space_id = bootstrap_context_space_id
+            let bootstrap_realm_id = bootstrap_context_realm_id
                 .clone()
                 .filter(|space| !space.trim().is_empty())
                 .unwrap_or(selected);
@@ -1095,15 +1095,15 @@ pub fn RouterView() -> Element {
                 &session,
                 &actor,
                 &device,
-                &bootstrap_space_id,
+                &bootstrap_realm_id,
                 profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
                 sync_bootstrap_complete(),
             ) else {
                 return;
             };
-            // BUG X4: the per-space bootstrap caches its `seen` key, so after
+            // BUG X4: the per-Realm bootstrap caches its `seen` key, so after
             // the user's first encrypted write *creates* the account MLS
-            // secret (and this space's MLS snapshot) the detection would
+            // secret (and this Realm's MLS snapshot) the detection would
             // never re-run and the backup prompt would never appear. Read a
             // `state_store` signal in the synchronous body (`has_local_mls_snapshot`)
             // so Dioxus re-fires this effect when the write saves the snapshot,
@@ -1112,7 +1112,7 @@ pub fn RouterView() -> Element {
             // longer matches once they flip false→true.
             let has_local_mls_snapshot = state_store_for_bootstrap
                 .read()
-                .mls_snapshot_for(&bootstrap_space_id)
+                .mls_snapshot_for(&bootstrap_realm_id)
                 .is_some();
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
@@ -1131,7 +1131,7 @@ pub fn RouterView() -> Element {
             let state_store_task = state_store_for_bootstrap;
             let mut crypto_state_task = crypto_state_for_bootstrap;
             let mut last_error_task = last_error_for_bootstrap;
-            let space_label = short_protocol_id(&bootstrap_space_id);
+            let realm_label = short_protocol_id(&bootstrap_realm_id);
             // Detection-step clones: the originals are moved into the Welcome
             // bootstrap call below; we reuse these for the account-secret
             // unlock probe afterwards.
@@ -1141,12 +1141,12 @@ pub fn RouterView() -> Element {
             let detect_device = device.clone();
             let state_store_for_probe = state_store_for_bootstrap;
             spawn(async move {
-                match bootstrap_mls_welcome_for_space(
+                match bootstrap_mls_welcome_for_realm(
                     base,
                     session,
                     actor,
                     device,
-                    bootstrap_space_id,
+                    bootstrap_realm_id,
                     state_store_task,
                     needs_mls_backup_for_bootstrap,
                 )
@@ -1159,7 +1159,7 @@ pub fn RouterView() -> Element {
                             .map(short_protocol_id)
                             .unwrap_or_else(|| "not uploaded".to_owned());
                         crypto_state_task.set(format!(
-                            "MLS Welcome applied for {space_label}: {} group(s); history backup {backup_label}",
+                            "MLS Welcome applied for {realm_label}: {} group(s); history backup {backup_label}",
                             outcome.applied
                         ));
                     }
@@ -1225,13 +1225,13 @@ pub fn RouterView() -> Element {
             });
         });
     }
-    let resolved_space_surface = resolve_space_surface(
+    let resolved_realm_surface = resolve_realm_surface(
         &route,
         &state_store(),
         &account_did(),
-        context_space_id.as_deref(),
+        context_realm_id.as_deref(),
     );
-    if let (Some(space_id), Some(surface)) = (routed_space_id.as_deref(), resolved_space_surface)
+    if let (Some(space_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
             &route,
             Route::TimelineSpace { .. }
@@ -1242,9 +1242,9 @@ pub fn RouterView() -> Element {
         )
     {
         let stored_surface =
-            load_space_surface_preference(&state_store(), &account_did(), space_id);
+            load_realm_surface_preference(&state_store(), &account_did(), space_id);
         if stored_surface != surface {
-            persist_space_surface_preference(
+            persist_realm_surface_preference(
                 &mut state_store.write(),
                 &account_did(),
                 space_id,
@@ -1256,13 +1256,13 @@ pub fn RouterView() -> Element {
     let loaded_spaces = spaces();
     let selected_preview = loaded_spaces
         .iter()
-        .find(|space| context_space_id.as_deref() == Some(space.space_id.as_str()))
+        .find(|space| context_realm_id.as_deref() == Some(space.space_id.as_str()))
         .cloned();
     let active_scope_mode = space_scope_mode();
     let active_space_scope_ids =
-        scoped_space_ids(&loaded_spaces, &active_space_id, active_scope_mode);
+        scoped_space_ids(&loaded_spaces, &active_realm_id, active_scope_mode);
     let active_projection_realm_id =
-        projection_realm_id_for_known_space(&loaded_spaces, &active_space_id).unwrap_or_default();
+        projection_realm_id_for_known_space(&loaded_spaces, &active_realm_id).unwrap_or_default();
     let active_space_scope_set: BTreeSet<String> = active_space_scope_ids.iter().cloned().collect();
     let active_space_scope_count = active_space_scope_ids.len();
     let active_space_scope_label = if active_space_scope_count <= 1 {
@@ -1277,18 +1277,18 @@ pub fn RouterView() -> Element {
     let space_tree = space_tree_items(&loaded_spaces);
     let space_projections = state_store.read().load().space_projections;
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
-        active_space_id.as_str()
+        active_realm_id.as_str()
     } else {
         active_projection_realm_id.as_str()
     };
-    let active_space_security_encrypted = crate::security_state::security_projection_for_scope_id(
+    let active_realm_security_encrypted = crate::security_state::security_projection_for_scope_id(
         &space_projections,
         active_security_scope_id,
     )
     .or_else(|| {
         crate::security_state::security_projection_for_scope_id(
             &space_projections,
-            &active_space_id,
+            &active_realm_id,
         )
     })
     .map(crate::security_state::realm_projection_is_encrypted)
@@ -1311,14 +1311,14 @@ pub fn RouterView() -> Element {
     } else {
         "Switch to night theme"
     };
-    let route_title = resolved_space_surface
-        .map(SpaceSurface::title)
+    let route_title = resolved_realm_surface
+        .map(RealmSurface::title)
         .unwrap_or_else(|| route_label(&route));
     let topbar_context_title = selected_preview
         .as_ref()
         .map(|space| space.title.clone())
         .unwrap_or_else(|| {
-            if route_uses_space_context {
+            if route_uses_realm_context {
                 "Space".to_owned()
             } else {
                 route_title.to_owned()
@@ -1711,7 +1711,7 @@ pub fn RouterView() -> Element {
                                         Link {
                                             class: "secondary",
                                             "data-testid": "mobile-space-nav-button",
-                                            to: Route::Space { space_id: item.space.space_id.clone() },
+                                            to: Route::Realm { realm_id: item.space.space_id.clone() },
                                             onclick: {
                                                 let id = item.space.space_id.clone();
                                                 move |_| {
@@ -1958,7 +1958,7 @@ pub fn RouterView() -> Element {
                                 let item_space = item.space.clone();
                                 let depth_px = item.depth * 14;
                                 let in_scope = active_space_scope_set.contains(&item_space.space_id);
-                                let is_active = effective_space_id.as_deref() == Some(item_space.space_id.as_str());
+                                let is_active = effective_realm_id.as_deref() == Some(item_space.space_id.as_str());
                                 let item_class = if is_active {
                                     "sidebar-nav-item space-tree-item is-active"
                                 } else if in_scope {
@@ -2018,7 +2018,7 @@ pub fn RouterView() -> Element {
                                 "data-testid": "space-button",
                                 title: "{item_space.title}",
                                 style: "padding-left: calc(10px + {depth_px}px);",
-                                to: Route::Space { space_id: item_space.space_id.clone() },
+                                to: Route::Realm { realm_id: item_space.space_id.clone() },
                                 onclick: {
                                     let id = item_space.space_id.clone();
                                     move |_| selected_space.set(id.clone())
@@ -2128,17 +2128,17 @@ pub fn RouterView() -> Element {
                             }
                         }
                         div { class: "topbar-context", "data-testid": "topbar-crumbs",
-                            if route_uses_space_context && !active_space_id.is_empty() {
+                            if route_uses_realm_context && !active_realm_id.is_empty() {
                                 SecurityStateBadge {
-                                    encrypted: active_space_security_encrypted,
+                                    encrypted: active_realm_security_encrypted,
                                     compact: false,
                                     test_id: Some("space-security-state".to_owned()),
                                 }
                             }
                             span { class: "topbar-context-title", "data-testid": "space-title", "{topbar_context_title}" }
-                            if route_uses_space_context && !active_space_id.is_empty() {
+                            if route_uses_realm_context && !active_realm_id.is_empty() {
                                 {
-                                    let (current_surface_label, current_surface_icon) = match resolved_space_surface {
+                                    let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
                                         Some(surface) => (surface.short_label(), surface.icon_name()),
                                         None => ("Settings", "settings"),
                                     };
@@ -2153,20 +2153,20 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
-                            if route_uses_space_context && active_space_scope_count > 1 {
+                            if route_uses_realm_context && active_space_scope_count > 1 {
                                 span { class: "topbar-context-pill muted", "{active_space_scope_label}" }
                             }
-                            if !active_space_id.is_empty() {
-                                span { class: "sr-only mono", "data-testid": "selected-space-id", "{active_space_id}" }
+                            if !active_realm_id.is_empty() {
+                                span { class: "sr-only mono", "data-testid": "selected-realm-id", "{active_realm_id}" }
                             }
                         }
                     }
-                    if route_uses_space_context && !active_space_id.is_empty() {
+                    if route_uses_realm_context && !active_realm_id.is_empty() {
                         SpaceContextBar {
-                            space_id: active_space_id.clone(),
+                            space_id: active_realm_id.clone(),
                             scope_label: active_space_scope_label.clone(),
                             scope_count: active_space_scope_count,
-                            current_surface: resolved_space_surface,
+                            current_surface: resolved_realm_surface,
                             account_did: account_did(),
                             state_store,
                             minimal_ready,
@@ -2286,7 +2286,7 @@ pub fn RouterView() -> Element {
                                         on_pick_space: move |space_id: String| {
                                             selected_space.set(space_id.clone());
                                             view.set(crate::views::View::Timeline);
-                                            let _ = navigator.push(Route::Space { space_id });
+                                            let _ = navigator.push(Route::Realm { realm_id: space_id });
                                             palette_open.set(false);
                                             topbar_search_expanded.set(false);
                                             global_query.set(String::new());
@@ -2670,9 +2670,9 @@ pub fn RouterView() -> Element {
                             sync_cursor: sync_cursor(),
                         }
                     },
-                    Route::Space { .. } => {
-                        match resolved_space_surface.unwrap_or(SpaceSurface::Timeline) {
-                            SpaceSurface::Timeline => {
+                    Route::Realm { .. } => {
+                        match resolved_realm_surface.unwrap_or(RealmSurface::Timeline) {
+                            RealmSurface::Timeline => {
                                 if minimal_ready {
                                     rsx! {
                                         crate::views::timeline::TimelinePanel {
@@ -2680,7 +2680,7 @@ pub fn RouterView() -> Element {
                                             account_did: account_did(),
                                             device_id: device_id(),
                                             token,
-                                            selected_space: active_space_id.clone(),
+                                            selected_space: active_realm_id.clone(),
                                             selected_space_scope: active_space_scope_ids.clone(),
                                             timeline,
                                             draft,
@@ -2695,7 +2695,7 @@ pub fn RouterView() -> Element {
                                     rsx! { ProfileGateNotice { profile: "minimal_client" } }
                                 }
                             }
-                            SpaceSurface::Board => {
+                            RealmSurface::Board => {
                                 if kanban_ready {
                                     rsx! {
                                         crate::views::kanban::KanbanPanel {
@@ -2704,7 +2704,7 @@ pub fn RouterView() -> Element {
                                             token,
                                             account_did: account_did(),
                                             device_id: device_id(),
-                                            selected_space: active_space_id.clone(),
+                                            selected_space: active_realm_id.clone(),
                                             projection_realm_id: active_projection_realm_id.clone(),
                                             selected_space_scope: active_space_scope_ids.clone(),
                                             sync_cursor,
@@ -2717,13 +2717,13 @@ pub fn RouterView() -> Element {
                                     rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
                                 }
                             }
-                            SpaceSurface::Document => {
+                            RealmSurface::Document => {
                                 if full_ready {
                                     rsx! {
                                         crate::views::document::DocumentPanel {
                                             base_url: base_url(),
                                             token,
-                                            selected_space: active_space_id.clone(),
+                                            selected_space: active_realm_id.clone(),
                                             document_ref: None,
                                             state_store,
                                             account_did: account_did(),
@@ -2736,7 +2736,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
-                        if let Some(sid) = route.space_id()
+                        if let Some(sid) = route.realm_id()
                             && selected_space() != sid
                         {
                             selected_space.set(sid.to_owned());
@@ -2748,7 +2748,7 @@ pub fn RouterView() -> Element {
                                     account_did: account_did(),
                                     device_id: device_id(),
                                     token,
-                                    selected_space: active_space_id.clone(),
+                                    selected_space: active_realm_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
                                     timeline,
                                     draft,
@@ -2764,7 +2764,7 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Chat { .. } => {
-                        if let Some(sid) = route.space_id()
+                        if let Some(sid) = route.realm_id()
                             && selected_space() != sid
                         {
                             selected_space.set(sid.to_owned());
@@ -2777,12 +2777,12 @@ pub fn RouterView() -> Element {
                                     account_did: account_did(),
                                     device_id: device_id(),
                                     token,
-                                    selected_space: active_space_id.clone(),
+                                    selected_space: active_realm_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
-                                    initial_flow_id: default_flow_id_for_scope(&active_space_id),
+                                    initial_flow_id: default_flow_id_for_scope(&active_realm_id),
                                     embedded: false,
                                 }
                             }
@@ -2903,24 +2903,24 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "e2ee_client" } }
                         }
                     },
-                    Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => {
-                        if let Some(sid) = route.space_id()
+                    Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
+                        if let Some(sid) = route.realm_id()
                             && selected_space() != sid
                         {
                             selected_space.set(sid.to_owned());
                         }
                         if full_ready {
                             rsx! {
-                                crate::views::space_admin::SpaceAdminPanel {
+                                crate::views::realm_admin::RealmAdminPanel {
                                     base_url: base_url(),
                                     account_did: account_did(),
                                     device_id: device_id(),
                                     token,
-                                    selected_space: active_space_id.clone(),
+                                    selected_space: active_realm_id.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
-                                    active_section: route.space_admin_section().map(str::to_owned),
+                                    active_section: route.realm_admin_section().map(str::to_owned),
                                 }
                             }
                         } else {
@@ -2938,7 +2938,7 @@ pub fn RouterView() -> Element {
                     | Route::KanbanBoard { .. }
                     | Route::KanbanBoardTask { .. }
                     | Route::KanbanTask { .. } => {
-                        if let Some(sid) = route.space_id()
+                        if let Some(sid) = route.realm_id()
                             && selected_space() != sid
                         {
                             selected_space.set(sid.to_owned());
@@ -2951,7 +2951,7 @@ pub fn RouterView() -> Element {
                                     token,
                                     account_did: account_did(),
                                     device_id: device_id(),
-                                    selected_space: active_space_id.clone(),
+                                    selected_space: active_realm_id.clone(),
                                     projection_realm_id: active_projection_realm_id.clone(),
                                     selected_space_scope: active_space_scope_ids.clone(),
                                     sync_cursor,
@@ -2972,14 +2972,16 @@ pub fn RouterView() -> Element {
                         }
                     },
                     Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
-                        if let Some(sid) = route.space_id()
+                        if let Some(sid) = route.realm_id()
                             && selected_space() != sid
                         {
                             selected_space.set(sid.to_owned());
                         }
                         let document_ref = match &route {
-                            Route::DocumentSpace { space_id } if space_id.starts_with("ck:morph:") => {
-                                Some(space_id.clone())
+                            Route::DocumentSpace { realm_id }
+                                if realm_id.starts_with("ck:morph:") =>
+                            {
+                                Some(realm_id.clone())
                             }
                             _ => None,
                         };
@@ -2988,7 +2990,7 @@ pub fn RouterView() -> Element {
                                 crate::views::document::DocumentPanel {
                                     base_url: base_url(),
                                     token,
-                                    selected_space: active_space_id.clone(),
+                                    selected_space: active_realm_id.clone(),
                                     document_ref,
                                     state_store,
                                     account_did: account_did(),
@@ -3005,7 +3007,7 @@ pub fn RouterView() -> Element {
                                 base_url: base_url(),
                                 token,
                                 state_store,
-                                selected_space: active_space_id.clone(),
+                                selected_space: active_realm_id.clone(),
                                 account_did: account_did(),
                                 device_id: device_id(),
                             }
@@ -3098,7 +3100,7 @@ fn SpaceContextBar(
     space_id: String,
     scope_label: String,
     scope_count: usize,
-    current_surface: Option<SpaceSurface>,
+    current_surface: Option<RealmSurface>,
     account_did: String,
     state_store: Signal<LocalStateStore>,
     minimal_ready: bool,
@@ -3114,7 +3116,7 @@ fn SpaceContextBar(
     rsx! {
         div { class: "space-context-bar", "data-testid": "space-context-bar",
             div { class: "actions space-nav-inline", "data-testid": "space-context-inline",
-                for surface in SpaceSurface::top_nav() {
+                for surface in RealmSurface::top_nav() {
                     if surface.is_available(minimal_ready, kanban_ready, full_ready) {
                         Link {
                             class: if current_surface == Some(surface) { "primary" } else { "secondary" },
@@ -3123,7 +3125,7 @@ fn SpaceContextBar(
                                 let account_did = account_did.clone();
                                 let space_id = space_id.clone();
                                 move |_| {
-                                    persist_space_surface_preference(
+                                    persist_realm_surface_preference(
                                         &mut state_store.write(),
                                         &account_did,
                                         &space_id,
@@ -3145,44 +3147,44 @@ fn SpaceContextBar(
                 }
                 Link {
                     class: if current_surface.is_none() { "primary" } else { "secondary" },
-                    to: Route::SpaceAdmin { space_id: space_id.clone() },
+                    to: Route::RealmAdmin { realm_id: space_id.clone() },
                     UiIcon { name: "settings" }
                     "Settings"
                 }
             }
             div {
-                class: if menu_open() { "space-nav-menu-host is-open" } else { "space-nav-menu-host" },
+                class: if menu_open() { "realm-nav-menu-host is-open" } else { "realm-nav-menu-host" },
                 "data-testid": "space-context-menu",
                 button {
-                    class: "btn icon sm secondary space-nav-menu-button",
+                    class: "btn icon sm secondary realm-nav-menu-button",
                     "data-testid": "space-context-menu-button",
                     title: "Switch view: {current_nav_label}",
-                    "aria-label": "Switch Space view",
+                    "aria-label": "Switch Realm view",
                     "aria-expanded": "{menu_open()}",
                     onclick: move |_| menu_open.toggle(),
                     UiIcon { name: current_nav_icon }
                 }
                 if menu_open() {
                     button {
-                        class: "space-nav-menu-scrim",
-                        "aria-label": "Close Space view menu",
+                        class: "realm-nav-menu-scrim",
+                        "aria-label": "Close Realm view menu",
                         onclick: move |_| menu_open.set(false),
                     }
                     div {
-                        class: "space-nav-menu-panel",
+                        class: "realm-nav-menu-panel",
                         role: "menu",
-                        "aria-label": "Space views",
-                        for surface in SpaceSurface::top_nav() {
+                        "aria-label": "Realm views",
+                        for surface in RealmSurface::top_nav() {
                             if surface.is_available(minimal_ready, kanban_ready, full_ready) {
                                 Link {
-                                    class: if current_surface == Some(surface) { "space-nav-menu-item is-active" } else { "space-nav-menu-item" },
+                                    class: if current_surface == Some(surface) { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
                                     role: "menuitem",
                                     to: surface.route(space_id.clone()),
                                     onclick: {
                                         let account_did = account_did.clone();
                                         let space_id = space_id.clone();
                                         move |_| {
-                                            persist_space_surface_preference(
+                                            persist_realm_surface_preference(
                                                 &mut state_store.write(),
                                                 &account_did,
                                                 &space_id,
@@ -3196,7 +3198,7 @@ fn SpaceContextBar(
                                 }
                             } else {
                                 button {
-                                    class: "space-nav-menu-item",
+                                    class: "realm-nav-menu-item",
                                     role: "menuitem",
                                     disabled: true,
                                     UiIcon { name: surface.icon_name() }
@@ -3205,9 +3207,9 @@ fn SpaceContextBar(
                             }
                         }
                         Link {
-                            class: if current_surface.is_none() { "space-nav-menu-item is-active" } else { "space-nav-menu-item" },
+                            class: if current_surface.is_none() { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
                             role: "menuitem",
-                            to: Route::SpaceAdmin { space_id: space_id.clone() },
+                            to: Route::RealmAdmin { realm_id: space_id.clone() },
                             onclick: move |_| menu_open.set(false),
                             UiIcon { name: "settings" }
                             "Settings"
@@ -3435,13 +3437,13 @@ fn DeferredFeatureGate(feature: &'static str) -> Element {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SpaceSurface {
+enum RealmSurface {
     Timeline,
     Board,
     Document,
 }
 
-impl SpaceSurface {
+impl RealmSurface {
     fn top_nav() -> [Self; 3] {
         [Self::Timeline, Self::Board, Self::Document]
     }
@@ -3488,11 +3490,11 @@ impl SpaceSurface {
         }
     }
 
-    fn route(self, space_id: String) -> Route {
+    fn route(self, realm_id: String) -> Route {
         match self {
-            Self::Timeline => Route::TimelineSpace { space_id },
-            Self::Board => Route::KanbanSpace { space_id },
-            Self::Document => Route::DocumentSpace { space_id },
+            Self::Timeline => Route::TimelineSpace { realm_id },
+            Self::Board => Route::KanbanSpace { realm_id },
+            Self::Document => Route::DocumentSpace { realm_id },
         }
     }
 
@@ -3505,31 +3507,31 @@ impl SpaceSurface {
     }
 }
 
-fn space_surface_preference_key(space_id: &str) -> String {
-    format!("space_surface:{space_id}")
+fn realm_surface_preference_key(realm_id: &str) -> String {
+    format!("realm_surface:{realm_id}")
 }
 
-fn load_space_surface_preference(
+fn load_realm_surface_preference(
     state_store: &LocalStateStore,
     account_key: &str,
-    space_id: &str,
-) -> SpaceSurface {
+    realm_id: &str,
+) -> RealmSurface {
     if account_key.trim().is_empty() {
-        return SpaceSurface::Timeline;
+        return RealmSurface::Timeline;
     }
 
     state_store
-        .load_private_data(account_key, &space_surface_preference_key(space_id))
+        .load_private_data(account_key, &realm_surface_preference_key(realm_id))
         .as_deref()
-        .and_then(SpaceSurface::from_preference)
-        .unwrap_or(SpaceSurface::Timeline)
+        .and_then(RealmSurface::from_preference)
+        .unwrap_or(RealmSurface::Timeline)
 }
 
-fn persist_space_surface_preference(
+fn persist_realm_surface_preference(
     state_store: &mut LocalStateStore,
     account_key: &str,
-    space_id: &str,
-    surface: SpaceSurface,
+    realm_id: &str,
+    surface: RealmSurface,
 ) {
     if account_key.trim().is_empty() {
         return;
@@ -3537,7 +3539,7 @@ fn persist_space_surface_preference(
 
     state_store.save_private_data(
         account_key,
-        space_surface_preference_key(space_id),
+        realm_surface_preference_key(realm_id),
         surface.preference_value(),
     );
 }
@@ -3545,44 +3547,43 @@ fn persist_space_surface_preference(
 fn default_flow_id_for_scope(scope_id: &str) -> String {
     scope_id
         .strip_prefix("ck:realm:")
-        .or_else(|| scope_id.strip_prefix("ck:space:"))
         .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| scope_id.to_owned())
 }
 
-fn resolve_space_surface(
+fn resolve_realm_surface(
     route: &Route,
     state_store: &LocalStateStore,
     account_key: &str,
-    _effective_space_id: Option<&str>,
-) -> Option<SpaceSurface> {
+    _effective_realm_id: Option<&str>,
+) -> Option<RealmSurface> {
     match route {
-        Route::Space { space_id } => Some(load_space_surface_preference(
+        Route::Realm { realm_id } => Some(load_realm_surface_preference(
             state_store,
             account_key,
-            space_id,
+            realm_id,
         )),
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
-            Some(SpaceSurface::Timeline)
+            Some(RealmSurface::Timeline)
         }
         Route::Chat { .. } => None,
         Route::Kanban
         | Route::KanbanSpace { .. }
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
-        | Route::KanbanTask { .. } => Some(SpaceSurface::Board),
+        | Route::KanbanTask { .. } => Some(RealmSurface::Board),
         Route::Document | Route::DocumentNew | Route::DocumentSpace { .. } => {
-            Some(SpaceSurface::Document)
+            Some(RealmSurface::Document)
         }
-        Route::SpaceAdmin { .. } | Route::SpaceAdminSection { .. } => None,
+        Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => None,
         _ => None,
     }
 }
 
-fn route_uses_space_context(route: &Route) -> bool {
+fn route_uses_realm_context(route: &Route) -> bool {
     matches!(
         route,
-        Route::Space { .. }
+        Route::Realm { .. }
             | Route::Timeline
             | Route::TimelineSpace { .. }
             | Route::TimelineMessage { .. }
@@ -3595,8 +3596,8 @@ fn route_uses_space_context(route: &Route) -> bool {
             | Route::Document
             | Route::DocumentNew
             | Route::DocumentSpace { .. }
-            | Route::SpaceAdmin { .. }
-            | Route::SpaceAdminSection { .. }
+            | Route::RealmAdmin { .. }
+            | Route::RealmAdminSection { .. }
     )
 }
 
@@ -3604,11 +3605,7 @@ fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
-        // Route::Space resolves either a Realm or a Space projection
-        // depending on the id prefix — see the sidebar two-tier
-        // classification. Keep both protocol terms visible until a
-        // separate Realm view splits off.
-        Route::Space { .. } => "Realm / Space",
+        Route::Realm { .. } => "Realm",
         Route::Timeline | Route::TimelineSpace { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }
@@ -3625,15 +3622,15 @@ fn route_label(route: &Route) -> &'static str {
             "Settings"
         }
         Route::VerifyDevice => "Verify Device",
-        Route::SpaceAdmin { .. } => "Space Settings",
-        Route::SpaceAdminSection { section, .. } => match section.as_str() {
+        Route::RealmAdmin { .. } => "Realm Settings",
+        Route::RealmAdminSection { section, .. } => match section.as_str() {
             "members" => "Members Settings",
             "access" => "Access Policy",
             "security" => "Security & MLS",
             "governance" => "Governance",
             "federation" => "Federation Trust",
             "repair" => "Repair & Danger",
-            _ => "Space Settings",
+            _ => "Realm Settings",
         },
         Route::Audit => "Audit",
         Route::Developer => "Developer Tools",
@@ -3710,16 +3707,16 @@ struct MlsWelcomeBootstrapOutcome {
     backup_id: Option<String>,
 }
 
-async fn bootstrap_mls_welcome_for_space(
+async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_token: String,
     actor_did: String,
     device_id: String,
-    space_id: String,
+    realm_id: String,
     mut state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
-    if session_token.trim().is_empty() || space_id.trim().is_empty() {
+    if session_token.trim().is_empty() || realm_id.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
@@ -3744,7 +3741,7 @@ async fn bootstrap_mls_welcome_for_space(
         crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
             &mut store,
             secure_store.as_ref(),
-            &space_id,
+            &realm_id,
             &actor_did,
             &device_id,
             &messages_value,
@@ -3757,7 +3754,7 @@ async fn bootstrap_mls_welcome_for_space(
     // `failed == 0` and is silent.
     if welcome_outcome.failed > 0 {
         tracing::warn!(
-            space = %space_id,
+            realm = %realm_id,
             applied = welcome_outcome.applied,
             failed = welcome_outcome.failed,
             first_error = welcome_outcome.first_error.as_deref().unwrap_or(""),
@@ -3781,7 +3778,7 @@ async fn bootstrap_mls_welcome_for_space(
     )
     .await;
 
-    let Some(snapshot) = state_store.read().mls_snapshot_for(&space_id) else {
+    let Some(snapshot) = state_store.read().mls_snapshot_for(&realm_id) else {
         return Ok(MlsWelcomeBootstrapOutcome {
             applied,
             backup_id: None,
@@ -4468,7 +4465,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             // so keep local container projections while their
                             // home Realm is still present.
                             let server_set: BTreeSet<String> =
-                                sync.spaces.keys().cloned().collect();
+                                sync.realms.keys().cloned().collect();
                             let keep_set = full_sync_projection_keep_set(
                                 &server_set,
                                 &store.load().space_projections,
@@ -4480,17 +4477,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     "full sync pruned stale space projections",
                                 );
                             }
-                            // Explicit `left_spaces` deltas — soland emits
+                            // Explicit `left_realms` deltas — soland emits
                             // these on incremental syncs too; for full sync
                             // they're redundant with `retain_space_projections`
                             // above but cheap to apply when soland evolves
                             // to send them on full sync.
-                            for left_id in &sync.left_spaces {
+                            for left_id in &sync.left_realms {
                                 store.forget_space(left_id);
                             }
-                            for (id, body) in &sync.spaces {
+                            for (id, body) in &sync.realms {
                                 store.save_space_projection(id.clone(), body.clone());
-                                // Thread the per-Space Anchor view (frontier /
+                                // Thread the per-Realm Anchor view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read
                                 // it. Bodies without an `anchor_view` field
@@ -4640,7 +4637,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 last_error.set(Some(format!("state_store flush failed: {error}")));
                             }
                         }
-                        let synced_timeline = timeline_events_from_sync_spaces(&sync.spaces);
+                        let synced_timeline = timeline_events_from_sync_spaces(&sync.realms);
                         // `spaces` is derived from `state_store.space_projections`
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
@@ -5285,19 +5282,19 @@ mod tests {
 
     #[test]
     fn space_top_nav_excludes_discussion_surface() {
-        let surfaces = SpaceSurface::top_nav();
+        let surfaces = RealmSurface::top_nav();
 
         assert_eq!(
             surfaces,
             [
-                SpaceSurface::Timeline,
-                SpaceSurface::Board,
-                SpaceSurface::Document
+                RealmSurface::Timeline,
+                RealmSurface::Board,
+                RealmSurface::Document
             ]
         );
         assert_eq!(
-            SpaceSurface::from_preference("discussion"),
-            Some(SpaceSurface::Board)
+            RealmSurface::from_preference("discussion"),
+            Some(RealmSurface::Board)
         );
     }
 
@@ -5325,15 +5322,15 @@ mod tests {
     }
 
     #[test]
-    fn kanban_board_route_uses_space_context_for_mls_bootstrap() {
+    fn kanban_board_route_uses_realm_context_for_mls_bootstrap() {
         let route = Route::KanbanBoard {
-            space_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
             board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
         };
 
-        assert!(route_uses_space_context(&route));
+        assert!(route_uses_realm_context(&route));
         assert_eq!(
-            route.space_id(),
+            route.realm_id(),
             Some("ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
         );
     }
@@ -5341,17 +5338,17 @@ mod tests {
     #[test]
     fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
         let route = Route::KanbanBoard {
-            space_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+            realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
             board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
         };
-        let space_id = route.space_id().expect("board route carries a realm id");
+        let realm_id = route.realm_id().expect("board route carries a realm id");
 
         let key = mls_welcome_bootstrap_key(
             "http://localhost:8080",
             "secret-session-token",
             "did:web:yougen.example",
             "ck:device:01964137-0000-7000-8000-000000000001",
-            space_id,
+            realm_id,
             true,
             true,
         )

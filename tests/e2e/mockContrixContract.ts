@@ -3,7 +3,7 @@
 // `cotest/tests/fixtures/yougen_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
-const DEMO_SPACE = "ck:space:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 
 export function mockCokretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
@@ -74,7 +74,7 @@ export function mockCokretContract(req) {
 
   if (method === "POST" && path === "/_cokret/find/directory/search-realms") {
     return json({
-      results: [spacePreview()],
+      results: [realmPreview()],
       next_cursor: null,
     });
   }
@@ -147,11 +147,11 @@ function json(body, status = 200) {
 // (see `soland/src/routing/spaces/directory.rs::search_realms`). The fields
 // here MUST stay aligned with that endpoint — the cotest parity test runs
 // this response against a live soland process.
-function spacePreview() {
+function realmPreview() {
   return {
-    realm_id: DEMO_SPACE.replace(/^ck:space:/, "ck:realm:"),
-    name: "Cokret Demo Space",
-    description: "Shared demo Space served by mocked server",
+    realm_id: DEMO_REALM,
+    title: "Cokret Demo Realm",
+    description: "Shared demo Realm served by mocked server",
     public: true,
     category: null,
     members: ["did:web:alice.example"],

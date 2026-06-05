@@ -17,7 +17,7 @@
 //!
 //! Each result row carries:
 //! - `global-search-result-item` on the wrapper
-//! - `global-search-result-space` for the source Space id
+//! - `global-search-result-realm` for the source Realm id
 //! - `global-search-result-snippet` for the body excerpt
 
 use dioxus::prelude::*;
@@ -76,13 +76,13 @@ pub struct SearchDestination {
 
 /// Resolve a search result to the most specific local target we can
 /// express. Newer soland rows may carry `message_id`, `event_id`,
-/// `surface`, or `task_id`; older rows still degrade to the Space overview.
+/// `surface`, or `task_id`; otherwise rows degrade to the Realm overview.
 pub fn result_destination(result: &Value) -> Option<SearchDestination> {
-    let space_id = result.get("space_id").and_then(Value::as_str)?;
+    let realm_id = result.get("realm_id").and_then(Value::as_str)?;
     if let Some(task_id) = string_field(result, &["task_id"]) {
         return Some(SearchDestination {
             route: Route::KanbanTask {
-                space_id: space_id.to_owned(),
+                realm_id: realm_id.to_owned(),
                 task_id: task_id.clone(),
             },
             anchor: Some(task_id),
@@ -93,7 +93,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     if let Some(message_id) = string_field(result, &["message_id", "event_id", "object_id"]) {
         return Some(SearchDestination {
             route: Route::TimelineMessage {
-                space_id: space_id.to_owned(),
+                realm_id: realm_id.to_owned(),
                 message_id: message_id.clone(),
             },
             anchor: Some(message_id),
@@ -107,19 +107,19 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
         .unwrap_or_default();
     let route = match surface {
         "timeline" | "message" => Route::TimelineSpace {
-            space_id: space_id.to_owned(),
+            realm_id: realm_id.to_owned(),
         },
         "kanban" | "board" => Route::KanbanSpace {
-            space_id: space_id.to_owned(),
+            realm_id: realm_id.to_owned(),
         },
         "chat" | "discussion" => Route::KanbanSpace {
-            space_id: space_id.to_owned(),
+            realm_id: realm_id.to_owned(),
         },
         "document" => Route::DocumentSpace {
-            space_id: space_id.to_owned(),
+            realm_id: realm_id.to_owned(),
         },
-        _ => Route::Space {
-            space_id: space_id.to_owned(),
+        _ => Route::Realm {
+            realm_id: realm_id.to_owned(),
         },
     };
     Some(SearchDestination {
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn result_destination_prefers_message_anchor() {
         let row = json!({
-            "space_id": "ck:space:demo",
+            "realm_id": "ck:realm:demo",
             "event_id": "ck:event:message",
             "content": {"body": "hit"}
         });
@@ -415,10 +415,10 @@ mod tests {
         assert_eq!(destination.anchor.as_deref(), Some("ck:event:message"));
         match destination.route {
             Route::TimelineMessage {
-                space_id,
+                realm_id,
                 message_id,
             } => {
-                assert_eq!(space_id, "ck:space:demo");
+                assert_eq!(realm_id, "ck:realm:demo");
                 assert_eq!(message_id, "ck:event:message");
             }
             other => panic!("expected TimelineMessage, got {other:?}"),

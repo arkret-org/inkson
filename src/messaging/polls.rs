@@ -383,7 +383,7 @@ fn flow_id_value(value: &str) -> cokret_sdk::FlowId {
 
 /// Build the `ck.content.poll.create` envelope for the wire.
 pub fn build_poll_create_op(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     flow_id: &str,
     poll_id: &str,
@@ -407,7 +407,7 @@ pub fn build_poll_create_op(
         sdk_payload_value(content.to_value(), "poll create content serialize"),
     )
     .with_message_id(poll_id);
-    let mut envelope = OperationBuilder::new(space_id, actor, "ck.message.create")
+    let mut envelope = OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(flow_id)
         .body(sdk_payload_value(
             payload.to_value(),
@@ -424,12 +424,12 @@ pub fn build_poll_create_op(
 /// vote. The multi-select variant is left for the soland-side reducer
 /// work referenced above.
 pub fn build_poll_vote_op(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     poll_id: &str,
     option_id: &str,
 ) -> EventEnvelope {
-    let flow_id = flow_id_from_space_id(space_id);
+    let flow_id = flow_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.response", "poll response")
         .with_field("poll_id", json!(poll_id))
         .with_field("choice", json!(option_id));
@@ -438,7 +438,7 @@ pub fn build_poll_vote_op(
         "discussion",
         sdk_payload_value(content.to_value(), "poll vote content serialize"),
     );
-    OperationBuilder::new(space_id, actor, "ck.message.create")
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
@@ -448,8 +448,8 @@ pub fn build_poll_vote_op(
 }
 
 /// Build the `ck.content.poll.close` envelope.
-pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
-    let flow_id = flow_id_from_space_id(space_id);
+pub fn build_poll_close_op(realm_id: &str, actor: &str, poll_id: &str) -> EventEnvelope {
+    let flow_id = flow_id_from_realm_id(realm_id);
     let content = cokret_sdk::ContentBlock::new("ck.content.poll.close", "poll closed")
         .with_field("poll_id", json!(poll_id));
     let payload = cokret_sdk::MessageCreatePayload::with_content(
@@ -457,7 +457,7 @@ pub fn build_poll_close_op(space_id: &str, actor: &str, poll_id: &str) -> EventE
         "discussion",
         sdk_payload_value(content.to_value(), "poll close content serialize"),
     );
-    OperationBuilder::new(space_id, actor, "ck.message.create")
+    OperationBuilder::new(realm_id, actor, "ck.message.create")
         .target_ref(poll_id)
         .body(sdk_payload_value(
             payload.to_value(),
@@ -471,8 +471,11 @@ pub fn new_poll_id() -> String {
     format!("poll-{}", uuid_v7())
 }
 
-fn flow_id_from_space_id(space_id: &str) -> String {
-    let suffix = space_id.replace("ck:realm:", "").replace("ck:space:", "");
+fn flow_id_from_realm_id(realm_id: &str) -> String {
+    let suffix = realm_id
+        .trim()
+        .strip_prefix("ck:realm:")
+        .unwrap_or_else(|| realm_id.trim());
     format!("ck:flow:{suffix}")
 }
 
@@ -544,7 +547,7 @@ mod tests {
         draft.set_option(0, "yes".into());
         draft.set_option(1, "no".into());
         let op = build_poll_create_op(
-            "ck:space:01904100-0000-7000-8000-000000000010",
+            "ck:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "ck:flow:01904100-0000-7000-8000-000000000011",
             "poll-x",

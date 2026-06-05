@@ -114,16 +114,16 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
   });
 
-  test("cross-signing: Run setup submits ck.cross_signing.publish into the principal control space", async ({
+  test("cross-signing: Run setup submits ck.cross_signing.publish into the principal control Realm", async ({
     page,
   }) => {
     // D2 — formerly unwritten. The verify-device panel now runs the
     // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
     // binding signatures + persist to a SecureKeyStore), then submits
     // the publish content as `ck.cross_signing.publish` into the
-    // principal control space (`ck:space:control:<did>`). This test
+    // principal control Realm. This test
     // catches regressions in: (a) the executor's wire-shape contract,
-    // (b) the control-space pinning, (c) the SDK binding alg field, and
+    // (b) the control-Realm pinning, (c) the SDK binding alg field, and
     // (d) the local-state writeback that keeps the panel's status line
     // hydrated across reloads.
     await page.addInitScript(() => {
@@ -164,10 +164,11 @@ test.describe("feature coverage placeholders", () => {
     const body = publishRequest.postDataJSON() as Record<string, unknown>;
     expect(body.kind).toBe("ck.cross_signing.publish");
 
-    // The envelope MUST target the principal control space (spec
-    // key-management.md §4.1). Yougen derives it via
-    // `ck:space:control:<actor_did>`.
-    expect(body.space_id).toBe("ck:space:control:did:web:alice.example");
+    // The envelope MUST target the principal control Realm (spec
+    // key-management.md §4.1).
+    expect(typeof body.realm_id).toBe("string");
+    expect((body.realm_id as string).startsWith("ck:realm:")).toBe(true);
+    expect(body.space_id).toBeUndefined();
 
     // Drill into the publish content payload: the executor MUST emit a
     // structurally complete publish (3 keys + binding + generation).
@@ -450,7 +451,7 @@ test.describe("feature coverage placeholders", () => {
     for (const leak of [
       "body",
       "message_body",
-      "space_title",
+      "realm_title",
       "title",
       "sender",
       "collapse_key",

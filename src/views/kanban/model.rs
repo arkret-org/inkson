@@ -1557,8 +1557,7 @@ pub(super) fn raw_operation_from_event(
 
     Some(RawOperationRecord {
         operation_id: operation_id.clone(),
-        space_id: json_path_string(Some(event), &["space_id"])
-            .or_else(|| json_path_string(Some(event), &["realm_id"]))
+        realm_id: json_path_string(Some(event), &["realm_id"])
             .or_else(|| json_path_string(Some(&body), &["object", "realm_id"])),
         received_at,
         payload: json!({
@@ -1984,7 +1983,7 @@ pub(super) fn local_space_create_from_raw_operation(
     }
     let realm_id = json_path_string(Some(object), &["realm_id"]).or_else(|| {
         record
-            .space_id
+            .realm_id
             .as_ref()
             .map(|space_id| scope_id_as_realm_id(space_id))
     });

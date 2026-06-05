@@ -232,7 +232,7 @@ fn toast_editor_bootstrap_script(
                 headers.authorization = `Bearer ${{config.token}}`;
             }}
             if (config.spaceId) {{
-                headers["x-cokret-space-id"] = config.spaceId;
+                headers["x-cokret-realm-id"] = config.spaceId;
             }}
             const safeName = (blob.name || "")
                 .split(/[\\/]/)
@@ -1209,9 +1209,9 @@ pub fn KanbanPanel(
         .count();
     let board_selected = !selected_board_space_id().trim().is_empty();
     // Pre-wrapped Realm id for building board / card URLs inside event
-    // handlers (the raw `selected_space` String can't be moved into more
+    // handlers (the raw selected Realm String can't be moved into more
     // than one closure).
-    let board_route_space_id = card_detail_route_space_id(&selected_space);
+    let board_route_realm_id = card_detail_route_realm_id(&selected_space);
     // R4 (fail-closed): three-state security signal. `Some(true/false)` means
     // the Realm security projection IS known (encrypted / plaintext); `None`
     // means the projection is missing / not yet synced. We deliberately drop
@@ -1264,7 +1264,7 @@ pub fn KanbanPanel(
                         div {
                             class: if board_popover() == BoardToolbarPopover::SelectBoard { "board-select-menu-host is-open" } else { "board-select-menu-host" },
                             {
-                                let board_route_space_id_for_select = board_route_space_id.clone();
+                                let board_route_realm_id_for_select = board_route_realm_id.clone();
                                 let local_realm_id_for_select = local_realm_id.clone();
                                 let account_did_for_select = account_did.clone();
                                 let device_id_for_select = device_id.clone();
@@ -1279,7 +1279,7 @@ pub fn KanbanPanel(
                                                 selected_board_space_id,
                                                 board_popover,
                                                 selected_card,
-                                                board_route_space_id_for_select.clone(),
+                                                board_route_realm_id_for_select.clone(),
                                                 local_realm_id_for_select.clone(),
                                                 lifecycle_container_projection,
                                                 lifecycle_flow_projection,
@@ -1332,7 +1332,7 @@ pub fn KanbanPanel(
                                     role: "listbox",
                                     "aria-label": "Boards",
                                     {
-                                        let board_route_space_id_for_empty = board_route_space_id.clone();
+                                        let board_route_realm_id_for_empty = board_route_realm_id.clone();
                                         let local_realm_id_for_empty = local_realm_id.clone();
                                         let account_did_for_empty = account_did.clone();
                                         let device_id_for_empty = device_id.clone();
@@ -1347,7 +1347,7 @@ pub fn KanbanPanel(
                                                         selected_board_space_id,
                                                         board_popover,
                                                         selected_card,
-                                                        board_route_space_id_for_empty.clone(),
+                                                        board_route_realm_id_for_empty.clone(),
                                                         local_realm_id_for_empty.clone(),
                                                         lifecycle_container_projection,
                                                         lifecycle_flow_projection,
@@ -1371,7 +1371,7 @@ pub fn KanbanPanel(
                                             let option_id = board_option.id.clone();
                                             let option_title = board_option.title.clone();
                                             let option_is_active = selected_board_space_id() == option_id;
-                                            let board_route_space_id_for_option = board_route_space_id.clone();
+                                            let board_route_realm_id_for_option = board_route_realm_id.clone();
                                             let local_realm_id_for_option = local_realm_id.clone();
                                             let account_did_for_option = account_did.clone();
                                             let device_id_for_option = device_id.clone();
@@ -1391,7 +1391,7 @@ pub fn KanbanPanel(
                                                                 selected_board_space_id,
                                                                 board_popover,
                                                                 selected_card,
-                                                                board_route_space_id_for_option.clone(),
+                                                                board_route_realm_id_for_option.clone(),
                                                                 local_realm_id_for_option.clone(),
                                                                 lifecycle_container_projection,
                                                                 lifecycle_flow_projection,
@@ -2107,7 +2107,7 @@ pub fn KanbanPanel(
                                 ondragend: move |_| dragging_card.set(None),
                                 onclick: {
                                     let c = card.clone();
-                                    let route_space_id = card_detail_route_space_id(&selected_space);
+                                    let route_realm_id = card_detail_route_realm_id(&selected_space);
                                     move |_| {
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
@@ -2128,7 +2128,7 @@ pub fn KanbanPanel(
                                         card_detail_overlay_press_ended.set(false);
                                         selected_card.set(Some(c.clone()));
                                         let _ = navigator.push(kanban_card_task_route(
-                                            &route_space_id,
+                                            &route_realm_id,
                                             &selected_board_space_id(),
                                             &c.id,
                                         ));
@@ -3943,14 +3943,14 @@ fn route_board_id(route: &Route) -> Option<String> {
 
 /// Build the URL for selecting a board (no card open). Falls back to the
 /// board-less `/kanban/<realm>` route when no board is selected yet.
-fn kanban_board_route(space_id: &str, board_id: &str) -> Route {
-    let space_id = card_detail_route_space_id(space_id);
+fn kanban_board_route(realm_id: &str, board_id: &str) -> Route {
+    let realm_id = card_detail_route_realm_id(realm_id);
     let board_id = board_id.trim();
     if board_id.is_empty() {
-        Route::KanbanSpace { space_id }
+        Route::KanbanSpace { realm_id }
     } else {
         Route::KanbanBoard {
-            space_id,
+            realm_id,
             board_id: board_id.to_owned(),
         }
     }
@@ -3959,15 +3959,15 @@ fn kanban_board_route(space_id: &str, board_id: &str) -> Route {
 /// Build the URL for an open card. Prefers the board-carrying form so a
 /// refresh restores the board; falls back to the board-less task route
 /// when the board id is unknown.
-fn kanban_card_task_route(space_id: &str, board_id: &str, task_id: &str) -> Route {
-    let space_id = card_detail_route_space_id(space_id);
+fn kanban_card_task_route(realm_id: &str, board_id: &str, task_id: &str) -> Route {
+    let realm_id = card_detail_route_realm_id(realm_id);
     let board_id = board_id.trim();
     let task_id = task_id.trim().to_owned();
     if board_id.is_empty() {
-        Route::KanbanTask { space_id, task_id }
+        Route::KanbanTask { realm_id, task_id }
     } else {
         Route::KanbanBoardTask {
-            space_id,
+            realm_id,
             board_id: board_id.to_owned(),
             task_id,
         }
@@ -4724,28 +4724,28 @@ fn card_synthesis_track_entries(
     entries
 }
 
-fn card_detail_route_space_id(space_id: &str) -> String {
-    let space_id = space_id.trim();
-    if space_id.is_empty() {
+fn card_detail_route_realm_id(realm_id: &str) -> String {
+    let realm_id = realm_id.trim();
+    if realm_id.is_empty() {
         DEMO_BOARD_SPACE_ID.to_owned()
     } else {
-        space_id.to_owned()
+        realm_id.to_owned()
     }
 }
 
-fn kanban_card_detail_board_route(space_id: &str, board_id: &str) -> Route {
-    let space_id = space_id.trim();
-    if space_id.is_empty() {
+fn kanban_card_detail_board_route(realm_id: &str, board_id: &str) -> Route {
+    let realm_id = realm_id.trim();
+    if realm_id.is_empty() {
         Route::Kanban
     } else {
-        kanban_board_route(space_id, board_id)
+        kanban_board_route(realm_id, board_id)
     }
 }
 
-fn flow_detail_deep_link_path(space_id: &str, flow_id: &str) -> String {
+fn flow_detail_deep_link_path(realm_id: &str, flow_id: &str) -> String {
     format!(
         "/kanban/{}/task/{}",
-        card_detail_route_space_id(space_id),
+        card_detail_route_realm_id(realm_id),
         flow_id.trim()
     )
 }
@@ -5920,7 +5920,7 @@ fn select_kanban_board(
     mut selected_board_space_id: Signal<String>,
     mut board_popover: Signal<BoardToolbarPopover>,
     mut selected_card: Signal<Option<KanbanCard>>,
-    board_route_space_id: String,
+    board_route_realm_id: String,
     local_realm_id: String,
     lifecycle_container_projection: Signal<Vec<crate::api::SpaceContainerProjectionView>>,
     lifecycle_flow_projection: Signal<Vec<crate::api::FlowProjectionView>>,
@@ -5945,20 +5945,20 @@ fn select_kanban_board(
         columns.set(Vec::new());
         adding_card_to.set(None);
         board_status.set("Select or create a board before adding lists".to_owned());
-        replace_kanban_board_url(&board_route_space_id, &board_id);
+        replace_kanban_board_url(&board_route_realm_id, &board_id);
         return;
     }
     if containers.is_empty() && flows.is_empty() {
         let raw_operations = state_store.read().load().raw_operations;
         if raw_operations.is_empty() {
             board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
-            replace_kanban_board_url(&board_route_space_id, &board_id);
+            replace_kanban_board_url(&board_route_realm_id, &board_id);
             return;
         }
         let decrypt_store = state_store.read();
         let decrypt_ctx = MlsDecryptCtx {
             state_store: &decrypt_store,
-            space_id: &board_route_space_id,
+            space_id: &board_route_realm_id,
             actor_did: &decrypt_actor,
             device_id: &decrypt_device,
         };
@@ -5993,14 +5993,14 @@ fn select_kanban_board(
                 short_protocol_id(&board_id)
             ));
         }
-        replace_kanban_board_url(&board_route_space_id, &board_id);
+        replace_kanban_board_url(&board_route_realm_id, &board_id);
         return;
     }
     let raw_operations = state_store.read().load().raw_operations;
     let decrypt_store = state_store.read();
     let decrypt_ctx = MlsDecryptCtx {
         state_store: &decrypt_store,
-        space_id: &board_route_space_id,
+        space_id: &board_route_realm_id,
         actor_did: &decrypt_actor,
         device_id: &decrypt_device,
     };
@@ -6042,16 +6042,16 @@ fn select_kanban_board(
             short_protocol_id(&board_id)
         ));
     }
-    replace_kanban_board_url(&board_route_space_id, &board_id);
+    replace_kanban_board_url(&board_route_realm_id, &board_id);
 }
 
-fn replace_kanban_board_url(space_id: &str, board_id: &str) {
-    let space_id = card_detail_route_space_id(space_id);
+fn replace_kanban_board_url(realm_id: &str, board_id: &str) {
+    let realm_id = card_detail_route_realm_id(realm_id);
     let board_id = board_id.trim();
     let path = if board_id.is_empty() {
-        format!("/kanban/{space_id}")
+        format!("/kanban/{realm_id}")
     } else {
-        format!("/kanban/{space_id}/board/{board_id}")
+        format!("/kanban/{realm_id}/board/{board_id}")
     };
     let Ok(encoded_path) = serde_json::to_string(&path) else {
         return;
@@ -6694,14 +6694,14 @@ mod tests {
     fn route_card_flow_id_reads_task_segment_only() {
         assert_eq!(
             route_card_flow_id(&Route::KanbanTask {
-                space_id: "ck:space:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }),
             Some("ck:flow:abc".to_owned())
         );
         assert_eq!(
             route_card_flow_id(&Route::KanbanBoardTask {
-                space_id: "ck:space:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 board_id: "ck:space:board".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }),
@@ -6714,14 +6714,14 @@ mod tests {
     fn route_board_id_reads_board_segment_only() {
         assert_eq!(
             route_board_id(&Route::KanbanBoard {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 board_id: "ck:space:board".to_owned(),
             }),
             Some("ck:space:board".to_owned())
         );
         assert_eq!(
             route_board_id(&Route::KanbanBoardTask {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 board_id: "ck:space:board".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }),
@@ -6731,14 +6731,14 @@ mod tests {
         // the projection on arrival.
         assert_eq!(
             route_board_id(&Route::KanbanTask {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }),
             None
         );
         assert_eq!(
             route_board_id(&Route::KanbanSpace {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
             }),
             None
         );
@@ -6749,14 +6749,14 @@ mod tests {
         assert_eq!(
             kanban_board_route("ck:realm:ops", "ck:space:board"),
             Route::KanbanBoard {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 board_id: "ck:space:board".to_owned(),
             }
         );
         assert_eq!(
             kanban_board_route("ck:realm:ops", ""),
             Route::KanbanSpace {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
             }
         );
     }
@@ -6766,7 +6766,7 @@ mod tests {
         assert_eq!(
             kanban_card_task_route("ck:realm:ops", "ck:space:board", "ck:flow:abc"),
             Route::KanbanBoardTask {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 board_id: "ck:space:board".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }
@@ -6774,7 +6774,7 @@ mod tests {
         assert_eq!(
             kanban_card_task_route("ck:realm:ops", "", "ck:flow:abc"),
             Route::KanbanTask {
-                space_id: "ck:realm:ops".to_owned(),
+                realm_id: "ck:realm:ops".to_owned(),
                 task_id: "ck:flow:abc".to_owned(),
             }
         );
@@ -7117,7 +7117,7 @@ mod tests {
             "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
-            "space_id": TEST_REALM_ID,
+            "realm_id": TEST_REALM_ID,
             "payload": {
                 "flow_id": flow_id,
                 "patch": {
@@ -7188,7 +7188,7 @@ mod tests {
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_space_id: Some("ck:space:0196419b-0000-7000-8000-000000000001".to_owned()),
+                parent_realm_id: Some("ck:space:0196419b-0000-7000-8000-000000000001".to_owned()),
             },
         ]);
 
@@ -7208,7 +7208,7 @@ mod tests {
         let raw_operations = vec![
             RawOperationRecord {
                 operation_id: "sha256:local-board-create".to_owned(),
-                space_id: Some(realm_id.to_owned()),
+                realm_id: Some(realm_id.to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "kind": "ck.space.create",
@@ -7227,7 +7227,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "sha256:local-list-create".to_owned(),
-                space_id: Some(realm_id.to_owned()),
+                realm_id: Some(realm_id.to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "kind": "ck.space.create",
@@ -7295,7 +7295,7 @@ mod tests {
             title: "Todos".to_owned(),
             state: "active".to_owned(),
             rank: Some("U".to_owned()),
-            parent_space_id: Some(board_id.to_owned()),
+            parent_realm_id: Some(board_id.to_owned()),
         }];
 
         let (columns, options, selected_board) = columns_from_lifecycle_projection_with_local(
@@ -7320,7 +7320,7 @@ mod tests {
         let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
         let raw_operations = vec![RawOperationRecord {
             operation_id: "sha256:local-board-create".to_owned(),
-            space_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+            realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ck.space.create",
@@ -7377,7 +7377,7 @@ mod tests {
                 title: "Todo".to_owned(),
                 state: "active".to_owned(),
                 rank: Some("U".to_owned()),
-                parent_space_id: Some(board_id.to_owned()),
+                parent_realm_id: Some(board_id.to_owned()),
             },
         ];
         let flows = vec![crate::api::FlowProjectionView {
@@ -7389,8 +7389,8 @@ mod tests {
                 "kind": "ck.content.text",
                 "body": "Projection body content"
             })),
-            board_space_id: Some(board_id.to_owned()),
-            list_space_id: Some(list_id.to_owned()),
+            board_realm_id: Some(board_id.to_owned()),
+            list_realm_id: Some(list_id.to_owned()),
             rank: Some("U".to_owned()),
             fields: Map::from_iter([
                 ("labels".to_owned(), json!(["demo", "db"])),
@@ -7431,7 +7431,7 @@ mod tests {
             title: "Todo".to_owned(),
             state: "active".to_owned(),
             rank: Some("U".to_owned()),
-            parent_space_id: Some(board_id.to_owned()),
+            parent_realm_id: Some(board_id.to_owned()),
         }];
 
         let (columns, options, selected_board) =
@@ -7452,7 +7452,7 @@ mod tests {
         let flow_id = "ck:flow:0196419b-0000-7000-8000-000000000003";
         let raw_operations = vec![RawOperationRecord {
             operation_id: "sha256:local-create".to_owned(),
-            space_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+            realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ck.flow.create",
@@ -7529,7 +7529,7 @@ mod tests {
             "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
-            "space_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
             "payload": {
                 "flow_id": flow_id,
                 "patch": {
@@ -7593,7 +7593,7 @@ mod tests {
             "event_kind": "ck.flow.update",
             "actor_id": "did:web:alice.example",
             "created_at": "2026-05-22T10:00:00Z",
-            "space_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
             "payload": {
                 "flow_id": flow_id,
                 "patch": {
@@ -8133,7 +8133,7 @@ mod tests {
         }];
         let queued = RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            space_id: Some("ck:realm:r1".to_owned()),
+            realm_id: Some("ck:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ck.flow.update",
@@ -8174,7 +8174,7 @@ mod tests {
         let raw_operations = vec![
             RawOperationRecord {
                 operation_id: "op-1".to_owned(),
-                space_id: Some("ck:realm:r1".to_owned()),
+                realm_id: Some("ck:realm:r1".to_owned()),
                 received_at: received_at("2026-05-22T10:00:00Z"),
                 payload: json!({
                     "kind": "ck.flow.update",
@@ -8192,7 +8192,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "op-2".to_owned(),
-                space_id: Some("ck:realm:r1".to_owned()),
+                realm_id: Some("ck:realm:r1".to_owned()),
                 received_at: received_at("2026-05-22T11:00:00Z"),
                 payload: json!({
                     "kind": "ck.flow.update",
@@ -8253,7 +8253,7 @@ mod tests {
         let ops = vec![
             RawOperationRecord {
                 operation_id: "op-a".to_owned(),
-                space_id: Some("ck:realm:r1".to_owned()),
+                realm_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "kind": "ck.flow.update",
@@ -8266,7 +8266,7 @@ mod tests {
             // Same flow, different actor — both should appear.
             RawOperationRecord {
                 operation_id: "op-b".to_owned(),
-                space_id: Some("ck:realm:r1".to_owned()),
+                realm_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "kind": "ck.message.create",
@@ -8280,7 +8280,7 @@ mod tests {
             // unrelated realm actors into the per-card participant list.
             RawOperationRecord {
                 operation_id: "op-c".to_owned(),
-                space_id: Some("ck:realm:r1".to_owned()),
+                realm_id: Some("ck:realm:r1".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "kind": "ck.flow.update",

@@ -732,7 +732,18 @@ impl CokretApi {
     }
 
     pub fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
-        Ok(self.base_url.join(path.trim().trim_start_matches('/'))?)
+        let normalized = path.trim().trim_start_matches('/');
+        // 红线(写死,不可绕过):yougen 只能走 `/_cokret/` 协议面。除
+        // `SOLAND_LEGACY_ALLOWLIST` 登记的递减存量外,任何 `_soland/` 产品/
+        // legacy 面调用都在这里 fail-closed。所有请求路径都收口于本函数
+        // (`get_json` / `post_json` / 直接 `endpoint()` 调用),故这是唯一守卫点。
+        if !soland_path_allowed(normalized) {
+            anyhow::bail!(
+                "yougen 红线:禁止调用 soland 产品/legacy 面 `{normalized}`;\
+                 yougen 只能使用 `/_cokret/` 协议面(存量见 SOLAND_LEGACY_ALLOWLIST)"
+            );
+        }
+        Ok(self.base_url.join(normalized)?)
     }
 
     /// Build a [`CokretPushClient`] that mirrors this api client's auth
@@ -2659,6 +2670,82 @@ fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
         .is_some_and(|fields| fields.contains_key("encryption_profile"))
 }
 
+/// 红线递减白名单 —— yougen 对 soland 产品/legacy 面(`_soland/...`)的**存量**调用。
+///
+/// 背景:旧原则「优先 `/_cokret/`、404 再回退 `/_soland/` legacy」是**错误**的 ——
+/// 它给协议↔产品耦合留了永久后门。正确约束是:yougen 是 Cokret 协议客户端,
+/// **绝对不使用 `_soland/`**。该约束由 [`endpoint`](CokretApi::endpoint) 在运行时
+/// fail-closed,并由 `tests::no_unlisted_soland_call_sites_in_src` 在编译期(测试)
+/// 拦死 —— 二者共用本表。
+///
+/// 本表是**递减**的:每把一处 `_soland/` 调用迁走,就删掉对应行;清零后此表为空,
+/// 红线即对所有 `_soland/` 永久生效。**严禁**为新代码新增 `_soland/` 条目。
+///
+/// 迁移去向(详见 spec):
+/// - 投影派生类(notifications / contacts 列表 / consent 列表)→ 订阅 `account/subscribe`
+///   事件流,客户端本地 reduce;
+/// - 写状态类(contacts request/respond、consent grant/revoke、profile、mark-all-read)
+///   → 提交 `ck.*` 事件(`/_cokret/self/events`);
+/// - 真·协议原语(register / account/me / principal-realm / logout / bridge-describe)
+///   → 待 soland 在 `/_cokret/` 暴露后切换;
+/// - 运维/遥测(audit/user-action、admin anchorer、dev-login)→ 评估是否保留为本地面。
+///
+/// 模板中以 `{` 开头的路径段为通配(匹配单段),其余段逐字相等。
+const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
+    // identity/account —— account::router(),仅 legacy 面,`/_cokret/` 下无等价
+    "_soland/self/account/register",
+    "_soland/self/account/me",
+    "_soland/self/account/profile",
+    "_soland/self/account/{did}/principal-realm",
+    // contacts —— consent/contact 事件的投影 + 写
+    "_soland/self/contacts",
+    "_soland/self/contacts/request",
+    "_soland/self/contacts/respond",
+    // consent cells —— consent dots 的投影 + 写
+    "_soland/self/consent/cells",
+    "_soland/self/consent/cells/{holder}/grant",
+    "_soland/self/consent/cells/{holder}/revoke",
+    // notifications —— messages 投影 + read cursor 的派生视图
+    "_soland/self/notifications",
+    "_soland/self/notifications/mark-all-read",
+    // index/search —— 对 projection 的子串扫描
+    "_soland/self/index/search",
+    // audit —— 客户端遥测上报
+    "_soland/self/audit/user-action",
+    // gate/auth —— dev-login / logout / bridge-describe(`/_cokret/gate` 下暂无等价)
+    "_soland/gate/auth/dev-login",
+    "_soland/gate/auth/logout",
+    "_soland/gate/auth/bridge/describe",
+    // admin —— 运维面,deployment-local(按设计不入协议)
+    "_soland/admin/spaces/{space_id}/anchorer",
+];
+
+/// 规整后的请求路径是否被红线放行:非 `_soland/` 一律放行;`_soland/` 仅当命中
+/// [`SOLAND_LEGACY_ALLOWLIST`] 中某条模板时放行,否则拒绝。
+fn soland_path_allowed(normalized_path: &str) -> bool {
+    let path = normalized_path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(normalized_path);
+    if !path.starts_with("_soland/") {
+        return true;
+    }
+    SOLAND_LEGACY_ALLOWLIST
+        .iter()
+        .any(|template| path_matches_template(path, template))
+}
+
+/// 分段匹配:`path` 与 `template` 段数相等,且模板中以 `{` 开头的段视为通配(匹配
+/// 任意单段),其余段必须逐字相等。
+fn path_matches_template(path: &str, template: &str) -> bool {
+    if path.split('/').count() != template.split('/').count() {
+        return false;
+    }
+    path.split('/')
+        .zip(template.split('/'))
+        .all(|(segment, tmpl)| tmpl.starts_with('{') || segment == tmpl)
+}
+
 #[cfg(test)]
 mod tests {
     use reqwest::header::{HeaderMap, HeaderValue};
@@ -2672,6 +2759,64 @@ mod tests {
             api.endpoint("/_cokret/describe").unwrap().as_str(),
             "http://127.0.0.1:8787/_cokret/describe"
         );
+    }
+
+    #[test]
+    fn endpoint_enforces_soland_redline() {
+        let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
+        // 非 soland(协议面)→ 放行
+        assert!(api.endpoint("_cokret/self/events").is_ok());
+        // 白名单内的存量 soland → 放行(含 `{}` 通配段)
+        assert!(api.endpoint("_soland/self/account/me").is_ok());
+        assert!(api.endpoint("_soland/self/consent/cells/alice/grant").is_ok());
+        // 白名单外的 soland → 拒绝。用拼接构造负样例,避免静态守卫把它当成
+        // 一处真实的违规调用字面量。
+        let unlisted = format!("{}/self/spaces/ck:space:1", "_soland");
+        let error = api
+            .endpoint(&unlisted)
+            .expect_err("白名单外的 soland 路径必须被红线拒绝");
+        assert!(
+            error.to_string().contains("红线"),
+            "拒绝原因应指明红线: {error}"
+        );
+    }
+
+    #[test]
+    fn no_unlisted_soland_call_sites_in_src() {
+        // 静态红线:扫描本 crate `src/` 下所有 `.rs` 字符串字面量,任何以
+        // `_soland/`(忽略前导 `/`)开头且不在 SOLAND_LEGACY_ALLOWLIST 内的字面量
+        // 都判为违规。新增任何白名单外的 `_soland/` 调用都会让本测试失败。
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        collect_unlisted_soland_literals(&src, &mut offenders);
+        assert!(
+            offenders.is_empty(),
+            "发现白名单外的 soland 调用(yougen 红线:只能用 `/_cokret/`;迁移存量\
+             须改事件流/提交事件并同步删 SOLAND_LEGACY_ALLOWLIST,严禁新增):\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    fn collect_unlisted_soland_literals(dir: &std::path::Path, out: &mut Vec<String>) {
+        // 构造 `_soland/` 标记而不在源码里写出连续的 `_soland`,以免本扫描器自我误伤。
+        let marker = format!("{}/", concat!("_so", "land"));
+        for entry in std::fs::read_dir(dir).expect("read src dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_unlisted_soland_literals(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let contents = std::fs::read_to_string(&path).expect("read rs file");
+                for (idx, _) in contents.match_indices('"') {
+                    let rest = &contents[idx + 1..];
+                    let Some(end) = rest.find('"') else { continue };
+                    let literal = &rest[..end];
+                    let trimmed = literal.trim_start_matches('/');
+                    if trimmed.starts_with(&marker) && !soland_path_allowed(trimmed) {
+                        out.push(format!("{}: {:?}", path.display(), literal));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -2976,29 +3121,29 @@ mod tests {
 
         let sync = parse_sync(json!({
             "cursor": "ck:cursor:test-1",
-            "spaces": {
-                "ck:space:0196419b-0000-7000-8000-000000000000": {"summary": {}}
+            "realms": {
+                "ck:realm:0196419b-0000-7000-8000-000000000000": {"summary": {}}
             },
             "to_device": [],
             "account_data": [],
             "device_lists": {"changed": [], "left": []}
         }))
         .unwrap();
-        assert_eq!(sync.spaces.len(), 1);
+        assert_eq!(sync.realms.len(), 1);
         assert_eq!(sync.cursor, "ck:cursor:test-1");
 
         // Spec-aligned wire shape per `client-sync.md §2`: flat
-        // `spaces` keyed by realm id, explicit `left_spaces`,
-        // flat arrays for top-level streams. The SDK's
-        // Canonical account subscribe snapshot shape.
+        // `realms` keyed by realm id, explicit `left_realms`,
+        // flat arrays for top-level streams. The SDK's canonical account
+        // subscribe snapshot shape.
         let sync_v1 = parse_sync(json!({
             "cursor": "ck:cursor:v1",
-            "spaces": {
-                "ck:space:joined": {
+            "realms": {
+                "ck:realm:joined": {
                     "summary": {"title": "Joined"}
                 }
             },
-            "left_spaces": ["ck:space:left"],
+            "left_realms": ["ck:realm:left"],
             "to_device": [{"type": "ck.mls.welcome"}],
             "account_data": [{"data_type": "client.ui", "content": {"theme": "system"}}],
             "device_lists": {"changed": [], "left": []},
@@ -3007,8 +3152,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(sync_v1.cursor, "ck:cursor:v1");
-        assert!(sync_v1.spaces.contains_key("ck:space:joined"));
-        assert_eq!(sync_v1.left_spaces, vec!["ck:space:left".to_owned()]);
+        assert!(sync_v1.realms.contains_key("ck:realm:joined"));
+        assert_eq!(sync_v1.left_realms, vec!["ck:realm:left".to_owned()]);
         assert_eq!(sync_v1.to_device.len(), 1);
         assert_eq!(sync_v1.account_data.len(), 1);
         assert!(sync_v1.notifications.is_object());
@@ -3023,10 +3168,10 @@ mod tests {
         assert_eq!(account_frame.cursor, "ck:cursor:account-1");
         assert!(
             account_frame
-                .spaces
+                .realms
                 .contains_key("ck:realm:019e4cdc-b435-7e52-9ada-39d5ec134729")
         );
-        assert!(account_frame.left_spaces.is_empty());
+        assert!(account_frame.left_realms.is_empty());
 
         let reconnect = parse_account_subscribe_snapshot_outcome(
             br#"{"kind":"resync_required","reason":"compaction","reconnect_after_ms":10000}
@@ -3058,14 +3203,14 @@ mod tests {
 
     #[test]
     fn event_paths_use_v1_query_parameters() {
-        let backfill = events_query_path("ck:space:demo");
+        let backfill = events_query_path("ck:realm:demo");
         assert_eq!(
             backfill,
             "_cokret/self/events/query?realms=ck%3Aspace%3Ademo"
         );
         assert!(!backfill.contains("direction="));
 
-        let subscribe = events_subscribe_path("ck:space:demo", Some("ck:cursor:demo"), Some(true));
+        let subscribe = events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
             "_cokret/self/events/subscribe?realms=ck%3Aspace%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
@@ -3391,7 +3536,7 @@ mod tests {
         let frames = parse_events_subscribe_ndjson_text(
             r#"
 {"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
-{"kind":"frontier","frontier":{"ck:space:demo":["ck:event:01"]}}
+{"kind":"frontier","frontier":{"ck:realm:demo":["ck:event:01"]}}
 {"kind":"catchup_complete"}
 "#,
         )

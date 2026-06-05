@@ -694,14 +694,14 @@ fn blocklist_entry_from_parts(
 /// Build a `ck.account_data.set` operation envelope for `key` -> `value`.
 ///
 /// `ck.account_data.set` is classified `actor_private_event` in
-/// `conformance.rs:393`; reducers MUST NOT include it in shared Space state.
+/// `conformance.rs:393`; reducers MUST NOT include it in shared Realm state.
 pub fn build_account_data_set(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     key: &AccountDataKey,
     value: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.account_data.set").body(serde_json::json!({
+    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
         "body": value,
@@ -710,11 +710,11 @@ pub fn build_account_data_set(
 }
 
 pub fn build_account_data_tombstone(
-    space_id: &str,
+    realm_id: &str,
     actor: &str,
     key: &AccountDataKey,
 ) -> OperationBuilder {
-    OperationBuilder::new(space_id, actor, "ck.account_data.set").body(serde_json::json!({
+    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
         "tombstone": true,
@@ -1174,7 +1174,7 @@ mod tests {
     #[test]
     fn build_account_data_set_emits_canonical_kind() {
         let op = build_account_data_set(
-            "ck:space:s1",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             &AccountDataKey::ClientReadReceipts,
             json!({"send": false}),
@@ -1190,7 +1190,7 @@ mod tests {
     #[test]
     fn build_account_data_tombstone_emits_canonical_payload() {
         let op = build_account_data_tombstone(
-            "ck:space:s1",
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             &AccountDataKey::ClientReadReceipts,
         )

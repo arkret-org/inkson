@@ -39,7 +39,7 @@ const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
     (
         "secret",
         "Secret",
-        "The Space should not disclose that it exists to unauthorized viewers.",
+        "The Realm should not disclose that it exists to unauthorized viewers.",
     ),
 ];
 
@@ -47,7 +47,7 @@ const JOIN_RULE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "public",
         "Public",
-        "Anyone who can see the Space can join without a separate approval step.",
+        "Anyone who can see the Realm can join without a separate approval step.",
     ),
     (
         "invite",
@@ -70,12 +70,12 @@ const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
     (
         "world_readable",
         "World readable",
-        "Past history is readable without joining. Use only with intentionally open Spaces.",
+        "Past history is readable without joining. Use only with intentionally open Realms.",
     ),
     (
         "shared",
         "Shared",
-        "New members can read the pre-join history that is meant to be shared with the whole Space.",
+        "New members can read the pre-join history that is meant to be shared with the whole Realm.",
     ),
     (
         "invited",
@@ -275,21 +275,21 @@ const SPACE_KIND_OPTIONS: [(&str, &str, &str); 5] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NewSpaceStep {
+enum NewRealmStep {
     Basics,
     Boundary,
     Seed,
     Done,
 }
 
-const NEW_SPACE_STEPS: [NewSpaceStep; 4] = [
-    NewSpaceStep::Basics,
-    NewSpaceStep::Boundary,
-    NewSpaceStep::Seed,
-    NewSpaceStep::Done,
+const NEW_REALM_STEPS: [NewRealmStep; 4] = [
+    NewRealmStep::Basics,
+    NewRealmStep::Boundary,
+    NewRealmStep::Seed,
+    NewRealmStep::Done,
 ];
 
-impl NewSpaceStep {
+impl NewRealmStep {
     fn label(self) -> &'static str {
         match self {
             Self::Basics => "Basics",
@@ -417,13 +417,13 @@ pub fn SetupPanel(
     let has_session = !token().trim().is_empty();
     let navigator = use_navigator();
 
-    let mut create_step = use_signal(|| NewSpaceStep::Basics);
+    let mut create_step = use_signal(|| NewRealmStep::Basics);
     let mut seed_members = use_signal(String::new);
-    let mut space_title = use_signal(String::new);
-    let mut space_summary = use_signal(String::new);
-    let mut space_discoverability = use_signal(|| "listed".to_owned());
-    let mut space_policy_join_rule = use_signal(|| "invite".to_owned());
-    let mut space_policy_history_visibility = use_signal(|| "shared".to_owned());
+    let mut realm_title = use_signal(String::new);
+    let mut realm_summary = use_signal(String::new);
+    let mut realm_discoverability = use_signal(|| "listed".to_owned());
+    let mut realm_policy_join_rule = use_signal(|| "invite".to_owned());
+    let mut realm_policy_history_visibility = use_signal(|| "shared".to_owned());
     // Spec realm-and-space.md §2.3 — `encryption_profile` and
     // `security_class` are Realm create-locked fields. UI default is
     // `mls_rfc9420` + `standard` (the safe / common case); the form
@@ -452,17 +452,17 @@ pub fn SetupPanel(
     let mut new_space_default_realm_id = use_signal(String::new);
     let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut new_space_created_id = use_signal(String::new);
-    let mut space_state = use_signal(|| "Draft not created yet".to_owned());
-    let mut created_space_id = use_signal(String::new);
+    let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
+    let mut created_realm_id = use_signal(String::new);
 
     let selected_space_id = selected_space();
     let has_selected_space = !selected_space_id.trim().is_empty();
     let active_create_step = create_step();
-    let title_value = space_title();
-    let summary_value = space_summary();
-    let discoverability_value = space_discoverability();
-    let join_rule_value = space_policy_join_rule();
-    let history_visibility_value = space_policy_history_visibility();
+    let title_value = realm_title();
+    let summary_value = realm_summary();
+    let discoverability_value = realm_discoverability();
+    let join_rule_value = realm_policy_join_rule();
+    let history_visibility_value = realm_policy_history_visibility();
     let encryption_profile_value = realm_encryption_profile();
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
@@ -579,12 +579,12 @@ pub fn SetupPanel(
         !new_space_title_value.trim().is_empty() && !new_space_realm_id_value.trim().is_empty();
     let new_space_can_submit = has_session && new_space_ready;
     let seed_members_value = seed_members();
-    let space_state_value = space_state();
-    let created_space_id_value = created_space_id();
+    let realm_state_value = realm_state();
+    let created_realm_id_value = created_realm_id();
     let parsed_seed_members = parse_seed_members(&seed_members_value);
     let seed_member_count = parsed_seed_members.len();
-    let has_created_space = !created_space_id_value.trim().is_empty();
-    let created_space_id_label = short_protocol_id(&created_space_id_value);
+    let has_created_realm = !created_realm_id_value.trim().is_empty();
+    let created_realm_id_label = short_protocol_id(&created_realm_id_value);
     let current_visibility_hint = policy_combination_hint(
         &discoverability_value,
         &join_rule_value,
@@ -594,12 +594,12 @@ pub fn SetupPanel(
     let basics_ready = !title_value.trim().is_empty();
     let boundary_ready = !current_policy_error;
     let can_advance_step = match active_create_step {
-        NewSpaceStep::Basics => basics_ready,
-        NewSpaceStep::Boundary => boundary_ready,
-        NewSpaceStep::Seed => basics_ready && boundary_ready,
-        NewSpaceStep::Done => has_created_space,
+        NewRealmStep::Basics => basics_ready,
+        NewRealmStep::Boundary => boundary_ready,
+        NewRealmStep::Seed => basics_ready && boundary_ready,
+        NewRealmStep::Done => has_created_realm,
     };
-    let can_create_space = has_session && basics_ready && boundary_ready;
+    let can_create_realm = has_session && basics_ready && boundary_ready;
 
     rsx! {
         div { class: "timeline", "data-testid": "setup-panel",
@@ -647,7 +647,7 @@ pub fn SetupPanel(
                             if has_selected_space {
                                 Link {
                                     class: "secondary",
-                                    to: Route::Space { space_id: selected_space_id.clone() },
+                                    to: Route::Realm { realm_id: selected_space_id.clone() },
                                     "Open Current Space"
                                 }
                             } else {
@@ -672,9 +672,9 @@ pub fn SetupPanel(
             }
 
             if active_section == SetupSection::Spaces {
-                div { class: "setup-shell new-space-shell", "data-testid": "space-lifecycle-flow",
+                div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-flow",
                     div { class: "setup-column",
-                        div { class: "event new-space-hero", "data-testid": "space-setup-guide",
+                        div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
                             div { class: "event-head",
                                 span { "New Realm" }
                                 span { "security boundary" }
@@ -690,16 +690,16 @@ pub fn SetupPanel(
                             }
                         }
 
-                        div { class: "event new-space-stepper",
+                        div { class: "event new-realm-stepper",
                             div { class: "event-head",
                                 span { "Create steps" }
                                 span { "{active_create_step.number()} / 4" }
                             }
                             div { class: "setup-step-list",
-                                for step in NEW_SPACE_STEPS {
+                                for step in NEW_REALM_STEPS {
                                     button {
                                         class: if active_create_step == step { "primary" } else { "secondary" },
-                                        disabled: step == NewSpaceStep::Done && !has_created_space,
+                                        disabled: step == NewRealmStep::Done && !has_created_realm,
                                         onclick: move |_| create_step.set(step),
                                         span { class: "setup-step-index", "{step.number()}" }
                                         span { class: "setup-step-label",
@@ -711,7 +711,7 @@ pub fn SetupPanel(
                             }
                         }
 
-                        if active_create_step == NewSpaceStep::Basics {
+                        if active_create_step == NewRealmStep::Basics {
                             div { class: "event",
                                 div { class: "event-head",
                                     span { "Basics" }
@@ -721,27 +721,27 @@ pub fn SetupPanel(
                                     div { class: "setup-field",
                                         label { "Realm title" }
                                         input {
-                                            "data-testid": "space-title-input",
+                                            "data-testid": "realm-title-input",
                                             value: "{title_value}",
                                             placeholder: "Engineering, Research, Design system...",
-                                            oninput: move |event| space_title.set(event.value())
+                                            oninput: move |event| realm_title.set(event.value())
                                         }
                                     }
                                     div { class: "setup-field setup-field-span-2",
                                         label { "Summary" }
                                         textarea {
-                                            "data-testid": "space-summary-input",
+                                            "data-testid": "realm-summary-input",
                                             value: "{summary_value}",
                                             rows: "3",
                                             placeholder: "What this Realm is for.",
-                                            oninput: move |event| space_summary.set(event.value())
+                                            oninput: move |event| realm_summary.set(event.value())
                                         }
                                     }
                                 }
                                 div { class: "actions setup-nav-actions",
                                     button {
                                         class: "primary",
-                                        "data-testid": "new-space-next-button",
+                                        "data-testid": "new-realm-next-button",
                                         disabled: !can_advance_step,
                                         onclick: move |_| create_step.set(active_create_step.next()),
                                         "Next: Boundary"
@@ -750,7 +750,7 @@ pub fn SetupPanel(
                             }
                         }
 
-                        if active_create_step == NewSpaceStep::Boundary {
+                        if active_create_step == NewRealmStep::Boundary {
                             div { class: "event",
                                 div { class: "event-head",
                                     span { "Boundary" }
@@ -764,7 +764,7 @@ pub fn SetupPanel(
                                             select {
                                                 "data-testid": "space-discoverability-input",
                                                 value: "{discoverability_value}",
-                                                onchange: move |event| space_discoverability.set(event.value()),
+                                                onchange: move |event| realm_discoverability.set(event.value()),
                                                 for (option_value, label, _) in DISCOVERABILITY_OPTIONS {
                                                     option {
                                                         value: "{option_value}",
@@ -785,7 +785,7 @@ pub fn SetupPanel(
                                             select {
                                                 "data-testid": "space-policy-join-rule-input",
                                                 value: "{join_rule_value}",
-                                                onchange: move |event| space_policy_join_rule.set(event.value()),
+                                                onchange: move |event| realm_policy_join_rule.set(event.value()),
                                                 for (option_value, label, _) in JOIN_RULE_OPTIONS {
                                                     option {
                                                         value: "{option_value}",
@@ -806,7 +806,7 @@ pub fn SetupPanel(
                                             select {
                                                 "data-testid": "space-policy-history-visibility-input",
                                                 value: "{history_visibility_value}",
-                                                onchange: move |event| space_policy_history_visibility.set(event.value()),
+                                                onchange: move |event| realm_policy_history_visibility.set(event.value()),
                                                 for (option_value, label, _) in HISTORY_VISIBILITY_OPTIONS {
                                                     option {
                                                         value: "{option_value}",
@@ -968,13 +968,13 @@ pub fn SetupPanel(
                                 div { class: "actions setup-nav-actions",
                                     button {
                                         class: "secondary",
-                                        "data-testid": "new-space-back-button",
+                                        "data-testid": "new-realm-back-button",
                                         onclick: move |_| create_step.set(active_create_step.previous()),
                                         "Back"
                                     }
                                     button {
                                         class: "primary",
-                                        "data-testid": "new-space-next-button",
+                                        "data-testid": "new-realm-next-button",
                                         disabled: !can_advance_step,
                                         onclick: move |_| create_step.set(active_create_step.next()),
                                         "Next: Seed"
@@ -983,7 +983,7 @@ pub fn SetupPanel(
                             }
                         }
 
-                        if active_create_step == NewSpaceStep::Seed {
+                        if active_create_step == NewRealmStep::Seed {
                             div { class: "event",
                                 div { class: "event-head",
                                     span { "Seed members" }
@@ -1023,14 +1023,14 @@ pub fn SetupPanel(
                                 div { class: "actions setup-nav-actions",
                                     button {
                                         class: "secondary",
-                                        "data-testid": "new-space-back-button",
+                                        "data-testid": "new-realm-back-button",
                                         onclick: move |_| create_step.set(active_create_step.previous()),
                                         "Back"
                                     }
                                     button {
                                         class: "primary",
                                         "data-testid": "create-space-button",
-                                        disabled: !can_create_space,
+                                        disabled: !can_create_realm,
                                         onclick: {
                                             let base = base_url.clone();
                                             move |_| {
@@ -1038,11 +1038,11 @@ pub fn SetupPanel(
                                                 let base = base.clone();
                                                 let backup_trigger_signal =
                                                     crate::components::try_needs_mls_backup_signal();
-                                                let title = space_title();
-                                                let summary = space_summary();
-                                                let discoverability = space_discoverability();
-                                                let join_rule = space_policy_join_rule();
-                                                let history_visibility = space_policy_history_visibility();
+                                                let title = realm_title();
+                                                let summary = realm_summary();
+                                                let discoverability = realm_discoverability();
+                                                let join_rule = realm_policy_join_rule();
+                                                let history_visibility = realm_policy_history_visibility();
                                                 let encryption_profile = realm_encryption_profile();
                                                 let security_class = realm_security_class();
                                                 let federation_policy = realm_federation_policy();
@@ -1112,7 +1112,7 @@ pub fn SetupPanel(
                                                                 // `ck:realm:*` id under `realm_id`.
                                                                 let space_id = realm.realm_id.clone();
                                                                 selected_space.set(space_id.clone());
-                                                                created_space_id.set(space_id.clone());
+                                                                created_realm_id.set(space_id.clone());
                                                                 // Optimistic sidebar update goes
                                                                 // through the canonical store —
                                                                 // the `spaces` Signal is derived
@@ -1189,7 +1189,7 @@ pub fn SetupPanel(
                                                                                     space_id,
                                                                                     err.user_message()
                                                                                 );
-                                                                                space_state.set(message.clone());
+                                                                                realm_state.set(message.clone());
                                                                                 status.set(message);
                                                                                 return;
                                                                             }
@@ -1301,9 +1301,9 @@ pub fn SetupPanel(
                                                                 }
 
                                                                 let message = steps.join(" · ");
-                                                                space_state.set(message.clone());
+                                                                realm_state.set(message.clone());
                                                                 status.set(message);
-                                                                create_step.set(NewSpaceStep::Done);
+                                                                create_step.set(NewRealmStep::Done);
                                                                 if crate::security_state::encryption_profile_is_encrypted(
                                                                     &encryption_profile,
                                                                 ) && let Some(signal) = backup_trigger_signal {
@@ -1347,14 +1347,14 @@ pub fn SetupPanel(
                                                                 } else {
                                                                     format!("create failed: {error}")
                                                                 };
-                                                                space_state.set(message.clone());
+                                                                realm_state.set(message.clone());
                                                                 status.set(message);
                                                             }
                                                         }
                                                         }
                                                         Err(error) => {
                                                             let message = format!("invalid server URL: {error}");
-                                                            space_state.set(message.clone());
+                                                            realm_state.set(message.clone());
                                                             status.set(message);
                                                         }
                                                     }
@@ -1367,38 +1367,38 @@ pub fn SetupPanel(
                             }
                         }
 
-                        if active_create_step == NewSpaceStep::Done {
-                            div { class: "event", "data-testid": "space-setup-done",
+                        if active_create_step == NewRealmStep::Done {
+                            div { class: "event", "data-testid": "realm-setup-done",
                                 div { class: "event-head",
                                     span { "Done" }
                                     span { "next context" }
                                 }
-                                if has_created_space {
+                                if has_created_realm {
                                     div { class: "setup-summary-list",
                                         div { class: "setup-summary-row",
                                             strong { "Created Realm" }
-                                            span { class: "mono", title: "{created_space_id_value}", "{created_space_id_label}" }
+                                            span { class: "mono", title: "{created_realm_id_value}", "{created_realm_id_label}" }
                                         }
                                         div { class: "setup-summary-row setup-summary-row-stack",
                                             strong { "Bootstrap state" }
-                                            span { class: "muted", "{space_state_value}" }
+                                            span { class: "muted", "{realm_state_value}" }
                                         }
                                     }
                                     div { class: "actions setup-nav-actions",
                                         button {
                                             class: "secondary",
-                                            "data-testid": "new-space-back-button",
+                                            "data-testid": "new-realm-back-button",
                                             onclick: move |_| create_step.set(active_create_step.previous()),
                                             "Back"
                                         }
                                         Link {
                                             class: "primary",
-                                            to: Route::Space { space_id: created_space_id_value.clone() },
+                                            to: Route::Realm { realm_id: created_realm_id_value.clone() },
                                             "Open Realm"
                                         }
                                         Link {
                                             class: "secondary",
-                                            to: Route::SpaceAdmin { space_id: created_space_id_value.clone() },
+                                            to: Route::RealmAdmin { realm_id: created_realm_id_value.clone() },
                                             "Open Realm Admin"
                                         }
                                     }
@@ -1407,8 +1407,8 @@ pub fn SetupPanel(
                                     div { class: "actions setup-nav-actions",
                                         button {
                                             class: "primary",
-                                            "data-testid": "new-space-back-button",
-                                            onclick: move |_| create_step.set(NewSpaceStep::Seed),
+                                            "data-testid": "new-realm-back-button",
+                                            onclick: move |_| create_step.set(NewRealmStep::Seed),
                                             "Back to Seed"
                                         }
                                     }
@@ -1442,13 +1442,13 @@ pub fn SetupPanel(
                                 }
                                 div { class: "setup-summary-row",
                                     strong { "Created Realm" }
-                                    span { class: "mono", "data-testid": "selected-space-id",
-                                        if has_created_space { "{created_space_id_label}" } else { "not created yet" }
+                                    span { class: "mono", "data-testid": "selected-realm-id",
+                                        if has_created_realm { "{created_realm_id_label}" } else { "not created yet" }
                                     }
                                 }
                                 div { class: "setup-summary-row setup-summary-row-stack",
                                     strong { "Bootstrap state" }
-                                    span { class: "muted", "{space_state_value}" }
+                                    span { class: "muted", "{realm_state_value}" }
                                 }
                             }
                         }

@@ -55,7 +55,7 @@ pub enum CrossSigningSetupStep {
     /// `ck.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
     /// spec §11 + §7.1 domain separation.
     PublishSecretStorageBackup,
-    /// Publish `ck.cross_signing.publish` to the principal control space.
+    /// Publish `ck.cross_signing.publish` to the principal control Realm.
     EmitCrossSigningPublish,
     /// Use the SSK to issue a `cross_signing_binding` over the current
     /// device's verify_key (spec §5.2), and attach it to the latest
@@ -513,19 +513,19 @@ impl CrossSigningSetupOutput {
 
     /// Construct the [`EventEnvelope`] yougen submits to write the
     /// `ck.cross_signing.publish` event. The caller supplies the
-    /// `space_id` of the principal's control space and the `actor` DID
+    /// `realm_id` of the principal's control Realm and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
     /// callers attach a `proof` via the standard signing pipeline before
     /// `submit_event_envelope`.
     pub fn build_publish_envelope(
         &self,
-        space_id: &str,
+        realm_id: &str,
         actor: &str,
     ) -> anyhow::Result<EventEnvelope> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
         Ok(
-            OperationBuilder::new(space_id, actor, "ck.cross_signing.publish")
+            OperationBuilder::new(realm_id, actor, "ck.cross_signing.publish")
                 .target_ref(self.publish_content.principal_id.as_str())
                 .body(body)
                 .build("yougen"),

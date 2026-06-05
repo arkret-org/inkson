@@ -11,10 +11,10 @@ use crate::routes::Route;
 use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
 
 /// Default `covered_frontier_lag` warning threshold used by the
-/// space_admin alert banner. Mirrors sodmin's
+/// realm_admin alert banner. Mirrors sodmin's
 /// `DEFAULT_LAG_WARN_THRESHOLD` so a member moving between the two
 /// surfaces sees the same alert ceiling. Read from the user preference
-/// signal in [`SpaceAdminPanel`].
+/// signal in [`RealmAdminPanel`].
 pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
@@ -33,7 +33,7 @@ struct InviteRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SpaceAdminSection {
+pub(crate) enum RealmAdminSection {
     Overview,
     Members,
     Access,
@@ -43,7 +43,7 @@ pub(crate) enum SpaceAdminSection {
     Repair,
 }
 
-impl SpaceAdminSection {
+impl RealmAdminSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
             "members" => Self::Members,
@@ -198,11 +198,11 @@ fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSu
     }
 }
 
-fn projected_members_for_space(store: &LocalStateStore, space_id: &str) -> Vec<String> {
+fn projected_members_for_realm(store: &LocalStateStore, realm_id: &str) -> Vec<String> {
     store
         .load()
         .space_projections
-        .get(space_id)
+        .get(realm_id)
         .and_then(|proj| {
             proj.get("members").or_else(|| {
                 proj.get("summary")
@@ -227,7 +227,7 @@ fn projected_members_for_space(store: &LocalStateStore, space_id: &str) -> Vec<S
 }
 
 #[component]
-pub fn SpaceAdminPanel(
+pub fn RealmAdminPanel(
     base_url: String,
     account_did: String,
     device_id: String,
@@ -351,7 +351,7 @@ pub fn SpaceAdminPanel(
     let covered_frontier_lag_label = covered_frontier_lag_value
         .map(|lag| lag.to_string())
         .unwrap_or_else(|| "-".to_owned());
-    // Per-Space Move submission tracker. Drives the state-pill list +
+    // per-Realm Move submission tracker. Drives the state-pill list +
     // the Space-wide anchorer_paused banner.
     let move_submissions = state_store
         .read()
@@ -362,16 +362,16 @@ pub fn SpaceAdminPanel(
     let space_pending_mls_binding = state_store
         .read()
         .space_has_pending_mls_binding(&selected_space);
-    let active_section = SpaceAdminSection::from_slug(active_section.as_deref());
+    let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     {
         let selected_space_for_hydration = selected_space.clone();
-        let should_hydrate_members = active_section == SpaceAdminSection::Members;
+        let should_hydrate_members = active_section == RealmAdminSection::Members;
         use_effect(move || {
             if !should_hydrate_members {
                 return;
             }
             let next =
-                projected_members_for_space(&state_store.read(), &selected_space_for_hydration);
+                projected_members_for_realm(&state_store.read(), &selected_space_for_hydration);
             if members() != next {
                 members.set(next);
             }
@@ -397,19 +397,19 @@ pub fn SpaceAdminPanel(
         + usize::from(covered_frontier_alert);
 
     rsx! {
-        div { class: "timeline", "data-testid": "space-admin-panel",
+        div { class: "timeline", "data-testid": "realm-admin-panel",
             // E2E debug: surface active_section value so tests can assert what
             // the component actually saw, not what the URL claims.
-            div { class: "muted", "data-testid": "space-admin-active-section",
+            div { class: "muted", "data-testid": "realm-admin-active-section",
                 "{active_section.label()}"
             }
-            div { class: "actions", "data-testid": "space-admin-sections",
-                for section in SpaceAdminSection::all() {
+            div { class: "actions", "data-testid": "realm-admin-sections",
+                for section in RealmAdminSection::all() {
                     if let Some(slug) = section.slug() {
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
-                            to: Route::SpaceAdminSection {
-                                space_id: selected_space.clone(),
+                            to: Route::RealmAdminSection {
+                                realm_id: selected_space.clone(),
                                 section: slug.to_owned(),
                             },
                             "{section.label()}"
@@ -417,68 +417,68 @@ pub fn SpaceAdminPanel(
                     } else {
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
-                            to: Route::SpaceAdmin {
-                                space_id: selected_space.clone(),
+                            to: Route::RealmAdmin {
+                                realm_id: selected_space.clone(),
                             },
                             "{section.label()}"
                         }
                     }
                 }
             }
-            if active_section == SpaceAdminSection::Overview {
-                div { class: "event", "data-testid": "space-admin-overview",
+            if active_section == RealmAdminSection::Overview {
+                div { class: "event", "data-testid": "realm-admin-overview",
                     div { class: "event-head",
                         span { "Admin Map" }
                         span { "{selected_space}" }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { {crate::i18n::tr("space_admin.members")} }
+                            strong { {crate::i18n::tr("realm_admin.members")} }
                             span { "{members().len()} known" }
                             div { class: "muted", "Invites, membership state machine, and leave flow." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "members".to_owned(),
                                 },
                                 "Open Members"
                             }
                         }
                         div { class: "metric",
-                            strong { {crate::i18n::tr("space_admin.access")} }
+                            strong { {crate::i18n::tr("realm_admin.access")} }
                             span { "{join_rule()} / {history_visibility()}" }
                             div { class: "muted", "Metadata, join rule, history visibility, and discovery live together." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "access".to_owned(),
                                 },
                                 "Open Access"
                             }
                         }
                         div { class: "metric",
-                            strong { {crate::i18n::tr("space_admin.security_mls")} }
+                            strong { {crate::i18n::tr("realm_admin.security_mls")} }
                             span { "epoch {mls_epoch_label}" }
                             div { class: "muted", "Capability grants, MLS health, anchor visibility, and audit-bound E2EE controls." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "security".to_owned(),
                                 },
                                 "Open Security"
                             }
                         }
                         div { class: "metric",
-                            strong { {crate::i18n::tr("space_admin.governance")} }
+                            strong { {crate::i18n::tr("realm_admin.governance")} }
                             span { "policy / moderation" }
                             div { class: "muted", "Organization-level governance and moderation policy stay out of the daily admin path." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "governance".to_owned(),
                                 },
                                 "Open Governance"
@@ -490,8 +490,8 @@ pub fn SpaceAdminPanel(
                             div { class: "muted", "Partner trust and service DID boundaries are isolated from Space-local settings." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "federation".to_owned(),
                                 },
                                 "Open Federation"
@@ -503,8 +503,8 @@ pub fn SpaceAdminPanel(
                             div { class: "muted", "Conflict repair, stalled Move diagnostics, and destructive actions are intentionally separated." }
                             Link {
                                 class: "secondary",
-                                to: Route::SpaceAdminSection {
-                                    space_id: selected_space.clone(),
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_space.clone(),
                                     section: "repair".to_owned(),
                                 },
                                 "Open Repair"
@@ -549,7 +549,7 @@ pub fn SpaceAdminPanel(
             // Move submission tracker - pill list of recent local writes
             // with state badges. Clicking a failed row reveals the reason
             // inline.
-            if active_section == SpaceAdminSection::Repair && !move_submissions.is_empty() {
+            if active_section == RealmAdminSection::Repair && !move_submissions.is_empty() {
                 div { class: "event", "data-testid": "move-submission-tracker",
                     div { class: "event-head",
                         span { "Recent Move submissions" }
@@ -635,7 +635,7 @@ pub fn SpaceAdminPanel(
             }
             // Bottom/conflict banner — rendered when the projection
             // exposes unresolved concurrent candidates. P0 M5.
-            if active_section == SpaceAdminSection::Repair && !bottom_cells.is_empty() {
+            if active_section == RealmAdminSection::Repair && !bottom_cells.is_empty() {
                 div { class: "event", "data-testid": "bottom-cells-banner",
                     div { class: "event-head",
                         span { "Concurrent candidates unresolved" }
@@ -848,7 +848,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            if active_section == SpaceAdminSection::Security {
+            if active_section == RealmAdminSection::Security {
                 // Covered_frontier_lag alert banner. Mirrors sodmin's admin
                 // page banner but stays client-side - it reads the lag from
                 // the LocalAnchorView populated on /sync, compares to a
@@ -999,7 +999,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
             }
-            if active_section == SpaceAdminSection::Access {
+            if active_section == RealmAdminSection::Access {
             // Realm / Space metadata editor. Spec fields are `title` and
             // optional `summary`; access policy is handled by the facet
             // controls below rather than by generic metadata fields.
@@ -1097,7 +1097,7 @@ pub fn SpaceAdminPanel(
                                     });
                                 }
                             },
-                            {crate::i18n::tr("space_admin.save_metadata")}
+                            {crate::i18n::tr("realm_admin.save_metadata")}
                         }
                     }
                 }
@@ -1192,11 +1192,11 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.apply_policy")}
+                        {crate::i18n::tr("realm_admin.apply_policy")}
                     }
                 }
             }
-            } // closes `if active_section == SpaceAdminSection::Access`
+            } // closes `if active_section == RealmAdminSection::Access`
 
             // Invite member
             div { class: "event", "data-testid": "admin-discussion-admission",
@@ -1226,7 +1226,7 @@ pub fn SpaceAdminPanel(
                 }
             }
 
-            if active_section == SpaceAdminSection::Members {
+            if active_section == RealmAdminSection::Members {
             div { class: "muted", "data-testid": "dbg-members-block-entered", "members section entered" }
             // Invite member
             div { class: "event", "data-testid": "invite-member",
@@ -1384,7 +1384,7 @@ pub fn SpaceAdminPanel(
                                 // Members appear as the local store applies
                                 // ck.member.state events.
                                 let store = state_store.read();
-                                let next = projected_members_for_space(&store, &space);
+                                let next = projected_members_for_realm(&store, &space);
                                 let count = next.len();
                                 members.set(next);
                                 status_msg.set(format!(
@@ -1392,7 +1392,7 @@ pub fn SpaceAdminPanel(
                                 ));
                             }
                         },
-                        {crate::i18n::tr("space_admin.refresh_members")}
+                        {crate::i18n::tr("realm_admin.refresh_members")}
                     }
                 }
                 for member in members() {
@@ -1442,7 +1442,7 @@ pub fn SpaceAdminPanel(
                                             .get("kind")
                                             .and_then(|k| k.as_str())
                                             == Some("ck.agent.endpoint")
-                                            && r.space_id
+                                            && r.realm_id
                                                 .as_deref()
                                                 .map(|s| s == selected_space)
                                                 .unwrap_or(true)
@@ -1536,7 +1536,7 @@ pub fn SpaceAdminPanel(
                                         });
                                     }
                                 },
-                                {crate::i18n::tr("space_admin.kick_member")}
+                                {crate::i18n::tr("realm_admin.kick_member")}
                             }
                             button {
                                 class: "secondary",
@@ -1597,7 +1597,7 @@ pub fn SpaceAdminPanel(
                                         });
                                     }
                                 },
-                                {crate::i18n::tr("space_admin.ban_member")}
+                                {crate::i18n::tr("realm_admin.ban_member")}
                             }
                             // (Legacy Move-flow kick/ban buttons removed — the
                             // direct-event kick/ban above now submits the same
@@ -1673,7 +1673,7 @@ pub fn SpaceAdminPanel(
                     }
                 }
                 if members().is_empty() {
-                    div { class: "muted", {crate::i18n::tr("space_admin.no_members_loaded")} }
+                    div { class: "muted", {crate::i18n::tr("realm_admin.no_members_loaded")} }
                 }
             }
 
@@ -1886,7 +1886,7 @@ pub fn SpaceAdminPanel(
             }
             }
 
-            if active_section == SpaceAdminSection::Security {
+            if active_section == RealmAdminSection::Security {
             // Audited E2EE assurance — crypto-media/audited-e2ee.md
             // Two profiles: ck.profile.attested_audit.e2ee.v1 (HW attestation forced)
             // and ck.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
@@ -1967,7 +1967,7 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.rotate_epoch")}
+                        {crate::i18n::tr("realm_admin.rotate_epoch")}
                     }
                 }
             }
@@ -2020,13 +2020,13 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.leave_space")}
+                        {crate::i18n::tr("realm_admin.leave_space")}
                     }
                 }
             }
             }
 
-            // Capability grant explanation — claude-design desktop/space-admin.html
+            // Capability grant explanation — claude-design desktop/realm-admin.html
             // authz/capabilities.md (delegation, revocation, claim conditions)
             //
             // Constraint type model: 8 family + subtype discriminator per
@@ -2270,7 +2270,7 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.grant_capability_move")}
+                        {crate::i18n::tr("realm_admin.grant_capability_move")}
                     }
                     button {
                         class: "secondary",
@@ -2337,12 +2337,12 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.revoke_capability_move")}
+                        {crate::i18n::tr("realm_admin.revoke_capability_move")}
                     }
                 }
             }
 
-            if active_section == SpaceAdminSection::Governance {
+            if active_section == RealmAdminSection::Governance {
             // Organization governance — identity/identity-did.md §6 + content-moderation
             // An Organization is a Principal (not a Realm). A single Realm can be
             // jointly governed by multiple organizations; the Realm's organization
@@ -2421,8 +2421,8 @@ pub fn SpaceAdminPanel(
             }
             }
 
-            if active_section == SpaceAdminSection::Federation {
-            // Trust bundle import — claude-design desktop/space-admin.html
+            if active_section == RealmAdminSection::Federation {
+            // Trust bundle import — claude-design desktop/realm-admin.html
             // sync/federation.md + sync/sovereign-deployment.md
             div { class: "event", "data-testid": "trust-bundle-panel",
                 div { class: "event-head",
@@ -2463,7 +2463,7 @@ pub fn SpaceAdminPanel(
             }
 
             // Danger zone
-            if active_section == SpaceAdminSection::Repair {
+            if active_section == RealmAdminSection::Repair {
             div { class: "event", "data-testid": "danger-zone",
                 div { class: "event-head", span { "Danger Zone" } span { "destructive actions" } }
                 div { class: "actions",
@@ -2505,7 +2505,7 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.archive_space")}
+                        {crate::i18n::tr("realm_admin.archive_space")}
                     }
                     button {
                         class: "secondary",
@@ -2544,7 +2544,7 @@ pub fn SpaceAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("space_admin.tombstone_delete")}
+                        {crate::i18n::tr("realm_admin.tombstone_delete")}
                     }
                 }
             }
@@ -2558,11 +2558,11 @@ pub fn SpaceAdminPanel(
             // SDK group can't be hydrated from inside the browser yet.
             div { class: "event", "data-testid": "mls-remove-builder",
                 div { class: "event-head",
-                    span { {crate::i18n::tr("space_admin.mls_remove_header")} }
+                    span { {crate::i18n::tr("realm_admin.mls_remove_header")} }
                     span { "B5c · ck.mls.commit" }
                 }
                 div { class: "muted",
-                    {crate::i18n::tr("space_admin.mls_remove_hint")}
+                    {crate::i18n::tr("realm_admin.mls_remove_hint")}
                 }
                 {
                     let has_snapshot = state_store
@@ -2584,7 +2584,7 @@ pub fn SpaceAdminPanel(
                             input {
                                 "data-testid": "mls-remove-target-did",
                                 value: "{device_revoke_target}",
-                                placeholder: crate::i18n::tr("space_admin.mls_remove_target_placeholder"),
+                                placeholder: crate::i18n::tr("realm_admin.mls_remove_target_placeholder"),
                                 oninput: move |evt| device_revoke_target.set(evt.value()),
                             }
                             div { class: "actions",
@@ -2592,7 +2592,7 @@ pub fn SpaceAdminPanel(
                                     class: "danger",
                                     "data-testid": "mls-remove-submit-button",
                                     disabled: disable_button,
-                                    title: crate::i18n::tr("space_admin.mls_remove_button"),
+                                    title: crate::i18n::tr("realm_admin.mls_remove_button"),
                                     onclick: {
                                         let base = base_url.clone();
                                         let space = selected_space.clone();
@@ -2620,7 +2620,7 @@ pub fn SpaceAdminPanel(
                                             });
                                         }
                                     },
-                                    {crate::i18n::tr("space_admin.mls_remove_button")}
+                                    {crate::i18n::tr("realm_admin.mls_remove_button")}
                                 }
                             }
                             if !device_revoke_status().is_empty() {
@@ -2765,7 +2765,7 @@ pub fn SpaceAdminPanel(
             }
 
             if !status_msg().is_empty() {
-                div { class: "muted", "data-testid": "space-admin-status", "{status_msg}" }
+                div { class: "muted", "data-testid": "realm-admin-status", "{status_msg}" }
             }
         }
     }
@@ -2780,7 +2780,7 @@ async fn run_device_revoke_from_snapshot(
     _base_url: String,
     _api_token: String,
     _state_store: Signal<LocalStateStore>,
-    _space_id: String,
+    _realm_id: String,
     _actor_did: String,
     _device_id: String,
     _target_did: String,
@@ -2810,7 +2810,7 @@ async fn run_device_revoke_from_snapshot(
     base_url: String,
     api_token: String,
     mut state_store: Signal<LocalStateStore>,
-    space_id: String,
+    realm_id: String,
     actor_did: String,
     device_id: String,
     target_did: String,
@@ -2820,12 +2820,12 @@ async fn run_device_revoke_from_snapshot(
         status.set("target device DID is required".to_owned());
         return;
     }
-    let envelope = match state_store.read().mls_snapshot_for(&space_id) {
+    let envelope = match state_store.read().mls_snapshot_for(&realm_id) {
         Some(env) => env,
         None => {
             status.set(format!(
                 "no persisted MLS snapshot for space {}; nothing to revoke against",
-                short_protocol_id(&space_id)
+                short_protocol_id(&realm_id)
             ));
             return;
         }
@@ -2849,7 +2849,7 @@ async fn run_device_revoke_from_snapshot(
             return;
         }
     };
-    let typed_realm = match cokret_sdk::RealmId::new(space_id.clone()) {
+    let typed_realm = match cokret_sdk::RealmId::new(realm_id.clone()) {
         Ok(s) => s,
         Err(err) => {
             status.set(format!("invalid realm id: {err}"));
@@ -2893,7 +2893,7 @@ async fn run_device_revoke_from_snapshot(
         .to_owned();
     let target_ref = full.output.commit_operation.object_id.clone();
     let mut envelope_builder =
-        crate::operation::OperationBuilder::new(space_id.clone(), actor, "mls_commit")
+        crate::operation::OperationBuilder::new(realm_id.clone(), actor, "mls_commit")
             .body(full.output.commit_operation.payload.clone());
     if let Some(tref) = target_ref {
         envelope_builder = envelope_builder.target_ref(tref);
@@ -2925,7 +2925,7 @@ async fn run_device_revoke_from_snapshot(
                 }
             };
             let new_envelope = crate::mls::persistence::encrypt_state(
-                &space_id,
+                &realm_id,
                 &post_state.group_id,
                 post_state.epoch,
                 &serialized_state,
@@ -2934,8 +2934,8 @@ async fn run_device_revoke_from_snapshot(
             );
             state_store
                 .write()
-                .save_mls_snapshot(space_id.clone(), new_envelope);
-            let snapshot = state_store.read().mls_snapshot_for(&space_id);
+                .save_mls_snapshot(realm_id.clone(), new_envelope);
+            let snapshot = state_store.read().mls_snapshot_for(&realm_id);
             let backup_result = if let Some(snapshot) = snapshot {
                 crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| {
                     let actor_did = actor_did.clone();

@@ -18,7 +18,7 @@ const PUSH_SW_PATH = "/yougen-cross-platform-push-sw.js";
 const LEAK_FIELDS = [
   "body",
   "message_body",
-  "space_title",
+  "realm_title",
   "title",
   "sender",
   "collapse_key",
@@ -150,7 +150,7 @@ test.describe("desktop push receive smoke", () => {
               reason: "background_sync_needed",
               body: "hidden body",
               message_body: "hidden message",
-              space_title: "hidden space",
+              realm_title: "hidden realm",
               title: "hidden title",
               sender: "did:web:alice.example",
               collapse_key: "ck:event:1",

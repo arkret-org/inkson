@@ -13,9 +13,9 @@
 //! * **First iteration is initial account sync** when no cursor is stored (or it's the `"-"`
 //!   sentinel). Subsequent iterations resume with `after=<cursor>&catchup=true`.
 //! * **Server-authoritative reconcile**: on a full sync the response is the truth for top-level
-//!   Realm membership. Nested container Spaces may not appear as top-level `response.spaces`
+//!   Realm membership. Nested container Spaces may not appear as top-level `response.realms`
 //!   entries, so locally projected Spaces are retained while their home Realm remains in the
-//!   full-sync response. On incremental, soland's `left_spaces` field is the prune signal.
+//!   full-sync response. On incremental, soland's `left_realms` field is the prune signal.
 //! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
 //!   engine's `generation` Signal; the loop notices on the next iteration and exits cleanly. A
 //!   fresh engine spawn picks up the next generation.
@@ -358,7 +358,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
                 // Space-container projections whose home Realm is still
                 // present. Containers are not guaranteed to arrive as
                 // top-level sync entries.
-                let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
+                let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
                 let keep_set = crate::app::full_sync_projection_keep_set(
                     &server_set,
                     &store.load().space_projections,
@@ -371,12 +371,12 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
                     );
                 }
             }
-            // Explicit `left_spaces` deltas — meaningful primarily on
+            // Explicit `left_realms` deltas — meaningful primarily on
             // incremental sync, but cheap to apply on full sync too.
-            for left_id in &response.left_spaces {
+            for left_id in &response.left_realms {
                 store.forget_space(left_id);
             }
-            for (id, body) in &response.spaces {
+            for (id, body) in &response.realms {
                 store.save_space_projection(id.clone(), body.clone());
                 let view = LocalAnchorView::from_sync_body(body);
                 store.set_anchor_view(id.clone(), view);
@@ -419,7 +419,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
         }
     }
 
-    let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.spaces);
+    let synced_timeline = crate::app::timeline_events_from_sync_spaces(&response.realms);
     let next_timeline = if is_full_sync {
         synced_timeline
     } else {
@@ -613,8 +613,8 @@ mod tests {
     fn empty_response(cursor: &str) -> ClientSyncResponse {
         ClientSyncResponse {
             cursor: cursor.to_owned(),
-            spaces: Default::default(),
-            left_spaces: Vec::new(),
+            realms: Default::default(),
+            left_realms: Vec::new(),
             to_device: Vec::new(),
             account_data: Vec::new(),
             device_lists: json!({}),
@@ -654,11 +654,11 @@ mod tests {
 
         let mut response = empty_response("sx:42");
         response
-            .spaces
+            .realms
             .insert("ck:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
 
         // Mirror the engine's full-sync prune step.
-        let server_set: BTreeSet<String> = response.spaces.keys().cloned().collect();
+        let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
         let keep_set =
             crate::app::full_sync_projection_keep_set(&server_set, &store.load().space_projections);
         let pruned = store.retain_space_projections(|id| keep_set.contains(id));
@@ -672,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn incremental_response_forgets_left_spaces() {
+    fn incremental_response_forgets_left_realms() {
         let path = std::env::temp_dir().join(format!(
             "yougen-engine-left-{}.json",
             std::time::SystemTime::now()
@@ -686,10 +686,10 @@ mod tests {
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
-        response.left_spaces = vec!["ck:space:b".to_owned()];
+        response.left_realms = vec!["ck:space:b".to_owned()];
 
-        // Mirror the engine's left_spaces step.
-        for id in &response.left_spaces {
+        // Mirror the engine's left_realms step.
+        for id in &response.left_realms {
             store.forget_space(id);
         }
 

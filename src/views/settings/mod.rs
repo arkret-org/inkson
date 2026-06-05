@@ -41,7 +41,7 @@ use crate::workflows::blocked_release_workflows;
 pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ck.read_receipt.preferences";
 
 /// `ck.account_data` key used by the cross-device UI preferences entry
-/// (theme, sidebar collapsed, per-Space view). Spec:
+/// (theme, sidebar collapsed, per-Realm view). Spec:
 /// `discovery/client-preferences.md` §2.
 pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
@@ -143,12 +143,12 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
 /// other devices reading the value via `/sync` get the same field names.
 pub(crate) fn build_read_receipt_preferences_body(
     default_send: bool,
-    space_overrides: &std::collections::BTreeMap<String, bool>,
+    realm_overrides: &std::collections::BTreeMap<String, bool>,
     flow_overrides: &std::collections::BTreeMap<String, bool>,
 ) -> serde_json::Value {
     json!({
         "default_send": default_send,
-        "space_overrides": space_overrides,
+        "realm_overrides": realm_overrides,
         "flow_overrides": flow_overrides,
     })
 }
@@ -166,7 +166,7 @@ fn push_read_receipt_account_data(
 ) {
     let body = build_read_receipt_preferences_body(
         state_store.read().read_receipt_default_send(),
-        &state_store.read().read_receipt_space_overrides(),
+        &state_store.read().read_receipt_realm_overrides(),
         &state_store.read().read_receipt_flow_overrides(),
     );
     spawn(async move {
@@ -231,7 +231,7 @@ pub(crate) fn push_blocklist_account_data(
 fn push_notification_rules_account_data(
     base_url: String,
     api_token: String,
-    muted_spaces: Vec<String>,
+    muted_realms: Vec<String>,
 ) {
     if api_token.trim().is_empty() {
         return;
@@ -250,11 +250,11 @@ fn push_notification_rules_account_data(
             "actions": ["notify", "highlight"]
         }),
     ];
-    for space_id in muted_spaces {
+    for realm_id in muted_realms {
         rules.push(json!({
-            "rule_id": format!("override.mute-space.{space_id}"),
+            "rule_id": format!("override.mute-realm.{realm_id}"),
             "conditions": [
-                {"kind": "field_match", "field": "space_id", "pattern": space_id}
+                {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
             ],
             "actions": ["dont_notify"]
         }));
@@ -612,7 +612,7 @@ impl SettingsSection {
             }
             Self::Mimi => "Connected services and MIMI interoperability controls.",
             Self::Notifications => {
-                "Notification rules, push registration, routing state, and per-Space delivery controls."
+                "Notification rules, push registration, routing state, and per-Realm delivery controls."
             }
             Self::Privacy => {
                 "Actor-private preferences, disclosure policy, and selective sharing rules."
@@ -703,19 +703,19 @@ pub fn SettingsPanel(
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
     let mut presence_visible = use_signal(|| true);
-    let mut notification_space_input = use_signal(String::new);
-    let mut notification_space_muted = use_signal(|| false);
+    let mut notification_realm_input = use_signal(String::new);
+    let mut notification_realm_muted = use_signal(|| false);
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let mut notification_settings_status = use_signal(String::new);
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so the timeline view can resolve
-    // (flow → space → default) before sending `ck.receipt.read`.
+    // (flow → realm → default) before sending `ck.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
-    let mut read_receipt_space_overrides =
-        use_signal(|| state_store.read().read_receipt_space_overrides());
+    let mut read_receipt_realm_overrides =
+        use_signal(|| state_store.read().read_receipt_realm_overrides());
     let mut read_receipt_override_input = use_signal(String::new);
     // Space remarks editor state (spec client-preferences.md §3.7).
     // `space_remarks_snapshot` is the resolved BTreeMap rendered for the
@@ -776,7 +776,7 @@ pub fn SettingsPanel(
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
-    let muted_spaces = state_store.read().muted_spaces();
+    let muted_realms = state_store.read().muted_realms();
     let active_locale = locale();
     let active_locale_code = active_locale.code();
     let active_direction = active_locale.direction().as_str();
@@ -1888,41 +1888,41 @@ pub fn SettingsPanel(
                                     span { "synced" }
                                 }
                                 label {
-                                    "Space"
+                                    "Realm"
                                     input {
-                                        "data-testid": "space-notification-target-input",
-                                        value: "{notification_space_input}",
+                                        "data-testid": "realm-notification-target-input",
+                                        value: "{notification_realm_input}",
                                         placeholder: "ck:realm:...",
-                                        oninput: move |evt| notification_space_input.set(evt.value()),
+                                        oninput: move |evt| notification_realm_input.set(evt.value()),
                                     }
                                 }
                                 label {
                                     input {
                                         r#type: "checkbox",
-                                        "data-testid": "space-mute-toggle",
-                                        checked: notification_space_muted(),
+                                        "data-testid": "realm-mute-toggle",
+                                        checked: notification_realm_muted(),
                                         onchange: move |evt| {
                                             let muted = evt.value() == "true";
-                                            notification_space_muted.set(muted);
-                                            let space_id = notification_space_input().trim().to_owned();
-                                            if space_id.is_empty() {
-                                                notification_settings_status.set("Enter a Space ID before changing mute.".to_owned());
+                                            notification_realm_muted.set(muted);
+                                            let realm_id = notification_realm_input().trim().to_owned();
+                                            if realm_id.is_empty() {
+                                                notification_settings_status.set("Enter a Realm ID before changing mute.".to_owned());
                                                 return;
                                             }
-                                            state_store.write().set_space_muted(space_id.clone(), muted);
+                                            state_store.write().set_realm_muted(realm_id.clone(), muted);
                                             push_notification_rules_account_data(
                                                 base_url(),
                                                 token(),
-                                                state_store.read().muted_spaces(),
+                                                state_store.read().muted_realms(),
                                             );
                                             notification_settings_status.set(format!(
                                                 "{} {}.",
-                                                short_protocol_id(&space_id),
+                                                short_protocol_id(&realm_id),
                                                 if muted { "muted" } else { "unmuted" }
                                             ));
                                         },
                                     }
-                                    " Mute this Space"
+                                    " Mute this Realm"
                                 }
                                 div { class: "actions",
                                     label {
@@ -1955,7 +1955,7 @@ pub fn SettingsPanel(
                                             push_notification_rules_account_data(
                                                 base_url(),
                                                 token(),
-                                                state_store.read().muted_spaces(),
+                                                state_store.read().muted_realms(),
                                             );
                                         },
                                         "Save"
@@ -2071,33 +2071,33 @@ pub fn SettingsPanel(
                     }
                     div { class: "event", "data-testid": "notifications-mute-summary",
                         div { class: "event-head",
-                            span { "Per-space mute rules" }
-                            span { "{muted_spaces.len()} muted" }
+                            span { "Per-realm mute rules" }
+                            span { "{muted_realms.len()} muted" }
                         }
-                        if muted_spaces.is_empty() {
-                            div { class: "muted", {crate::i18n::tr("settings.muted_spaces_empty")} }
+                        if muted_realms.is_empty() {
+                            div { class: "muted", {crate::i18n::tr("settings.muted_realms_empty")} }
                         } else {
-                            for space_id in muted_spaces {
+                            for realm_id in muted_realms {
                                 {
-                                    let space_id_label = short_protocol_id(&space_id);
+                                    let realm_id_label = short_protocol_id(&realm_id);
                                     rsx! {
-                                        div { class: "actions", "data-testid": "settings-muted-space-row",
-                                            span { title: "{space_id}", "{space_id_label}" }
+                                        div { class: "actions", "data-testid": "settings-muted-realm-row",
+                                            span { title: "{realm_id}", "{realm_id_label}" }
                                             button {
                                                 class: "secondary",
-                                                "data-testid": "notifications-settings-unmute-space",
+                                                "data-testid": "notifications-settings-unmute-realm",
                                                 onclick: {
-                                                    let space_id = space_id.clone();
+                                                    let realm_id = realm_id.clone();
                                                     move |_| {
-                                                        state_store.write().set_space_muted(space_id.clone(), false);
+                                                        state_store.write().set_realm_muted(realm_id.clone(), false);
                                                         push_notification_rules_account_data(
                                                             base_url(),
                                                             token(),
-                                                            state_store.read().muted_spaces(),
+                                                            state_store.read().muted_realms(),
                                                         );
                                                         status.set(format!(
                                                             "Unmuted {} from notification preferences",
-                                                            short_protocol_id(&space_id)
+                                                            short_protocol_id(&realm_id)
                                                         ));
                                                     }
                                                 },
@@ -2109,15 +2109,15 @@ pub fn SettingsPanel(
                             }
                             button {
                                 class: "secondary",
-                                "data-testid": "notifications-settings-clear-muted-spaces",
+                                "data-testid": "notifications-settings-clear-muted-realms",
                                 onclick: move |_| {
-                                    state_store.write().clear_muted_spaces();
+                                    state_store.write().clear_muted_realms();
                                     push_notification_rules_account_data(
                                         base_url(),
                                         token(),
-                                        state_store.read().muted_spaces(),
+                                        state_store.read().muted_realms(),
                                     );
-                                    status.set("Cleared all per-space mute rules".to_owned());
+                                    status.set("Cleared all per-realm mute rules".to_owned());
                                 },
                                 "Clear All Mutes"
                             }
@@ -2165,7 +2165,7 @@ pub fn SettingsPanel(
                                     send,
                                     &state_store
                                         .read()
-                                        .read_receipt_space_overrides(),
+                                        .read_receipt_realm_overrides(),
                                     &state_store
                                         .read()
                                         .read_receipt_flow_overrides(),
@@ -2185,25 +2185,25 @@ pub fn SettingsPanel(
                             },
                         }
                         " Send read receipts (ck.receipt.read) by default "
-                        HelpTip { text: "Resolution order is (flow → space → default). When a Space declares a read-receipt policy with disclosure=required or disabled, the server policy overrides this preference." }
+                        HelpTip { text: "Resolution order is (flow → realm → default). When a Realm declares a read-receipt policy with disclosure=required or disabled, the server policy overrides this preference." }
                     }
                     div { class: "event-head",
-                        span { "Per-space overrides" }
-                        span { "{read_receipt_space_overrides().len()} configured" }
-                        HelpTip { text: "Add a Space ID below to opt this Space out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a ck.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Space toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
+                        span { "per-Realm overrides" }
+                        span { "{read_receipt_realm_overrides().len()} configured" }
+                        HelpTip { text: "Add a Realm ID below to opt this Realm out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a ck.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Realm toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
                     }
-                    for (space_id, send) in read_receipt_space_overrides() {
+                    for (realm_id, send) in read_receipt_realm_overrides() {
                             // Policy lock — when soland publishes a
                             // ck.realm.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
                             // sync (P0 M3) wires the snapshot, this returns
-                            // `None` for every space and the row stays
+                            // `None` for every realm and the row stays
                             // editable.
                             {
                                 let policy = state_store
                                     .read()
-                                    .read_receipt_policy_for_space(&space_id);
+                                    .read_receipt_policy_for_realm(&realm_id);
                                 let locked = policy
                                     .as_ref()
                                     .is_some_and(|p| p.locks_user_choice());
@@ -2211,10 +2211,10 @@ pub fn SettingsPanel(
                                     .as_ref()
                                     .map(|p| p.lock_reason())
                                     .unwrap_or_default();
-                                let space_id_label = short_protocol_id(&space_id);
+                                let realm_id_label = short_protocol_id(&realm_id);
                                 rsx! {
                                     div { class: "actions", "data-testid": "read-receipt-override-row",
-                                        span { title: "{space_id}", "{space_id_label}" }
+                                        span { title: "{realm_id}", "{realm_id_label}" }
                                         span { class: "badge",
                                             {if send { "sending" } else { "skipping" }}
                                         }
@@ -2222,7 +2222,7 @@ pub fn SettingsPanel(
                                             span {
                                                 class: "badge red",
                                                 "data-testid": "read-receipt-override-locked",
-                                                "locked by Space policy"
+                                                "locked by Realm policy"
                                             }
                                         }
                                         button {
@@ -2230,22 +2230,22 @@ pub fn SettingsPanel(
                                             "data-testid": "read-receipt-override-toggle",
                                             disabled: locked,
                                             onclick: {
-                                                let space_id = space_id.clone();
+                                                let realm_id = realm_id.clone();
                                                 move |_| {
                                                     if locked {
                                                         return;
                                                     }
                                                     let next = !send;
-                                                    state_store.write().set_read_receipt_space_override(
-                                                        space_id.clone(),
+                                                    state_store.write().set_read_receipt_realm_override(
+                                                        realm_id.clone(),
                                                         Some(next),
                                                     );
-                                                    read_receipt_space_overrides.set(
-                                                        state_store.read().read_receipt_space_overrides(),
+                                                    read_receipt_realm_overrides.set(
+                                                        state_store.read().read_receipt_realm_overrides(),
                                                     );
                                                     status.set(format!(
                                                         "Read receipts for {}: {}",
-                                                        short_protocol_id(&space_id),
+                                                        short_protocol_id(&realm_id),
                                                         if next { "send" } else { "skip" }
                                                     ));
                                                     push_read_receipt_account_data(
@@ -2262,21 +2262,21 @@ pub fn SettingsPanel(
                                             "data-testid": "read-receipt-override-clear",
                                             disabled: locked,
                                             onclick: {
-                                                let space_id = space_id.clone();
+                                                let realm_id = realm_id.clone();
                                                 move |_| {
                                                     if locked {
                                                         return;
                                                     }
-                                                    state_store.write().set_read_receipt_space_override(
-                                                        space_id.clone(),
+                                                    state_store.write().set_read_receipt_realm_override(
+                                                        realm_id.clone(),
                                                         None,
                                                     );
-                                                    read_receipt_space_overrides.set(
-                                                        state_store.read().read_receipt_space_overrides(),
+                                                    read_receipt_realm_overrides.set(
+                                                        state_store.read().read_receipt_realm_overrides(),
                                                     );
                                                     status.set(format!(
                                                         "Read receipts for {}: inherit default",
-                                                        short_protocol_id(&space_id)
+                                                        short_protocol_id(&realm_id)
                                                     ));
                                                     push_read_receipt_account_data(
                                                         base_url(),
@@ -2300,7 +2300,7 @@ pub fn SettingsPanel(
                     div { class: "actions", "data-testid": "read-receipt-add-override",
                         input {
                             r#type: "text",
-                            placeholder: "ck:space:...",
+                            placeholder: "ck:realm:...",
                             value: "{read_receipt_override_input()}",
                             oninput: move |evt| read_receipt_override_input.set(evt.value()),
                         }
@@ -2308,22 +2308,22 @@ pub fn SettingsPanel(
                             class: "secondary",
                             "data-testid": "read-receipt-add-override-skip",
                             onclick: move |_| {
-                                let space_id = read_receipt_override_input().trim().to_owned();
-                                if space_id.is_empty() {
-                                    status.set("Enter a Space ID first".to_owned());
+                                let realm_id = read_receipt_override_input().trim().to_owned();
+                                if realm_id.is_empty() {
+                                    status.set("Enter a Realm ID first".to_owned());
                                     return;
                                 }
-                                state_store.write().set_read_receipt_space_override(
-                                    space_id.clone(),
+                                state_store.write().set_read_receipt_realm_override(
+                                    realm_id.clone(),
                                     Some(false),
                                 );
-                                read_receipt_space_overrides.set(
-                                    state_store.read().read_receipt_space_overrides(),
+                                read_receipt_realm_overrides.set(
+                                    state_store.read().read_receipt_realm_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
                                 status.set(format!(
                                     "Skipping read receipts in {}",
-                                    short_protocol_id(&space_id)
+                                    short_protocol_id(&realm_id)
                                 ));
                                 push_read_receipt_account_data(
                                     base_url(),
@@ -2337,22 +2337,22 @@ pub fn SettingsPanel(
                             class: "secondary",
                             "data-testid": "read-receipt-add-override-send",
                             onclick: move |_| {
-                                let space_id = read_receipt_override_input().trim().to_owned();
-                                if space_id.is_empty() {
-                                    status.set("Enter a Space ID first".to_owned());
+                                let realm_id = read_receipt_override_input().trim().to_owned();
+                                if realm_id.is_empty() {
+                                    status.set("Enter a Realm ID first".to_owned());
                                     return;
                                 }
-                                state_store.write().set_read_receipt_space_override(
-                                    space_id.clone(),
+                                state_store.write().set_read_receipt_realm_override(
+                                    realm_id.clone(),
                                     Some(true),
                                 );
-                                read_receipt_space_overrides.set(
-                                    state_store.read().read_receipt_space_overrides(),
+                                read_receipt_realm_overrides.set(
+                                    state_store.read().read_receipt_realm_overrides(),
                                 );
                                 read_receipt_override_input.set(String::new());
                                 status.set(format!(
                                     "Sending read receipts in {}",
-                                    short_protocol_id(&space_id)
+                                    short_protocol_id(&realm_id)
                                 ));
                                 push_read_receipt_account_data(
                                     base_url(),
@@ -3078,7 +3078,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "Profile space override" }
-                            span { title: "ck.profile.space_override", "Per-space profile" }
+                            span { title: "ck.profile.realm_override", "Per-realm profile" }
                             div { class: "muted", "Show a different profile or handle inside a specific Space" }
                         }
                     }
@@ -3333,17 +3333,17 @@ mod tests {
 
     /// The canonical `ck.read_receipt.preferences` body shape other devices
     /// read via `/sync` account_data. Locks the field names
-    /// (`default_send`, `space_overrides`, `flow_overrides`) so a future
+    /// (`default_send`, `realm_overrides`, `flow_overrides`) so a future
     /// rename can't silently desync devices.
     #[test]
     fn build_read_receipt_preferences_body_has_canonical_field_shape() {
         let mut spaces = BTreeMap::new();
-        spaces.insert("ck:space:demo".to_owned(), false);
+        spaces.insert("ck:realm:demo".to_owned(), false);
         let mut flows = BTreeMap::new();
         flows.insert("ck:flow:demo".to_owned(), true);
         let body = build_read_receipt_preferences_body(true, &spaces, &flows);
         assert_eq!(body["default_send"], serde_json::Value::Bool(true));
-        assert_eq!(body["space_overrides"]["ck:space:demo"], false);
+        assert_eq!(body["realm_overrides"]["ck:realm:demo"], false);
         assert_eq!(body["flow_overrides"]["ck:flow:demo"], true);
         // Keys we don't expect in this body — explicit guards so a typo
         // (e.g. `default` instead of `default_send`) regression-bisects.

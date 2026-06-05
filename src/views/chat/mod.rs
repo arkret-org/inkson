@@ -438,7 +438,7 @@ pub fn ChatPanel(
                     let mut got_sync_presence = false;
                     if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                         let active_typers =
-                            typing_actors_from_sync_spaces(&sync.spaces, &space, &actor);
+                            typing_actors_from_sync_spaces(&sync.realms, &space, &actor);
                         // Only write the signal when the value actually changed —
                         // an unchanged set would needlessly re-render the chat.
                         if poll_key_signal.read().as_str() == poll_key_for_task.as_str()
@@ -552,16 +552,16 @@ pub fn ChatPanel(
                 {
                     let mut store = state_store.write();
                     store.save_sync_cursor(sync.cursor.clone());
-                    for (space_id, projection) in &sync.spaces {
+                    for (space_id, projection) in &sync.realms {
                         store.save_space_projection(space_id.clone(), projection.clone());
                     }
                 }
                 loaded_messages.extend(chat_messages_from_sync_spaces_with_sidecar(
-                    &sync.spaces,
+                    &sync.realms,
                     Some(&state_store.read()),
                     decrypt_identity,
                 ));
-                loaded_poll_cards.extend(poll_cards_from_sync_spaces(&sync.spaces));
+                loaded_poll_cards.extend(poll_cards_from_sync_spaces(&sync.realms));
                 let default_space_ids = if selected_scope_for_load.is_empty() {
                     vec![selected_space_for_load.clone()]
                 } else {
@@ -569,7 +569,7 @@ pub fn ChatPanel(
                 };
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_sync_spaces(&sync.spaces, &default_space_ids),
+                    channels_from_sync_spaces(&sync.realms, &default_space_ids),
                 );
                 sync_cursor.set(sync.cursor);
             }
@@ -2346,8 +2346,8 @@ pub fn ChatPanel(
                 // a checkbox.
                 let space_id_for_mute = selected_space.clone();
                 let flow_id_for_rr = selected_channel_value.clone();
-                let muted_spaces_now = state_store.read().muted_spaces();
-                let space_is_muted = muted_spaces_now.contains(&space_id_for_mute);
+                let muted_realms_now = state_store.read().muted_realms();
+                let realm_is_muted = muted_realms_now.contains(&space_id_for_mute);
                 let rr_default_send = state_store.read().read_receipt_default_send();
                 let rr_flow_override =
                     state_store.read().read_receipt_flow_override(&flow_id_for_rr);
@@ -2385,14 +2385,14 @@ pub fn ChatPanel(
                             input {
                                 r#type: "checkbox",
                                 "data-testid": "discussion-settings-mute",
-                                checked: space_is_muted,
+                                checked: realm_is_muted,
                                 onchange: {
                                     let space_id = space_id_for_mute.clone();
                                     move |evt: Event<FormData>| {
                                         let new_muted = evt.value() == "true";
                                         state_store
                                             .write()
-                                            .set_space_muted(space_id.clone(), new_muted);
+                                            .set_realm_muted(space_id.clone(), new_muted);
                                     }
                                 },
                             }
@@ -4234,7 +4234,7 @@ mod tests {
             "id": "ck:event:body-shape",
             "type": "ck.message.create",
             "actor": "did:web:alice.example",
-            "space_id": "ck:space:demo",
+            "realm_id": "ck:realm:demo",
             "created_at": "2026-05-14T01:23:45Z",
             "causal": {"actor_seq": 42},
             "body": {
@@ -4248,7 +4248,7 @@ mod tests {
         let message = chat_message_from_event("ck:space:fallback", &event).unwrap();
 
         assert_eq!(message.id, "ck:event:body-shape");
-        assert_eq!(message.space_id, "ck:space:demo");
+        assert_eq!(message.space_id, "ck:realm:demo");
         assert_eq!(message.flow_id, "ck:flow:announce");
         assert_eq!(message.body, "restored from durable history");
         assert_eq!(message.sender, "did:web:alice.example");
@@ -4274,7 +4274,7 @@ mod tests {
             }
         });
 
-        let message = chat_message_from_event("ck:space:demo", &event).unwrap();
+        let message = chat_message_from_event("ck:realm:demo", &event).unwrap();
 
         assert_eq!(message.id, "ck:event:nested");
         assert_eq!(message.flow_id, "ck:flow:support");
@@ -4391,7 +4391,7 @@ mod tests {
         let state = ClientLocalState {
             raw_operations: vec![crate::local_state::RawOperationRecord {
                 operation_id: "ck:operation:local".to_owned(),
-                space_id: Some("ck:space:local".to_owned()),
+                realm_id: Some("ck:space:local".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
                     "event_id": "ck:event:local",
@@ -4436,7 +4436,7 @@ mod tests {
         let state = ClientLocalState {
             raw_operations: vec![crate::local_state::RawOperationRecord {
                 operation_id: "ck:operation:enc".to_owned(),
-                space_id: Some("ck:space:local".to_owned()),
+                realm_id: Some("ck:space:local".to_owned()),
                 received_at: chrono::Utc::now(),
                 // Encrypted stub: identity only, NO plaintext body.
                 payload: json!({
@@ -4727,7 +4727,7 @@ mod tests {
         let records = vec![
             RawOperationRecord {
                 operation_id: "op-1".to_owned(),
-                space_id: Some("ck:space:demo".to_owned()),
+                realm_id: Some("ck:realm:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "ck.agent.endpoint",
@@ -4736,7 +4736,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "op-2".to_owned(),
-                space_id: Some("ck:space:other".to_owned()),
+                realm_id: Some("ck:space:other".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "ck.agent.endpoint",
@@ -4745,7 +4745,7 @@ mod tests {
             },
             RawOperationRecord {
                 operation_id: "op-3".to_owned(),
-                space_id: Some("ck:space:demo".to_owned()),
+                realm_id: Some("ck:realm:demo".to_owned()),
                 received_at: Utc::now(),
                 payload: json!({
                     "kind": "ck.message.create",
@@ -4754,7 +4754,7 @@ mod tests {
             },
         ];
 
-        let agent_ids = agent_ids_from_raw_operations(&records, "ck:space:demo");
+        let agent_ids = agent_ids_from_raw_operations(&records, "ck:realm:demo");
         assert_eq!(
             agent_ids,
             vec!["did:web:researcher-agent.example".to_owned()]
@@ -4766,7 +4766,7 @@ mod tests {
         let event = json!({
             "event_id": "ck:event:flow",
             "kind": "ck.flow.create",
-            "space_id": "ck:space:demo",
+            "realm_id": "ck:realm:demo",
             "flow_id": "ck:flow:ops",
             "title": "Ops discussion",
             "category": "support",
@@ -4780,7 +4780,7 @@ mod tests {
             }
         });
 
-        let channel = channel_from_flow_event("ck:space:demo", &event).unwrap();
+        let channel = channel_from_flow_event("ck:realm:demo", &event).unwrap();
 
         assert_eq!(channel.flow_id, "ck:flow:ops");
         assert_eq!(channel.name, "Ops discussion");
@@ -4795,7 +4795,7 @@ mod tests {
         let event = json!({
             "event_id": "ck:event:flow",
             "kind": "ck.flow.create",
-            "space_id": "ck:space:demo",
+            "realm_id": "ck:realm:demo",
             "flow_id": "ck:flow:doc",
             "title": "Doc flow",
             "flow": {
@@ -4807,7 +4807,7 @@ mod tests {
             }
         });
 
-        assert!(channel_from_flow_event("ck:space:demo", &event).is_none());
+        assert!(channel_from_flow_event("ck:realm:demo", &event).is_none());
     }
 
     #[test]
@@ -4827,7 +4827,7 @@ mod tests {
             }
         });
 
-        let channel = default_discussion_channel("ck:space:demo", Some(&body));
+        let channel = default_discussion_channel("ck:realm:demo", Some(&body));
 
         assert_eq!(channel.flow_id, "ck:flow:demo");
         assert_eq!(channel.name, "General");
@@ -4838,7 +4838,7 @@ mod tests {
 
     #[test]
     fn default_discussion_channel_synthesizes_default_flow_when_projection_is_absent() {
-        let channel = default_discussion_channel("ck:space:demo", None);
+        let channel = default_discussion_channel("ck:realm:demo", None);
 
         assert_eq!(channel.flow_id, "ck:flow:demo");
         assert_eq!(channel.name, "Discussion");
@@ -4971,7 +4971,7 @@ mod tests {
                 "encrypted_content": {"ciphertext": "blob"},
             }
         });
-        let msg = chat_message_from_event("ck:space:demo", &event).expect("message");
+        let msg = chat_message_from_event("ck:realm:demo", &event).expect("message");
         assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
     }
 
@@ -4995,7 +4995,7 @@ mod tests {
             }
         });
 
-        let msg = chat_message_from_event("ck:space:demo", &event).expect("message");
+        let msg = chat_message_from_event("ck:realm:demo", &event).expect("message");
 
         assert_eq!(msg.body, "");
         assert_eq!(msg.flow_id, "ck:flow:1");

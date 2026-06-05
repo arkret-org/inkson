@@ -612,7 +612,7 @@ pub fn DirectoryPanel(
                             Link {
                                 class: "primary",
                                 "data-testid": "open-space-button",
-                                to: Route::Space { space_id: space.space_id.clone() },
+                                to: Route::Realm { realm_id: space.space_id.clone() },
                                 onclick: {
                                     let id = space.space_id.clone();
                                     move |_| {

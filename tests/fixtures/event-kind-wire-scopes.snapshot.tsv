@@ -91,7 +91,7 @@ ck.policy.rule	durable_event
 ck.policy.set	durable_event
 ck.presence	ephemeral_event
 ck.profile.create	durable_event
-ck.profile.space_override	durable_event
+ck.profile.realm_override	durable_event
 ck.profile.update	durable_event
 ck.reaction.add	durable_event
 ck.reaction.remove	durable_event

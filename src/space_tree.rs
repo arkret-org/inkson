@@ -569,16 +569,7 @@ pub(crate) fn projection_home_realm_id(body: &Value) -> Option<String> {
 }
 
 pub(crate) fn server_set_contains_realm_id(server_set: &BTreeSet<String>, realm_id: &str) -> bool {
-    if server_set.contains(realm_id) {
-        return true;
-    }
-    if let Some(suffix) = realm_id.strip_prefix("ck:realm:") {
-        return server_set.contains(&format!("ck:space:{suffix}"));
-    }
-    if let Some(suffix) = realm_id.strip_prefix("ck:space:") {
-        return server_set.contains(&format!("ck:realm:{suffix}"));
-    }
-    false
+    server_set.contains(realm_id)
 }
 
 pub fn full_sync_projection_keep_set(

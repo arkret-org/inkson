@@ -22,7 +22,7 @@ const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
     pub operation_id: String,
-    pub space_id: Option<String>,
+    pub realm_id: Option<String>,
     pub received_at: DateTime<Utc>,
     pub payload: Value,
 }
@@ -141,7 +141,7 @@ impl ReadMarkerRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadReceiptPolicySnapshot {
     /// Disclosure mode — `optional` (default), `required`, or `disabled`.
-    /// `required` and `disabled` lock the user's per-Space override.
+    /// `required` and `disabled` lock the user's per-Realm override.
     pub disclosure: String,
     /// Visibility scope — `public`, `private`, `track_scoped`. Surfaced
     /// in the lock-reason text so the user knows why the toggle is locked.
@@ -159,11 +159,11 @@ impl ReadReceiptPolicySnapshot {
     pub fn lock_reason(&self) -> String {
         match self.disclosure.as_str() {
             "required" => format!(
-                "Space policy: read receipts are REQUIRED ({}). User-level skip is disabled.",
+                "Realm policy: read receipts are REQUIRED ({}). User-level skip is disabled.",
                 self.visibility.as_deref().unwrap_or("public")
             ),
             "disabled" => format!(
-                "Space policy: read receipts are DISABLED ({}). User-level send is disabled.",
+                "Realm policy: read receipts are DISABLED ({}). User-level send is disabled.",
                 self.visibility.as_deref().unwrap_or("public")
             ),
             _ => String::new(),
@@ -189,7 +189,7 @@ fn raw_operation_kind(payload: &Value) -> Option<&str> {
 ///
 /// This replaces the deterministic `[42; 32]` demo seed used by every Move
 /// builder caller (`consent_demo::demo_signing_key`,
-/// `space_admin::build_signed_*`, etc.). Fresh installs generate via
+/// `realm_admin::build_signed_*`, etc.). Fresh installs generate via
 /// `getrandom::fill` on first access; existing dev installs that still
 /// hold a `[42; 32]` cache are simply broken - they regenerate the next
 /// time the store is loaded with no record present (Cokret v1 protocol is
@@ -532,12 +532,12 @@ pub struct LocalAnchorView {
     /// ref). `None` means the governance cell hasn't been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier: Option<String>,
-    /// The per-Space MLS `covered_frontier_lag` count - how many
+    /// The per-Realm MLS `covered_frontier_lag` count - how many
     /// governance Moves the MLS group has yet to acknowledge. Soland
     /// publishes this as `anchor_view.covered_frontier_lag` (a bare
     /// integer) when it knows the lag; clients combine it with a
     /// configurable warn threshold (default 5) to render an alert banner
-    /// in `space_admin`. `None` means soland hasn't surfaced a lag value -
+    /// in `realm_admin`. `None` means soland hasn't surfaced a lag value -
     /// UI treats that as "no alert".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_frontier_lag: Option<u64>,
@@ -576,7 +576,7 @@ impl LocalAnchorView {
     }
 
     /// True when soland has surfaced a covered_frontier_lag strictly
-    /// greater than `threshold`. Used by the space_admin covered_frontier
+    /// greater than `threshold`. Used by the realm_admin covered_frontier
     /// alert banner to decide whether to render. Returns `false` when no
     /// lag has been published yet (the field is `None`) - the UI treats
     /// that as "no signal, no alert".
@@ -664,7 +664,7 @@ fn capability_grant_safety_rank(value: &Value) -> u8 {
 }
 
 impl LocalAnchorView {
-    /// Best-effort extraction of an Anchor view from a per-Space `/sync`
+    /// Best-effort extraction of an Anchor view from a per-Realm `/sync`
     /// body. The wire shape soland is moving toward (P0 M3) is:
     ///
     /// ```jsonc
@@ -744,7 +744,7 @@ impl LocalAnchorView {
                         },
                     );
                 }
-                // Well-known named cells surfaced for the space_admin MLS
+                // Well-known named cells surfaced for the realm_admin MLS
                 // epoch widget. We accept either a raw `value` or a typed
                 // `register.value` field - soland's canonical projection
                 // uses the latter; tests may emit the former.
@@ -925,7 +925,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
     #[serde(default)]
-    pub muted_spaces: BTreeMap<String, bool>,
+    pub muted_realms: BTreeMap<String, bool>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
     /// Read receipt send preferences (spec
@@ -933,15 +933,15 @@ pub struct ClientLocalState {
     /// `ck.read_receipt.preferences`).
     ///
     /// `read_receipt_default_send` is the global fallback (default: send).
-    /// `read_receipt_space_overrides` and `read_receipt_flow_overrides`
-    /// are per-scope overrides; resolution order is (flow → space →
+    /// `read_receipt_realm_overrides` and `read_receipt_flow_overrides`
+    /// are per-scope overrides; resolution order is (flow → realm →
     /// default), matching the SDK's `ReadReceiptPreferences::effective_send`.
     /// Until the server wires `ck.account_data.set` for this key,
     /// preferences live only on this device.
     #[serde(default = "default_true")]
     pub read_receipt_default_send: bool,
     #[serde(default)]
-    pub read_receipt_space_overrides: BTreeMap<String, bool>,
+    pub read_receipt_realm_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub read_receipt_flow_overrides: BTreeMap<String, bool>,
     /// Server-declared `ck.realm.read_receipt_policy` snapshots, keyed by
@@ -969,7 +969,7 @@ pub struct ClientLocalState {
     /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
     /// arrive when `submit_move` succeeds and get updated when the next
     /// sync surfaces an Anchor that includes the id (or a rejection).
-    /// Drives the timeline / space_admin state pill UI.
+    /// Drives the timeline / realm_admin state pill UI.
     #[serde(default)]
     pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
     /// Encrypted private account data (preferences, tags, custom emojis).
@@ -1012,7 +1012,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Spaces whose `ck.mls.genesis` event has already been submitted to
-    /// soland. Tracked per-space so genesis is emitted exactly once for a
+    /// soland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
     /// needless round-trip on every encrypted write after the first).
@@ -1261,10 +1261,10 @@ impl Default for ClientLocalState {
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             notification_client_state: BTreeMap::new(),
-            muted_spaces: BTreeMap::new(),
+            muted_realms: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             read_receipt_default_send: true,
-            read_receipt_space_overrides: BTreeMap::new(),
+            read_receipt_realm_overrides: BTreeMap::new(),
             read_receipt_flow_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
             anchor_views: BTreeMap::new(),
@@ -1480,13 +1480,13 @@ impl LocalStateStore {
     pub fn append_raw_operation(
         &mut self,
         operation_id: impl Into<String>,
-        space_id: Option<String>,
+        realm_id: Option<String>,
         payload: Value,
     ) {
         self.ensure_cached_loaded();
         let operation_id = operation_id.into();
         if raw_operation_kind(&payload) == Some("ck.realm.destroy")
-            && let Some(realm_id) = space_id.as_deref().filter(|id| !id.trim().is_empty())
+            && let Some(realm_id) = realm_id.as_deref().filter(|id| !id.trim().is_empty())
         {
             self.cached.realm_lifecycle_state.insert(
                 realm_id.to_owned(),
@@ -1495,7 +1495,7 @@ impl LocalStateStore {
         }
         self.cached.raw_operations.push(RawOperationRecord {
             operation_id,
-            space_id,
+            realm_id,
             received_at: Utc::now(),
             payload,
         });
@@ -1755,11 +1755,11 @@ impl LocalStateStore {
     /// no longer reports get pruned from the local cache instead of
     /// lingering as ghost entries in the sidebar.
     ///
-    /// Also prunes the auxiliary per-space caches (`drafts`,
+    /// Also prunes the auxiliary per-Realm caches (`drafts`,
     /// `anchor_views`, `read_cursors`, `space_remarks`,
     /// `mls_snapshots`, `move_submissions` keyed by space, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
-    /// `muted_spaces`, and any leftover encrypted-message draft) so a
+    /// `muted_realms`, and any leftover encrypted-message draft) so a
     /// pruned Space doesn't leave private remnants behind.
     pub fn retain_space_projections<F>(&mut self, keep: F) -> Vec<String>
     where
@@ -1783,8 +1783,8 @@ impl LocalStateStore {
         removed
     }
 
-    /// Remove a single Space and every per-space derived record. Public
-    /// entry point for `left_spaces`-style sync deltas. Flushes once.
+    /// Remove a single Space and every per-Realm derived record. Public
+    /// entry point for `left_realms`-style sync deltas. Flushes once.
     pub fn forget_space(&mut self, space_id: &str) {
         self.ensure_cached_loaded();
         let trimmed = space_id.trim();
@@ -1802,8 +1802,8 @@ impl LocalStateStore {
         self.cached.anchor_views.remove(space_id);
         self.cached.space_remarks.remove(space_id);
         self.cached.mls_snapshots.remove(space_id);
-        self.cached.muted_spaces.remove(space_id);
-        self.cached.read_receipt_space_overrides.remove(space_id);
+        self.cached.muted_realms.remove(space_id);
+        self.cached.read_receipt_realm_overrides.remove(space_id);
         self.cached.read_receipt_policy_snapshots.remove(space_id);
         // `read_cursors` are keyed by `"{realm}\n{kind}\n{ref}\n{track}"` —
         // strip every marker whose Realm prefix matches.
@@ -2149,36 +2149,36 @@ impl LocalStateStore {
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
-    pub fn set_space_muted(&mut self, space_id: impl Into<String>, muted: bool) {
+    pub fn set_realm_muted(&mut self, realm_id: impl Into<String>, muted: bool) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let realm_id = realm_id.into();
         if muted {
-            self.cached.muted_spaces.insert(space_id, true);
+            self.cached.muted_realms.insert(realm_id, true);
         } else {
-            self.cached.muted_spaces.remove(&space_id);
+            self.cached.muted_realms.remove(&realm_id);
         }
         let _ = self.flush();
     }
 
-    pub fn clear_muted_spaces(&mut self) {
+    pub fn clear_muted_realms(&mut self) {
         self.ensure_cached_loaded();
-        self.cached.muted_spaces.clear();
+        self.cached.muted_realms.clear();
         let _ = self.flush();
     }
 
-    pub fn is_space_muted(&self, space_id: &str) -> bool {
+    pub fn is_realm_muted(&self, realm_id: &str) -> bool {
         self.load()
-            .muted_spaces
-            .get(space_id)
+            .muted_realms
+            .get(realm_id)
             .copied()
             .unwrap_or(false)
     }
 
-    pub fn muted_spaces(&self) -> Vec<String> {
+    pub fn muted_realms(&self) -> Vec<String> {
         self.load()
-            .muted_spaces
+            .muted_realms
             .into_iter()
-            .filter_map(|(space_id, muted)| muted.then_some(space_id))
+            .filter_map(|(realm_id, muted)| muted.then_some(realm_id))
             .collect()
     }
 
@@ -2194,35 +2194,35 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn read_receipt_space_override(&self, space_id: &str) -> Option<bool> {
+    pub fn read_receipt_realm_override(&self, realm_id: &str) -> Option<bool> {
         self.load()
-            .read_receipt_space_overrides
-            .get(space_id)
+            .read_receipt_realm_overrides
+            .get(realm_id)
             .copied()
     }
 
-    pub fn set_read_receipt_space_override(
+    pub fn set_read_receipt_realm_override(
         &mut self,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         send: Option<bool>,
     ) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let realm_id = realm_id.into();
         match send {
             Some(value) => {
                 self.cached
-                    .read_receipt_space_overrides
-                    .insert(space_id, value);
+                    .read_receipt_realm_overrides
+                    .insert(realm_id, value);
             }
             None => {
-                self.cached.read_receipt_space_overrides.remove(&space_id);
+                self.cached.read_receipt_realm_overrides.remove(&realm_id);
             }
         }
         let _ = self.flush();
     }
 
-    pub fn read_receipt_space_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_space_overrides
+    pub fn read_receipt_realm_overrides(&self) -> BTreeMap<String, bool> {
+        self.load().read_receipt_realm_overrides
     }
 
     pub fn read_receipt_flow_override(&self, flow_id: &str) -> Option<bool> {
@@ -2416,38 +2416,38 @@ impl LocalStateStore {
         }
     }
 
-    /// Get the server-declared read-receipt policy for a Space (when known).
+    /// Get the server-declared read-receipt policy for a Realm (when known).
     /// `None` means the client hasn't synced a policy snapshot yet and the
     /// user's override is still authoritative.
-    pub fn read_receipt_policy_for_space(
+    pub fn read_receipt_policy_for_realm(
         &self,
-        space_id: &str,
+        realm_id: &str,
     ) -> Option<ReadReceiptPolicySnapshot> {
         self.load()
             .read_receipt_policy_snapshots
-            .get(space_id)
+            .get(realm_id)
             .cloned()
     }
 
-    /// Replace the server-declared policy snapshot for a Space. Called from
+    /// Replace the server-declared policy snapshot for a Realm. Called from
     /// the sync path once the Anchor view (P0 M3) surfaces
-    /// `ck.component.space.read_receipt_policy.v1` cell value; tests use
+    /// `ck.component.realm.read_receipt_policy.v1` cell value; tests use
     /// this to seed lock-state UI behavior.
     pub fn set_read_receipt_policy_snapshot(
         &mut self,
-        space_id: impl Into<String>,
+        realm_id: impl Into<String>,
         snapshot: Option<ReadReceiptPolicySnapshot>,
     ) {
         self.ensure_cached_loaded();
-        let space_id = space_id.into();
+        let realm_id = realm_id.into();
         match snapshot {
             Some(value) => {
                 self.cached
                     .read_receipt_policy_snapshots
-                    .insert(space_id, value);
+                    .insert(realm_id, value);
             }
             None => {
-                self.cached.read_receipt_policy_snapshots.remove(&space_id);
+                self.cached.read_receipt_policy_snapshots.remove(&realm_id);
             }
         }
         let _ = self.flush();
@@ -2497,17 +2497,17 @@ impl LocalStateStore {
     }
 
     /// Resolve effective send preference per spec (server policy → flow →
-    /// space → default). Mirror of
+    /// realm → default). Mirror of
     /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
     /// `ck.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).
-    pub fn read_receipt_should_send(&self, flow_id: Option<&str>, space_id: Option<&str>) -> bool {
+    pub fn read_receipt_should_send(&self, flow_id: Option<&str>, realm_id: Option<&str>) -> bool {
         let snapshot = self.load();
-        if let Some(sid) = space_id
-            && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(sid)
+        if let Some(rid) = realm_id
+            && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(rid)
         {
             match policy.disclosure.as_str() {
                 "required" => return true,
@@ -2520,8 +2520,8 @@ impl LocalStateStore {
         {
             return *value;
         }
-        if let Some(sid) = space_id
-            && let Some(value) = snapshot.read_receipt_space_overrides.get(sid)
+        if let Some(rid) = realm_id
+            && let Some(value) = snapshot.read_receipt_realm_overrides.get(rid)
         {
             return *value;
         }
@@ -2651,7 +2651,7 @@ impl LocalStateStore {
             .map(|(key, _)| key.clone())
     }
 
-    /// Apply per-event protocol states from a per-Space sync projection.
+    /// Apply per-event protocol states from a per-Realm sync projection.
     /// Spec source: `service-surface.md §5.3`, where each reducer-input
     /// Event may carry `event_id`, `event_state`, and an optional reason code.
     pub fn ingest_move_event_states(&mut self, space_id: &str, body: &Value) -> usize {
@@ -2705,7 +2705,7 @@ impl LocalStateStore {
     }
 
     /// Read all tracked Moves for a specific Space, sorted by submit
-    /// time (newest first). Used by the timeline / space_admin pills.
+    /// time (newest first). Used by the timeline / realm_admin pills.
     pub fn move_submissions_for_space(&self, space_id: &str) -> Vec<MoveSubmissionRecord> {
         let mut out: Vec<MoveSubmissionRecord> = self
             .load()
@@ -3495,7 +3495,6 @@ fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
 fn default_flow_id_for_realm(realm_id: &str) -> String {
     realm_id
         .strip_prefix("ck:realm:")
-        .or_else(|| realm_id.strip_prefix("ck:space:"))
         .map(|suffix| format!("ck:flow:{suffix}"))
         .unwrap_or_else(|| realm_id.to_owned())
 }
@@ -4158,11 +4157,11 @@ mod tests {
         store.save_sync_cursor("sx:next");
         store.append_raw_operation(
             "ck:operation:local-01",
-            Some("ck:space:demo".to_owned()),
+            Some("ck:realm:demo".to_owned()),
             serde_json::json!({"type": "ck.message.create"}),
         );
-        store.save_space_projection("ck:space:demo", serde_json::json!({"name": "Demo"}));
-        store.save_draft("ck:space:demo", "hello");
+        store.save_space_projection("ck:realm:demo", serde_json::json!({"name": "Demo"}));
+        store.save_draft("ck:realm:demo", "hello");
 
         let state = store.load();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:next"));
@@ -4170,18 +4169,18 @@ mod tests {
             state.raw_operations[0].operation_id,
             "ck:operation:local-01"
         );
-        assert_eq!(state.space_projections["ck:space:demo"]["name"], "Demo");
-        assert_eq!(store.draft_for("ck:space:demo"), "hello");
+        assert_eq!(state.space_projections["ck:realm:demo"]["name"], "Demo");
+        assert_eq!(store.draft_for("ck:realm:demo"), "hello");
 
-        store.save_draft("ck:space:demo", " ");
-        assert!(store.draft_for("ck:space:demo").is_empty());
+        store.save_draft("ck:realm:demo", " ");
+        assert!(store.draft_for("ck:realm:demo").is_empty());
     }
 
     #[test]
     fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
         let path = temp_state_path("realm-lifecycle");
         let mut store = LocalStateStore::with_path(path.clone());
-        let realm_id = "ck:space:destroyed";
+        let realm_id = "ck:realm:destroyed";
 
         assert!(!store.realm_is_destroyed(realm_id));
         store.append_raw_operation(
@@ -4224,20 +4223,20 @@ mod tests {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_notification_projection(vec![serde_json::json!({
             "notification_id": "notif-1",
-            "space_id": "ck:space:demo",
+            "realm_id": "ck:realm:demo",
             "kind": "message",
             "body": "Hello"
         })]);
         store.set_notification_read("notif-1", true);
         store.set_notification_archived("notif-1", true);
-        store.set_space_muted("ck:space:demo", true);
+        store.set_realm_muted("ck:realm:demo", true);
         store.set_notification_kind_enabled("message", false);
 
         let reader = LocalStateStore::with_path(path);
         assert_eq!(reader.notification_projection().len(), 1);
         assert!(reader.notification_state_for("notif-1").read);
         assert!(reader.notification_state_for("notif-1").archived);
-        assert!(reader.is_space_muted("ck:space:demo"));
+        assert!(reader.is_realm_muted("ck:realm:demo"));
         assert!(!reader.notification_kind_enabled("message"));
     }
 
@@ -4248,13 +4247,13 @@ mod tests {
         let marker = store.save_read_cursor(
             "did:web:alice.example",
             "device-1",
-            "ck:space:demo",
+            "ck:realm:demo",
             None,
             "ck:event:read-1",
         );
 
         assert_eq!(marker.marker_type, "ck.read_cursor.advance");
-        assert_eq!(marker.body.realm_id, "ck:space:demo");
+        assert_eq!(marker.body.realm_id, "ck:realm:demo");
         assert_eq!(marker.body.position.event_id, "ck:event:read-1");
         assert_eq!(marker.body.read_scope.kind, "flow");
         assert_eq!(
@@ -4269,7 +4268,7 @@ mod tests {
                     "schema": "ck.schema.read_cursor.v1",
                     "actor_id": "did:web:alice.example",
                     "device_id": "device-1",
-                    "realm_id": "ck:space:demo",
+                    "realm_id": "ck:realm:demo",
                     "read_scope": {
                         "kind": "flow",
                         "ref": "ck:flow:demo",
@@ -4286,7 +4285,7 @@ mod tests {
 
         let reader = LocalStateStore::with_path(path);
         let persisted = reader
-            .read_cursor_for("ck:space:demo", None)
+            .read_cursor_for("ck:realm:demo", None)
             .expect("read marker persisted");
         assert_eq!(persisted.actor, "did:web:alice.example");
         assert_eq!(persisted.device_id, "device-1");
@@ -4300,21 +4299,21 @@ mod tests {
         store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
-            "ck:space:demo",
+            "ck:realm:demo",
             None,
             "ck:event:topic",
         );
         store.save_read_cursor(
             "did:web:alice.example",
             "desktop",
-            "ck:space:demo",
+            "ck:realm:demo",
             Some("ck:thread:reply-1".to_owned()),
             "ck:event:thread",
         );
 
         assert_eq!(
             store
-                .read_cursor_for("ck:space:demo", None)
+                .read_cursor_for("ck:realm:demo", None)
                 .expect("topic marker")
                 .body
                 .position
@@ -4323,7 +4322,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .read_cursor_for("ck:space:demo", Some("ck:thread:reply-1"))
+                .read_cursor_for("ck:realm:demo", Some("ck:thread:reply-1"))
                 .expect("thread marker")
                 .body
                 .position
@@ -4478,55 +4477,55 @@ mod tests {
     fn retain_space_projections_prunes_per_space_caches() {
         let path = temp_state_path("retain-prunes");
         let mut store = LocalStateStore::with_path(path);
-        // Seed three spaces with overlapping per-space caches.
-        for id in ["ck:space:keep", "ck:space:drop-a", "ck:space:drop-b"] {
+        // Seed three realms with overlapping per-realm caches.
+        for id in ["ck:realm:keep", "ck:realm:drop-a", "ck:realm:drop-b"] {
             store.save_space_projection(id, serde_json::json!({"name": id}));
             store.save_draft(id, "draft");
             store.set_anchor_view(id, LocalAnchorView::default());
-            store.set_space_muted(id, true);
+            store.set_realm_muted(id, true);
         }
         // Independently keyed records that should follow the prune.
         store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
-            "ck:space:drop-a",
+            "ck:realm:drop-a",
             None,
             "ck:event:42",
         );
         store.save_read_cursor(
             "did:web:tester.example",
             "device-1",
-            "ck:space:keep",
+            "ck:realm:keep",
             None,
             "ck:event:99",
         );
 
-        let pruned = store.retain_space_projections(|id| id == "ck:space:keep");
+        let pruned = store.retain_space_projections(|id| id == "ck:realm:keep");
         assert_eq!(pruned.len(), 2);
-        assert!(pruned.contains(&"ck:space:drop-a".to_owned()));
-        assert!(pruned.contains(&"ck:space:drop-b".to_owned()));
+        assert!(pruned.contains(&"ck:realm:drop-a".to_owned()));
+        assert!(pruned.contains(&"ck:realm:drop-b".to_owned()));
 
         let state = store.load();
         assert_eq!(state.space_projections.len(), 1);
-        assert!(state.space_projections.contains_key("ck:space:keep"));
-        assert!(!state.drafts.contains_key("ck:space:drop-a"));
-        assert!(state.drafts.contains_key("ck:space:keep"));
-        assert!(!state.anchor_views.contains_key("ck:space:drop-a"));
-        assert!(state.anchor_views.contains_key("ck:space:keep"));
-        assert!(!state.muted_spaces.contains_key("ck:space:drop-b"));
-        assert!(state.muted_spaces.contains_key("ck:space:keep"));
+        assert!(state.space_projections.contains_key("ck:realm:keep"));
+        assert!(!state.drafts.contains_key("ck:realm:drop-a"));
+        assert!(state.drafts.contains_key("ck:realm:keep"));
+        assert!(!state.anchor_views.contains_key("ck:realm:drop-a"));
+        assert!(state.anchor_views.contains_key("ck:realm:keep"));
+        assert!(!state.muted_realms.contains_key("ck:realm:drop-b"));
+        assert!(state.muted_realms.contains_key("ck:realm:keep"));
         let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
         assert!(
             kept_marker_keys
                 .iter()
-                .any(|k| k.starts_with("ck:space:keep\n")),
-            "kept space marker should survive prune: {kept_marker_keys:?}",
+                .any(|k| k.starts_with("ck:realm:keep\n")),
+            "kept realm marker should survive prune: {kept_marker_keys:?}",
         );
         assert!(
             kept_marker_keys
                 .iter()
-                .all(|k| !k.starts_with("ck:space:drop-a\n")),
-            "pruned space marker should be gone: {kept_marker_keys:?}",
+                .all(|k| !k.starts_with("ck:realm:drop-a\n")),
+            "pruned realm marker should be gone: {kept_marker_keys:?}",
         );
     }
 
@@ -4755,41 +4754,41 @@ mod tests {
         let path = temp_state_path("read-receipt-default");
         let mut store = LocalStateStore::with_path(path.clone());
         assert!(store.read_receipt_default_send());
-        assert!(store.read_receipt_should_send(None, Some("ck:space:any")));
+        assert!(store.read_receipt_should_send(None, Some("ck:realm:any")));
 
         store.set_read_receipt_default_send(false);
         let reader = LocalStateStore::with_path(path);
         assert!(!reader.read_receipt_default_send());
-        assert!(!reader.read_receipt_should_send(None, Some("ck:space:any")));
+        assert!(!reader.read_receipt_should_send(None, Some("ck:realm:any")));
     }
 
     #[test]
-    fn read_receipt_resolution_flow_overrides_space_overrides_default() {
+    fn read_receipt_resolution_flow_overrides_realm_overrides_default() {
         let path = temp_state_path("read-receipt-resolve");
         let mut store = LocalStateStore::with_path(path.clone());
         // default = true (send)
-        store.set_read_receipt_space_override("ck:space:demo", Some(false));
+        store.set_read_receipt_realm_override("ck:realm:demo", Some(false));
         store.set_read_receipt_flow_override("ck:flow:demo", Some(true));
 
         let reader = LocalStateStore::with_path(path);
         // Flow override wins.
-        assert!(reader.read_receipt_should_send(Some("ck:flow:demo"), Some("ck:space:demo")));
+        assert!(reader.read_receipt_should_send(Some("ck:flow:demo"), Some("ck:realm:demo")));
         // Space override wins over default when no flow override.
-        assert!(!reader.read_receipt_should_send(None, Some("ck:space:demo")));
+        assert!(!reader.read_receipt_should_send(None, Some("ck:realm:demo")));
         // Default applies when nothing matches.
-        assert!(reader.read_receipt_should_send(None, Some("ck:space:other")));
+        assert!(reader.read_receipt_should_send(None, Some("ck:realm:other")));
     }
 
     #[test]
     fn read_receipt_clearing_override_falls_back_to_default() {
         let path = temp_state_path("read-receipt-clear");
         let mut store = LocalStateStore::with_path(path);
-        store.set_read_receipt_space_override("ck:space:demo", Some(false));
-        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
+        store.set_read_receipt_realm_override("ck:realm:demo", Some(false));
+        assert!(!store.read_receipt_should_send(None, Some("ck:realm:demo")));
 
-        store.set_read_receipt_space_override("ck:space:demo", None);
-        assert!(store.read_receipt_should_send(None, Some("ck:space:demo")));
-        assert!(store.read_receipt_space_override("ck:space:demo").is_none());
+        store.set_read_receipt_realm_override("ck:realm:demo", None);
+        assert!(store.read_receipt_should_send(None, Some("ck:realm:demo")));
+        assert!(store.read_receipt_realm_override("ck:realm:demo").is_none());
     }
 
     #[test]
@@ -4797,18 +4796,18 @@ mod tests {
         let path = temp_state_path("read-receipt-policy-required");
         let mut store = LocalStateStore::with_path(path);
         // User opted out of the Space.
-        store.set_read_receipt_space_override("ck:space:demo", Some(false));
+        store.set_read_receipt_realm_override("ck:realm:demo", Some(false));
         // But server publishes disclosure=required → must override to true.
         store.set_read_receipt_policy_snapshot(
-            "ck:space:demo",
+            "ck:realm:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "required".to_owned(),
                 visibility: Some("public".to_owned()),
             }),
         );
-        assert!(store.read_receipt_should_send(None, Some("ck:space:demo")));
+        assert!(store.read_receipt_should_send(None, Some("ck:realm:demo")));
         let snap = store
-            .read_receipt_policy_for_space("ck:space:demo")
+            .read_receipt_policy_for_realm("ck:realm:demo")
             .unwrap();
         assert!(snap.locks_user_choice());
         assert!(!snap.lock_reason().is_empty());
@@ -4822,31 +4821,31 @@ mod tests {
         store.set_read_receipt_default_send(true);
         // Server publishes disclosure=disabled → must override to false.
         store.set_read_receipt_policy_snapshot(
-            "ck:space:demo",
+            "ck:realm:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "disabled".to_owned(),
                 visibility: Some("private".to_owned()),
             }),
         );
-        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
+        assert!(!store.read_receipt_should_send(None, Some("ck:realm:demo")));
     }
 
     #[test]
     fn server_policy_optional_does_not_lock() {
         let path = temp_state_path("read-receipt-policy-optional");
         let mut store = LocalStateStore::with_path(path);
-        store.set_read_receipt_space_override("ck:space:demo", Some(false));
+        store.set_read_receipt_realm_override("ck:realm:demo", Some(false));
         store.set_read_receipt_policy_snapshot(
-            "ck:space:demo",
+            "ck:realm:demo",
             Some(ReadReceiptPolicySnapshot {
                 disclosure: "optional".to_owned(),
                 visibility: None,
             }),
         );
         // optional → user override wins.
-        assert!(!store.read_receipt_should_send(None, Some("ck:space:demo")));
+        assert!(!store.read_receipt_should_send(None, Some("ck:realm:demo")));
         let snap = store
-            .read_receipt_policy_for_space("ck:space:demo")
+            .read_receipt_policy_for_realm("ck:realm:demo")
             .unwrap();
         assert!(!snap.locks_user_choice());
         assert_eq!(snap.lock_reason(), "");
@@ -4856,13 +4855,13 @@ mod tests {
     fn anchor_view_default_returns_empty_bytes_sentinel() {
         let path = temp_state_path("anchor-default");
         let store = LocalStateStore::with_path(path);
-        let view = store.anchor_view_for("ck:space:demo");
+        let view = store.anchor_view_for("ck:realm:demo");
         assert!(view.frontier.is_empty());
         assert!(view.leaves.is_empty());
         assert!(view.state_root.is_none());
         assert_eq!(view.move_anchor_ref(), LocalAnchorView::EMPTY_ANCHOR_REF);
         assert_eq!(
-            store.anchor_ref_for_move("ck:space:demo"),
+            store.anchor_ref_for_move("ck:realm:demo"),
             LocalAnchorView::EMPTY_ANCHOR_REF
         );
     }
@@ -4873,7 +4872,7 @@ mod tests {
         {
             let mut store = LocalStateStore::with_path(path.clone());
             store.set_anchor_view(
-                "ck:space:demo",
+                "ck:realm:demo",
                 LocalAnchorView {
                     frontier: vec![
                         "ck:anchor:sha256:bbb".to_owned(),
@@ -4890,13 +4889,13 @@ mod tests {
             );
         }
         let reader = LocalStateStore::with_path(path);
-        let view = reader.anchor_view_for("ck:space:demo");
+        let view = reader.anchor_view_for("ck:realm:demo");
         assert_eq!(view.frontier.len(), 2);
         assert_eq!(view.leaves.len(), 1);
         assert_eq!(view.state_root.as_deref(), Some("ck:state:sha256:abc"));
         assert_eq!(view.move_anchor_ref(), "ck:anchor:sha256:aaa");
         assert_eq!(
-            reader.anchor_ref_for_move("ck:space:demo"),
+            reader.anchor_ref_for_move("ck:realm:demo"),
             "ck:anchor:sha256:aaa"
         );
     }
@@ -4974,7 +4973,7 @@ mod tests {
     #[test]
     fn safer_winner_for_unknown_cell_family_returns_none() {
         let mut view = LocalAnchorView::default();
-        let cell = "ck:cell:ck.component.space.organization.v1:ck:space:demo".to_owned();
+        let cell = "ck:cell:ck.component.space.organization.v1:ck:realm:demo".to_owned();
         view.bottom_cells.insert(
             cell.clone(),
             BottomCellInfo {
@@ -5132,10 +5131,10 @@ mod tests {
                 "frontier": ["ck:anchor:sha256:aaa"],
                 "leaves": [],
                 "cells": {
-                    "ck:cell:ck.component.mls.epoch.v1:ck:space:demo": {
+                    "ck:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
                         "value": 7
                     },
-                    "ck:cell:ck.component.governance.covered_frontier.v1:ck:space:demo": {
+                    "ck:cell:ck.component.governance.covered_frontier.v1:ck:realm:demo": {
                         "register": { "value": "ck:state:sha256:abcd" }
                     }
                 }
@@ -5157,7 +5156,7 @@ mod tests {
             "anchor_view": {
                 "frontier": [],
                 "cells": {
-                    "ck:cell:ck.component.mls.epoch.v1:ck:space:demo": {
+                    "ck:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
                         "value": { "epoch": 42, "members": 3 }
                     }
                 }
@@ -5346,7 +5345,7 @@ mod tests {
         {
             let mut store = LocalStateStore::with_path(path.clone());
             store.set_read_receipt_policy_snapshot(
-                "ck:space:demo",
+                "ck:realm:demo",
                 Some(ReadReceiptPolicySnapshot {
                     disclosure: "required".to_owned(),
                     visibility: Some("track_scoped".to_owned()),
@@ -5355,7 +5354,7 @@ mod tests {
         }
         let reader = LocalStateStore::with_path(path);
         let snap = reader
-            .read_receipt_policy_for_space("ck:space:demo")
+            .read_receipt_policy_for_realm("ck:realm:demo")
             .unwrap();
         assert_eq!(snap.disclosure, "required");
         assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));

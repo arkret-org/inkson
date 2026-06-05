@@ -421,7 +421,7 @@ fn mls_history_backup_needs_restore(
 ///
 /// A local account secret alone is not enough readiness proof: an earlier
 /// incomplete bootstrap can leave a stale/random local secret without any
-/// usable per-Space MLS snapshot. In that state encrypted writes still fail
+/// usable per-Realm MLS snapshot. In that state encrypted writes still fail
 /// with `MissingWelcome`, so the prompt must stay available whenever the
 /// server has account-secret recovery material and local history is missing,
 /// stale, or undecryptable.
@@ -1759,7 +1759,7 @@ mod tests {
         let mut flows = std::collections::BTreeMap::new();
         flows.insert("ck:flow:alpha".to_owned(), fields);
         let mut spaces = std::collections::BTreeMap::new();
-        spaces.insert("ck:space:demo".to_owned(), flows);
+        spaces.insert("ck:realm:demo".to_owned(), flows);
         spaces
     }
 
@@ -1892,11 +1892,11 @@ mod tests {
             "sidecar must be restored"
         );
         assert_eq!(
-            state.private_plaintext_for("ck:space:demo", "ck:flow:alpha", "body"),
+            state.private_plaintext_for("ck:realm:demo", "ck:flow:alpha", "body"),
             Some("\"author body\"".to_owned())
         );
         assert_eq!(
-            state.private_plaintext_for("ck:space:demo", "ck:flow:alpha", "synthesis"),
+            state.private_plaintext_for("ck:realm:demo", "ck:flow:alpha", "synthesis"),
             Some("\"author synthesis\"".to_owned())
         );
     }

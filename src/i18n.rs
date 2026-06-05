@@ -457,7 +457,7 @@ pub fn english_translations() -> TranslationDict {
         "dashboard.onboarding_delta",
         "Identity, device, and recovery setup",
     );
-    dict.set("dashboard.recent_spaces", "Recent Spaces");
+    dict.set("dashboard.recent_realms", "Recent Realms");
     dict.set("dashboard.no_spaces", "No spaces loaded");
     dict.set(
         "dashboard.no_spaces_help",
@@ -468,7 +468,7 @@ pub fn english_translations() -> TranslationDict {
         "The client is not showing placeholder spaces.",
     );
     // F-I18N-CLEAN-1: en strings previously hard-coded in dashboard / chat /
-    // kanban / settings / space_admin views.
+    // kanban / settings / realm_admin views.
     dict.set("dashboard.resume_context", "Resume in the current context");
     dict.set("dashboard.no_notifications", "No notifications loaded");
     dict.set(
@@ -490,10 +490,10 @@ pub fn english_translations() -> TranslationDict {
         "Space-scoped policy — managed under Space admin.",
     );
     dict.set(
-        "settings.muted_spaces_empty",
-        "No spaces muted. Use the Notifications view to mute a noisy space.",
+        "settings.muted_realms_empty",
+        "No realms muted. Use the Notifications view to mute a noisy realm.",
     );
-    dict.set("space_admin.no_members_loaded", "No members loaded.");
+    dict.set("realm_admin.no_members_loaded", "No members loaded.");
 
     dict.set("notifications.archived", "Show archived");
     dict.set("notifications.mark_all_read", "Mark all read");
@@ -547,10 +547,10 @@ pub fn english_translations() -> TranslationDict {
         "recovery.vault_rotate_prompt",
         "Enter a new passphrase above and click Encrypt and upload to rotate.",
     );
-    dict.set("space_admin.save_metadata", "Save Title & Summary");
-    dict.set("space_admin.save_metadata_move", "Save Metadata (Move)");
-    dict.set("space_admin.tombstone_delete", "Tombstone / Delete");
-    dict.set("space_admin.archive_space", "Archive Space");
+    dict.set("realm_admin.save_metadata", "Save Title & Summary");
+    dict.set("realm_admin.save_metadata_move", "Save Metadata (Move)");
+    dict.set("realm_admin.tombstone_delete", "Tombstone / Delete");
+    dict.set("realm_admin.archive_space", "Archive Space");
     dict.set("verify_device.refresh_trust", "Refresh");
     dict.set("verify_device.verify_action", "Verify");
     dict.set("verify_device.revoke_action", "Revoke");
@@ -569,22 +569,22 @@ pub fn english_translations() -> TranslationDict {
         "kanban.security_not_ready",
         "Security state not ready; please retry shortly before writing to this Realm.",
     );
-    dict.set("space_admin.apply_policy", "Apply Policy");
+    dict.set("realm_admin.apply_policy", "Apply Policy");
     dict.set(
-        "space_admin.grant_capability_move",
+        "realm_admin.grant_capability_move",
         "Grant capability (Move)",
     );
     dict.set(
-        "space_admin.revoke_capability_move",
+        "realm_admin.revoke_capability_move",
         "Revoke capability (Move)",
     );
-    dict.set("space_admin.refresh_members", "Refresh");
-    dict.set("space_admin.kick_member", "Kick");
-    dict.set("space_admin.ban_member", "Ban");
-    dict.set("space_admin.kick_member_move", "Kick (Move)");
-    dict.set("space_admin.ban_member_move", "Ban (Move)");
-    dict.set("space_admin.rotate_epoch", "Rotate Epoch");
-    dict.set("space_admin.leave_space", "Leave");
+    dict.set("realm_admin.refresh_members", "Refresh");
+    dict.set("realm_admin.kick_member", "Kick");
+    dict.set("realm_admin.ban_member", "Ban");
+    dict.set("realm_admin.kick_member_move", "Kick (Move)");
+    dict.set("realm_admin.ban_member_move", "Ban (Move)");
+    dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
+    dict.set("realm_admin.leave_space", "Leave");
     dict.set("recovery.primary", "Primary");
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
@@ -720,23 +720,23 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Space-admin view (section labels)
-    dict.set("space_admin.title", "Space Settings");
-    dict.set("space_admin.governance", "Governance");
-    dict.set("space_admin.devices", "Devices");
-    dict.set("space_admin.members", "Members");
-    dict.set("space_admin.access", "Access");
-    dict.set("space_admin.security_mls", "Security & MLS");
+    dict.set("realm_admin.title", "Space Settings");
+    dict.set("realm_admin.governance", "Governance");
+    dict.set("realm_admin.devices", "Devices");
+    dict.set("realm_admin.members", "Members");
+    dict.set("realm_admin.access", "Access");
+    dict.set("realm_admin.security_mls", "Security & MLS");
     dict.set(
-        "space_admin.mls_remove_header",
+        "realm_admin.mls_remove_header",
         "MLS Remove (device revoke)",
     );
     dict.set(
-        "space_admin.mls_remove_hint",
+        "realm_admin.mls_remove_hint",
         "Decrypt the local MLS snapshot, run remove_member_by_principal against the target device, and submit ck.mls.commit. Post-commit state is re-encrypted on success.",
     );
-    dict.set("space_admin.mls_remove_button", "Build & submit MLS Remove");
+    dict.set("realm_admin.mls_remove_button", "Build & submit MLS Remove");
     dict.set(
-        "space_admin.mls_remove_target_placeholder",
+        "realm_admin.mls_remove_target_placeholder",
         "Target device (handle or full identifier)",
     );
 
@@ -825,7 +825,7 @@ pub fn english_translations() -> TranslationDict {
 
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.group.all", "All");
-    dict.set("notifications.group.space", "Space");
+    dict.set("notifications.group.realm", "Realm");
     dict.set("notifications.group.type", "Type");
     dict.set("notifications.group.time", "Time");
     dict.set("notifications.tooltip.mark_all_read", "Mark all read");
@@ -836,7 +836,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.settings_card_hint", "managed in Settings");
     dict.set(
         "notifications.settings_card_body",
-        "Notification rules, muted spaces, and push delivery preferences now live in Settings.",
+        "Notification rules, muted realms, and push delivery preferences now live in Settings.",
     );
     dict.set("notifications.settings_card_open", "Open settings");
     dict.set(
@@ -1474,7 +1474,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.onboarding", "引导");
     dict.set("dashboard.onboarding_steps", "4 步");
     dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
-    dict.set("dashboard.recent_spaces", "最近空间");
+    dict.set("dashboard.recent_realms", "最近 Realm");
     dict.set("dashboard.no_spaces", "暂无空间");
     dict.set("dashboard.no_spaces_help", "服务器尚未返回空间列表。");
     dict.set("dashboard.no_session_help", "客户端不会展示占位空间。");
@@ -1497,10 +1497,10 @@ pub fn chinese_translations() -> TranslationDict {
         "Space 级别策略——在 Space 管理处设置。",
     );
     dict.set(
-        "settings.muted_spaces_empty",
-        "未静音任何空间。在通知视图中静音吵闹空间。",
+        "settings.muted_realms_empty",
+        "未静音任何 Realm。在通知视图中静音吵闹 Realm。",
     );
-    dict.set("space_admin.no_members_loaded", "暂无成员。");
+    dict.set("realm_admin.no_members_loaded", "暂无成员。");
 
     dict.set("notifications.archived", "显示已归档");
     dict.set("notifications.mark_all_read", "全部标记已读");
@@ -1548,10 +1548,10 @@ pub fn chinese_translations() -> TranslationDict {
         "recovery.vault_rotate_prompt",
         "请在上方输入新口令并点击「加密并上传」完成轮换。",
     );
-    dict.set("space_admin.save_metadata", "保存标题和摘要");
-    dict.set("space_admin.save_metadata_move", "通过 Move 保存元数据");
-    dict.set("space_admin.tombstone_delete", "终结 / 删除");
-    dict.set("space_admin.archive_space", "归档 Space");
+    dict.set("realm_admin.save_metadata", "保存标题和摘要");
+    dict.set("realm_admin.save_metadata_move", "通过 Move 保存元数据");
+    dict.set("realm_admin.tombstone_delete", "终结 / 删除");
+    dict.set("realm_admin.archive_space", "归档 Space");
     dict.set("verify_device.refresh_trust", "刷新");
     dict.set("verify_device.verify_action", "验证");
     dict.set("verify_device.revoke_action", "撤销");
@@ -1570,16 +1570,16 @@ pub fn chinese_translations() -> TranslationDict {
         "kanban.security_not_ready",
         "安全状态未就绪,请稍候重试后再写入该 Realm。",
     );
-    dict.set("space_admin.apply_policy", "应用策略");
-    dict.set("space_admin.grant_capability_move", "授予权限（Move）");
-    dict.set("space_admin.revoke_capability_move", "撤销权限（Move）");
-    dict.set("space_admin.refresh_members", "刷新");
-    dict.set("space_admin.kick_member", "踢出");
-    dict.set("space_admin.ban_member", "封禁");
-    dict.set("space_admin.kick_member_move", "踢出（Move）");
-    dict.set("space_admin.ban_member_move", "封禁（Move）");
-    dict.set("space_admin.rotate_epoch", "轮换 Epoch");
-    dict.set("space_admin.leave_space", "退出");
+    dict.set("realm_admin.apply_policy", "应用策略");
+    dict.set("realm_admin.grant_capability_move", "授予权限（Move）");
+    dict.set("realm_admin.revoke_capability_move", "撤销权限（Move）");
+    dict.set("realm_admin.refresh_members", "刷新");
+    dict.set("realm_admin.kick_member", "踢出");
+    dict.set("realm_admin.ban_member", "封禁");
+    dict.set("realm_admin.kick_member_move", "踢出（Move）");
+    dict.set("realm_admin.ban_member_move", "封禁（Move）");
+    dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
+    dict.set("realm_admin.leave_space", "退出");
     dict.set("recovery.primary", "主");
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
@@ -1709,20 +1709,20 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.mls_recovery.submit", "设置 / 替换恢复口令");
 
     // Space-admin view
-    dict.set("space_admin.title", "Space 设置");
-    dict.set("space_admin.governance", "治理");
-    dict.set("space_admin.devices", "设备");
-    dict.set("space_admin.members", "成员");
-    dict.set("space_admin.access", "访问控制");
-    dict.set("space_admin.security_mls", "安全与 MLS");
-    dict.set("space_admin.mls_remove_header", "MLS 移除（设备吊销）");
+    dict.set("realm_admin.title", "Space 设置");
+    dict.set("realm_admin.governance", "治理");
+    dict.set("realm_admin.devices", "设备");
+    dict.set("realm_admin.members", "成员");
+    dict.set("realm_admin.access", "访问控制");
+    dict.set("realm_admin.security_mls", "安全与 MLS");
+    dict.set("realm_admin.mls_remove_header", "MLS 移除（设备吊销）");
     dict.set(
-        "space_admin.mls_remove_hint",
+        "realm_admin.mls_remove_hint",
         "用本设备 MLS 快照密钥解密群状态，运行 remove_member_by_principal，提交 ck.mls.commit；成功后重新加密持久化新一轮 epoch。",
     );
-    dict.set("space_admin.mls_remove_button", "构建并提交 MLS 移除");
+    dict.set("realm_admin.mls_remove_button", "构建并提交 MLS 移除");
     dict.set(
-        "space_admin.mls_remove_target_placeholder",
+        "realm_admin.mls_remove_target_placeholder",
         "目标设备（句柄或完整标识符）",
     );
 
@@ -1802,7 +1802,7 @@ pub fn chinese_translations() -> TranslationDict {
 
     // Notifications panel
     dict.set("notifications.group.all", "全部");
-    dict.set("notifications.group.space", "按空间");
+    dict.set("notifications.group.realm", "按 Realm");
     dict.set("notifications.group.type", "按类型");
     dict.set("notifications.group.time", "按时间");
     dict.set("notifications.tooltip.mark_all_read", "全部标为已读");

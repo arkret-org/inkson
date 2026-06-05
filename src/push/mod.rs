@@ -1282,7 +1282,7 @@ mod tests {
         validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
 
         for payload in [
-            serde_json::json!({"space_id": "ck:space:demo"}),
+            serde_json::json!({"realm_id": "ck:realm:demo"}),
             serde_json::json!({"event": {"event_id": "ck:event:1"}}),
             serde_json::json!({"sender": "did:web:alice.example"}),
             serde_json::json!({"items": [{"flow_id": "ck:flow:demo"}]}),

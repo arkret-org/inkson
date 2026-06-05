@@ -9,7 +9,7 @@
 //! and does not imply `join_rule=public`. Any UI that surfaces a resource's
 //! access state must keep the three dimensions visible independently.
 //!
-//! This component is shared between `views/directory.rs`, `views/space_admin.rs`,
+//! This component is shared between `views/directory.rs`, `views/realm_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
 pub use cokret_sdk::{Discoverability, HistoryVisibility, JoinRule};

@@ -613,10 +613,10 @@ mod tests {
         let rules = parse_push_rules(&json!({
             "rules": [
                 {
-                    "rule_id": "override.mute-space",
+                    "rule_id": "override.mute-realm",
                     "kind": "override",
                     "conditions": [
-                        {"kind": "field_match", "field": "space_id", "pattern": "ck:realm:demo"}
+                        {"kind": "field_match", "field": "realm_id", "pattern": "ck:realm:demo"}
                     ],
                     "actions": ["dont_notify"]
                 },
@@ -636,7 +636,7 @@ mod tests {
         assert!(!decision.should_notify);
         assert_eq!(
             decision.matched_rule_id.as_deref(),
-            Some("override.mute-space")
+            Some("override.mute-realm")
         );
         assert_eq!(decision.actions, vec!["dont_notify".to_owned()]);
     }
