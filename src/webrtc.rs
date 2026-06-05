@@ -19,7 +19,7 @@ use crate::operation::OperationBuilder;
 
 // NOTE: `ck.call.signal` is an ephemeral kind and MUST route through
 // `EphemeralEnvelope` (`ck.schema.ephemeral_envelope.v1`), NOT through
-// `ck.events.submit`. The canonical builder lives in
+// `ck.self.events.submit`. The canonical builder lives in
 // `crate::api::build_call_signal_envelope_v1` and accepts the v1
 // canonical signal_type values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,

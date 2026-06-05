@@ -9,7 +9,7 @@ impl CokretApi {
     // `// TODO(P3-impl)` stubs.
     // ────────────────────────────────────────────────────────────────
 
-    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.account.agent_key_pair`.
+    /// `POST /_cokret/gate/account/agent-key-pair` — `ck.gate.account.agent_key_pair`.
     /// Authorizes a fresh agent runtime key pair against an agent
     /// principal.
     pub async fn agent_key_pair(
@@ -23,7 +23,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents` — `ck.agent.provision`. Provisions a new
+    /// `POST /_cokret/self/agents` — `ck.self.agent.provision`. Provisions a new
     /// personal agent: DID issuance + first agent key authorize +
     /// controller grant attach in one orchestrated request.
     pub async fn agent_provision(
@@ -34,20 +34,20 @@ impl CokretApi {
             .await
     }
 
-    /// `GET /_cokret/self/agents` — `ck.agent.list`. Returns the
+    /// `GET /_cokret/self/agents` — `ck.self.agent.list`. Returns the
     /// controller-self list of agents (soland enforces caller binding).
     pub async fn agent_list(&self) -> anyhow::Result<AgentListResBody> {
         self.get_json("_cokret/self/agents").await
     }
 
-    /// `GET /_cokret/self/agents/{id}` — `ck.agent.get`.
+    /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.get`.
     pub async fn agent_get(&self, agent_principal_id: &str) -> anyhow::Result<AgentResBody> {
         let agent_principal_id = path_component(agent_principal_id);
         self.get_json(&format!("_cokret/self/agents/{agent_principal_id}"))
             .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/pause` — `ck.agent.pause` (durable
+    /// `POST /_cokret/self/agents/{id}/pause` — `ck.self.agent.pause` (durable
     /// reducer-input event). Auth Server flushes capability cache with
     /// reason `agent_paused`.
     pub async fn agent_pause(
@@ -63,7 +63,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/resume` — `ck.agent.resume`.
+    /// `POST /_cokret/self/agents/{id}/resume` — `ck.self.agent.resume`.
     pub async fn agent_resume(
         &self,
         agent_principal_id: &str,
@@ -77,7 +77,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.agent.deactivate`.
+    /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.self.agent.deactivate`.
     /// Triggers a cascade: `ck.agent.key.revoke` +
     /// `ck.capability.revoke` + runtime endpoint revocation on the
     /// soland side. Destructive — callers MUST gate this on an
@@ -95,7 +95,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.agent.rotate_key`.
+    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.self.agent.rotate_key`.
     /// Writes the `ck.agent.key.{revoke,authorize}` pair atomically.
     pub async fn agent_rotate_key(
         &self,
@@ -110,7 +110,7 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/grants` — `ck.agent.grant.attach`.
+    /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.attach`.
     /// Attaches a capability grant scoped to the agent. `grant_kind`
     /// SHOULD be one of the 14 CKP-0008 capability actions.
     pub async fn agent_grant_attach(
@@ -127,7 +127,7 @@ impl CokretApi {
     }
 
     /// `DELETE /_cokret/self/agents/{id}/grants/{grant_id}` —
-    /// `ck.agent.grant.detach`.
+    /// `ck.self.agent.grant.detach`.
     pub async fn agent_grant_detach(
         &self,
         agent_principal_id: &str,
@@ -142,7 +142,7 @@ impl CokretApi {
     }
 
     /// `POST /_cokret/self/agents/{id}/sidecar-thread/ensure` —
-    /// `ck.agent.sidecar_thread.ensure`. Idempotently derives the
+    /// `ck.self.agent.sidecar_thread.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
     /// between the controller and the native agent. Defaults
     /// `home_policy = "context_realm_preferred"` per CKP-0009 §3 / B-F.

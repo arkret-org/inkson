@@ -30,7 +30,7 @@ impl CokretApi {
     }
 
     /// R3.3 (CKP-0011) — resolve a shareable object address (Realm / Flow /
-    /// Message) to a directory preview via `ck.directory.resolve_target`
+    /// Message) to a directory preview via `ck.find.directory.resolve_target`
     /// (`POST /_cokret/find/directory/resolve-target`).
     ///
     /// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
@@ -209,7 +209,7 @@ impl CokretApi {
         Ok(invitee.to_owned())
     }
 
-    /// R3.2 (cokret-spec @ b56cab1) — `ck.directory.list_handles_for_subject`.
+    /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
     ///
     /// Inverse of [`Self::resolve_handle`]: given a known holder/principal
     /// DID, return the current context-visible signed handle claims +

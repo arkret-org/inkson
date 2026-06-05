@@ -123,13 +123,13 @@ use crate::operation::{
 };
 
 /// B-F / CKP-0009 §3 — default home-policy discriminator passed on
-/// `ck.agent.sidecar_thread.ensure`. The spec rolled the default from
+/// `ck.self.agent.sidecar_thread.ensure`. The spec rolled the default from
 /// "default home realm" to "context realm preferred"; yougen MUST emit
 /// this token unless the caller explicitly overrides it.
 pub const SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED: &str = "context_realm_preferred";
 
 /// Returns the canonical default home-policy string for the
-/// `ck.agent.sidecar_thread.ensure` request body's `home_policy` field.
+/// `ck.self.agent.sidecar_thread.ensure` request body's `home_policy` field.
 pub fn sidecar_home_policy_default() -> &'static str {
     SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED
 }
@@ -311,7 +311,7 @@ impl Default for RetryPolicy {
     }
 }
 
-/// Context for `ck.directory.resolve_handle`.
+/// Context for `ck.find.directory.resolve_handle`.
 ///
 /// Protocol distinction: `lookup` / `mention` are display-safe resolves;
 /// `member_add` / `invite` request Realm/audience-bound membership-builder
@@ -2603,7 +2603,7 @@ fn select_join_candidate<'a>(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == "ck.events.submit")
+                .any(|op| op == "ck.self.events.submit")
         })
         .filter(|candidate| {
             candidate
@@ -2959,7 +2959,7 @@ mod tests {
             "protocol_version": "1.0",
             "supported_profiles": [],
             "supported_features": ["account.subscribe"],
-            "supported_operations": ["ck.account.subscribe"],
+            "supported_operations": ["ck.self.account.subscribe"],
             "supported_bindings": [{"kind": "http_json"}],
             "auth_metadata": {},
             "limits": {"storage": "memory"},

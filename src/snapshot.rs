@@ -11,7 +11,7 @@ use cokret_sdk::{ReducerSnapshotManifest, verify_snapshot_chunks};
 
 /// Round 4 (spec a77b995) — outcome of consuming a
 /// [`cokret_sdk::SnapshotBootstrap`] envelope carried alongside a
-/// `ck.events.query` response. The receiver validates the envelope's
+/// `ck.self.events.query` response. The receiver validates the envelope's
 /// structural fields (`signature`, `state_digest`, `snapshot_frontier`,
 /// per-chunk digests) BEFORE applying any chunk bytes. Any failure
 /// returns [`SnapshotBootstrapOutcome::FallBackFullSync`] so the

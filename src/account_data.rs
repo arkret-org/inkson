@@ -187,7 +187,7 @@ impl AccountDataStore {
 /// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
 /// of the most-recently uploaded avatar reference. The blob_ref itself
 /// (`ck:blob:sha256:<hex>`) is public — the avatar is also published via
-/// `ck.account.update_profile` so other actors see it through the
+/// `ck.self.account.update_profile` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
 /// up the same blob without needing to re-fetch `/account/me`.
 pub fn build_client_ui_body(

@@ -1428,7 +1428,7 @@ pub(super) fn local_created_card(
         external_visibility: "Not shared externally".to_owned(),
         history_visibility: "board default".to_owned(),
         activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
-        audit_hint: "Write queued locally until ck.events.submit succeeds.".to_owned(),
+        audit_hint: "Write queued locally until ck.self.events.submit succeeds.".to_owned(),
         security_encrypted: None,
         state,
         lifecycle: FlowLifecycleState::Active,

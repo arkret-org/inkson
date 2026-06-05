@@ -3,7 +3,7 @@
 //! This module captures the client-side wire contract for the new media
 //! binding profile that landed in cokret-spec round R3:
 //!
-//! - **CALL-1** — `ck.call.media.token_exchange`: obtain a backend token and `participant_binding`
+//! - **CALL-1** — `ck.self.call.media.token_exchange`: obtain a backend token and `participant_binding`
 //!   from soland's `POST /rtc/token` endpoint via the SDK helper
 //!   [`cokret_sdk::media::call_media_token_exchange`].
 //! - **CALL-2** — render `focus_unavailable_for_client` as a hard failure with retry / leave
@@ -42,7 +42,7 @@ pub const SFRAME_FRAME_KEY_LENGTH: u16 = 19;
 /// Empty context for the MLS exporter call (matches spec §11).
 pub const SFRAME_FRAME_KEY_CONTEXT: &[u8] = &[];
 
-/// Spec-mandated TTL ceiling for media tokens (`ck.call.media.token_exchange`).
+/// Spec-mandated TTL ceiling for media tokens (`ck.self.call.media.token_exchange`).
 /// Soland defaults to 300s; the ceiling is 600s.
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = 600;
 

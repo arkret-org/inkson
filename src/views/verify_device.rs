@@ -1147,18 +1147,16 @@ pub fn VerifyDevicePanel(
                                         //    cross-signing publish + device
                                         //    authorization events MUST live
                                         //    in the principal control
-                                        //    space, derived as
-                                        //    `ck:space:control:<did>`. The
-                                        //    SDK exposes the canonical
-                                        //    derivation; we route through
-                                        //    it so the server-side pinning
-                                        //    check accepts the write.
-                                        let control_space =
-                                            cokret_sdk::auth::principal_control_space_id(
+                                        //    Realm. The SDK exposes the
+                                        //    canonical derivation; we route
+                                        //    through it so the server-side
+                                        //    pinning check accepts the write.
+                                        let control_realm =
+                                            cokret_sdk::auth::principal_control_realm_id(
                                                 &principal,
                                             );
                                         let envelope = match output
-                                            .build_publish_envelope(&control_space, &actor)
+                                            .build_publish_envelope(&control_realm, &actor)
                                         {
                                             Ok(env) => env,
                                             Err(err) => {

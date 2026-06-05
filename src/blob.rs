@@ -7,7 +7,7 @@
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
 //! events. The actual upload bytes go to the Principal Server's
-//! `ck.blob.upload` endpoint; this module covers the durable event side.
+//! `ck.self.blob.upload` endpoint; this module covers the durable event side.
 
 use anyhow::anyhow;
 use base64::Engine as _;
@@ -51,7 +51,7 @@ pub fn blob_typed_id(bytes: &[u8]) -> String {
 }
 
 /// Build a `ck.blob.register` event body describing an authenticated media
-/// upload. Pairs with a server-side `ck.blob.upload` to make the blob
+/// upload. Pairs with a server-side `ck.self.blob.upload` to make the blob
 /// retrievable through the durable event chain.
 pub fn build_blob_register(
     space_id: &str,

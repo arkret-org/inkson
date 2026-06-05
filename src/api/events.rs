@@ -66,8 +66,8 @@ impl CokretApi {
 
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`ck.typing`). They MUST flow through the canonical
-    /// `ck.ephemeral.send` operation (`POST /_cokret/self/ephemeral`), never
-    /// through `ck.events.submit` or a deployment-local typing shim.
+    /// `ck.self.ephemeral.send` operation (`POST /_cokret/self/ephemeral`), never
+    /// through `ck.self.events.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
         space_id: &str,
@@ -83,8 +83,8 @@ impl CokretApi {
     }
 
     /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST flow through `ck.ephemeral.send`; the
-    /// `ck.events.submit` durable path and deployment-local `/receipts`
+    /// ephemeral. They MUST flow through `ck.self.ephemeral.send`; the
+    /// `ck.self.events.submit` durable path and deployment-local `/receipts`
     /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
@@ -186,7 +186,7 @@ impl CokretApi {
             .unwrap_or(false)
     }
 
-    /// Submit a typed [`EventEnvelope`] over `ck.events.submit`. The
+    /// Submit a typed [`EventEnvelope`] over `ck.self.events.submit`. The
     /// active-signer registry is the SINGLE source of detached JWS
     /// proofs — if no signer is installed this fails closed with
     /// `no active signer configured` rather than sending an unsigned
@@ -239,7 +239,7 @@ impl CokretApi {
             .await
     }
 
-    /// `ck.events.submit` in batch form over typed envelopes. Spec binds
+    /// `ck.self.events.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_cokret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
     /// [`cokret_sdk::EventsSubmitBatchRequest`],
@@ -316,7 +316,7 @@ impl CokretApi {
     /// `ck.schema.ephemeral_envelope.v1` (kind in
     /// {`ck.call.signal`, `ck.presence`, `ck.typing`, `ck.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
-    /// signal kinds MUST NOT travel via `ck.events.submit`; this method is
+    /// signal kinds MUST NOT travel via `ck.self.events.submit`; this method is
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
@@ -349,7 +349,7 @@ impl CokretApi {
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the
     /// `ck.key.verification.*` family) MUST travel on the device-message
-    /// channel, NOT through `ck.events.submit` or the broadcast ephemeral
+    /// channel, NOT through `ck.self.events.submit` or the broadcast ephemeral
     /// channel. Thin convenience wrapper around
     /// [`Self::send_device_message_envelope`] that asserts the kind belongs
     /// to the to-device ephemeral family.

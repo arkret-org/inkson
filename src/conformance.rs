@@ -325,7 +325,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.mls.welcome",
         // Moderation (governance/content-moderation)
         "ck.moderation.franking_proof",
-        "ck.moderation.report",
+        "ck.self.moderation.report",
         // Morph (C45 — schema_migrate is the first-class schema_refs[]
         // evolution event with explicit compatibility_class; replaces ad-hoc
         // schema_refs[] writes via ck.morph.update).
@@ -744,7 +744,7 @@ mod tests {
         // Server advertises exactly the operations SDK's
         // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
         // client should be ready. `chat_mvp` additionally requires
-        // `ck.account.subscribe` which the fixture intentionally omits, so
+        // `ck.self.account.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
@@ -754,8 +754,8 @@ mod tests {
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
             "supported_features": [],
             "supported_operations": [
-                "ck.events.get",
-                "ck.events.query",
+                "ck.self.events.get",
+                "ck.self.events.query",
                 "ck.server.describe",
             ],
             "supported_bindings": [],
@@ -787,8 +787,8 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("ck.account.subscribe")),
-            "expected chat_mvp to flag missing ck.account.subscribe, got {:?}",
+                .any(|missing| missing.contains("ck.self.account.subscribe")),
+            "expected chat_mvp to flag missing ck.self.account.subscribe, got {:?}",
             chat.missing
         );
     }

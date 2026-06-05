@@ -6,7 +6,7 @@ impl CokretApi {
     /// `<base>/_cokret/self/blob/get?blob_ref=<…>&purpose=profile_avatar`
     /// shape that soland's
     /// `/blob/get` handler answers — callers can plug this directly
-    /// into `<img src=…>` or `ck.account.update_profile { avatar_url }`.
+    /// into `<img src=…>` or `ck.self.account.update_profile { avatar_url }`.
     pub fn blob_download_url(&self, blob_ref: &str) -> String {
         blob_download_url_for(self.base_url.as_str(), blob_ref)
     }

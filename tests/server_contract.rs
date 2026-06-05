@@ -37,21 +37,21 @@ fn yougen_accepts_server_contract_payloads() {
             "moderation.report"
         ],
         "supported_operations": [
-            "ck.account.subscribe",
-            "ck.events.query",
-            "ck.events.subscribe",
-            "ck.snapshot.head",
-            "ck.directory.describe",
-            "ck.directory.search_realms",
-            "ck.directory.resolve_realm",
+            "ck.self.account.subscribe",
+            "ck.self.events.query",
+            "ck.self.events.subscribe",
+            "ck.self.snapshot.head",
+            "ck.find.directory.describe",
+            "ck.find.directory.search_realms",
+            "ck.find.directory.resolve_realm",
             "ck.index.describe",
             "ck.index.query",
-            "ck.authz.check",
-            "ck.authz.get_effective_grants",
-            "ck.authz.get_invites",
-            "ck.push.register_device",
-            "ck.push.unregister_device",
-            "ck.moderation.report"
+            "ck.self.authz.check",
+            "ck.self.authz.get_effective_grants",
+            "ck.self.authz.get_invites",
+            "ck.edge.push.register_device",
+            "ck.edge.push.unregister_device",
+            "ck.self.moderation.report"
         ],
         "supported_bindings": [{"kind": "http_json", "base_path": "/_cokret"}],
         "supported_reducer_profiles": ["ck.reducer.v1"],
@@ -167,7 +167,7 @@ fn yougen_accepts_server_contract_payloads() {
             "service_type": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
-            "operations": ["ck.events.submit"],
+            "operations": ["ck.self.events.submit"],
             "join_methods": ["invite_accept", "member_join"],
             "priority": 0,
             "source": "directory_ingest",
@@ -324,9 +324,9 @@ fn server_description_gates_event_envelope_write_plane() {
             "ck.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "ck.events.describe",
-            "ck.events.submit",
-            "ck.account.subscribe"
+            "ck.self.events.describe",
+            "ck.self.events.submit",
+            "ck.self.account.subscribe"
         ],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "account.subscribe"],
@@ -359,7 +359,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_operations": ["ck.account.subscribe"],
+            "supported_operations": ["ck.self.account.subscribe"],
             "supported_features": ["account.subscribe"]
         }))
         .is_err()
@@ -373,7 +373,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "supported_operations": ["ck.account.subscribe"],
+        "supported_operations": ["ck.self.account.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["account.subscribe"],
         "auth_metadata": {},
@@ -392,8 +392,8 @@ fn server_description_gates_event_envelope_write_plane() {
         events_missing.missing_event_envelope_write_requirements(),
         vec![
             "ck.profile.core_event_store.v1",
-            "ck.events.describe",
-            "ck.events.submit"
+            "ck.self.events.describe",
+            "ck.self.events.submit"
         ]
     );
     // `plaintext_visibility` is now present + non-null, so it falls out of
@@ -402,8 +402,8 @@ fn server_description_gates_event_envelope_write_plane() {
         events_missing.missing_v1_principal_server_requirements(),
         vec![
             "ck.profile.core_event_store.v1",
-            "ck.events.describe",
-            "ck.events.submit",
+            "ck.self.events.describe",
+            "ck.self.events.submit",
         ]
     );
 }
@@ -631,7 +631,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 }
 
 // (Move/Anchor pipeline tests removed — all writes now go through
-// ck.events.submit; the SubmitEventResponse wire shape is exercised by
+// ck.self.events.submit; the SubmitEventResponse wire shape is exercised by
 // soland's own integration tests and the cokret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401

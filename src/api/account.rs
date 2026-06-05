@@ -137,7 +137,7 @@ impl CokretApi {
 
     /// A4b — update the authenticated principal's public profile
     /// (display_name / bio / avatar_url). Mirrors soland's
-    /// `ck.account.update_profile` wire shape: each field is
+    /// `ck.self.account.update_profile` wire shape: each field is
     /// `Option<String>`; `None` leaves the field untouched server-side,
     /// `Some("")` explicitly clears it. The server normalises empty
     /// strings to `None` on write.
@@ -377,7 +377,7 @@ impl CokretApi {
         self.get_json("_cokret/self/account/describe").await
     }
 
-    /// `ck.account.subscribe` snapshot fold. The server returns NDJSON frames;
+    /// `ck.self.account.subscribe` snapshot fold. The server returns NDJSON frames;
     /// this consumes the first `delta` frame and keeps the rest of the app on
     /// the existing folded `ClientSyncResponse` projection path.
     pub async fn account_subscribe_snapshot(

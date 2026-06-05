@@ -19,7 +19,7 @@ pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
-// ck.events.submit via the cx_ops::* event builders. The original
+// ck.self.events.submit via the cx_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1380,7 +1380,7 @@ pub fn SpaceAdminPanel(
                             let space = selected_space.clone();
                             move |_| {
                                 // Spec-canonical read path is the local sync
-                                // projection (driven by ck.events.subscribe).
+                                // projection (driven by ck.self.events.subscribe).
                                 // Members appear as the local store applies
                                 // ck.member.state events.
                                 let store = state_store.read();
@@ -1402,7 +1402,7 @@ pub fn SpaceAdminPanel(
                             div { class: "event", "data-testid": "member-row", "data-member-did": "{member}",
                         div { class: "event-head",
                             // A4b — member avatar slot. Avatars are
-                            // public via `ck.account.update_profile`
+                            // public via `ck.self.account.update_profile`
                             // (mirrored on this row via the
                             // `member-avatar` testid). v1 renders an
                             // initials-only placeholder; a follow-up
@@ -2100,7 +2100,7 @@ pub fn SpaceAdminPanel(
                     span { "ck.component.capability.grant.v1 · OrSet" }
                 }
                 div { class: "muted",
-                    "Submits a ck.capability.grant or ck.capability.revoke event via ck.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
+                    "Submits a ck.capability.grant or ck.capability.revoke event via ck.self.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
                 }
                 label { "Grant ID (cell subject)" }
                 input {
@@ -2402,7 +2402,7 @@ pub fn SpaceAdminPanel(
 
             // Moderation events — governance/content-moderation.md
             // Two canonical events drive content-level moderation:
-            //   ck.moderation.report — an actor files a report (against a message / flow / morph / actor)
+            //   ck.self.moderation.report — an actor files a report (against a message / flow / morph / actor)
             //   ck.moderation.franking_proof  — E2EE franking proof (so encrypted content remains reviewable)
             // Outcomes like quarantine / require_review are reducer decisions, not separate events.
             div { class: "event", "data-testid": "moderation-events",
@@ -2414,7 +2414,7 @@ pub fn SpaceAdminPanel(
                     "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as ck.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
                 }
                 div { class: "actions",
-                    span { class: "badge blue", title: "ck.moderation.report", "Report" }
+                    span { class: "badge blue", title: "ck.self.moderation.report", "Report" }
                     span { class: "badge accent", title: "ck.moderation.franking_proof", "Franking proof" }
                     span { class: "muted", "→ reducer decides deny / quarantine / require_review" }
                 }

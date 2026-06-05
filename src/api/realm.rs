@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     /// Build + submit the spec-canonical `ck.realm.create` event bundle
-    /// (and its facet follow-ups) via `ck.events.submit`
+    /// (and its facet follow-ups) via `ck.self.events.submit`
     /// (`POST /_cokret/self/events`).
     ///
     /// Per spec realm-and-space.md §2.6 the create event itself is the
@@ -270,7 +270,7 @@ impl CokretApi {
 
     /// Member-state FSM transition (kick / ban / unban / leave) on the
     /// Realm's `ck.component.member.state.v1` cell. Submits a `ck.member.state`
-    /// event via `ck.events.submit`; deployment-local member REST shims are
+    /// event via `ck.self.events.submit`; deployment-local member REST shims are
     /// intentionally not used.
     pub async fn transition_member_state(
         &self,
@@ -326,7 +326,7 @@ impl CokretApi {
         .await
     }
 
-    // ── Space / Realm Management (all writes go through ck.events.submit) ─
+    // ── Space / Realm Management (all writes go through ck.self.events.submit) ─
 
     /// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
     /// `patch` carries the merge-shape body the server reducer applies to the

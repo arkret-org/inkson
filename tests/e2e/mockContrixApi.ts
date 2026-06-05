@@ -244,32 +244,32 @@ export async function mockCokretApi(page: Page) {
           "events.submit",
         ],
         supported_operations: [
-          "ck.account.subscribe",
-          "ck.events.query",
-          "ck.events.subscribe",
-          "ck.directory.search_realms",
-          "ck.directory.resolve_realm",
-          "ck.authz.check",
+          "ck.self.account.subscribe",
+          "ck.self.events.query",
+          "ck.self.events.subscribe",
+          "ck.find.directory.search_realms",
+          "ck.find.directory.resolve_realm",
+          "ck.self.authz.check",
           "ck.realm.create",
           "ck.space.create",
           "ck.member.state",
           "ck.invite.create",
           "ck.invite.accept",
           "ck.invite.cancel",
-          "ck.events.submit",
+          "ck.self.events.submit",
           "ck.message.create",
           "ck.message.revise",
           "ck.message.redact",
           "ck.reaction.add",
-          "ck.keys.upload",
-          "ck.keys.query",
-          "ck.keys.claim",
-          "ck.device_messages.get",
-          "ck.device_messages.put",
-          "ck.push.register_device",
-          "ck.mimi.provider_directory",
-          "ck.events.describe",
-          "ck.events.submit",
+          "ck.self.keys.upload",
+          "ck.self.keys.query",
+          "ck.self.keys.claim",
+          "ck.self.device_messages.get",
+          "ck.self.device_messages.put",
+          "ck.edge.push.register_device",
+          "ck.open.mimi.provider_directory",
+          "ck.self.events.describe",
+          "ck.self.events.submit",
         ],
         supported_schema_profiles: ["ck.schema.core.v1"],
         supported_reducer_profiles: ["ck.reducer.v1"],
@@ -535,7 +535,7 @@ export async function mockCokretApi(page: Page) {
       return json(route, {
         ok: true,
         key_packages: [{ key_package_ref: "mimi:key-package:e2e", target: "mimi://remote.example/alice" }],
-        receipt: { kind: "ck.mimi.key_material", profile: "ck.profile.mimi_interop.v1" },
+        receipt: { kind: "ck.open.mimi.key_material", profile: "ck.profile.mimi_interop.v1" },
       });
     }
 
@@ -544,7 +544,7 @@ export async function mockCokretApi(page: Page) {
       return json(route, {
         ok: true,
         room_id: roomId,
-        receipt: { kind: "ck.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
+        receipt: { kind: "ck.open.mimi.room_update", operation_id: "ck:operation:mimi-room-update" },
       });
     }
 
@@ -552,7 +552,7 @@ export async function mockCokretApi(page: Page) {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
-        receipt: { kind: "ck.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
+        receipt: { kind: "ck.open.mimi.notify", notification_id: "ck:mimi:notify:e2e" },
       });
     }
 
@@ -585,7 +585,7 @@ export async function mockCokretApi(page: Page) {
           { identifier: "mimi://mimi.example.com/alice", did: "did:web:alice.example", role: "admin" },
           { identifier: "mimi://remote.example/bob", did: "did:web:bob.example", role: "member" },
         ],
-        receipt: { kind: "ck.mimi.group_info", profile: "ck.profile.mimi_interop.v1" },
+        receipt: { kind: "ck.open.mimi.group_info", profile: "ck.profile.mimi_interop.v1" },
       });
     }
 
@@ -594,7 +594,7 @@ export async function mockCokretApi(page: Page) {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "requested",
-        receipt: { kind: "ck.mimi.request_consent" },
+        receipt: { kind: "ck.open.mimi.request_consent" },
       });
     }
 
@@ -603,7 +603,7 @@ export async function mockCokretApi(page: Page) {
         ok: true,
         consent_id: "ck:mimi-consent:e2e",
         state: "accepted",
-        receipt: { kind: "ck.mimi.update_consent" },
+        receipt: { kind: "ck.open.mimi.update_consent" },
       });
     }
 
@@ -615,7 +615,7 @@ export async function mockCokretApi(page: Page) {
         mapped_did: "did:web:alice.example",
         provider_id: "mimi://mimi.example.com",
         proofs: [{ type: "private_identifier_query", expires_at: "2026-04-30T12:00:00Z" }],
-        receipt: { kind: "ck.mimi.identifier_query", privacy_mode: body.privacy_mode },
+        receipt: { kind: "ck.open.mimi.identifier_query", privacy_mode: body.privacy_mode },
       });
     }
 
@@ -624,7 +624,7 @@ export async function mockCokretApi(page: Page) {
         ok: true,
         report_id: "ck:report:mimi-e2e",
         status: "queued",
-        receipt: { kind: "ck.mimi.report_abuse" },
+        receipt: { kind: "ck.open.mimi.report_abuse" },
       });
     }
 
@@ -635,7 +635,7 @@ export async function mockCokretApi(page: Page) {
         media_type: "application/octet-stream",
         size: 23,
         proxy_url: "/_cokret/open/mimi/proxy-download/ck:blob:sha256:e2e",
-        receipt: { kind: "ck.mimi.proxy_download", direct_object_store_url: null },
+        receipt: { kind: "ck.open.mimi.proxy_download", direct_object_store_url: null },
       });
     }
 
@@ -1163,7 +1163,7 @@ function joinCandidate() {
     service_type: "principal_server",
     role: "primary",
     endpoint: null,
-    operations: ["ck.events.submit"],
+    operations: ["ck.self.events.submit"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",

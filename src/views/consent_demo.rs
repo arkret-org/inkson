@@ -1,7 +1,7 @@
 //! First end-to-end UI consent-flow PoC.
 //!
 //! Wires a single user-facing button — "Grant consent" — to the
-//! Event Envelope write path (`operation::cx_ops` + `ck.events.submit`).
+//! Event Envelope write path (`operation::cx_ops` + `ck.self.events.submit`).
 //! The flow is:
 //!
 //! 1. user types `consent_id` + `tag` in the form;
@@ -54,7 +54,7 @@ pub fn ConsentGrantDemoCard(
                 span { "ck.consent.grant · cell-driven" }
             }
             div { class: "muted",
-                "Submits a ck.consent.grant event via ck.events.submit; soland's reducer folds the OrSet add into the ck.component.consent.grant.v1 cell."
+                "Submits a ck.consent.grant event via ck.self.events.submit; soland's reducer folds the OrSet add into the ck.component.consent.grant.v1 cell."
             }
             label { "Space ID" }
             input {

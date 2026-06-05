@@ -144,7 +144,7 @@ pub struct SpaceCreateResponse {
 }
 
 // (Move/Anchor pipeline DTOs deleted; all writes now go through
-// ck.events.submit via SubmitEventResponse.)
+// ck.self.events.submit via SubmitEventResponse.)
 
 /// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
@@ -164,8 +164,8 @@ pub enum AccountDataSetOutcome {
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "ck.profile.core_event_store.v1";
 pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ck.profile.principal_server_events_api.v1";
-pub const OP_EVENTS_DESCRIBE: &str = "ck.events.describe";
-pub const OP_EVENTS_SUBMIT: &str = "ck.events.submit";
+pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.describe";
+pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.submit";
 
 /// Yougen-side convenience methods over the SDK's [`ServerDescription`].
 ///
@@ -1243,7 +1243,7 @@ pub struct AgentGrantDetachResBody {
     pub todos: Vec<String>,
 }
 
-/// CKP-0008 / CKP-0009 §6 + B-F: `ck.agent.sidecar_thread.ensure` MUST
+/// CKP-0008 / CKP-0009 §6 + B-F: `ck.self.agent.sidecar_thread.ensure` MUST
 /// default `home_policy = "context_realm_preferred"`. This is encoded
 /// in the request body's optional `context_realm_id` plus the
 /// `home_policy` discriminator.

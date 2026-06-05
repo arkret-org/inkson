@@ -63,7 +63,7 @@ Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
 normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
-  call-signal no longer travel through the durable `ck.events.submit`
+  call-signal no longer travel through the durable `ck.self.events.submit`
   path. They go through a dedicated `ck.schema.ephemeral_envelope.v1`
   channel (broadcast) or `ck.schema.device_message.v1` (to-device key
   verification). This is transparent to end users but is a

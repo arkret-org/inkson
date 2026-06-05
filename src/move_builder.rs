@@ -3,7 +3,7 @@
 //!
 //! The full Move construction + signing surface (`build_*_move`,
 //! `sign_unsigned_move`, `UnsignedMove`, …) has been removed: all writes
-//! now go through `ck.events.submit` via the Event Envelope path
+//! now go through `ck.self.events.submit` via the Event Envelope path
 //! (`operation.rs` / `api/events.rs`), with `effects[]` inlined in the
 //! envelope. Only the few standalone helpers that other modules still
 //! depend on survive here:
