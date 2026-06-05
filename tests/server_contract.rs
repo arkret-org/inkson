@@ -291,7 +291,10 @@ fn yougen_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(blob.size_bytes, 23);
-    assert_eq!(blob.content_digest.as_str(), format!("sha256:{}", "ab".repeat(32)));
+    assert_eq!(
+        blob.content_digest.as_str(),
+        format!("sha256:{}", "ab".repeat(32))
+    );
 
     let report: yougen::models::ModerationReportResBody = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",

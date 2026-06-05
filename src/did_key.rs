@@ -26,13 +26,17 @@ pub fn encode_ed25519_did_key_multibase(verifying_key: &VerifyingKey) -> String 
 /// Compose a full `did:key` DID URL from a verifying key
 /// (`did:key:z<...>`).
 pub fn did_key_from_verifying_key(verifying_key: &VerifyingKey) -> String {
-    format!("did:key:{}", encode_ed25519_did_key_multibase(verifying_key))
+    format!(
+        "did:key:{}",
+        encode_ed25519_did_key_multibase(verifying_key)
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ed25519_dalek::SigningKey;
+
+    use super::*;
 
     #[test]
     fn did_key_round_trips_prefix() {

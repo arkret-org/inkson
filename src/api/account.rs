@@ -176,7 +176,7 @@ impl CokretApi {
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
             "_soland/self/contacts/request",
-            json!({"target": target, "scope": scope}),
+            json!({"target": target, "consent_scope": scope}),
         )
         .await
     }

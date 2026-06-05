@@ -71,6 +71,7 @@ pub struct ContactResponse {
     pub requester: String,
     pub target: String,
     #[serde(default)]
+    #[serde(rename = "consent_scope")]
     pub scope: String,
     pub status: String,
     pub created_at: String,
@@ -1212,6 +1213,7 @@ pub struct AgentRotateKeyResBody {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentGrantAttachReqBody {
     pub grant_kind: String,
+    #[serde(rename = "agent_key_scope")]
     pub scope: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
@@ -1223,6 +1225,7 @@ pub struct AgentGrantResBody {
     pub agent_principal_id: String,
     pub grant_id: String,
     pub grant_kind: String,
+    #[serde(rename = "agent_key_scope")]
     pub scope: Value,
     pub state: String,
     pub created_at: String,
