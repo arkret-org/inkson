@@ -114,7 +114,11 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  await mockCokretApi(page);
+  await mockCokretApi(page, {
+    advertiseListHandlesForSubject: !testInfo.title.startsWith(
+      "account menu falls back to account handle",
+    ),
+  });
   if (testInfo.title.startsWith("login page")) {
     return;
   }
@@ -219,6 +223,31 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   expect(Math.abs(logoutBox!.y - settingsBox!.y)).toBeLessThan(2);
   expect(refreshBox!.x).toBeLessThan(logoutBox!.x);
   expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
+});
+
+test("account menu falls back to account handle when handle directory lookup is not advertised", async ({
+  page,
+}) => {
+  let handleDirectoryRequests = 0;
+  const pageErrors: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/_cokret/find/directory/list-handles-for-subject") {
+      handleDirectoryRequests += 1;
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.message);
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await refreshServer(page);
+  await latestTestId(page, "account-menu-button").click();
+
+  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice.example");
+  await expect(latestTestId(page, "account-menu-handles")).not.toContainText("unavailable");
+  expect(handleDirectoryRequests).toBe(0);
+  expect(pageErrors).toEqual([]);
 });
 
 test("workspace header collapses and sidebar edge resizes the menu", async ({ page }) => {

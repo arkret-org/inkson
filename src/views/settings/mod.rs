@@ -702,6 +702,7 @@ pub fn SettingsPanel(
     token: Signal<String>,
     personal_handles: Vec<String>,
     personal_handles_status: String,
+    can_list_handles_for_subject: bool,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     push_state: Signal<String>,
@@ -2646,12 +2647,14 @@ pub fn SettingsPanel(
                             }
                         }
                     }
-                    // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
-                    // §3.2.1 primary handle via list_handles_for_subject.
-                    crate::views::helpers::WhyThisHandlePanel {
-                        base_url: base_url(),
-                        token: token(),
-                        subject_id: account_did(),
+                    if can_list_handles_for_subject {
+                        // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
+                        // §3.2.1 primary handle via list_handles_for_subject.
+                        crate::views::helpers::WhyThisHandlePanel {
+                            base_url: base_url(),
+                            token: token(),
+                            subject_id: account_did(),
+                        }
                     }
                 }
 

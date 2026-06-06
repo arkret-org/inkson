@@ -38,7 +38,12 @@ type FlowProjection = {
   fields?: Record<string, unknown>;
 };
 
-export async function mockCokretApi(page: Page) {
+type MockCokretApiOptions = {
+  advertiseListHandlesForSubject?: boolean;
+};
+
+export async function mockCokretApi(page: Page, options: MockCokretApiOptions = {}) {
+  const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
@@ -259,6 +264,9 @@ export async function mockCokretApi(page: Page) {
           "ck.self.events.subscribe",
           "ck.find.directory.search_realms",
           "ck.find.directory.resolve_realm",
+          ...(advertiseListHandlesForSubject
+            ? ["ck.find.directory.list_handles_for_subject"]
+            : []),
           "ck.self.authz.check",
           "ck.realm.create",
           "ck.space.create",

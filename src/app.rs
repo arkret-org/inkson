@@ -43,6 +43,7 @@ const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const NAVIGATION_SCOPE_PREFERENCE_KEY: &str = "layout.realm_tree.scope";
 const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
 const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
+const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 220.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
@@ -587,7 +588,7 @@ pub fn RouterView() -> Element {
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
     let mut personal_handles = use_signal(Vec::<String>::new);
-    let mut personal_handles_status = use_signal(|| "Handles not loaded".to_owned());
+    let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
@@ -870,6 +871,8 @@ pub fn RouterView() -> Element {
                     last_error,
                     server_description,
                     server_probe_status,
+                    personal_handles,
+                    personal_handles_status,
                     theme,
                     sync_generation,
                     sync_bootstrap_complete,
@@ -1094,6 +1097,9 @@ pub fn RouterView() -> Element {
         .as_ref()
         .map(|description| description.service_did.as_str().to_owned())
         .unwrap_or_default();
+    let can_list_handles_for_subject = active_server_description
+        .as_ref()
+        .is_some_and(|description| description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT));
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
     let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
@@ -1109,15 +1115,19 @@ pub fn RouterView() -> Element {
         });
     }
     {
-        let lookup_base_url = base_url();
-        let lookup_actor = account_did();
-        let lookup_token = token();
         use_effect(move || {
+            let lookup_base_url = base_url();
+            let lookup_actor = account_did();
+            let lookup_token = token();
+            let lookup_supported = server_description().as_ref().is_some_and(|description| {
+                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
+            });
             let key = format!(
-                "{}|{}|{}",
+                "{}|{}|{}|{}",
                 lookup_base_url,
                 lookup_actor,
-                !lookup_token.trim().is_empty()
+                !lookup_token.trim().is_empty(),
+                lookup_supported,
             );
             if personal_handles_lookup_key() == key {
                 return;
@@ -1126,6 +1136,12 @@ pub fn RouterView() -> Element {
             if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
                 personal_handles.set(Vec::new());
                 personal_handles_status.set("No authenticated session".to_owned());
+                return;
+            }
+            if !lookup_supported {
+                if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
+                }
                 return;
             }
             personal_handles_status.set("Loading handles".to_owned());
@@ -1149,13 +1165,23 @@ pub fn RouterView() -> Element {
                             personal_handles.set(handles);
                         }
                         Err(err) => {
-                            personal_handles.set(Vec::new());
-                            personal_handles_status.set(format!("Handles unavailable: {err}"));
+                            tracing::warn!(
+                                ?err,
+                                "directory list_handles_for_subject failed; keeping account handle fallback"
+                            );
+                            if personal_handles().is_empty() {
+                                personal_handles_status.set("Not published".to_owned());
+                            }
                         }
                     },
                     Err(err) => {
-                        personal_handles.set(Vec::new());
-                        personal_handles_status.set(format!("Invalid server URL: {err}"));
+                        tracing::warn!(
+                            ?err,
+                            "directory list_handles_for_subject skipped for invalid server URL"
+                        );
+                        if personal_handles().is_empty() {
+                            personal_handles_status.set("Not published".to_owned());
+                        }
                     }
                 }
             });
@@ -1933,6 +1959,8 @@ pub fn RouterView() -> Element {
                                     last_error,
                                     server_description,
                                     server_probe_status,
+                                    personal_handles,
+                                    personal_handles_status,
                                     theme,
                                     sync_generation,
                                     sync_bootstrap_complete,
@@ -2076,6 +2104,9 @@ pub fn RouterView() -> Element {
                                                     status,
                                                     account_did,
                                                     device_id,
+                                                    personal_handles,
+                                                    personal_handles_status,
+                                                    personal_handles_lookup_key,
                                                     sync_generation,
                                                 });
                                                 server_menu_open.set(false);
@@ -2101,6 +2132,8 @@ pub fn RouterView() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        personal_handles,
+                                                        personal_handles_status,
                                                         theme,
                                                         sync_generation,
                                                         sync_bootstrap_complete,
@@ -2954,6 +2987,15 @@ pub fn RouterView() -> Element {
                                                             Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
+                                                                    if let Some(handle) =
+                                                                        normalize_personal_handle(&account.handle)
+                                                                    {
+                                                                        personal_handles.set(vec![handle]);
+                                                                        personal_handles_status.set("1 handle".to_owned());
+                                                                    } else {
+                                                                        personal_handles.set(Vec::new());
+                                                                        personal_handles_status.set("Not published".to_owned());
+                                                                    }
                                                                     account_did.set(canonical_actor.clone());
                                                                     persist_config(
                                                                         config_store,
@@ -2983,8 +3025,21 @@ pub fn RouterView() -> Element {
                                                                                     .account_me()
                                                                                     .await
                                                                                     .ok()
-                                                                                    .map(|account| account.did)
-                                                                                    .filter(|did| !did.trim().is_empty()),
+                                                                                    .and_then(|account| {
+                                                                                        if let Some(handle) =
+                                                                                            normalize_personal_handle(&account.handle)
+                                                                                        {
+                                                                                            personal_handles.set(vec![handle]);
+                                                                                            personal_handles_status
+                                                                                                .set("1 handle".to_owned());
+                                                                                        } else {
+                                                                                            personal_handles.set(Vec::new());
+                                                                                            personal_handles_status
+                                                                                                .set("Not published".to_owned());
+                                                                                        }
+                                                                                        (!account.did.trim().is_empty())
+                                                                                            .then_some(account.did)
+                                                                                    }),
                                                                                 Err(_) => None,
                                                                             }
                                                                             .unwrap_or_else(|| actor.clone());
@@ -3067,6 +3122,9 @@ pub fn RouterView() -> Element {
                                                 sync_cursor.set("-".to_owned());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
+                                                personal_handles.set(Vec::new());
+                                                personal_handles_status.set("Not published".to_owned());
+                                                personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
                                                 session_boot_state.set(SessionBootState::Unauthenticated);
                                                 // Bump the SyncEngine generation so any
@@ -3363,6 +3421,7 @@ pub fn RouterView() -> Element {
                             token,
                             personal_handles: personal_handles(),
                             personal_handles_status: personal_handles_status(),
+                            can_list_handles_for_subject,
                             config_store,
                             state_store,
                             push_state,
@@ -4235,6 +4294,11 @@ fn display_handles_from_directory_response(
     handles
 }
 
+fn normalize_personal_handle(handle: &str) -> Option<String> {
+    let normalized = handle.trim().trim_start_matches('@').trim();
+    (!normalized.is_empty()).then(|| normalized.to_owned())
+}
+
 fn account_handles_display(handles: &[String], fallback: &str) -> String {
     if handles.is_empty() {
         fallback.to_owned()
@@ -4489,6 +4553,9 @@ struct ServerSelectionContext {
     status: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
+    personal_handles: Signal<Vec<String>>,
+    personal_handles_status: Signal<String>,
+    personal_handles_lookup_key: Signal<String>,
     /// SyncEngine generation counter — bumped to retire the
     /// previous-server engine after the cache wipe + URL repoint.
     sync_generation: Signal<u64>,
@@ -4512,6 +4579,9 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut status = ctx.status;
     let mut state_store = ctx.state_store;
     let mut sync_generation = ctx.sync_generation;
+    let mut personal_handles = ctx.personal_handles;
+    let mut personal_handles_status = ctx.personal_handles_status;
+    let mut personal_handles_lookup_key = ctx.personal_handles_lookup_key;
     let server_changed = !same_server_url(&base_url(), &server_url);
 
     // A space cached against the previous server's view is meaningless
@@ -4549,6 +4619,9 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     device_queue.set(0);
     frontier_state.set("Not loaded".to_owned());
     crypto_state.set("Refresh session for selected server".to_owned());
+    personal_handles.set(Vec::new());
+    personal_handles_status.set("Not published".to_owned());
+    personal_handles_lookup_key.set(String::new());
     server_description.set(None);
     server_probe_status.set("server not probed".to_owned());
     status.set(ConnectionState::Offline.label().to_owned());
@@ -4778,6 +4851,8 @@ struct ConnectContext {
     last_error: Signal<Option<String>>,
     server_description: Signal<Option<ServerDescription>>,
     server_probe_status: Signal<String>,
+    personal_handles: Signal<Vec<String>>,
+    personal_handles_status: Signal<String>,
     /// A4a: shared UI theme signal so `/sync` can hydrate the theme
     /// from the remote `client.ui` account-data payload right after
     /// session bootstrap. Stub field — wire-up is tracked under A4a.
@@ -4819,6 +4894,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut last_error = ctx.last_error;
         let mut server_description = ctx.server_description;
         let mut server_probe_status = ctx.server_probe_status;
+        let mut personal_handles = ctx.personal_handles;
+        let mut personal_handles_status = ctx.personal_handles_status;
         let mut theme = ctx.theme;
         let navigator = ctx.navigator;
         let mut session_boot_state = ctx.session_boot_state;
@@ -4942,8 +5019,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
+                let mut account_handle = None::<String>;
                 let canonical_actor = match authed.account_me().await {
-                    Ok(account) if !account.did.trim().is_empty() => account.did,
+                    Ok(account) if !account.did.trim().is_empty() => {
+                        account_handle = normalize_personal_handle(&account.handle);
+                        account.did
+                    }
                     Ok(_) => {
                         last_error.set(Some(
                             "account_me: server returned empty actor DID; reusing local actor"
@@ -4956,7 +5037,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             session_token = refreshed;
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.account_me().await {
-                                Ok(account) if !account.did.trim().is_empty() => account.did,
+                                Ok(account) if !account.did.trim().is_empty() => {
+                                    account_handle = normalize_personal_handle(&account.handle);
+                                    account.did
+                                }
                                 Ok(_) => {
                                     last_error.set(Some(
                                         "account_me: refreshed session returned empty actor DID; reusing local actor"
@@ -5022,6 +5106,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         actor.clone()
                     }
                 };
+                if let Some(handle) = account_handle {
+                    personal_handles.set(vec![handle]);
+                    personal_handles_status.set("1 handle".to_owned());
+                } else if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
+                }
                 if canonical_actor != actor {
                     // Account changed since the last persisted run (the
                     // server's `/account/me` disagrees with our cached
