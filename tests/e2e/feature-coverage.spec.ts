@@ -19,6 +19,10 @@
 import { expect, test } from "@playwright/test";
 import { mockCokretApi } from "./mockCokretApi";
 
+function latestTestId(page: import("@playwright/test").Page, testId: string) {
+  return page.getByTestId(testId).last();
+}
+
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
     await mockCokretApi(page);
@@ -37,8 +41,8 @@ test.describe("feature coverage placeholders", () => {
       );
     });
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-    const connectButton = page.getByTestId("connect-button");
+    await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+    const connectButton = latestTestId(page, "connect-button");
     if (await connectButton.count()) {
       await connectButton.click();
     }
@@ -230,8 +234,9 @@ test.describe("feature coverage placeholders", () => {
     // by intercepting the upload and checking the wire body.
     const PASSPHRASE = "correct-horse-battery-staple-7";
 
-    await page.goto("/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("vault-section")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    const recoveryPanel = latestTestId(page, "recovery-panel");
+    await expect(recoveryPanel.getByTestId("vault-section")).toBeVisible({ timeout: 60_000 });
 
     // Watch for the PUT before we trigger it so we don't race the
     // browser. The mock above returns `{status: "stored"}` so the UI
@@ -242,9 +247,9 @@ test.describe("feature coverage placeholders", () => {
       );
     });
 
-    await page.getByTestId("vault-passphrase").fill(PASSPHRASE);
-    await page.getByTestId("vault-passphrase-confirm").fill(PASSPHRASE);
-    await page.getByTestId("vault-rekey").click();
+    await recoveryPanel.getByTestId("vault-passphrase").fill(PASSPHRASE);
+    await recoveryPanel.getByTestId("vault-passphrase-confirm").fill(PASSPHRASE);
+    await recoveryPanel.getByTestId("vault-rekey").click();
 
     const request = await uploadPromise;
     const raw = request.postData() ?? "";
@@ -273,7 +278,7 @@ test.describe("feature coverage placeholders", () => {
     expect(raw).not.toContain("yougen_demo_nonce");
     expect(raw).not.toContain("BASE64URL_OPAQUE_BLOB_PLACEHOLDER");
 
-    await expect(page.getByTestId("vault-status")).toContainText(/Uploaded backup|stored/i, {
+    await expect(recoveryPanel.getByTestId("vault-status")).toContainText(/Uploaded backup|stored/i, {
       timeout: 60_000,
     });
   });
@@ -286,10 +291,11 @@ test.describe("feature coverage placeholders", () => {
     // surfaces to render. The Shamir share release/reconstruct path is
     // not wired yet; this e2e pins the UI surface so the flow has
     // somewhere to plug in when the policy-backed recovery session lands.
-    await page.goto("/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("recovery-panel")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId("social-recovery-section")).toBeVisible();
-    await expect(page.getByTestId("recovery-key-section")).toBeVisible();
+    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    const recoveryPanel = latestTestId(page, "recovery-panel");
+    await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
+    await expect(recoveryPanel.getByTestId("social-recovery-section")).toBeVisible();
+    await expect(recoveryPanel.getByTestId("recovery-key-section")).toBeVisible();
   });
 
   // ---- Discoverability ≠ Join Rule ≠ History ----

@@ -792,6 +792,32 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
+    if (url.pathname === "/_cokret/find/directory/list-handles-for-subject") {
+      const body = await route.request().postDataJSON();
+      const subject = body.subject ?? "did:web:alice.example";
+      return json(route, {
+        subject,
+        primary_handle: "alice:local.host",
+        as_of: "2026-04-28T12:00:00Z",
+        has_more: false,
+        claims: [
+          {
+            subject,
+            handle: "alice:local.host",
+            issuer: "did:web:server.local",
+            issuer_service_did: "did:web:server.local",
+            binding_state: "verified",
+            claim_kind: "handle_binding",
+            visibility: "public",
+            audience: "did:web:server.local",
+            created_at: "2026-04-28T12:00:00Z",
+            verified_at: "2026-04-28T12:00:00Z",
+            expires_at: "2027-04-28T12:00:00Z",
+          },
+        ],
+      });
+    }
+
     if (url.pathname === "/_cokret/find/directory/resolve-realm") {
       return json(route, {
         realm_preview: realmPreview(),

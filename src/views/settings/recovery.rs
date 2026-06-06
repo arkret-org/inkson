@@ -1,8 +1,9 @@
-//! G3.Y1 — Recovery passphrase setup ceremony at `/settings/recovery`.
+//! G3.Y1 — legacy recovery passphrase setup ceremony.
 //!
-//! Sibling of the broader `views/recovery.rs` aggregator that also
-//! handles Encrypted Cloud Vault, Recovery Key (high-entropy string)
-//! and Social Recovery / SSS. This narrow surface is what the cotest
+//! The broader `views/recovery.rs` aggregator now owns `/settings/recovery`
+//! inside the Settings shell. This module still owns the persisted
+//! passphrase state helper used by setup prompts. This narrow surface is
+//! what the cotest
 //! `identity/recovery` scenario hooks: a single passphrase setup +
 //! confirmation flow that emits the testids the scenario expects.
 //!
