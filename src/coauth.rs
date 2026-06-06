@@ -12,6 +12,8 @@ use crate::api::CokretApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
+const COAUTH_AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/account/auth/bridge/describe";
+const COAUTH_INTEGRATION_DESCRIBE_PATH: &str = "_cokret/gate/account/integration/describe";
 // These three constants are **only**
 // referenced by `build_authorize_url_preview` — the diagnostic /
 // inspector function that renders an example authorize URL without
@@ -211,7 +213,7 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// Canonical OIDC token endpoint response shape. Used by
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
-/// G3.Y0 — wire shape of `POST /_cokret/gate/session-grants/refresh` (G3.C1).
+/// G3.Y0 — wire shape of `POST /_cokret/gate/account/session-grants/refresh` (G3.C1).
 /// Mirrors `coauth::handlers::cokret::RefreshSessionGrantResponse`. We
 /// keep the fields as `String` so the cotest harness can assert
 /// equality against the JSON body verbatim.
@@ -411,11 +413,11 @@ impl CoauthApi {
             .await
             .context("coauth OIDC discovery failed")?;
         let bridge = self
-            .get_json::<CoauthAuthBridgeDescribe>("_cokret/gate/auth/bridge/describe")
+            .get_json::<CoauthAuthBridgeDescribe>(COAUTH_AUTH_BRIDGE_DESCRIBE_PATH)
             .await
             .context("coauth auth bridge describe failed")?;
         let integration_manifest = self
-            .get_json::<CoauthIntegrationManifest>("_cokret/gate/integration/describe")
+            .get_json::<CoauthIntegrationManifest>(COAUTH_INTEGRATION_DESCRIBE_PATH)
             .await
             .context("coauth integration describe failed")?;
 
@@ -448,7 +450,7 @@ impl CoauthApi {
     }
 
     pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
-        self.get_json("_cokret/gate/auth/bridge/describe").await
+        self.get_json(COAUTH_AUTH_BRIDGE_DESCRIBE_PATH).await
     }
 
     pub async fn describe_oidc_exchange(
@@ -459,7 +461,7 @@ impl CoauthApi {
     }
 
     pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
-        self.get_json("_cokret/gate/integration/describe").await
+        self.get_json(COAUTH_INTEGRATION_DESCRIBE_PATH).await
     }
 
     /// List invite-quarantine entries from coauth's admin endpoint. Admins
@@ -710,7 +712,7 @@ impl CoauthApi {
         .await
     }
 
-    /// G3.Y0 + G3.C1 — call coauth's `POST /_cokret/gate/session-grants/refresh`
+    /// G3.Y0 + G3.C1 — call coauth's `POST /_cokret/gate/account/session-grants/refresh`
     /// with a DPoP proof and the prior grant JWT. On success returns
     /// the rotated grant (single-use semantics: the old grant is now
     /// revoked).
@@ -724,7 +726,7 @@ impl CoauthApi {
         audience: Option<&str>,
         dpop_proof: &str,
     ) -> anyhow::Result<RefreshSessionGrantResponse> {
-        let endpoint = self.endpoint("_cokret/gate/session-grants/refresh")?;
+        let endpoint = self.endpoint("_cokret/gate/account/session-grants/refresh")?;
         let body = json!({
             "grant_jwt": grant_jwt,
             "audience": audience,
@@ -1121,7 +1123,7 @@ pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow
 /// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
 /// `coauth/crates/backend/src/handlers/cokret.rs:575`). soland forwards
-/// the proof to coauth's `/_cokret/gate/session-grants/introspect` endpoint
+/// the proof to coauth's `/_cokret/gate/account/session-grants/introspect` endpoint
 /// when calling `validate_session_grant_binding` — the JWS MUST verify
 /// against the session_public_key registered with the grant, and the
 /// claims MUST match `grant_id` / `grant_jwt_hash` / `audience` /
@@ -2116,10 +2118,11 @@ mod tests {
                 grant_types: vec!["authorization_code".to_owned()],
                 token_endpoint_auth_method: Some("none".to_owned()),
             }],
-            oidc_browser_bridge_session_path: "_cokret/gate/auth/oidc/browser-bridge/session"
+            oidc_browser_bridge_session_path:
+                "_cokret/gate/account/auth/oidc/browser-bridge/session".to_owned(),
+            oidc_exchange_describe_path: "_cokret/gate/account/auth/oidc/exchange/describe"
                 .to_owned(),
-            oidc_exchange_describe_path: "_cokret/gate/auth/oidc/exchange/describe".to_owned(),
-            oidc_exchange_path: "_cokret/gate/auth/oidc/exchange".to_owned(),
+            oidc_exchange_path: "_cokret/gate/account/auth/oidc/exchange".to_owned(),
             auth_bridge_contract: "auth-bridge".to_owned(),
             auth_bridge_todos: Vec::new(),
             integration_manifest: CoauthIntegrationManifest {

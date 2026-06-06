@@ -5,18 +5,17 @@ struct PrincipalRealmLookupResponse {
     realm_id: String,
 }
 
-/// Canonical, protocol-namespace location of the auth-bridge describe
-/// document. Per `service-http-binding.md` the auth bridge lives under the
-/// versionless `/_cokret/gate/...` trust surface; coauth already serves the
-/// bridge describe here (see `coauth.rs`), so this is the single bootstrap
-/// anchor both adapters share.
-const AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/auth/bridge/describe";
+/// Preferred protocol-namespace location of the principal auth-bridge describe
+/// document. Auth server surfaces live under `/_cokret/gate/account/*`; older
+/// soland deployments still expose the principal bridge only in the product
+/// namespace below.
+const AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/account/auth/bridge/describe";
 
 /// Legacy product-namespace fallback for servers that have not yet aliased
 /// their auth bridge into the protocol namespace. Probed only when the
 /// canonical path returns `404 unrecognized_endpoint`.
 ///
-/// TODO: drop once soland serves the bridge describe under `/_cokret/gate/...`
+/// TODO: drop once soland serves the bridge describe under `/_cokret/gate/account/...`
 /// (or advertises its location via `/_cokret/describe.auth_metadata`).
 const AUTH_BRIDGE_DESCRIBE_PATH_LEGACY: &str = "_soland/gate/auth/bridge/describe";
 
@@ -36,11 +35,11 @@ impl CokretApi {
     }
 
     /// Resolve the principal server's auth-bridge describe document from a
-    /// single bootstrap anchor. Prefers the canonical protocol-namespace path
-    /// (`/_cokret/gate/auth/bridge/describe`) so the soland and coauth adapters
-    /// share one discovery entry point, and falls back to the legacy vendor
-    /// path (`/_soland/gate/...`) only when the canonical alias is absent
-    /// (`404 unrecognized_endpoint`). All other errors propagate unchanged.
+    /// single bootstrap anchor. Prefers the protocol-namespace path
+    /// (`/_cokret/gate/account/auth/bridge/describe`) and falls back to the
+    /// legacy soland product path (`/_soland/gate/...`) only when the
+    /// protocol alias is absent (`404 unrecognized_endpoint`). All other
+    /// errors propagate unchanged.
     pub async fn auth_bridge_describe(
         &self,
     ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {

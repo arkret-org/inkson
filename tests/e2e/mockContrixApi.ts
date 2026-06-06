@@ -294,31 +294,31 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/auth/bridge/describe") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/auth/bridge/describe") {
       return json(route, {
         contract: "cokret.rest.auth_bridge.v1",
         version: "2026-05-04-scaffold",
-        api_base_path: "/_cokret/gate",
+        api_base_path: "/_cokret",
         oauth: {
           discovery_path: "/.well-known/openid-configuration",
-          browser_bridge_session_path: "/_cokret/gate/auth/oidc/browser-bridge/session",
-          exchange_describe_path: "/_cokret/gate/auth/oidc/exchange/describe",
-          exchange_path: "/_cokret/gate/auth/oidc/exchange",
+          browser_bridge_session_path: "/_cokret/gate/account/auth/oidc/browser-bridge/session",
+          exchange_describe_path: "/_cokret/gate/account/auth/oidc/exchange/describe",
+          exchange_path: "/_cokret/gate/account/auth/oidc/exchange",
           supported_flows: ["authorization_code_pkce_browser"],
         },
         cokret: {
-          login_path: "/_cokret/gate/auth/login",
-          logout_path: "/_soland/gate/auth/logout",
-          providers_path: "/_cokret/gate/auth/providers",
-          session_grants_path: "/_cokret/gate/session-grants",
-          session_grants_introspect_path: "/_cokret/gate/session-grants/introspect",
+          login_path: "/_cokret/gate/account/auth/login",
+          logout_path: "/_cokret/gate/account/auth/logout",
+          providers_path: "/_cokret/gate/account/auth/providers",
+          session_grants_path: "/_cokret/gate/account/session-grants",
+          session_grants_introspect_path: "/_cokret/gate/account/session-grants/introspect",
           session_grant_scope: "urn:cokret:principal-server:session.bind",
         },
         todos: [],
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/auth/oidc/browser-bridge/session") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/auth/oidc/browser-bridge/session") {
       const body = await route.request().postDataJSON();
       const redirectUri = body.redirect_uri ?? "http://127.0.0.1:4527/auth/callback";
       const principalAudience = body.principal_audience ?? "did:web:server.local";
@@ -352,14 +352,14 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/integration/describe") {
+    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/integration/describe") {
       return json(route, {
         contract: "cokret.rest.integration_manifest.v1",
         version: "2026-05-04-scaffold",
         service: "coauth",
         service_kind: "account_authority",
-        api_base_path: "/_cokret/gate",
-        describe_path: "/_cokret/gate/integration/describe",
+        api_base_path: "/_cokret",
+        describe_path: "/_cokret/gate/account/integration/describe",
         dependencies: [],
         surfaces: [],
         examples: {},
