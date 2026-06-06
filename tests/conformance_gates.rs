@@ -365,29 +365,29 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 }
 
 #[test]
-fn build_space_state_event_join_rule_matches_event_schema() {
-    let mut envelope = api::build_space_state_event(
+fn build_realm_state_event_join_rule_matches_event_schema() {
+    let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_DID,
         "ck.realm.join_rule",
         serde_json::json!("invite"),
     )
-    .expect("build_space_state_event(join_rule) succeeds");
+    .expect("build_realm_state_event(join_rule) succeeds");
     stamp_wire_fields(&mut envelope);
-    assert_envelope_matches_schema("build_space_state_event[join_rule]", &envelope);
+    assert_envelope_matches_schema("build_realm_state_event[join_rule]", &envelope);
 }
 
 #[test]
-fn build_space_state_event_history_visibility_matches_event_schema() {
-    let mut envelope = api::build_space_state_event(
+fn build_realm_state_event_history_visibility_matches_event_schema() {
+    let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_DID,
         "ck.realm.history_visibility",
         serde_json::json!("shared"),
     )
-    .expect("build_space_state_event(history_visibility) succeeds");
+    .expect("build_realm_state_event(history_visibility) succeeds");
     stamp_wire_fields(&mut envelope);
-    assert_envelope_matches_schema("build_space_state_event[history_visibility]", &envelope);
+    assert_envelope_matches_schema("build_realm_state_event[history_visibility]", &envelope);
 }
 
 #[test]
@@ -408,7 +408,7 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
     )
     .expect("build_realm_history_sharing_policy_event succeeds");
     stamp_wire_fields(&mut envelope);
-    assert_envelope_matches_schema("build_space_state_event[history_sharing_policy]", &envelope);
+    assert_envelope_matches_schema("build_realm_state_event[history_sharing_policy]", &envelope);
 }
 
 #[test]
@@ -429,7 +429,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
     )
     .expect("build_realm_preview_policy_event succeeds");
     stamp_wire_fields(&mut envelope);
-    assert_envelope_matches_schema("build_space_state_event[preview_policy]", &envelope);
+    assert_envelope_matches_schema("build_realm_state_event[preview_policy]", &envelope);
 }
 
 #[test]
