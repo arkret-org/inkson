@@ -58,6 +58,17 @@ pub const VAULT_NONCE_LEN: usize = 24;
 /// of entropy; encoded as a 24-word BIP-39 mnemonic for user custody.
 pub const RECOVERY_KEY_BYTES: usize = 32;
 
+/// WebAuthn PRF outputs are SHA-256-sized secrets. We treat them as wrapping
+/// key material only: the 24-word Recovery Key remains the offline root.
+pub const PASSKEY_PRF_OUTPUT_LEN: usize = 32;
+
+/// Random salt supplied to the WebAuthn PRF extension and reused as HKDF salt
+/// for the local Recovery Key wrapper.
+pub const PASSKEY_WRAP_SALT_LEN: usize = 32;
+
+/// XChaCha20-Poly1305 nonce length for the local passkey wrapper.
+pub const PASSKEY_WRAP_NONCE_LEN: usize = 24;
+
 /// Length of the producer-generated `nonce_salt` (key-management.md §7.5: "至少
 /// 128-bit 随机值"). Mixed into the deterministic nonce transcript so duplicate
 /// business-metadata tuples cannot collide nonces.
@@ -69,6 +80,7 @@ pub const VAULT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 
 const HKDF_COMMITMENT_INFO: &[u8] = b"cokret-key-backup-commitment-v1";
 const HKDF_NONCE_INFO: &[u8] = b"cokret-key-backup-aead-nonce-v1";
+const HKDF_PASSKEY_WRAP_INFO: &[u8] = b"cokret-recovery-passkey-wrap-v1";
 
 /// Outcome of `derive_vault_kek`: the KEK plus the parameters that
 /// generated it. The parameters are serialised into the backup body so
@@ -120,6 +132,18 @@ pub struct VaultSealed {
     pub nonce_b64: String,
     pub nonce_salt_b64: String,
     pub key_commitment: String,
+}
+
+/// Local passkey/WebAuthn PRF wrapper output. This is not a
+/// `ck.schema.key_backup.v1` wire envelope and deliberately does not introduce
+/// a new `recipient_method`; it is a browser-local convenience wrapper for the
+/// current 24-word Recovery Key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PasskeyWrappedRecoveryKey {
+    pub salt_b64: String,
+    pub nonce_b64: String,
+    pub ciphertext_b64: String,
+    pub ciphertext_digest: String,
 }
 
 /// Stretch a user passphrase into a 32-byte key under Argon2id with a
@@ -368,6 +392,103 @@ pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
         .expect("recovery key fingerprint requires a valid 24-word BIP-39 key");
     let digest = Sha256::digest(canonical.as_bytes());
     format!("sha256:{}", hex_lower(&digest))
+}
+
+/// Generate the random salt passed to the WebAuthn PRF extension. The salt is
+/// public metadata; the authenticator-specific PRF output is the secret.
+pub fn generate_passkey_wrap_salt() -> Result<[u8; PASSKEY_WRAP_SALT_LEN]> {
+    let mut salt = [0u8; PASSKEY_WRAP_SALT_LEN];
+    fill(&mut salt).map_err(|err| anyhow!("passkey wrap salt rng: {err}"))?;
+    Ok(salt)
+}
+
+fn passkey_wrap_key(
+    prf_output: &[u8],
+    salt: &[u8; PASSKEY_WRAP_SALT_LEN],
+) -> Result<Zeroizing<[u8; 32]>> {
+    if prf_output.len() != PASSKEY_PRF_OUTPUT_LEN {
+        return Err(anyhow!(
+            "passkey PRF output must be {PASSKEY_PRF_OUTPUT_LEN} bytes"
+        ));
+    }
+    let hk = Hkdf::<Sha256>::new(Some(salt), prf_output);
+    let mut out = Zeroizing::new([0u8; 32]);
+    hk.expand(HKDF_PASSKEY_WRAP_INFO, out.as_mut())
+        .map_err(|err| anyhow!("passkey wrap hkdf expand: {err}"))?;
+    Ok(out)
+}
+
+/// Wrap a valid 24-word Recovery Key with a WebAuthn PRF output. Callers pass a
+/// canonical AAD transcript that binds account id, credential id, rp id, wrap
+/// id, and recovery-key fingerprint.
+pub fn seal_recovery_key_with_passkey_prf(
+    recovery_key: &str,
+    prf_output: &[u8],
+    salt: &[u8; PASSKEY_WRAP_SALT_LEN],
+    aad: &[u8],
+) -> Result<PasskeyWrappedRecoveryKey> {
+    let canonical = normalize_recovery_key_input(recovery_key)
+        .ok_or_else(|| anyhow!("passkey wrapper requires a valid 24-word recovery key"))?;
+    let mut nonce = [0u8; PASSKEY_WRAP_NONCE_LEN];
+    fill(&mut nonce).map_err(|err| anyhow!("passkey wrap nonce rng: {err}"))?;
+    let key = passkey_wrap_key(prf_output, salt)?;
+    let cipher = XChaCha20Poly1305::new((&*key).into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: canonical.as_bytes(),
+                aad,
+            },
+        )
+        .map_err(|err| anyhow!("passkey recovery key encrypt: {err}"))?;
+    let digest = Sha256::digest(&ciphertext);
+    Ok(PasskeyWrappedRecoveryKey {
+        salt_b64: B64.encode(salt),
+        nonce_b64: B64.encode(nonce),
+        ciphertext_b64: B64.encode(&ciphertext),
+        ciphertext_digest: format!("sha256:{}", hex_lower(&digest)),
+    })
+}
+
+/// Open a local passkey/WebAuthn PRF wrapper and return the canonical 24-word
+/// Recovery Key. Any wrong PRF output, wrong AAD, or malformed phrase fails.
+pub fn open_recovery_key_with_passkey_prf(
+    prf_output: &[u8],
+    salt_b64: &str,
+    nonce_b64: &str,
+    ciphertext_b64: &str,
+    aad: &[u8],
+) -> Result<String> {
+    let salt_bytes = B64
+        .decode(salt_b64.trim_end_matches('='))
+        .context("passkey wrap salt base64")?;
+    let salt: [u8; PASSKEY_WRAP_SALT_LEN] = salt_bytes
+        .try_into()
+        .map_err(|_| anyhow!("passkey wrap salt must be {PASSKEY_WRAP_SALT_LEN} bytes"))?;
+    let nonce_bytes = B64
+        .decode(nonce_b64.trim_end_matches('='))
+        .context("passkey wrap nonce base64")?;
+    let nonce: [u8; PASSKEY_WRAP_NONCE_LEN] = nonce_bytes
+        .try_into()
+        .map_err(|_| anyhow!("passkey wrap nonce must be {PASSKEY_WRAP_NONCE_LEN} bytes"))?;
+    let ciphertext = B64
+        .decode(ciphertext_b64.trim_end_matches('='))
+        .context("passkey wrap ciphertext base64")?;
+    let key = passkey_wrap_key(prf_output, &salt)?;
+    let cipher = XChaCha20Poly1305::new((&*key).into());
+    let plaintext = cipher
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: ciphertext.as_slice(),
+                aad,
+            },
+        )
+        .map_err(|_| anyhow!("passkey recovery key decrypt failed"))?;
+    let phrase = String::from_utf8(plaintext).context("passkey recovery key utf8")?;
+    normalize_recovery_key_input(&phrase)
+        .ok_or_else(|| anyhow!("passkey wrapper decrypted an invalid recovery key"))
 }
 
 /// Round R2/R3 (T15) — OOB code entry validation.
@@ -767,6 +888,69 @@ mod tests {
                 .join("   "),
         );
         assert_eq!(fp, fp2);
+    }
+
+    #[test]
+    fn passkey_prf_wrapper_round_trips_recovery_key() {
+        let phrase = format_recovery_key(&[0x11u8; RECOVERY_KEY_BYTES]);
+        let prf = [0xA5u8; PASSKEY_PRF_OUTPUT_LEN];
+        let salt = [0x5Au8; PASSKEY_WRAP_SALT_LEN];
+        let aad = br#"{"account_id":"did:web:alice.example","wrap_id":"ck:recovery-wrap:test"}"#;
+
+        let sealed = seal_recovery_key_with_passkey_prf(&phrase, &prf, &salt, aad).unwrap();
+        assert_eq!(sealed.salt_b64, B64.encode(salt));
+        assert!(sealed.ciphertext_digest.starts_with("sha256:"));
+
+        let opened = open_recovery_key_with_passkey_prf(
+            &prf,
+            &sealed.salt_b64,
+            &sealed.nonce_b64,
+            &sealed.ciphertext_b64,
+            aad,
+        )
+        .unwrap();
+        assert_eq!(opened, phrase);
+    }
+
+    #[test]
+    fn passkey_prf_wrapper_rejects_wrong_prf_or_aad() {
+        let phrase = format_recovery_key(&[0x22u8; RECOVERY_KEY_BYTES]);
+        let prf = [0x07u8; PASSKEY_PRF_OUTPUT_LEN];
+        let salt = [0x08u8; PASSKEY_WRAP_SALT_LEN];
+        let aad = b"stable-aad";
+        let sealed = seal_recovery_key_with_passkey_prf(&phrase, &prf, &salt, aad).unwrap();
+
+        let wrong_prf = [0x09u8; PASSKEY_PRF_OUTPUT_LEN];
+        assert!(
+            open_recovery_key_with_passkey_prf(
+                &wrong_prf,
+                &sealed.salt_b64,
+                &sealed.nonce_b64,
+                &sealed.ciphertext_b64,
+                aad,
+            )
+            .is_err()
+        );
+
+        assert!(
+            open_recovery_key_with_passkey_prf(
+                &prf,
+                &sealed.salt_b64,
+                &sealed.nonce_b64,
+                &sealed.ciphertext_b64,
+                b"tampered-aad",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn passkey_prf_wrapper_rejects_non_recovery_key_input() {
+        let prf = [0x33u8; PASSKEY_PRF_OUTPUT_LEN];
+        let salt = [0x44u8; PASSKEY_WRAP_SALT_LEN];
+        let err = seal_recovery_key_with_passkey_prf("custom passphrase", &prf, &salt, b"aad")
+            .unwrap_err();
+        assert!(err.to_string().contains("24-word recovery key"));
     }
 
     #[test]

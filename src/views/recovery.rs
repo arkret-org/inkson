@@ -27,7 +27,9 @@ use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
     RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
-    fingerprint_recovery_key, generate_recovery_key, recovery_passphrase_strength_error,
+    fingerprint_recovery_key, generate_passkey_wrap_salt, generate_recovery_key,
+    open_recovery_key_with_passkey_prf, recovery_passphrase_strength_error,
+    seal_recovery_key_with_passkey_prf,
 };
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -46,6 +48,30 @@ struct Guardian {
     note: String,
     #[serde(default)]
     confirmed: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct PasskeyRecoveryWrap {
+    #[serde(default)]
+    wrap_id: String,
+    #[serde(default)]
+    credential_id_b64: String,
+    #[serde(default)]
+    credential_label: String,
+    #[serde(default)]
+    rp_id: String,
+    #[serde(default)]
+    salt_b64: String,
+    #[serde(default)]
+    nonce_b64: String,
+    #[serde(default)]
+    ciphertext_b64: String,
+    #[serde(default)]
+    ciphertext_digest: String,
+    #[serde(default)]
+    recovery_key_fingerprint: String,
+    #[serde(default)]
+    created_at: String,
 }
 
 /// One row in the "List existing backups" table — server-side metadata
@@ -190,6 +216,21 @@ mod restore_parse_tests {
         vaulted.vault_backup_id = "ck:backup:abc".to_owned();
         assert!(recovery_state_has_user_material(&vaulted));
     }
+
+    #[test]
+    fn recovery_state_with_only_passkey_wrapper_is_not_configured() {
+        let mut state = RecoveryState::default();
+        state.passkey_wraps.push(PasskeyRecoveryWrap {
+            wrap_id: "ck:recovery-wrap:test".to_owned(),
+            credential_id_b64: "Y3JlZA".to_owned(),
+            recovery_key_fingerprint: "sha256:abc".to_owned(),
+            ..PasskeyRecoveryWrap::default()
+        });
+        assert!(
+            !recovery_state_has_user_material(&state),
+            "passkey wrappers are convenience unlocks, not root recovery material"
+        );
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +255,11 @@ struct RecoveryState {
     sss_total: u32,
     #[serde(default)]
     guardians: Vec<Guardian>,
+    /// Browser-local WebAuthn PRF wrappers for quick unlock of the current
+    /// 24-word Recovery Key. These are convenience wrappers, not fresh-device
+    /// recovery material.
+    #[serde(default)]
+    passkey_wraps: Vec<PasskeyRecoveryWrap>,
     /// RFC-3339 UTC of the last "Rehearse social recovery" click.
     #[serde(default)]
     last_rehearsed_at: String,
@@ -236,6 +282,7 @@ impl Default for RecoveryState {
             sss_threshold: default_threshold(),
             sss_total: default_total(),
             guardians: Vec::new(),
+            passkey_wraps: Vec::new(),
             last_rehearsed_at: String::new(),
         }
     }
@@ -272,6 +319,19 @@ fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
             .guardians
             .iter()
             .any(|guardian| !guardian.did.trim().is_empty() || !guardian.label.trim().is_empty())
+}
+
+fn passkey_wrap_aad(account_id: &str, wrap: &PasskeyRecoveryWrap) -> anyhow::Result<Vec<u8>> {
+    crate::canonical::canonical_json_bytes(&serde_json::json!({
+        "schema": "ck.local.recovery_passkey_wrap.v1",
+        "account_id": account_id,
+        "wrap_id": wrap.wrap_id,
+        "credential_id": wrap.credential_id_b64,
+        "rp_id": wrap.rp_id,
+        "recovery_key_fingerprint": wrap.recovery_key_fingerprint,
+        "created_at": wrap.created_at,
+    }))
+    .map_err(|err| anyhow::anyhow!("passkey wrap aad canonical json: {err}"))
 }
 
 pub(crate) fn recovery_options_configured(
@@ -351,6 +411,8 @@ pub fn RecoveryPanel(
     let mut recovery_key_fp = use_signal(|| initial.recovery_key_fingerprint.clone());
     let mut recovery_key_rotated_at = use_signal(|| initial.recovery_key_rotated_at.clone());
     let mut recovery_key_status = use_signal(String::new);
+    let mut passkey_wraps = use_signal(|| initial.passkey_wraps.clone());
+    let mut passkey_status = use_signal(String::new);
 
     // Social recovery state
     let mut threshold = use_signal(|| initial.sss_threshold);
@@ -383,6 +445,7 @@ pub fn RecoveryPanel(
         sss_threshold: threshold(),
         sss_total: total(),
         guardians: guardians(),
+        passkey_wraps: passkey_wraps(),
         last_rehearsed_at: last_rehearsed(),
     };
 
@@ -840,9 +903,11 @@ pub fn RecoveryPanel(
                                         live_recovery_key.set(key);
                                         recovery_key_fp.set(fp);
                                         recovery_key_rotated_at.set(now);
+                                        passkey_wraps.set(Vec::new());
                                         recovery_key_status.set(
-                                            "New Recovery Key generated. Copy it now — it is only displayed once.".to_owned()
+                                            "New Recovery Key generated. Copy it now — it is only displayed once. Existing passkey quick-unlock wrappers were cleared.".to_owned()
                                         );
+                                        passkey_status.set(String::new());
                                         let next = snapshot_state();
                                         save_state(&mut store, &actor_key, &next);
                                     }
@@ -864,6 +929,226 @@ pub fn RecoveryPanel(
                             recovery_key_status.set("Plaintext cleared from memory.".to_owned());
                         },
                         "Clear from screen"
+                    }
+                }
+            }
+
+            // Passkey quick unlock — browser-local WebAuthn PRF wrapper
+            div { class: "event", "data-testid": "passkey-recovery-section",
+                div { class: "event-head",
+                    span { "Passkey quick unlock" }
+                    span { class: "muted", "browser-local WebAuthn PRF" }
+                    HelpTip { text: "This wraps the 24-word Recovery Key with a WebAuthn PRF output for this browser/RP context. It is a convenience unlock layer, not a replacement for writing down the 24 words or for fresh-device recovery policy proof." }
+                }
+                div { class: "muted",
+                    "After you generate or unlock the 24-word Recovery Key, create a local passkey wrapper so this browser can show it again after user verification. This is not a replacement for the 24 words; the encrypted wrapper is stored locally and the server still never receives the words."
+                }
+                div { class: "metric-grid", "data-testid": "passkey-wrap-overview",
+                    div { class: "metric",
+                        strong { "Local wrappers" }
+                        span { "data-testid": "passkey-wrap-count", "{passkey_wraps().len()} saved" }
+                        div { class: "muted", "Stored in local recovery.state.v1 only" }
+                    }
+                    div { class: "metric",
+                        strong { "Scope" }
+                        span { "data-testid": "passkey-wrap-scope",
+                            {
+                                passkey_wraps()
+                                    .last()
+                                    .map(|wrap| wrap.rp_id.clone())
+                                    .unwrap_or_else(|| crate::passkey_prf::default_rp_id().unwrap_or_else(|| "browser only".to_owned()))
+                            }
+                        }
+                        div { class: "muted", "Bound to this origin / RP id" }
+                    }
+                    div { class: "metric",
+                        strong { "Root method" }
+                        span { "24-word Recovery Key" }
+                        div { class: "muted", "Passkey unlock is additive; keep the words offline" }
+                    }
+                }
+                if !passkey_status().is_empty() {
+                    div { class: "muted", "data-testid": "passkey-wrap-status", "{passkey_status}" }
+                }
+                div { class: "actions",
+                    button {
+                        class: "primary",
+                        "data-testid": "passkey-wrap-create",
+                        disabled: live_recovery_key().trim().is_empty(),
+                        title: if live_recovery_key().trim().is_empty() {
+                            "Generate or unlock the 24-word Recovery Key first."
+                        } else {
+                            "Create a browser-local passkey wrapper for the current 24-word Recovery Key."
+                        },
+                        onclick: {
+                            let actor_key = actor_key.clone();
+                            let mut store = state_store;
+                            move |_| {
+                                let recovery_key = live_recovery_key();
+                                if recovery_key.trim().is_empty() {
+                                    passkey_status.set("Generate or unlock the 24-word Recovery Key first.".to_owned());
+                                    return;
+                                }
+                                let actor = actor_key.clone();
+                                let rp_id = crate::passkey_prf::default_rp_id()
+                                    .unwrap_or_else(|| "origin-default".to_owned());
+                                let label = format!("Cokret Recovery {}", short_protocol_id(&actor));
+                                let fp = recovery_key_fp();
+                                passkey_status.set("Waiting for passkey user verification…".to_owned());
+                                spawn(async move {
+                                    let salt = match generate_passkey_wrap_salt() {
+                                        Ok(salt) => salt,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey wrapper salt failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let material = match crate::passkey_prf::create_recovery_passkey_prf(
+                                        &label,
+                                        &actor,
+                                        &rp_id,
+                                        &salt,
+                                    )
+                                    .await
+                                    {
+                                        Ok(material) => material,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey PRF unavailable: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let created_at = chrono::Utc::now().to_rfc3339();
+                                    let mut wrap = PasskeyRecoveryWrap {
+                                        wrap_id: format!("ck:recovery-wrap:{}", uuid_v7()),
+                                        credential_id_b64: material.credential_id_b64.clone(),
+                                        credential_label: label.clone(),
+                                        rp_id: rp_id.clone(),
+                                        recovery_key_fingerprint: fp.clone(),
+                                        created_at,
+                                        ..PasskeyRecoveryWrap::default()
+                                    };
+                                    let aad = match passkey_wrap_aad(&actor, &wrap) {
+                                        Ok(aad) => aad,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey wrapper AAD failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let sealed = match seal_recovery_key_with_passkey_prf(
+                                        &recovery_key,
+                                        &material.prf_output,
+                                        &salt,
+                                        &aad,
+                                    ) {
+                                        Ok(sealed) => sealed,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey wrapper encrypt failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    wrap.salt_b64 = sealed.salt_b64;
+                                    wrap.nonce_b64 = sealed.nonce_b64;
+                                    wrap.ciphertext_b64 = sealed.ciphertext_b64;
+                                    wrap.ciphertext_digest = sealed.ciphertext_digest;
+
+                                    let mut next = passkey_wraps();
+                                    next.retain(|existing| {
+                                        existing.credential_id_b64 != wrap.credential_id_b64
+                                            || existing.recovery_key_fingerprint != wrap.recovery_key_fingerprint
+                                    });
+                                    next.push(wrap);
+                                    passkey_wraps.set(next);
+                                    save_state(&mut store, &actor, &snapshot_state());
+                                    passkey_status.set(
+                                        "Passkey quick unlock saved locally. Keep the 24 words offline for fresh-device recovery.".to_owned()
+                                    );
+                                });
+                            }
+                        },
+                        "Create passkey unlock"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "passkey-wrap-unlock",
+                        disabled: passkey_wraps().is_empty(),
+                        title: "Use the latest local passkey wrapper to show the 24-word Recovery Key after user verification.",
+                        onclick: {
+                            let actor_key = actor_key.clone();
+                            move |_| {
+                                let actor = actor_key.clone();
+                                let current_fp = recovery_key_fp();
+                                let wrap = passkey_wraps()
+                                    .into_iter()
+                                    .rev()
+                                    .find(|wrap| current_fp.is_empty() || wrap.recovery_key_fingerprint == current_fp);
+                                let Some(wrap) = wrap else {
+                                    passkey_status.set("No passkey wrapper matches the current Recovery Key fingerprint.".to_owned());
+                                    return;
+                                };
+                                passkey_status.set("Waiting for passkey user verification…".to_owned());
+                                spawn(async move {
+                                    let material = match crate::passkey_prf::evaluate_recovery_passkey_prf(
+                                        &wrap.credential_id_b64,
+                                        &wrap.rp_id,
+                                        &wrap.salt_b64,
+                                    )
+                                    .await
+                                    {
+                                        Ok(material) => material,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey PRF unlock failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let aad = match passkey_wrap_aad(&actor, &wrap) {
+                                        Ok(aad) => aad,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey wrapper AAD failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let recovery_key = match open_recovery_key_with_passkey_prf(
+                                        &material.prf_output,
+                                        &wrap.salt_b64,
+                                        &wrap.nonce_b64,
+                                        &wrap.ciphertext_b64,
+                                        &aad,
+                                    ) {
+                                        Ok(key) => key,
+                                        Err(err) => {
+                                            passkey_status.set(format!("Passkey wrapper decrypt failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    if fingerprint_recovery_key(&recovery_key) != wrap.recovery_key_fingerprint {
+                                        passkey_status.set("Passkey wrapper fingerprint mismatch.".to_owned());
+                                        return;
+                                    }
+                                    live_recovery_key.set(recovery_key);
+                                    recovery_key_status.set(
+                                        "Recovery Key restored from local passkey quick unlock. Clear it from the screen when done.".to_owned()
+                                    );
+                                    passkey_status.set("Passkey quick unlock succeeded locally.".to_owned());
+                                });
+                            }
+                        },
+                        "Unlock with passkey"
+                    }
+                    button {
+                        class: "secondary",
+                        "data-testid": "passkey-wrap-remove",
+                        disabled: passkey_wraps().is_empty(),
+                        title: "Remove local passkey quick-unlock wrappers. This does not delete server backups or the 24-word Recovery Key.",
+                        onclick: {
+                            let actor_key = actor_key.clone();
+                            let mut store = state_store;
+                            move |_| {
+                                passkey_wraps.set(Vec::new());
+                                save_state(&mut store, &actor_key, &snapshot_state());
+                                passkey_status.set("Removed local passkey quick-unlock wrappers.".to_owned());
+                            }
+                        },
+                        "Remove local passkeys"
                     }
                 }
             }
