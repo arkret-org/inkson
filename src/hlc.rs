@@ -16,10 +16,10 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::Utc;
 use cokret_sdk::Hlc as SdkHlc;
-use cokret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
+use cokret_sdk::hlc::{parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// A Hybrid Logical Clock timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -35,21 +35,24 @@ pub struct Hlc {
 impl Hlc {
     /// Create a new HLC with the current wall-clock time.
     ///
-    /// Delegates to the SDK's `HlcGenerator`, which owns the canonical
-    /// wall-clock source and node-id derivation. We mint a generator for
-    /// `node_id`, read its current HLC and decode it back into this struct's
-    /// three fields. This keeps the physical-time source and node-id hashing
-    /// byte-identical to anything the SDK produces for the same DID, instead
-    /// of yougen reading the clock and hashing the node id on its own.
+    /// Uses the same wire format and node-id derivation as the SDK, but
+    /// reads the clock through `crate::clock` so the wasm build does not
+    /// call `std::time::SystemTime::now()`.
     pub fn now(node_id: &str) -> Self {
-        let hlc = HlcGenerator::new(node_id).current();
-        let parts = parse_hlc(hlc.as_str())
-            .expect("HlcGenerator emits a spec-valid HLC string parseable by parse_hlc");
+        let node_segment = node_id_hex(node_id);
+        let candidate = format!(
+            "{:012x}-{:04x}-{}",
+            crate::clock::now_unix_ms().min(0xffffffffffff),
+            0,
+            node_segment
+        );
+        let parts =
+            parse_hlc(&candidate).expect("locally formatted HLC string is parseable by parse_hlc");
         Self {
             physical_ms: parts.physical_ms,
             logical: parts.logical,
             node_id: u32::from_str_radix(&parts.node_id, 16)
-                .expect("SDK node-id segment is 8 lowercase hex chars"),
+                .expect("node-id segment is 8 lowercase hex chars"),
         }
     }
 
@@ -128,18 +131,20 @@ impl fmt::Display for Hlc {
 /// Hash a node identifier string to the 32-bit value used by [`Hlc`]'s
 /// `node_id` segment.
 ///
-/// Delegates to the SDK's `HlcGenerator`, which owns the canonical node-id
-/// derivation (SHA-256(`node_id`), first 4 bytes as 8 lowercase hex chars).
-/// We mint a generator for `node_id`, read its current HLC and parse out the
-/// node segment, then decode the 8 hex chars back to the `u32` this struct
-/// stores. This removes yougen's duplicate SHA-256 prefix implementation
-/// while staying byte-compatible with anything the SDK produced for the same
-/// DID (pinned by `hash_node_id_matches_sdk_compute_node_id`).
+/// Uses the SDK's documented node-id derivation (SHA-256(`node_id`), first
+/// 4 bytes as 8 lowercase hex chars) without constructing `HlcGenerator`,
+/// whose wall-clock read is not available on wasm32-unknown-unknown.
 pub fn hash_node_id(node_id: &str) -> u32 {
-    let hlc = HlcGenerator::new(node_id).current();
-    let parts = parse_hlc(hlc.as_str())
-        .expect("HlcGenerator emits a spec-valid HLC string parseable by parse_hlc");
-    u32::from_str_radix(&parts.node_id, 16).expect("SDK node-id segment is 8 lowercase hex chars")
+    u32::from_str_radix(&node_id_hex(node_id), 16)
+        .expect("node-id segment is 8 lowercase hex chars")
+}
+
+fn node_id_hex(identifier: &str) -> String {
+    let hash = Sha256::digest(identifier.as_bytes());
+    hash[0..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// A global monotonic sequence counter for operation ordering.
@@ -147,12 +152,7 @@ static GLOBAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Generate the next monotonic sequence number.
 pub fn next_seq() -> u64 {
-    let wall_floor = Utc::now()
-        .timestamp_millis()
-        .max(0)
-        .try_into()
-        .unwrap_or(0_u64)
-        .saturating_mul(1000);
+    let wall_floor = crate::clock::now_unix_ms().saturating_mul(1000);
     loop {
         let current = GLOBAL_SEQ.load(Ordering::Relaxed);
         let next = wall_floor.max(current.saturating_add(1));

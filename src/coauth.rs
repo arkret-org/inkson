@@ -12,6 +12,7 @@ use crate::api::CokretApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
+const PRINCIPAL_SESSION_BIND_SCOPE: &str = "urn:cokret:principal-server:session.bind";
 // These three constants are **only**
 // referenced by `build_authorize_url_preview` — the diagnostic /
 // inspector function that renders an example authorize URL without
@@ -1519,15 +1520,24 @@ fn build_authorize_url(
     code_challenge: &str,
 ) -> anyhow::Result<String> {
     let mut url = Url::parse(&topology.authorization_endpoint)?;
-    let scope = if topology
+    if !topology
+        .scopes_supported
+        .iter()
+        .any(|scope| scope == PRINCIPAL_SESSION_BIND_SCOPE)
+    {
+        anyhow::bail!(
+            "coauth discovery did not advertise required principal session scope {PRINCIPAL_SESSION_BIND_SCOPE}"
+        );
+    }
+    let mut scope_tokens = vec!["openid", PRINCIPAL_SESSION_BIND_SCOPE];
+    if topology
         .scopes_supported
         .iter()
         .any(|scope| scope == "offline_access")
     {
-        "openid offline_access"
-    } else {
-        "openid"
-    };
+        scope_tokens.push("offline_access");
+    }
+    let scope = scope_tokens.join(" ");
     let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
 
     {
@@ -1535,7 +1545,7 @@ fn build_authorize_url(
         query.append_pair("response_type", "code");
         query.append_pair("client_id", client_id);
         query.append_pair("redirect_uri", redirect_uri);
-        query.append_pair("scope", scope);
+        query.append_pair("scope", &scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
         if !actor_did.trim().is_empty() {
@@ -2056,6 +2066,31 @@ mod tests {
     }
 
     #[test]
+    fn authorize_url_requests_principal_session_scope() {
+        let topology = test_topology();
+        let bundle = build_oidc_scaffold_bundle(
+            &topology,
+            "https://principal.example",
+            "did:web:alice.example",
+            "device-dddd-4444",
+        )
+        .unwrap();
+        let parsed = Url::parse(&bundle.authorize_url).unwrap();
+        let requested_scope = parsed
+            .query_pairs()
+            .find(|(key, _)| key == "scope")
+            .unwrap()
+            .1
+            .into_owned();
+        assert!(
+            requested_scope
+                .split_ascii_whitespace()
+                .any(|scope| scope == PRINCIPAL_SESSION_BIND_SCOPE),
+            "authorize URL must request the principal session-bind scope"
+        );
+    }
+
+    #[test]
     fn bridge_authorize_url_gets_reauthentication_params() {
         let updated = authorize_url_with_forced_reauthentication(
             "https://issuer.example/auth?client_id=c&prompt=consent&max_age=3600",
@@ -2095,7 +2130,7 @@ mod tests {
             token_endpoint: Some("https://issuer.example/token".to_owned()),
             userinfo_endpoint: Some("https://issuer.example/userinfo".to_owned()),
             code_challenge_methods_supported: vec!["S256".to_owned()],
-            scopes_supported: vec!["openid".to_owned()],
+            scopes_supported: vec!["openid".to_owned(), PRINCIPAL_SESSION_BIND_SCOPE.to_owned()],
             oidc_clients: vec![CoauthOidcClientHint {
                 id: "test-client".to_owned(),
                 client_id: "yougen-test".to_owned(),

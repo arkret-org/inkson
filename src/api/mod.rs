@@ -2154,7 +2154,7 @@ fn build_member_state_transition_event_with_binding(
 /// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
 /// seconds — spec encoding.md §3.5).
 fn event_timestamp() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    crate::clock::now_rfc3339_secs()
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
@@ -2574,10 +2574,7 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
 }
 
 fn events_query_path(realm_id: &str) -> String {
-    format!(
-        "_cokret/self/events/query?realms={}",
-        query_component(realm_id)
-    )
+    format!("_cokret/self/events?realms={}", query_component(realm_id))
 }
 
 // Consumed only by the native (`not(wasm32)`) `events_subscribe_ndjson`
@@ -3313,16 +3310,13 @@ mod tests {
     #[test]
     fn event_paths_use_v1_query_parameters() {
         let backfill = events_query_path("ck:realm:demo");
-        assert_eq!(
-            backfill,
-            "_cokret/self/events/query?realms=ck%3Aspace%3Ademo"
-        );
+        assert_eq!(backfill, "_cokret/self/events?realms=ck%3Arealm%3Ademo");
         assert!(!backfill.contains("direction="));
 
         let subscribe = events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true));
         assert_eq!(
             subscribe,
-            "_cokret/self/events/subscribe?realms=ck%3Aspace%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
+            "_cokret/self/events/subscribe?realms=ck%3Arealm%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
         );
         assert!(!subscribe.contains("&from="));
     }

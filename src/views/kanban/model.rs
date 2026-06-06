@@ -396,7 +396,7 @@ impl CardState {
             }
             CardState::Accepted => "Server accepted the event; waiting for projection/anchor",
             CardState::SoftFailed => "Server did not accept this event",
-            CardState::Quarantined => "Write failed and needs manual review",
+            CardState::Quarantined => "Write failed; open the queue for details",
             CardState::Conflict => "Server reported a CAS conflict",
         }
     }
@@ -443,6 +443,20 @@ pub(super) struct BoardWriteRecord {
     /// auto-retries up to [`MAX_CONFLICT_REBASE_ATTEMPTS`] before
     /// surfacing the record as Quarantined for manual review.
     pub(super) rebase_attempts: u8,
+}
+
+impl BoardWriteRecord {
+    pub(super) fn needs_manual_conflict_review(&self) -> bool {
+        match self.state {
+            CardState::Conflict => true,
+            CardState::Quarantined => {
+                self.note.contains("cas_conflict")
+                    || self.note.contains("manual conflict")
+                    || self.note.contains("manual review")
+            }
+            _ => false,
+        }
+    }
 }
 
 /// T20 — Where the board projection data comes from.

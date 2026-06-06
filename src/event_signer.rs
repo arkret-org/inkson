@@ -253,7 +253,7 @@ impl YougenEventSigner {
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
 
         let verification_method = self.verification_method_for_event(event);
-        let created_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let created_at = crate::clock::now_rfc3339_secs();
         let mut proof_binding = serde_json::json!({
             "event_digest": event_digest.as_str(),
             "actor_id": event.actor_id.as_str(),
@@ -304,7 +304,7 @@ impl YougenEventSigner {
         }];
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
-            *guard = Some(Utc::now());
+            *guard = Some(crate::clock::now_utc());
         }
         let _proof_type = Self::proof_type_tag();
         Ok(())

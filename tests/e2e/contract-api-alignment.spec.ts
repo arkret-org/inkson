@@ -39,7 +39,7 @@ const PROBES: Probe[] = [
       payload: { body: "alignment probe" },
     },
   },
-  { label: "events_list", method: "GET", path: "/_cokret/self/events/query" },
+  { label: "events_list", method: "GET", path: "/_cokret/self/events" },
   { label: "account_me", method: "GET", path: "/_soland/self/account/me" },
   { label: "directory_describe", method: "GET", path: "/_cokret/find/directory/describe" },
   {

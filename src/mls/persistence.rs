@@ -212,7 +212,7 @@ pub fn encrypt_state(
     snapshot_secret: &str,
     salt: &[u8],
 ) -> MlsSnapshotEnvelope {
-    let recorded_at = Utc::now();
+    let recorded_at = crate::clock::now_utc();
     let key = derive_key(snapshot_secret, salt, KDF_ITERATIONS);
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     let aad = build_aead_aad(salt, epoch, recorded_at);

@@ -382,7 +382,7 @@ impl OperationBuilder {
             actor_id: self.actor,
             actor_seq,
             realm_id,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            created_at: crate::clock::now_rfc3339_secs(),
             hlc: hlc.encode(),
             prev_refs: deps,
             refs: self.refs,

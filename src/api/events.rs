@@ -173,11 +173,7 @@ impl CokretApi {
         &self,
     ) -> anyhow::Result<crate::event_signer::EventProofContext> {
         let describe = self.describe_cached().await?;
-        Ok(crate::event_signer::EventProofContext::new()
-            .with_domain(describe.trust_domain.to_string())
-            .with_audience(crate::operation::EventProofAudience::single(
-                describe.service_did.to_string(),
-            )))
+        Ok(event_proof_context_from_description(describe))
     }
 
     /// H1 — read `capabilities.batch_submit` off the cached
@@ -413,4 +409,60 @@ fn ensure_event_proofs_are_domain_bound(envelope: &EventEnvelope) -> anyhow::Res
         }
     }
     Ok(())
+}
+
+fn event_proof_context_from_description(
+    describe: &ServerDescription,
+) -> crate::event_signer::EventProofContext {
+    let service_did = describe.service_did.to_string();
+    crate::event_signer::EventProofContext::new()
+        .with_domain(service_did.clone())
+        .with_audience(crate::operation::EventProofAudience::single(service_did))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn event_proof_context_binds_domain_and_audience_to_service_did() {
+        let describe = parse_server_description(json!({
+            "service_did": "did:web:local.host",
+            "trust_domain": "ck:trust_domain:local.host",
+            "service_type": "principal_server",
+            "protocol_version": "1.0",
+            "supported_profiles": [
+                "ck.profile.core_event_store.v1",
+                "ck.profile.principal_server_events_api.v1"
+            ],
+            "supported_operations": [
+                "ck.self.events.describe",
+                "ck.self.events.submit"
+            ],
+            "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
+            "supported_features": ["ck.feature.soland.events.describe"],
+            "auth_metadata": {"mode": "development"},
+            "limits": {},
+            "plaintext_visibility": {"default": "encrypted"},
+            "implemented_features": ["ck.feature.soland.events.describe"],
+            "claimed_profiles": [],
+            "verified_profiles": [],
+            "experimental_features": [],
+            "compat_surfaces": [],
+            "development_mode": true
+        }))
+        .unwrap();
+
+        let context = event_proof_context_from_description(&describe);
+
+        assert_eq!(context.domain.as_deref(), Some("did:web:local.host"));
+        assert_eq!(
+            context.audience,
+            Some(crate::operation::EventProofAudience::Single(
+                "did:web:local.host".to_owned()
+            ))
+        );
+    }
 }

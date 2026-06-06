@@ -50,7 +50,7 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "GET" && path === "/_cokret/self/events/query") {
+  if (method === "GET" && path === "/_cokret/self/events") {
     return json({ events: [], next_cursor: null });
   }
 
@@ -125,7 +125,7 @@ export function canonicalPath(path) {
   const aliases = {
     "/server/describe": "/_cokret/describe",
     "/events/submit": "/_cokret/self/events",
-    "/events/list": "/_cokret/self/events/query",
+    "/events/list": "/_cokret/self/events",
     "/account/me": "/_soland/self/account/me",
     "/directory/search-realms": "/_cokret/find/directory/search-realms",
     "/keys/backups": "/_cokret/self/keys/backups",

@@ -810,7 +810,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname === "/_cokret/self/events/query") {
+    if (url.pathname === "/_cokret/self/events" && route.request().method() === "GET") {
       const requestedRealms = (url.searchParams.get("realms") ?? "")
         .split(",")
         .map((realm) => realm.trim())

@@ -368,7 +368,7 @@ pub fn build_mls_genesis_payload(
             MlsRuntimeError::Genesis("governance binding missing effective_scope".to_owned())
         })?;
     let ratchet_tree_digest = crate::canonical::sha256_digest(summary.ratchet_tree.as_bytes());
-    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let created_at = crate::clock::now_rfc3339_secs();
     Ok(serde_json::json!({
         "mls_group_id": summary.group_id,
         "effective_scope": effective_scope,

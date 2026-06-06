@@ -1202,9 +1202,9 @@ pub fn KanbanPanel(
     }
 
     let write_record_count = write_records().len();
-    let manual_review_count = write_records()
+    let manual_conflict_review_count = write_records()
         .iter()
-        .filter(|record| matches!(record.state, CardState::Conflict | CardState::Quarantined))
+        .filter(|record| record.needs_manual_conflict_review())
         .count();
     let board_selected = !selected_board_space_id().trim().is_empty();
     // Pre-wrapped Realm id for building board / card URLs inside event
@@ -1785,7 +1785,7 @@ pub fn KanbanPanel(
                                             },
                                             "Replay Queue"
                                         }
-                                        span { class: "muted", "{manual_review_count} review / {write_record_count} total" }
+                                        span { class: "muted", "{manual_conflict_review_count} review / {write_record_count} total" }
                                     }
                                     div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
                                     for record in write_records() {
@@ -1818,11 +1818,11 @@ pub fn KanbanPanel(
                 }
             }
 
-            if manual_review_count > 0 {
+            if manual_conflict_review_count > 0 {
                 div { class: "event board-conflict-alert", "data-testid": "board-conflict-alert",
                     div {
-                        strong { "Board admin review required" }
-                        div { class: "muted", "{manual_review_count} queued write(s) need manual conflict resolution before replay." }
+                        strong { "Board conflict review required" }
+                        div { class: "muted", "{manual_conflict_review_count} queued write(s) hit a CAS conflict and need manual resolution before replay." }
                     }
                 }
             }
@@ -6216,6 +6216,43 @@ mod tests {
                     serde_json::to_string_pretty(&event.payload).unwrap()
                 )
             });
+    }
+
+    fn board_write_record(state: CardState, note: &str) -> BoardWriteRecord {
+        BoardWriteRecord {
+            state,
+            move_id: "ck:operation:test".to_owned(),
+            kind: "ck.flow.create".to_owned(),
+            cell_id: "ck:cell:test".to_owned(),
+            effect_summary: "{}".to_owned(),
+            anchor_ref: "ck:anchor:test".to_owned(),
+            hlc: "000000000000-0000-00000000".to_owned(),
+            note: note.to_owned(),
+            signed_move_json: None,
+            rebase_attempts: 0,
+        }
+    }
+
+    #[test]
+    fn board_write_manual_review_is_only_for_conflicts() {
+        let transient_failure = board_write_record(
+            CardState::Quarantined,
+            "submit failed: projection still pending",
+        );
+        assert!(
+            !transient_failure.needs_manual_conflict_review(),
+            "ordinary submit failures should not show the board admin review banner"
+        );
+
+        let exhausted_conflict = board_write_record(
+            CardState::Quarantined,
+            "cas_conflict exhausted 3 rebase attempts",
+        );
+        assert!(exhausted_conflict.needs_manual_conflict_review());
+
+        let active_conflict =
+            board_write_record(CardState::Conflict, "server returned cas_conflict");
+        assert!(active_conflict.needs_manual_conflict_review());
     }
 
     #[test]
