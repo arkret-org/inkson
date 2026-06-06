@@ -924,7 +924,7 @@ pub fn RouterView() -> Element {
         let mut needs_mls_backup = needs_mls_backup;
         let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
         let mut restore_payload_cache = mls_restore_payload_cache;
-        let state_store_for_detection = state_store;
+        let mut state_store_for_detection = state_store;
         use_effect(move || {
             let base = base_url();
             let session = token();
@@ -962,10 +962,12 @@ pub fn RouterView() -> Element {
             //   2. Fold the local account-secret presence into the detection key (`sec=`) so the
             //      `seen` guard no longer matches once the secret flips false→true, letting the
             //      detection re-run and re-evaluate the backup prompt.
-            let has_local_mls_snapshot =
-                !state_store_for_detection.read().mls_snapshots().is_empty();
+            let state_for_detection_key = state_store_for_detection.read();
+            let has_local_mls_snapshot = !state_for_detection_key.mls_snapshots().is_empty();
             let has_encrypted_realm_projection =
-                local_state_has_encrypted_realm(&state_store_for_detection.read());
+                local_state_has_encrypted_realm(&state_for_detection_key);
+            let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
+            drop(state_for_detection_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
                 &actor,
@@ -973,7 +975,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
@@ -989,6 +991,17 @@ pub fn RouterView() -> Element {
                     Ok(payload) => {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
+                        {
+                            let mut store = state_store_for_detection.write();
+                            let _ =
+                                crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &payload,
+                                    &mut store,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    &device,
+                                );
+                        }
                         let should_unlock = {
                             let store = state_store_for_detection.read();
                             crate::mls::account_recovery::mls_restore_prompt_required(
@@ -1005,6 +1018,13 @@ pub fn RouterView() -> Element {
                         if should_unlock {
                             restore_payload_cache.set(Some(payload));
                             needs_mls_unlock.set(true);
+                            needs_mls_backup.set(false);
+                            needs_mls_recovery_setup.set(false);
+                        } else if needs_mls_unlock() {
+                            // Multiple detection effects can race with different
+                            // restore-payload snapshots. Once one detects a real
+                            // unlock requirement, keep the modal open until the
+                            // user restores successfully or the session resets.
                             needs_mls_backup.set(false);
                             needs_mls_recovery_setup.set(false);
                         } else {
@@ -1155,13 +1175,17 @@ pub fn RouterView() -> Element {
             // and fold both the local account-secret presence (`sec=`) and the
             // snapshot presence (`snap=`) into the key so the `seen` guard no
             // longer matches once they flip false→true.
-            let has_local_mls_snapshot = state_store_for_bootstrap
-                .read()
+            let state_for_bootstrap_key = state_store_for_bootstrap.read();
+            let has_local_mls_snapshot = state_for_bootstrap_key
                 .mls_snapshot_for(&bootstrap_realm_id)
                 .is_some();
-            let has_encrypted_realm_projection = state_store_for_bootstrap
-                .read()
-                .realm_projection_is_mls_encrypted(&bootstrap_realm_id);
+            let has_encrypted_realm_projection =
+                state_for_bootstrap_key.realm_projection_is_mls_encrypted(&bootstrap_realm_id);
+            let local_mls_epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(
+                &state_for_bootstrap_key,
+                &bootstrap_realm_id,
+            );
+            drop(state_for_bootstrap_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
                 &actor,
@@ -1169,7 +1193,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -1187,7 +1211,7 @@ pub fn RouterView() -> Element {
             let detect_session = session.clone();
             let detect_actor = actor.clone();
             let detect_device = device.clone();
-            let state_store_for_probe = state_store_for_bootstrap;
+            let mut state_store_for_probe = state_store_for_bootstrap;
             spawn(async move {
                 match bootstrap_mls_welcome_for_realm(
                     base,
@@ -1234,6 +1258,17 @@ pub fn RouterView() -> Element {
                     Ok(payload) => {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
+                        {
+                            let mut store = state_store_for_probe.write();
+                            let _ =
+                                crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &payload,
+                                    &mut store,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    &detect_device,
+                                );
+                        }
                         let should_unlock = {
                             let store = state_store_for_probe.read();
                             crate::mls::account_recovery::mls_restore_prompt_required(
@@ -1251,6 +1286,12 @@ pub fn RouterView() -> Element {
                         if should_unlock {
                             restore_payload_cache_for_bootstrap.set(Some(payload));
                             needs_mls_unlock_for_bootstrap.set(true);
+                            needs_mls_backup_for_bootstrap.set(false);
+                            needs_mls_recovery_setup_for_bootstrap.set(false);
+                        } else if needs_mls_unlock_for_bootstrap() {
+                            // Keep an already-rendered unlock modal stable when
+                            // the boot-time and per-Realm probes resolve out of
+                            // order with different payload freshness.
                             needs_mls_backup_for_bootstrap.set(false);
                             needs_mls_recovery_setup_for_bootstrap.set(false);
                         } else {
@@ -4117,6 +4158,23 @@ fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> bool {
         .realm_tree_projections
         .values()
         .any(crate::security_state::realm_projection_is_encrypted)
+}
+
+fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
+    let mut max_epoch = 0_u64;
+    for (realm_id, snapshot) in state_store.mls_snapshots() {
+        max_epoch = max_epoch.max(snapshot.epoch);
+        max_epoch = max_epoch.max(
+            state_store
+                .anchor_view_for_realm(&realm_id)
+                .mls_epoch
+                .unwrap_or(0),
+        );
+    }
+    for anchor_view in state_store.anchor_views().values() {
+        max_epoch = max_epoch.max(anchor_view.mls_epoch.unwrap_or(0));
+    }
+    max_epoch
 }
 
 fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_did: &str) -> bool {

@@ -131,48 +131,56 @@ pub fn MlsUnlockPrompt(
 
     rsx! {
         div {
-            class: "event mls-unlock-banner",
-            "data-testid": "mls-unlock-banner",
-            role: "region",
-            "aria-label": crate::i18n::tr("mls_unlock.aria_label"),
-            div { class: "event-head",
-                strong { {crate::i18n::tr("mls_unlock.title")} }
-                span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
-            }
-            div { class: "muted",
-                {crate::i18n::tr("mls_unlock.description")}
-            }
-            if busy() {
-                div {
-                    class: "muted",
-                    "data-testid": "mls-unlock-loading",
-                    role: "status",
-                    {crate::i18n::tr("mls_unlock.loading_hint")}
+            class: "modal-overlay mls-recovery-modal-overlay",
+            "data-testid": "mls-unlock-modal",
+            div {
+                class: "modal event mls-recovery-modal mls-unlock-banner",
+                "data-testid": "mls-unlock-banner",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "mls-unlock-title",
+                "aria-label": crate::i18n::tr("mls_unlock.aria_label"),
+                div { class: "modal-head event-head",
+                    h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
+                    span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
                 }
-            }
-            div { class: "mls-unlock-row",
-                input {
-                    r#type: "password",
-                    "data-testid": "mls-unlock-passphrase",
-                    placeholder: crate::i18n::tr("mls_unlock.placeholder"),
-                    value: "{passphrase}",
-                    disabled: busy(),
-                    oninput: move |evt| passphrase.set(evt.value()),
-                }
-                button {
-                    class: "primary",
-                    "data-testid": "mls-unlock-submit",
-                    disabled: busy(),
-                    onclick: on_unlock,
+                div { class: "modal-body mls-recovery-modal-body",
+                    div { class: "muted",
+                        {crate::i18n::tr("mls_unlock.description")}
+                    }
                     if busy() {
-                        {crate::i18n::tr("mls_unlock.button_busy")}
-                    } else {
-                        {crate::i18n::tr("mls_unlock.button_idle")}
+                        div {
+                            class: "muted",
+                            "data-testid": "mls-unlock-loading",
+                            role: "status",
+                            {crate::i18n::tr("mls_unlock.loading_hint")}
+                        }
+                    }
+                    if !status().is_empty() {
+                        div { class: "muted", "data-testid": "mls-unlock-status", "{status}" }
                     }
                 }
-            }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "mls-unlock-status", "{status}" }
+                div { class: "modal-foot mls-unlock-row",
+                    input {
+                        r#type: "password",
+                        "data-testid": "mls-unlock-passphrase",
+                        placeholder: crate::i18n::tr("mls_unlock.placeholder"),
+                        value: "{passphrase}",
+                        disabled: busy(),
+                        oninput: move |evt| passphrase.set(evt.value()),
+                    }
+                    button {
+                        class: "primary",
+                        "data-testid": "mls-unlock-submit",
+                        disabled: busy(),
+                        onclick: on_unlock,
+                        if busy() {
+                            {crate::i18n::tr("mls_unlock.button_busy")}
+                        } else {
+                            {crate::i18n::tr("mls_unlock.button_idle")}
+                        }
+                    }
+                }
             }
         }
     }
@@ -206,23 +214,31 @@ pub fn MlsRecoverySetupMissingBanner(
 
     rsx! {
         div {
-            class: "event mls-recovery-missing-banner",
-            "data-testid": "mls-recovery-missing-banner",
-            role: "region",
-            "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
-            div { class: "event-head",
-                strong { {crate::i18n::tr("mls_recovery_missing.title")} }
-                span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }
-            }
-            div { class: "muted",
-                {crate::i18n::tr("mls_recovery_missing.description")}
-            }
-            div { class: "mls-unlock-row",
-                button {
-                    class: "secondary",
-                    "data-testid": "mls-recovery-missing-dismiss",
-                    onclick: move |_| needs_mls_recovery_setup.set(false),
-                    {crate::i18n::tr("mls_recovery_missing.button_dismiss")}
+            class: "modal-overlay mls-recovery-modal-overlay",
+            "data-testid": "mls-recovery-missing-modal",
+            div {
+                class: "modal event mls-recovery-modal mls-recovery-missing-banner",
+                "data-testid": "mls-recovery-missing-banner",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "mls-recovery-missing-title",
+                "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
+                div { class: "modal-head event-head",
+                    h3 { id: "mls-recovery-missing-title", {crate::i18n::tr("mls_recovery_missing.title")} }
+                    span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }
+                }
+                div { class: "modal-body mls-recovery-modal-body",
+                    div { class: "muted",
+                        {crate::i18n::tr("mls_recovery_missing.description")}
+                    }
+                }
+                div { class: "modal-foot mls-unlock-row",
+                    button {
+                        class: "secondary",
+                        "data-testid": "mls-recovery-missing-dismiss",
+                        onclick: move |_| needs_mls_recovery_setup.set(false),
+                        {crate::i18n::tr("mls_recovery_missing.button_dismiss")}
+                    }
                 }
             }
         }

@@ -634,6 +634,29 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     Ok(report)
 }
 
+/// Restore server-side MLS history using the account/device snapshot secret
+/// that is already present on this device. This is the no-prompt path for an
+/// unlocked device whose local snapshot is stale relative to another device's
+/// uploaded `mls_history` backup.
+pub fn restore_mls_history_with_local_secret_from_payload(
+    list_payload: &Value,
+    state_store: &mut crate::local_state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+) -> RestoreReport {
+    let mut report = RestoreReport::default();
+    restore_history_and_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        actor_did,
+        device_id,
+        &mut report,
+    );
+    report
+}
+
 /// Shared restore tail (used by both the passphrase and recovery-key entry
 /// points): with the account secret already local, restore every `mls_history`
 /// backup and the author's `mls_private_plaintext` sidecar. Per-item failures

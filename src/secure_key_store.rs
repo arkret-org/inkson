@@ -283,6 +283,72 @@ impl Drop for MemorySecureKeyStore {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+struct FallbackSecureKeyStore {
+    primary: Arc<dyn SecureKeyStore>,
+    fallback: Arc<dyn SecureKeyStore>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl FallbackSecureKeyStore {
+    fn new(primary: Arc<dyn SecureKeyStore>, fallback: Arc<dyn SecureKeyStore>) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::fmt::Debug for FallbackSecureKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FallbackSecureKeyStore")
+            .field("primary", &self.primary.backend_name())
+            .field("fallback", &self.fallback.backend_name())
+            .finish()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl SecureKeyStore for FallbackSecureKeyStore {
+    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+        match self.primary.store_secret(key, value) {
+            Ok(()) => {
+                let _ = self.fallback.store_secret(key, value);
+                Ok(())
+            }
+            Err(primary_err) => match self.fallback.store_secret(key, value) {
+                Ok(()) => Ok(()),
+                Err(fallback_err) => Err(SecureKeyStoreError::Backend(format!(
+                    "primary secure store write failed: {primary_err}; fallback write failed: {fallback_err}"
+                ))),
+            },
+        }
+    }
+
+    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+        match self.primary.get_secret(key) {
+            Ok(Some(secret)) => Ok(Some(secret)),
+            Ok(None) => match self.fallback.get_secret(key) {
+                Ok(secret) => Ok(secret),
+                Err(SecureKeyStoreError::Unsupported(_)) => Ok(None),
+                Err(err) => Err(err),
+            },
+            Err(primary_err) => match self.fallback.get_secret(key) {
+                Ok(Some(secret)) => Ok(Some(secret)),
+                Ok(None) | Err(_) => Err(primary_err),
+            },
+        }
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        let primary = self.primary.delete_secret(key);
+        let _ = self.fallback.delete_secret(key);
+        primary
+    }
+
+    fn backend_name(&self) -> &'static str {
+        WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND
+    }
+}
+
 /// Desktop OS-keychain backend. Uses the `keyring` crate which routes
 /// to:
 ///
@@ -769,7 +835,19 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     #[cfg(target_arch = "wasm32")]
     {
         if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
-            return store.clone();
+            return match LocalStorageSecureKeyStore::new(service_name) {
+                Ok(fallback) => Arc::new(FallbackSecureKeyStore::new(
+                    store.clone(),
+                    Arc::new(fallback),
+                )),
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        "LocalStorageSecureKeyStore fallback init failed after IndexedDB upgrade"
+                    );
+                    store.clone()
+                }
+            };
         }
         // The wasm32 build persists AEAD-wrapped secrets to `localStorage`
         // rather than dropping them on a memory-only fallback. See

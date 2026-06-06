@@ -262,71 +262,79 @@ pub fn MlsBackupPrompt(
 
     rsx! {
         div {
-            class: "event mls-backup-banner",
-            "data-testid": "mls-backup-banner",
-            role: "region",
-            "aria-label": crate::i18n::tr("mls_backup.aria_label"),
-            div { class: "event-head",
-                strong { {crate::i18n::tr("mls_backup.title")} }
-                span { class: "muted", {crate::i18n::tr("mls_backup.subtitle")} }
-            }
-            div { class: "muted",
-                {crate::i18n::tr("mls_backup.description")}
-            }
-            div { class: "muted", "data-testid": "mls-backup-passphrase-loss-warning",
-                strong { {crate::i18n::tr("mls_backup.warning.passphrase_loss")} }
-            }
-            if !generated_now.trim().is_empty() {
-                div { class: "workflow-form",
-                    label { r#for: "mls-backup-generated-key",
-                        {crate::i18n::tr("mls_backup.generated_key_label")}
-                    }
-                    textarea {
-                        id: "mls-backup-generated-key",
-                        "data-testid": "mls-backup-generated-key",
-                        rows: "3",
-                        readonly: true,
-                        value: "{generated_now}",
-                    }
-                    div { class: "form-hint-warn", "data-testid": "mls-backup-generated-key-warning",
-                        {crate::i18n::tr("mls_backup.generated_key_warning")}
-                    }
+            class: "modal-overlay mls-recovery-modal-overlay",
+            "data-testid": "mls-backup-modal",
+            div {
+                class: "modal event mls-recovery-modal mls-backup-banner",
+                "data-testid": "mls-backup-banner",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "mls-backup-title",
+                "aria-label": crate::i18n::tr("mls_backup.aria_label"),
+                div { class: "modal-head event-head",
+                    h3 { id: "mls-backup-title", {crate::i18n::tr("mls_backup.title")} }
+                    span { class: "muted", {crate::i18n::tr("mls_backup.subtitle")} }
                 }
-            }
-            div { class: "mls-backup-row",
-                if generated_now.trim().is_empty() {
-                    button {
-                        class: "primary",
-                        "data-testid": "mls-backup-submit",
-                        disabled: !can_submit,
-                        onclick: on_backup,
-                        if busy() {
-                            {crate::i18n::tr("mls_backup.button_busy")}
-                        } else {
-                            {crate::i18n::tr("mls_backup.button_idle")}
+                div { class: "modal-body mls-recovery-modal-body",
+                    div { class: "muted",
+                        {crate::i18n::tr("mls_backup.description")}
+                    }
+                    div { class: "muted", "data-testid": "mls-backup-passphrase-loss-warning",
+                        strong { {crate::i18n::tr("mls_backup.warning.passphrase_loss")} }
+                    }
+                    if !generated_now.trim().is_empty() {
+                        div { class: "workflow-form",
+                            label { r#for: "mls-backup-generated-key",
+                                {crate::i18n::tr("mls_backup.generated_key_label")}
+                            }
+                            textarea {
+                                id: "mls-backup-generated-key",
+                                "data-testid": "mls-backup-generated-key",
+                                rows: "3",
+                                readonly: true,
+                                value: "{generated_now}",
+                            }
+                            div { class: "form-hint-warn", "data-testid": "mls-backup-generated-key-warning",
+                                {crate::i18n::tr("mls_backup.generated_key_warning")}
+                            }
                         }
                     }
-                    button {
-                        class: "secondary",
-                        "data-testid": "mls-backup-dismiss",
-                        disabled: busy(),
-                        onclick: move |_| needs_mls_backup.set(false),
-                        {crate::i18n::tr("mls_backup.button_dismiss")}
-                    }
-                } else {
-                    button {
-                        class: "primary",
-                        "data-testid": "mls-backup-saved",
-                        onclick: move |_| {
-                            generated_recovery_key.set(String::new());
-                            needs_mls_backup.set(false);
-                        },
-                        {crate::i18n::tr("mls_backup.button_saved")}
+                    if !status().is_empty() {
+                        div { class: "muted", "data-testid": "mls-backup-status", "{status}" }
                     }
                 }
-            }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "mls-backup-status", "{status}" }
+                div { class: "modal-foot mls-backup-row",
+                    if generated_now.trim().is_empty() {
+                        button {
+                            class: "primary",
+                            "data-testid": "mls-backup-submit",
+                            disabled: !can_submit,
+                            onclick: on_backup,
+                            if busy() {
+                                {crate::i18n::tr("mls_backup.button_busy")}
+                            } else {
+                                {crate::i18n::tr("mls_backup.button_idle")}
+                            }
+                        }
+                        button {
+                            class: "secondary",
+                            "data-testid": "mls-backup-dismiss",
+                            disabled: busy(),
+                            onclick: move |_| needs_mls_backup.set(false),
+                            {crate::i18n::tr("mls_backup.button_dismiss")}
+                        }
+                    } else {
+                        button {
+                            class: "primary",
+                            "data-testid": "mls-backup-saved",
+                            onclick: move |_| {
+                                generated_recovery_key.set(String::new());
+                                needs_mls_backup.set(false);
+                            },
+                            {crate::i18n::tr("mls_backup.button_saved")}
+                        }
+                    }
+                }
             }
         }
     }

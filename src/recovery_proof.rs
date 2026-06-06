@@ -69,10 +69,10 @@ pub fn build_principal_signing_proof(
 }
 
 /// Same as [`build_principal_signing_proof`] but signs with the process-wide
-/// active signer (device/HSM via `EventSigner::sign_raw`). Returns `Ok(None)`
-/// when no signer is installed. NOTE: `principal_signing` proofs MUST be signed
-/// by a key the active recovery policy authorizes as principal-grade control;
-/// the caller is responsible for ensuring the active signer is that key.
+/// active signer. Returns `Ok(None)` when no signer is installed. NOTE:
+/// `principal_signing` proofs MUST be signed by a key the active recovery policy
+/// authorizes as principal-grade control; the caller is responsible for ensuring
+/// the active signer is that key.
 pub fn build_principal_signing_proof_active(session: &Value) -> anyhow::Result<Option<Value>> {
     let Some(signer) = crate::event_signer::active_signer() else {
         return Ok(None);

@@ -284,7 +284,10 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await realmCreateRequest;
 
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-banner")).toHaveAttribute("role", "dialog");
+  await expect(latestTestId(page, "mls-backup-banner")).toHaveAttribute("aria-modal", "true");
   await expect(latestTestId(page, "mls-backup-submit")).toBeVisible();
   await expect(page.getByTestId("mls-backup-passphrase")).toHaveCount(0);
   await expect(page.getByTestId("mls-backup-confirm")).toHaveCount(0);
@@ -920,7 +923,12 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText(/created ck:realm:/);
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
+  await latestTestId(page, "mls-backup-submit").click();
+  await expect(latestTestId(page, "mls-backup-generated-key")).toBeVisible();
+  await latestTestId(page, "mls-backup-saved").click();
+  await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
   await expect(page.getByTestId("realm-lifecycle-flow").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
   await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();

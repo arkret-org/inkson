@@ -91,14 +91,14 @@ pub fn sign_key_backup_auth_data(
     Ok(())
 }
 
-/// Sign `body`'s `auth_data` with the active device signer (seed OR external /
-/// HSM — both via `EventSigner::sign`, which returns a raw signature).
+/// Sign `body`'s `auth_data` with the active device signer. This requires a
+/// signer that can produce raw Ed25519 signatures over canonical JSON bytes.
 ///
 /// Returns `Ok(true)` when signed, `Ok(false)` when NO signer is installed (the
 /// legitimate unsigned case — e.g. tests, or pre-bootstrap), and `Err` when a
 /// signer IS present but signing failed. Crucially this no longer silently
-/// downgrades external/HSM signers to unsigned: a present signer always signs or
-/// errors, so callers never ship an unsigned-but-a-signer-existed backup.
+/// downgrades a present-but-unsuitable signer to unsigned: a present signer
+/// always signs or errors, so callers never ship an unsigned backup by accident.
 pub fn sign_key_backup_with_active_device(
     body: &mut Value,
     device_id: &str,

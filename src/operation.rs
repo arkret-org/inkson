@@ -2514,12 +2514,10 @@ mod tests {
         );
         assert_eq!(op.payload["object"]["rank"], "U");
         assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
-        assert!(
-            op.payload["object"]["created_at"]
-                .as_str()
-                .unwrap()
-                .ends_with('Z')
-        );
+        let created_at = op.payload["object"]["created_at"].as_str().unwrap();
+        assert_eq!(created_at.len(), 20);
+        assert!(created_at.ends_with('Z'));
+        assert!(!created_at.contains('.'));
     }
 
     #[test]

@@ -2417,6 +2417,28 @@ button:disabled:hover,
   display: flex; justify-content: flex-end; gap: 8px;
 }
 
+.mls-recovery-modal {
+  width: min(640px, calc(100vw - 32px));
+}
+.mls-recovery-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mls-recovery-modal textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+}
+.mls-recovery-modal .mls-unlock-row,
+.mls-recovery-modal .mls-backup-row {
+  flex-wrap: wrap;
+}
+.mls-recovery-modal .mls-unlock-row input {
+  flex: 1 1 260px;
+  min-width: min(100%, 220px);
+}
+
 .modal-overlay,
 .publish-to-source-modal-backdrop {
   position: fixed;

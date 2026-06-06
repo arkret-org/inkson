@@ -58,6 +58,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use cokret_sdk::signatures::proof::{EventProofBuilder, EventSigner as SdkEventSigner, ProofType};
+use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::Value;
 
 use crate::operation::{
@@ -82,6 +83,10 @@ pub enum EventSignerError {
     /// Canonical serialisation failed before reaching the signer.
     #[error("canonical encoding failed before signing: {0}")]
     Encoding(String),
+    /// A caller needs a raw Ed25519 signature over canonical JSON bytes,
+    /// but this signer only exposes the detached-JWS event-signing path.
+    #[error("raw canonical-byte signing is not available for this signer")]
+    RawSigningUnavailable,
 }
 
 /// Domain/audience binding carried by EventProof and included in the
@@ -125,6 +130,10 @@ pub struct YougenEventSigner {
     /// for the in-process seed path and `"external"` for delegated
     /// backends.
     mode_tag: &'static str,
+    /// Local seed-backed signers can also produce raw Ed25519 signatures
+    /// over canonical JSON bytes. Event proofs still go through the SDK
+    /// detached-JWS signer held in `inner`.
+    raw_signing_key: Option<SigningKey>,
     /// Wall-clock timestamp of the most recent successful sign call.
     /// `None` until the first sign succeeds. Exposed for the UI
     /// freshness indicator.
@@ -138,6 +147,7 @@ impl std::fmt::Debug for YougenEventSigner {
             .field("verification_method", &self.verification_method)
             .field("mode_tag", &self.mode_tag)
             .field("algorithm", &self.inner.algorithm())
+            .field("raw_signing_available", &self.raw_signing_key.is_some())
             .field("last_signed_at", &self.last_signed_at_snapshot())
             .finish()
     }
@@ -167,6 +177,7 @@ impl YougenEventSigner {
             signer_did,
             verification_method,
             mode_tag: "external",
+            raw_signing_key: None,
             last_signed_at: Mutex::new(None),
         }
     }
@@ -187,16 +198,19 @@ impl YougenEventSigner {
         self.inner.algorithm()
     }
 
-    /// Produce a RAW detached signature over `bytes` (not a JWS) using the
-    /// active backend — works for the in-process seed signer AND external / HSM
-    /// signers alike (the SDK `EventSigner::sign` returns raw signature bytes;
-    /// for EdDSA that is the 64-byte Ed25519 signature). Used for the
-    /// `ck.schema.key_backup.v1` `auth_data.signature` (key-management.md
-    /// §7.4.1), whose wire form is a single base64url token, not a dotted JWS.
+    /// Produce a raw Ed25519 signature over `bytes` (not a detached JWS).
+    /// Used for protocol control-plane proofs such as key backup
+    /// `auth_data.signature` and recovery proofs, whose wire form is a
+    /// single base64url token over canonical JSON bytes.
     pub fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>, EventSignerError> {
-        self.inner
-            .sign(bytes)
-            .map_err(|err| EventSignerError::Backend(err.to_string()))
+        let Some(signing_key) = &self.raw_signing_key else {
+            return Err(EventSignerError::RawSigningUnavailable);
+        };
+        let signature = signing_key.sign(bytes);
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        Ok(signature.to_bytes().to_vec())
     }
 
     /// `"ed25519"` for the in-process seed signer, `"external"` for
@@ -343,12 +357,14 @@ pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> Yo
     use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
     let signer_did = signer_did.into();
     let verification_method = format!("{signer_did}#device");
+    let raw_signing_key = SigningKey::from_bytes(&seed);
     let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, verification_method.clone());
     YougenEventSigner {
         inner: Arc::new(sdk_signer),
         signer_did,
         verification_method,
         mode_tag: "ed25519",
+        raw_signing_key: Some(raw_signing_key),
         last_signed_at: Mutex::new(None),
     }
 }
@@ -531,6 +547,42 @@ mod tests {
         assert_eq!(signer.algorithm(), "EdDSA");
         assert_eq!(signer.mode_tag(), "ed25519");
         assert!(signer.last_signed_at_snapshot().is_none());
+    }
+
+    #[test]
+    fn sign_raw_signs_canonical_bytes_not_detached_jws_input() {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use ed25519_dalek::{Signature, SigningKey, Verifier as _};
+
+        let _g = reset();
+        let seed = [8u8; 32];
+        let signer = build_ed25519_signer(seed, "did:web:raw.example");
+        let bytes = canonical_json_bytes(&json!({
+            "purpose": "key_backup_unlock_proof",
+            "version": 1,
+        }))
+        .unwrap();
+
+        let sig = signer.sign_raw(&bytes).expect("raw sign");
+        let signature = Signature::from_slice(&sig).expect("64-byte signature");
+        let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
+
+        verifying_key
+            .verify(&bytes, &signature)
+            .expect("raw signature verifies against canonical bytes");
+
+        let jws_signing_input = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#),
+            URL_SAFE_NO_PAD.encode(&bytes)
+        );
+        assert!(
+            verifying_key
+                .verify(jws_signing_input.as_bytes(), &signature)
+                .is_err(),
+            "raw control-plane signatures must not be detached-JWS signatures"
+        );
     }
 
     #[test]
