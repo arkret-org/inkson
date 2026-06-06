@@ -2819,10 +2819,6 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/self/account/me",
     "_soland/self/account/profile",
     "_soland/self/account/{did}/principal-realm",
-    // contacts —— consent/contact 事件的投影 + 写
-    "_soland/self/contacts",
-    "_soland/self/contacts/request",
-    "_soland/self/contacts/respond",
     // consent cells —— consent dots 的投影 + 写
     "_soland/self/consent/cells",
     "_soland/self/consent/cells/{holder}/grant",

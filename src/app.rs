@@ -1277,6 +1277,19 @@ pub fn RouterView() -> Element {
     }
 
     let loaded_realm_tree_nodes = realm_tree_nodes();
+    let direct_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
+        .iter()
+        .filter(|node| {
+            node.kind == RealmTreeNodeKind::Realm
+                && realm_tree_node_looks_like_direct_conversation(node)
+        })
+        .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
+        .collect();
+    let collaboration_realm_tree_nodes: Vec<_> = loaded_realm_tree_nodes
+        .iter()
+        .filter(|node| !direct_realm_tree_node_ids.contains(node.id.as_str()))
+        .cloned()
+        .collect();
     let selected_preview = loaded_realm_tree_nodes
         .iter()
         .find(|node| context_realm_id.as_deref() == Some(node.id.as_str()))
@@ -1307,7 +1320,7 @@ pub fn RouterView() -> Element {
         pinned_realm_ids_from_store(&store)
     };
     let realm_tree =
-        realm_tree_items_with_pinned_realms(&loaded_realm_tree_nodes, &pinned_realm_ids);
+        realm_tree_items_with_pinned_realms(&collaboration_realm_tree_nodes, &pinned_realm_ids);
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()
@@ -1965,7 +1978,7 @@ pub fn RouterView() -> Element {
                             }
                         }
                     }
-                    if realm_sidebar_tab() == "collaboration" && !loaded_realm_tree_nodes.is_empty() && !sidebar_is_collapsed {
+                    if realm_sidebar_tab() == "collaboration" && !collaboration_realm_tree_nodes.is_empty() && !sidebar_is_collapsed {
                         div { class: "sidebar-scope-toggle", "data-testid": "navigation-scope-toggle", role: "group", "aria-label": "Navigation selection scope",
                             button {
                                 class: if active_scope_mode == NavigationScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
@@ -1995,7 +2008,9 @@ pub fn RouterView() -> Element {
                         if direct_contact_rows.read().is_empty() {
                             div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
                                 span { class: "sidebar-nav-icon", UiIcon { name: "message-circle" } }
-                                span { class: "grow truncate", if has_session { crate::i18n::tr("direct.empty") } else { crate::i18n::tr("direct.sign_in") } }
+                                span { class: "grow truncate",
+                                    {if has_session { crate::i18n::tr("direct.empty") } else { crate::i18n::tr("direct.sign_in") }}
+                                }
                             }
                         } else {
                             for contact in direct_contact_rows.read().iter() {
@@ -2074,7 +2089,7 @@ pub fn RouterView() -> Element {
                                 }
                             }
                         }
-                    } else if loaded_realm_tree_nodes.is_empty() {
+                    } else if collaboration_realm_tree_nodes.is_empty() {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-empty-state",
                             span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
                             span { class: "grow truncate", if has_session { "No Realm tree loaded" } else { "Sign in to load Realms" } }
@@ -3834,7 +3849,7 @@ fn resolve_realm_surface(
         Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
             Some(RealmSurface::Timeline)
         }
-        Route::Chat { .. } => None,
+        Route::Chat { .. } | Route::DirectConversation { .. } => None,
         Route::Kanban
         | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
@@ -3856,6 +3871,7 @@ fn route_uses_realm_context(route: &Route) -> bool {
             | Route::TimelineRealm { .. }
             | Route::TimelineMessage { .. }
             | Route::Chat { .. }
+            | Route::DirectConversation { .. }
             | Route::Kanban
             | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
@@ -3878,6 +3894,7 @@ fn route_label(route: &Route) -> &'static str {
             "Timeline View"
         }
         Route::Chat { .. } => "Discussion",
+        Route::DirectConversation { .. } => "Direct",
         Route::Contacts | Route::ContactsNew => "Contacts",
         Route::Directory => "Search",
         Route::Setup => "New Realm",

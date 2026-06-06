@@ -782,6 +782,18 @@ pub fn build_account_data_tombstone(
 }
 
 pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
+    if let Some(prefix) = [
+        cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR,
+        cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM,
+    ]
+    .into_iter()
+    .find(|prefix| {
+        key.strip_prefix(*prefix)
+            .is_some_and(|rest| rest.starts_with('.'))
+    }) {
+        return Some(prefix);
+    }
+
     [
         cokret_sdk::ACCOUNT_DATA_TYPE_REMINDER,
         cokret_sdk::ACCOUNT_DATA_TYPE_SCHEDULED_SEND,
@@ -1439,6 +1451,34 @@ mod tests {
                 .is_ok()
         );
         assert!(scheduled_send_account_data_key("not-a-message-id").is_err());
+    }
+
+    #[test]
+    fn contact_and_realm_remarks_are_encrypted_account_data() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let realm_key = realm_remark_account_data_key(realm_id);
+        let actor_key = contact_remark_account_data_key("did:web:alice.example");
+
+        assert_eq!(
+            private_account_data_key_prefix(&realm_key),
+            Some(cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM)
+        );
+        assert_eq!(
+            private_account_data_key_prefix(&actor_key),
+            Some(cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR)
+        );
+        assert!(validate_private_account_data_key(&realm_key).is_ok());
+        assert!(validate_private_account_data_key(&actor_key).is_ok());
+
+        let op = build_account_data_set(
+            realm_id,
+            "did:web:alice.example",
+            &AccountDataKey::Custom(realm_key),
+            json!({"pinned": true}),
+        )
+        .build("node");
+        assert!(op.payload.get("encrypted_payload").is_some());
+        assert!(op.payload.get("body").is_none());
     }
 
     #[test]

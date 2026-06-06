@@ -306,7 +306,7 @@ pub fn DirectoryPanel(
                                             let summary = result
                                                 .contacts
                                                 .iter()
-                                                .map(|contact| format!("{} -> {} {}", contact.requester, contact.target, contact.status))
+                                                .map(|contact| format!("{} {}", contact.peer, contact.state))
                                                 .collect::<Vec<_>>()
                                                 .join(", ");
                                             contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
