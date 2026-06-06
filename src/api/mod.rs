@@ -1,6 +1,6 @@
 use std::fmt::{self, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 use url::Url;
 
 /// A token that can be used to cancel in-flight API requests.
@@ -330,6 +330,11 @@ pub struct CokretApiError {
 }
 
 const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
+
+/// Browser `fetch` cannot reliably abort the long-poll once reqwest has handed
+/// it to the platform. Keep account-subscribe network calls globally serial so
+/// duplicate UI tasks cannot leave multiple pending long-polls in DevTools.
+static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// True when a discovery probe failed because the endpoint does not exist on
 /// this server — i.e. the routing layer returned `404 unrecognized_endpoint`

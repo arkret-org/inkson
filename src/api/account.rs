@@ -400,6 +400,7 @@ impl CokretApi {
         if let Some(token) = after {
             validate_cursor(token)?;
         }
+        let _subscribe_gate = ACCOUNT_SUBSCRIBE_NETWORK_GATE.lock().await;
         let mut url = self.endpoint("_cokret/self/account/subscribe")?;
         {
             let mut query = url.query_pairs_mut();
