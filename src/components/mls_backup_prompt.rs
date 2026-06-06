@@ -51,6 +51,12 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     if !has_local_secret {
         return;
     }
+    // Surface the prompt as soon as the local account secret exists. The
+    // server probe below will close it again if a passphrase backup is already
+    // present. This avoids a silent window after creating an encrypted Realm
+    // where the app has recoverable material locally but the async backup-list
+    // check has not completed yet.
+    needs_mls_backup.set(true);
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the flow — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
@@ -70,6 +76,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
         }
     };
     if crate::mls::account_recovery::select_mls_account_secret_backup(&payload).is_some() {
+        needs_mls_backup.set(false);
         return;
     }
     needs_mls_backup.set(true);

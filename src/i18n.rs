@@ -481,6 +481,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("chat.empty_discussions", "No discussion tracks available.");
     dict.set("chat.empty_messages", "No messages yet.");
+    dict.set("chat.loading_messages", "Loading discussion...");
     // F-CHAT-DEAD-UI-1: discussion settings panel.
     dict.set("chat.settings.mute_notifications", "Mute notifications");
     dict.set("chat.settings.read_receipts", "Read receipts");
@@ -649,6 +650,20 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "Restored");
     dict.set("mls_unlock.status.restored_suffix", "encrypted space(s).");
     dict.set("mls_unlock.status.failed_suffix", "failed");
+    dict.set(
+        "mls_recovery_missing.aria_label",
+        "Encrypted history recovery is not configured",
+    );
+    dict.set("mls_recovery_missing.title", "Recovery backup is missing");
+    dict.set(
+        "mls_recovery_missing.subtitle",
+        "encrypted history cannot unlock here",
+    );
+    dict.set(
+        "mls_recovery_missing.description",
+        "This browser can see an encrypted Realm, but the server does not have a recovery-passphrase backup for the account MLS secret. Open an existing unlocked device, create the MLS recovery passphrase backup, then reload this browser.",
+    );
+    dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 
     // One-time account-MLS-secret BACKUP prompt (mirror of mls_unlock).
     dict.set("mls_backup.aria_label", "Back up encrypted history");
@@ -1487,6 +1502,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("chat.empty_discussions", "暂无可用讨论 track。");
     dict.set("chat.empty_messages", "尚无消息。");
+    dict.set("chat.loading_messages", "正在加载讨论...");
     // F-CHAT-DEAD-UI-1: 与 en dict 同步的讨论设置面板文案。
     dict.set("chat.settings.mute_notifications", "静音通知");
     dict.set("chat.settings.read_receipts", "已读回执");
@@ -1652,6 +1668,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "已恢复");
     dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
     dict.set("mls_unlock.status.failed_suffix", "个失败");
+    dict.set("mls_recovery_missing.aria_label", "加密历史尚未配置恢复");
+    dict.set("mls_recovery_missing.title", "缺少恢复备份");
+    dict.set("mls_recovery_missing.subtitle", "此浏览器无法解锁加密历史");
+    dict.set(
+        "mls_recovery_missing.description",
+        "此浏览器能看到加密 Realm，但服务器上没有可用恢复口令打开的账号 MLS secret 备份。请在已有且已解锁的设备上创建 MLS 恢复口令备份，然后刷新此浏览器。",
+    );
+    dict.set("mls_recovery_missing.button_dismiss", "关闭");
 
     // 一次性账号 MLS secret 备份提示（mls_unlock 的镜像）。
     dict.set("mls_backup.aria_label", "备份加密历史");

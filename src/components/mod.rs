@@ -67,7 +67,7 @@ pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_flag_mls_backup_after_encrypted_write,
     try_needs_mls_backup_signal,
 };
-pub use mls_unlock::MlsUnlockPrompt;
+pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{
     Discoverability, HistoryVisibility, JoinRule, PermissionPill, PermissionPillRow,

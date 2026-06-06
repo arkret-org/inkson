@@ -170,3 +170,54 @@ pub fn MlsUnlockPrompt(
         }
     }
 }
+
+/// Fresh-device recovery diagnostic shown when encrypted Realm/history exists
+/// but this account has no passphrase-backed `mls_account_secret` backup on
+/// the server. In that state `MlsUnlockPrompt` cannot ask for a passphrase
+/// because there is no account-secret backup to open, so the app must tell the
+/// user to create the recovery backup from an existing unlocked device instead
+/// of silently rendering empty encrypted surfaces.
+#[component]
+pub fn MlsRecoverySetupMissingBanner(
+    mut needs_mls_recovery_setup: Signal<bool>,
+    actor_did: Signal<String>,
+) -> Element {
+    if !needs_mls_recovery_setup() {
+        return rsx! {};
+    }
+
+    let actor = actor_did();
+    if !actor.trim().is_empty() {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        if matches!(
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor.trim()),
+            Ok(Some(_))
+        ) {
+            return rsx! {};
+        }
+    }
+
+    rsx! {
+        div {
+            class: "event mls-recovery-missing-banner",
+            "data-testid": "mls-recovery-missing-banner",
+            role: "region",
+            "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
+            div { class: "event-head",
+                strong { {crate::i18n::tr("mls_recovery_missing.title")} }
+                span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }
+            }
+            div { class: "muted",
+                {crate::i18n::tr("mls_recovery_missing.description")}
+            }
+            div { class: "mls-unlock-row",
+                button {
+                    class: "secondary",
+                    "data-testid": "mls-recovery-missing-dismiss",
+                    onclick: move |_| needs_mls_recovery_setup.set(false),
+                    {crate::i18n::tr("mls_recovery_missing.button_dismiss")}
+                }
+            }
+        }
+    }
+}

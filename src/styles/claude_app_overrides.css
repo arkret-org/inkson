@@ -967,6 +967,21 @@
   color: var(--text-3);
 }
 
+.discussion-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discussion-loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: message-send-spin 760ms linear infinite;
+}
+
 .chat-revision-stack,
 .chat-redact-confirm {
   display: grid;
@@ -3355,4 +3370,3 @@
     grid-template-columns: 1fr;
   }
 }
-

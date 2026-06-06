@@ -193,6 +193,7 @@ pub fn ChatPanel(
     let mut redact_confirm = use_signal(|| Option::<String>::None);
     let mut reaction_picker = use_signal(|| Option::<String>::None);
     let mut initial_sync_requested = use_signal(|| false);
+    let mut initial_sync_finished = use_signal(|| false);
     // G3.Y2 — mention picker. `mention_picker_state` tracks open/closed
     // + the current `@`-query + the list of inserted chips so the
     // composer can render `mention-picker` / `mention-suggestion` /
@@ -510,6 +511,7 @@ pub fn ChatPanel(
 
     if !initial_sync_requested() && !token().trim().is_empty() {
         initial_sync_requested.set(true);
+        initial_sync_finished.set(false);
         let base = base_url.clone();
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
@@ -522,12 +524,14 @@ pub fn ChatPanel(
         let account_did_for_decrypt = account_did.clone();
         let device_id_for_decrypt = device_id.clone();
         let mut account_display_name_for_load = account_display_name;
+        let mut initial_sync_finished_for_load = initial_sync_finished;
         spawn(async move {
             let decrypt_identity = Some((
                 account_did_for_decrypt.as_str(),
                 device_id_for_decrypt.as_str(),
             ));
             let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) else {
+                initial_sync_finished_for_load.set(true);
                 return;
             };
             let mut loaded_messages = {
@@ -613,6 +617,7 @@ pub fn ChatPanel(
             if !loaded_poll_cards.is_empty() {
                 merge_poll_cards(&mut poll_cards.write(), loaded_poll_cards);
             }
+            initial_sync_finished_for_load.set(true);
         });
     }
 
@@ -671,6 +676,10 @@ pub fn ChatPanel(
     }
 
     let composer_class = "discussion-composer";
+    let discussion_feed_loading = !visible_channels_empty
+        && visible_message_count == 0
+        && !token().trim().is_empty()
+        && !initial_sync_finished();
 
     rsx! {
         div { class: "{shell_class}", "data-testid": "chat-panel",
@@ -2174,7 +2183,16 @@ pub fn ChatPanel(
                             }
                         }
                     } else if visible_message_count == 0 {
-                        div { class: "discussion-empty", {crate::i18n::tr("chat.empty_messages")} }
+                        if discussion_feed_loading {
+                            div {
+                                class: "discussion-empty discussion-loading",
+                                "data-testid": "discussion-loading",
+                                span { class: "discussion-loading-spinner", "aria-hidden": "true" }
+                                span { {crate::i18n::tr("chat.loading_messages")} }
+                            }
+                        } else {
+                            div { class: "discussion-empty", {crate::i18n::tr("chat.empty_messages")} }
+                        }
                     }
                 }
             }
