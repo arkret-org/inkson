@@ -116,7 +116,7 @@ async function readLocalConfig(page: import("@playwright/test").Page) {
 test.beforeEach(async ({ page }, testInfo) => {
   await mockCokretApi(page, {
     advertiseListHandlesForSubject: !testInfo.title.startsWith(
-      "account menu falls back to account handle",
+      "account menu falls back to account localpart",
     ),
   });
   if (testInfo.title.startsWith("login page")) {
@@ -225,7 +225,7 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
 });
 
-test("account menu falls back to account handle when handle directory lookup is not advertised", async ({
+test("account menu falls back to account localpart when handle directory lookup is not advertised", async ({
   page,
 }) => {
   let handleDirectoryRequests = 0;
@@ -244,7 +244,7 @@ test("account menu falls back to account handle when handle directory lookup is 
   await refreshServer(page);
   await latestTestId(page, "account-menu-button").click();
 
-  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice.example");
+  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice.example:local.host");
   await expect(latestTestId(page, "account-menu-handles")).not.toContainText("unavailable");
   expect(handleDirectoryRequests).toBe(0);
   expect(pageErrors).toEqual([]);

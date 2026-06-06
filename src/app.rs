@@ -1167,7 +1167,7 @@ pub fn RouterView() -> Element {
                         Err(err) => {
                             tracing::warn!(
                                 ?err,
-                                "directory list_handles_for_subject failed; keeping account handle fallback"
+                                "directory list_handles_for_subject failed; keeping account localpart fallback"
                             );
                             if personal_handles().is_empty() {
                                 personal_handles_status.set("Not published".to_owned());
@@ -2987,10 +2987,10 @@ pub fn RouterView() -> Element {
                                                             Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
-                                                                    if let Some(handle) =
-                                                                        normalize_personal_handle(&account.handle)
+                                                                    if let Some(personal_handle) =
+                                                                        personal_handle_from_account_localpart(&account.handle, &base)
                                                                     {
-                                                                        personal_handles.set(vec![handle]);
+                                                                        personal_handles.set(vec![personal_handle]);
                                                                         personal_handles_status.set("1 handle".to_owned());
                                                                     } else {
                                                                         personal_handles.set(Vec::new());
@@ -3026,10 +3026,10 @@ pub fn RouterView() -> Element {
                                                                                     .await
                                                                                     .ok()
                                                                                     .and_then(|account| {
-                                                                                        if let Some(handle) =
-                                                                                            normalize_personal_handle(&account.handle)
+                                                                                        if let Some(personal_handle) =
+                                                                                            personal_handle_from_account_localpart(&account.handle, &base)
                                                                                         {
-                                                                                            personal_handles.set(vec![handle]);
+                                                                                            personal_handles.set(vec![personal_handle]);
                                                                                             personal_handles_status
                                                                                                 .set("1 handle".to_owned());
                                                                                         } else {
@@ -4294,9 +4294,24 @@ fn display_handles_from_directory_response(
     handles
 }
 
-fn normalize_personal_handle(handle: &str) -> Option<String> {
-    let normalized = handle.trim().trim_start_matches('@').trim();
-    (!normalized.is_empty()).then(|| normalized.to_owned())
+fn personal_handle_from_account_localpart(
+    account_localpart: &str,
+    server_url: &str,
+) -> Option<String> {
+    let normalized_localpart = account_localpart.trim().trim_start_matches('@').trim();
+    if normalized_localpart.is_empty() {
+        return None;
+    }
+    let server_host = handle_domain_from_server_url(server_url)?;
+    Some(format!("{normalized_localpart}:{server_host}"))
+}
+
+fn handle_domain_from_server_url(server_url: &str) -> Option<String> {
+    let normalized = normalize_server_url(server_url);
+    url::Url::parse(&normalized)
+        .ok()?
+        .host_str()
+        .map(str::to_owned)
 }
 
 fn account_handles_display(handles: &[String], fallback: &str) -> String {
@@ -5019,10 +5034,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
-                let mut account_handle = None::<String>;
+                let mut account_personal_handle = None::<String>;
                 let canonical_actor = match authed.account_me().await {
                     Ok(account) if !account.did.trim().is_empty() => {
-                        account_handle = normalize_personal_handle(&account.handle);
+                        account_personal_handle =
+                            personal_handle_from_account_localpart(&account.handle, &base);
                         account.did
                     }
                     Ok(_) => {
@@ -5038,7 +5054,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.account_me().await {
                                 Ok(account) if !account.did.trim().is_empty() => {
-                                    account_handle = normalize_personal_handle(&account.handle);
+                                    account_personal_handle =
+                                        personal_handle_from_account_localpart(
+                                            &account.handle,
+                                            &base,
+                                        );
                                     account.did
                                 }
                                 Ok(_) => {
@@ -5106,8 +5126,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         actor.clone()
                     }
                 };
-                if let Some(handle) = account_handle {
-                    personal_handles.set(vec![handle]);
+                if let Some(personal_handle) = account_personal_handle {
+                    personal_handles.set(vec![personal_handle]);
                     personal_handles_status.set("1 handle".to_owned());
                 } else if personal_handles().is_empty() {
                     personal_handles_status.set("Not published".to_owned());
@@ -5682,6 +5702,22 @@ fn frontier_label(frontier: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn personal_handle_from_account_localpart_adds_server_host() {
+        assert_eq!(
+            personal_handle_from_account_localpart("@alice", "https://local.host").as_deref(),
+            Some("alice:local.host")
+        );
+        assert_eq!(
+            personal_handle_from_account_localpart("  ", "https://local.host"),
+            None
+        );
+        assert_eq!(
+            personal_handle_from_account_localpart("@alice", "not a server URL"),
+            None
+        );
+    }
 
     /// The App component installs a default push-token provider on
     /// first render so `device-summary` never
