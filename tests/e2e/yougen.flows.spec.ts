@@ -262,6 +262,26 @@ test("settings encryption replaces manual key backup inputs with guidance", asyn
   await expect(latestTestId(page, "settings-mls-recovery")).toBeVisible();
 });
 
+test("recovery passkey quick unlock stays additive to the 24-word key", async ({ page }) => {
+  await page.goto("/recovery", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("recovery-panel")).toBeVisible();
+
+  const passkeySection = page.getByTestId("passkey-recovery-section");
+  await expect(passkeySection).toBeVisible();
+  await expect(passkeySection).toContainText("browser-local WebAuthn PRF");
+  await expect(passkeySection).toContainText("not a replacement");
+  await expect(page.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
+  await expect(page.getByTestId("passkey-wrap-create")).toBeDisabled();
+  await expect(page.getByTestId("passkey-wrap-unlock")).toBeDisabled();
+
+  await page.getByTestId("recovery-key-regenerate").click();
+  await expect(page.getByTestId("recovery-key-status")).toContainText("New Recovery Key generated");
+  const recoveryWords = (await page.getByTestId("recovery-key-current").textContent()) ?? "";
+  expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
+  await expect(page.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await expect(passkeySection).toContainText("24-word Recovery Key");
+});
+
 test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   await refreshServer(page);
 

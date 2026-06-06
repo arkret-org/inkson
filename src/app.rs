@@ -707,6 +707,7 @@ pub fn RouterView() -> Element {
     // bootstrap connect() can pass it via `ConnectContext`. The engine
     // itself is spawned by the `use_effect` further down.
     let mut sync_generation = use_signal(|| 0u64);
+    let mut sync_engine_active_generation = use_signal(|| Option::<u64>::None);
 
     // CKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
@@ -894,6 +895,10 @@ pub fn RouterView() -> Element {
         if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete() {
             return;
         }
+        if *sync_engine_active_generation.peek() == Some(current_gen) {
+            return;
+        }
+        sync_engine_active_generation.set(Some(current_gen));
         let ctx = crate::sync_engine::SyncEngineContext {
             base_url,
             token,
@@ -910,8 +915,12 @@ pub fn RouterView() -> Element {
             selected_realm_id,
             profiles: profiles_signal,
         };
+        let mut active_generation = sync_engine_active_generation;
         spawn(async move {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
+            if *active_generation.peek() == Some(current_gen) {
+                active_generation.set(None);
+            }
         });
     });
 
