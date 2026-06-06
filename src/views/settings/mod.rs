@@ -25,13 +25,8 @@ use serde_json::json;
 use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
-use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
-use crate::recovery_crypto::{
-    RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
-    recovery_passphrase_strength_error,
-};
 use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 use crate::workflows::blocked_release_workflows;
@@ -769,10 +764,6 @@ pub fn SettingsPanel(
     let mut blocklist_reason_input = use_signal(String::new);
     let mut blocklist_status = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
-    let mut key_backup_status = use_signal(|| "Not configured".to_owned());
-    let mut key_backup_id =
-        use_signal(|| "ck:backup:01964137-0000-7000-8000-000000000000".to_owned());
-    let mut key_backup_passphrase = use_signal(String::new);
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
@@ -1453,211 +1444,39 @@ pub fn SettingsPanel(
                         option { value: "prefer-plaintext", "Prefer Plaintext" }
                     }
                     div { class: "muted", "Current: {crypto_state}" }
-                    label { "Key Backup" }
-                    div { class: "muted", "{key_backup_status}" }
-                    {
-                        // Inline strength meter so users notice when the
-                        // passphrase is too short to protect the backup.
-                        let strength = estimate_passphrase_strength(&key_backup_passphrase());
-                        let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
-                        let strength_label = match strength {
-                            0 => "(passphrase required)",
-                            1..=2 => "weak",
-                            3 => "good",
-                            _ => "strong",
-                        };
-                        rsx! { div { class: "muted",
-                            "Passphrase strength: {strength_label}; minimum good ({min_strength}/5). Losing this E2E recovery passphrase means encrypted history cannot be restored on a fresh device."
-                        } }
-                    }
-                    div { class: "actions",
-                        input {
-                            "data-testid": "key-backup-id-input",
-                            value: "{key_backup_id}",
-                            oninput: move |evt| key_backup_id.set(evt.value()),
+                    div { class: "event", "data-testid": "key-backup-guidance",
+                        div { class: "event-head",
+                            span { "Key backup" }
+                            span { "recovery setup" }
                         }
-                        input {
-                            "data-testid": "key-backup-passphrase-input",
-                            r#type: "password",
-                            value: "{key_backup_passphrase}",
-                            placeholder: "Vault passphrase",
-                            oninput: move |evt| key_backup_passphrase.set(evt.value()),
+                        div { class: "muted",
+                            "The recovery backup id is generated when a backup is created; it is not something to type by hand. Use the recovery flow to create a vault/recovery key, or use the lower-level manual page only when debugging a specific backup envelope."
                         }
-                        button {
-                            class: "secondary",
-                            "data-testid": "key-backup-setup",
-                            disabled: recovery_passphrase_strength_error(&key_backup_passphrase()).is_some(),
-                            onclick: move |_| {
-                                let base = base_url();
-                                let api_token = token();
-                                let backup_id = key_backup_id();
-                                let actor = account_did();
-                                let device = device_id();
-                                let passphrase = key_backup_passphrase();
-                                if passphrase.trim().is_empty() {
-                                    key_backup_status.set(
-                                        "Enter a vault passphrase before storing the backup."
-                                            .to_owned(),
-                                    );
-                                    return;
-                                }
-                                if let Some(reason) = recovery_passphrase_strength_error(&passphrase) {
-                                    key_backup_status.set(reason.to_owned());
-                                    return;
-                                }
-                                // Backup body schema mirrors the recovery vault
-                                // payload (see views/recovery.rs) so the same
-                                // restore flow recovers backups created here.
-                                // The plaintext carries identity refs only —
-                                // device signing key + MLS state are stored in
-                                // separate scoped backups by future flows.
-                                let payload_plaintext = serde_json::json!({
-                                    "schema_version": 1,
-                                    "actor_id": actor,
-                                    "device_id": device,
-                                    "minted_at": chrono::Utc::now().to_rfc3339(),
-                                    "source": "settings.encryption.store_backup",
-                                })
-                                .to_string();
-                                let pass_bytes = passphrase.into_bytes();
-                                spawn(async move {
-                                    let kek = match derive_vault_kek(&pass_bytes) {
-                                        Ok(k) => k,
-                                        Err(err) => {
-                                            key_backup_status.set(format!(
-                                                "Argon2id stretch failed: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                    let body = match build_recovery_vault_backup_body(
-                                        &backup_id,
-                                        &actor,
-                                        &device,
-                                        &kek,
-                                        payload_plaintext.as_bytes(),
-                                    ) {
-                                        Ok(b) => b,
-                                        Err(err) => {
-                                            key_backup_status.set(format!(
-                                                "AEAD encrypt failed: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                    let backup_id_clone = backup_id.clone();
-                                    let backup_id_for_log = backup_id.clone();
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.put_key_backup(&backup_id_clone, body).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(_) => {
-                                            key_backup_status.set(format!(
-                                                "Backup {backup_id_for_log} stored"
-                                            ));
-                                            key_backup_passphrase.set(String::new());
-                                        }
-                                        Err(err) => key_backup_status
-                                            .set(format!("Backup store failed: {}", err.display())),
-                                    }
-                                });
-                            },
-                            {crate::i18n::tr("settings.store_backup")}
+                        div { class: "actions",
+                            Link {
+                                class: "primary",
+                                "data-testid": "key-backup-open-recovery",
+                                to: Route::Recovery,
+                                UiIcon { name: "key" }
+                                "Open Recovery"
+                            }
+                            Link {
+                                class: "secondary",
+                                "data-testid": "key-backup-open-manual",
+                                to: Route::SettingsSecurity,
+                                UiIcon { name: "archive" }
+                                "Manual backup tools"
+                            }
                         }
-                        button {
-                            class: "secondary",
-                            "data-testid": "key-backup-list",
-                            onclick: move |_| {
-                                let base = base_url();
-                                let api_token = token();
-                                spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.list_key_backups().await
-                                    })
-                                    .await
-                                    {
-                                        Ok(response) => key_backup_status
-                                            .set(format!("Backups: {response}")),
-                                        Err(err) => key_backup_status
-                                            .set(format!("Backup list: {}", err.display())),
-                                    }
-                                });
-                            },
-                            "List Backups"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "key-backup-load",
-                            onclick: move |_| {
-                                let base = base_url();
-                                let api_token = token();
-                                let backup_id = key_backup_id();
-                                spawn(async move {
-                                    let backup_id_for_msg = backup_id.clone();
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.list_key_backups().await
-                                    })
-                                    .await
-                                    {
-                                        Ok(response) => {
-                                            let found = response
-                                                .get("backups")
-                                                .and_then(serde_json::Value::as_array)
-                                                .and_then(|backups| {
-                                                    backups.iter().find(|entry| {
-                                                        entry
-                                                            .get("backup_id")
-                                                            .and_then(serde_json::Value::as_str)
-                                                            == Some(backup_id.as_str())
-                                                    })
-                                                });
-                                            match found {
-                                                Some(metadata) => key_backup_status.set(format!(
-                                                    "Backup {backup_id_for_msg}: {metadata}"
-                                                )),
-                                                None => key_backup_status.set(format!(
-                                                    "Backup {backup_id_for_msg} is not listed for this account."
-                                                )),
-                                            }
-                                        }
-                                        Err(err) => key_backup_status
-                                            .set(format!("Backup load: {}", err.display())),
-                                    }
-                                });
-                            },
-                            "Load Backup"
-                        }
-                        button {
-                            class: "secondary",
-                            "data-testid": "key-backup-delete",
-                            onclick: move |_| {
-                                let base = base_url();
-                                let api_token = token();
-                                let backup_id = key_backup_id();
-                                let actor = account_did();
-                                spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.delete_key_backup(&backup_id, &actor).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(response) => key_backup_status
-                                            .set(format!("Backup deleted: {response}")),
-                                        Err(err) => key_backup_status
-                                            .set(format!("Backup delete: {}", err.display())),
-                                    }
-                                });
-                            },
-                            "Delete Backup"
+                        div { class: "muted",
+                            "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. Encrypted-history recovery key setup is handled by the panel below."
                         }
                     }
-                    div { class: "muted", "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*." }
                 }
-                            // X11.1 — persistent MLS recovery-passphrase entry.
+                            // X11.1 — persistent MLS recovery-key entry.
                             // Always reachable here (Security & recovery),
                             // shows live backup status, and lets the user
-                            // set/replace the passphrase regardless of the
+                            // generate/replace the recovery key regardless of the
                             // boot detection effect timing. NOT gated on
                             // `needs_mls_backup`.
                             mls_recovery::SettingsMlsRecoveryPanel {

@@ -580,6 +580,7 @@ pub fn RouterView() -> Element {
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
+    let mut notifications_drawer_open = use_signal(|| false);
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
@@ -1508,6 +1509,12 @@ pub fn RouterView() -> Element {
     } else {
         route.clone()
     };
+    let show_recovery_setup_prompt = has_session
+        && !matches!(
+            &content_route,
+            Route::Recovery | Route::SettingsRecovery | Route::Recover
+        )
+        && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
     rsx! {
         style { "{STYLE}" }
@@ -1551,6 +1558,12 @@ pub fn RouterView() -> Element {
                     return;
                 }
                 if key == "Escape" {
+                    if notifications_drawer_open() {
+                        notifications_drawer_open.set(false);
+                        event.prevent_default();
+                        event.stop_propagation();
+                        return;
+                    }
                     if shortcut_help_open() {
                         shortcut_help_open.set(false);
                         event.prevent_default();
@@ -1615,6 +1628,40 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            if show_recovery_setup_prompt {
+                div {
+                    class: "event recovery-setup-banner",
+                    "data-testid": "recovery-setup-banner",
+                    role: "region",
+                    "aria-label": "Recovery setup is incomplete",
+                    div { class: "event-head",
+                        strong { "Recovery setup is incomplete" }
+                        span { class: "muted", "first-time setup" }
+                    }
+                    div { class: "muted",
+                        "Set up at least one recovery method before relying on this account. A recovery key or encrypted vault is stored client-side/server-side as ciphertext only; Cokret cannot recover the plaintext for you."
+                    }
+                    div { class: "actions",
+                        Link {
+                            class: "primary",
+                            "data-testid": "recovery-setup-open-recovery",
+                            to: Route::Recovery,
+                            UiIcon { name: "key" }
+                            "Configure recovery"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "recovery-setup-open-encryption",
+                            to: Route::SettingsSection { section: "encryption".to_owned() },
+                            UiIcon { name: "lock" }
+                            "Encrypted history status"
+                        }
+                    }
+                    div { class: "muted",
+                        "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up."
+                    }
+                }
+            }
             // Fresh-device diagnostic: encrypted history exists, but no
             // passphrase-backed account-secret backup is available to unlock
             // on this browser.
@@ -1680,12 +1727,25 @@ pub fn RouterView() -> Element {
                     },
                     UiIcon { name: theme_toggle_icon }
                 }
-                Link {
-                    class: "btn icon sm ghost topbar-notifications-link",
+                button {
+                    r#type: "button",
+                    class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
                     "data-testid": "mobile-topbar-notifications-button",
-                    to: Route::Notifications,
                     title: "Notifications",
                     "aria-label": "Notifications",
+                    "aria-expanded": "{notifications_drawer_open()}",
+                    onclick: move |event: dioxus::events::MouseEvent| {
+                        event.stop_propagation();
+                        mobile_nav_open.set(false);
+                        account_menu_open.set(false);
+                        server_menu_open.set(false);
+                        if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                            palette_open.set(false);
+                            topbar_search_expanded.set(false);
+                            global_query.set(String::new());
+                        }
+                        notifications_drawer_open.toggle();
+                    },
                     UiIcon { name: "inbox" }
                     span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                 }
@@ -2373,12 +2433,25 @@ pub fn RouterView() -> Element {
                                 span { "data-testid": "last-error", "{err}" }
                             }
                         }
-                        Link {
-                            class: "btn icon sm ghost topbar-notifications-link",
+                        button {
+                            r#type: "button",
+                            class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
                             "data-testid": "topbar-notifications-button",
-                            to: Route::Notifications,
                             title: crate::i18n::tr("nav.notifications"),
                             "aria-label": crate::i18n::tr("nav.notifications"),
+                            "aria-expanded": "{notifications_drawer_open()}",
+                            onclick: move |event: dioxus::events::MouseEvent| {
+                                event.stop_propagation();
+                                mobile_nav_open.set(false);
+                                account_menu_open.set(false);
+                                server_menu_open.set(false);
+                                if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                                    palette_open.set(false);
+                                    topbar_search_expanded.set(false);
+                                    global_query.set(String::new());
+                                }
+                                notifications_drawer_open.toggle();
+                            },
                             UiIcon { name: "inbox" }
                             span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
@@ -3154,6 +3227,49 @@ pub fn RouterView() -> Element {
                 }
             }
             }
+            if notifications_drawer_open() {
+                div {
+                    class: "notifications-drawer-layer",
+                    "data-testid": "notifications-drawer",
+                    button {
+                        r#type: "button",
+                        class: "notifications-drawer-scrim",
+                        "data-testid": "notifications-drawer-scrim",
+                        "aria-label": "Close notifications",
+                        onclick: move |_| notifications_drawer_open.set(false),
+                    }
+                    aside {
+                        class: "notifications-drawer-panel",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        "aria-label": crate::i18n::tr("nav.notifications"),
+                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                        div { class: "notifications-drawer-header",
+                            div { class: "notifications-drawer-title",
+                                UiIcon { name: "inbox" }
+                                span { {crate::i18n::tr("nav.notifications")} }
+                            }
+                            button {
+                                r#type: "button",
+                                class: "btn icon sm ghost",
+                                "data-testid": "notifications-drawer-close",
+                                title: crate::i18n::tr("common.close"),
+                                "aria-label": crate::i18n::tr("common.close"),
+                                onclick: move |_| notifications_drawer_open.set(false),
+                                UiIcon { name: "x" }
+                            }
+                        }
+                        crate::views::notifications::NotificationsPanel {
+                            base_url: base_url(),
+                            account_did: account_did(),
+                            device_id: device_id(),
+                            token,
+                            state_store,
+                            on_navigate: EventHandler::new(move |_| notifications_drawer_open.set(false)),
+                        }
+                    }
+                }
+            }
             // A6.4 — shortcut help overlay; toggled by the `?` global
             // key handler on the shell div above.
             crate::components::shortcut_help::ShortcutHelpOverlay {
@@ -3746,6 +3862,16 @@ fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> bool {
         .realm_tree_projections
         .values()
         .any(crate::security_state::realm_projection_is_encrypted)
+}
+
+fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_did: &str) -> bool {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return false;
+    }
+    !(crate::views::recovery::recovery_options_configured(state_store, actor)
+        || crate::views::settings::recovery::recovery_passphrase_configured(state_store, actor)
+        || crate::components::mls_recovery_backup_configured(state_store, actor))
 }
 
 fn mls_recovery_setup_missing(

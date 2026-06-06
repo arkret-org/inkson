@@ -67,6 +67,9 @@ pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_flag_mls_backup_after_encrypted_write,
     try_needs_mls_backup_signal,
 };
+pub(crate) use mls_backup_prompt::{
+    mark_mls_recovery_backup_configured, mls_recovery_backup_configured,
+};
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use offline_pending_badge::OfflinePendingBadge;
 pub use permission_pill::{
@@ -174,6 +177,7 @@ pub fn UiIcon(name: String) -> Element {
             "M3 10.5 9.5 4a3 3 0 0 1 5 0L21 10.5M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"
         }
         "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
+        "key" => "M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-2.8-2.8L20 2h2v2l-8.4 8.4ZM7 17h.01",
         "lock" => "M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5V10Zm7 4v2",
         "menu" => "M4 6h16M4 12h16M4 18h16",
         "maximize" => "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",

@@ -54,6 +54,7 @@ mobile-ios = []
 [dependencies]
 anyhow = "1.0.100"
 base64 = "0.22"
+bip39 = "2.2.2"
 chime = { version = "1.0.0", path = "../chime", features = ["http"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 dioxus-router = "0.7.9"

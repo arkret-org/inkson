@@ -1,4 +1,4 @@
-//! X11.1 — persistent "MLS Recovery Passphrase" settings section.
+//! X11.1 — persistent "MLS Recovery Key" settings section.
 //!
 //! The one-time [`crate::components::MlsBackupPrompt`] only surfaces when the
 //! boot-time detection effect flips `needs_mls_backup`, whose `detection_key`
@@ -6,7 +6,7 @@
 //! RELIABLE entry: it is always reachable under
 //! `/settings/encryption` (Security & recovery), is NOT gated on
 //! `needs_mls_backup`, shows the live backup status, and lets the user
-//! set/replace the MLS recovery passphrase regardless of effect timing.
+//! generate/replace the MLS recovery key regardless of effect timing.
 //!
 //! On mount it fetches `list_key_backups` to compute status; the submit path
 //! mirrors `MlsBackupPrompt` exactly (account-secret upload + best-effort
@@ -15,7 +15,7 @@
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
-use crate::recovery_crypto::{RECOVERY_PASSPHRASE_MIN_STRENGTH, estimate_passphrase_strength};
+use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input};
 use crate::views::helpers::with_authed_api;
 
 /// Resolved backup status for the section header / status line.
@@ -29,7 +29,7 @@ enum MlsRecoveryStatus {
     /// Server already holds an `mls_account_secret` backup.
     BackedUp,
     /// Local account secret exists but the server has no backup → the user
-    /// should set a recovery passphrase.
+    /// should generate a recovery key backup.
     NotBackedUp,
 }
 
@@ -77,8 +77,7 @@ pub fn SettingsMlsRecoveryPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut status = use_signal(|| MlsRecoveryStatus::Loading);
-    let mut passphrase = use_signal(String::new);
-    let mut confirm = use_signal(String::new);
+    let mut generated_recovery_key = use_signal(String::new);
     let mut action_status = use_signal(String::new);
     let mut busy = use_signal(|| false);
 
@@ -108,9 +107,20 @@ pub fn SettingsMlsRecoveryPanel(
             .await
             {
                 Ok(payload) => {
-                    let server_backup =
-                        crate::mls::account_recovery::select_mls_account_secret_backup(&payload)
-                            .is_some();
+                    let server_backup_body =
+                        crate::mls::account_recovery::select_mls_account_secret_backup(&payload);
+                    if let Some(backup_id) = server_backup_body
+                        .as_ref()
+                        .and_then(|body| body.get("backup_id"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        crate::components::mark_mls_recovery_backup_configured(
+                            &mut state_store.write(),
+                            &actor,
+                            backup_id,
+                        );
+                    }
+                    let server_backup = server_backup_body.is_some();
                     status.set(resolve_status(server_backup, local_secret));
                 }
                 Err(err) => {
@@ -127,18 +137,9 @@ pub fn SettingsMlsRecoveryPanel(
         });
     }
 
-    let pass_now = passphrase();
-    let confirm_now = confirm();
-    let too_weak = !pass_now.is_empty()
-        && estimate_passphrase_strength(&pass_now) < RECOVERY_PASSPHRASE_MIN_STRENGTH;
-    let mismatch = !confirm_now.is_empty() && pass_now != confirm_now;
-    let can_submit = has_session
-        && !pass_now.is_empty()
-        && pass_now == confirm_now
-        && estimate_passphrase_strength(&pass_now) >= RECOVERY_PASSPHRASE_MIN_STRENGTH;
+    let can_submit = has_session && !busy() && generated_recovery_key().trim().is_empty();
 
     let current_status = status();
-    let strength = estimate_passphrase_strength(&pass_now);
 
     // Submit: mirror `MlsBackupPrompt` — upload the account secret, then
     // best-effort upload the encrypted private-plaintext sidecar.
@@ -146,19 +147,18 @@ pub fn SettingsMlsRecoveryPanel(
         if busy() {
             return;
         }
-        let pass = passphrase();
-        if pass.is_empty() {
-            action_status.set(crate::i18n::tr("mls_backup.status.enter_passphrase"));
-            return;
-        }
-        if pass != confirm() {
-            action_status.set(crate::i18n::tr("mls_backup.status.mismatch"));
-            return;
-        }
-        if estimate_passphrase_strength(&pass) < RECOVERY_PASSPHRASE_MIN_STRENGTH {
-            action_status.set(crate::i18n::tr("mls_backup.status.too_weak"));
-            return;
-        }
+        let recovery_key = match generate_recovery_key() {
+            Ok(key) => key,
+            Err(err) => {
+                action_status.set(format!(
+                    "{} {err}",
+                    crate::i18n::tr("mls_backup.status.generate_failed")
+                ));
+                return;
+            }
+        };
+        let recovery_secret = normalize_recovery_key_input(&recovery_key)
+            .expect("generated recovery key is valid BIP-39");
         let base = base_url();
         let session = token();
         let actor = account_did();
@@ -173,6 +173,7 @@ pub fn SettingsMlsRecoveryPanel(
         busy.set(true);
         action_status.set(crate::i18n::tr("mls_backup.status.uploading"));
         spawn(async move {
+            let recovery_key_for_display = recovery_key.clone();
             let actor_for_sidecar = actor.clone();
             let device_for_sidecar = device.clone();
             let base_for_sidecar = base.clone();
@@ -184,14 +185,19 @@ pub fn SettingsMlsRecoveryPanel(
                     secure_store.as_ref(),
                     &actor,
                     &device,
-                    pass.as_bytes(),
+                    recovery_secret.as_bytes(),
                 )
                 .await
             })
             .await;
             busy.set(false);
             match result {
-                Ok(_backup_id) => {
+                Ok(backup_id) => {
+                    crate::components::mark_mls_recovery_backup_configured(
+                        &mut state_store.write(),
+                        &actor_for_sidecar,
+                        &backup_id,
+                    );
                     // Best-effort sidecar upload (account secret already
                     // succeeded; sidecar failure must not block success).
                     if let Some(sidecar_json) = sidecar_json {
@@ -216,8 +222,7 @@ pub fn SettingsMlsRecoveryPanel(
                         .await;
                         let _ = outcome;
                     }
-                    passphrase.set(String::new());
-                    confirm.set(String::new());
+                    generated_recovery_key.set(recovery_key_for_display);
                     action_status.set(crate::i18n::tr("mls_backup.status.created"));
                     status.set(MlsRecoveryStatus::BackedUp);
                 }
@@ -227,6 +232,8 @@ pub fn SettingsMlsRecoveryPanel(
             }
         });
     };
+
+    let generated_now = generated_recovery_key();
 
     rsx! {
         div { class: "event", "data-testid": "settings-mls-recovery",
@@ -247,58 +254,46 @@ pub fn SettingsMlsRecoveryPanel(
             // Hide the set/replace form when there's nothing to back up yet —
             // the account secret only exists after the first encrypted write.
             if current_status != MlsRecoveryStatus::NoLocalSecret {
+                if !generated_now.trim().is_empty() {
+                    div { class: "workflow-form",
+                        label { r#for: "settings-mls-recovery-generated-key",
+                            {crate::i18n::tr("mls_backup.generated_key_label")}
+                        }
+                        textarea {
+                            id: "settings-mls-recovery-generated-key",
+                            "data-testid": "settings-mls-recovery-generated-key",
+                            rows: "3",
+                            readonly: true,
+                            value: "{generated_now}",
+                        }
+                        div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-generated-key-warning",
+                            {crate::i18n::tr("mls_backup.generated_key_warning")}
+                        }
+                    }
+                }
                 div { class: "workflow-form",
-                    label { r#for: "settings-mls-recovery-passphrase",
-                        {crate::i18n::tr("settings.mls_recovery.passphrase_label")}
-                    }
-                    input {
-                        id: "settings-mls-recovery-passphrase",
-                        "data-testid": "settings-mls-recovery-passphrase",
-                        r#type: "password",
-                        autocomplete: "new-password",
-                        placeholder: crate::i18n::tr("mls_backup.placeholder"),
-                        value: "{passphrase}",
-                        disabled: busy() || !has_session,
-                        oninput: move |evt| passphrase.set(evt.value()),
-                    }
-                    input {
-                        "data-testid": "settings-mls-recovery-confirm",
-                        r#type: "password",
-                        autocomplete: "new-password",
-                        placeholder: crate::i18n::tr("mls_backup.placeholder_confirm"),
-                        value: "{confirm}",
-                        disabled: busy() || !has_session,
-                        oninput: move |evt| confirm.set(evt.value()),
-                    }
-                    div {
-                        class: if too_weak { "form-hint-warn" } else { "muted" },
-                        "data-testid": "settings-mls-recovery-strength",
-                        {format!(
-                            "{} ({strength}/5). {}",
-                            crate::i18n::tr("settings.mls_recovery.strength_prefix"),
-                            crate::i18n::tr("settings.mls_recovery.strength_min"),
-                        )}
-                    }
-                    if too_weak {
-                        div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-weak-hint",
-                            {crate::i18n::tr("mls_backup.hint.too_weak")}
-                        }
-                    }
-                    if mismatch {
-                        div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-mismatch-hint",
-                            {crate::i18n::tr("mls_backup.hint.mismatch")}
-                        }
-                    }
                     div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "settings-mls-recovery-submit",
-                            disabled: busy() || !can_submit,
-                            onclick: on_submit,
-                            if busy() {
-                                {crate::i18n::tr("mls_backup.button_busy")}
-                            } else {
-                                {crate::i18n::tr("settings.mls_recovery.submit")}
+                        if !generated_now.trim().is_empty() {
+                            button {
+                                class: "primary",
+                                "data-testid": "settings-mls-recovery-saved",
+                                onclick: move |_| {
+                                    generated_recovery_key.set(String::new());
+                                    action_status.set(String::new());
+                                },
+                                {crate::i18n::tr("mls_backup.button_saved")}
+                            }
+                        } else {
+                            button {
+                                class: "primary",
+                                "data-testid": "settings-mls-recovery-submit",
+                                disabled: !can_submit,
+                                onclick: on_submit,
+                                if busy() {
+                                    {crate::i18n::tr("mls_backup.button_busy")}
+                                } else {
+                                    {crate::i18n::tr("settings.mls_recovery.submit")}
+                                }
                             }
                         }
                     }
