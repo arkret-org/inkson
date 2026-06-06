@@ -1472,45 +1472,20 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Encryption {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "encryption-settings",
-                    div { class: "event-head", span { "Encryption" } span { "MLS / E2EE" } }
-                    label { "MLS Group Policy" }
-                    select {
-                        value: "{mls_group_policy}",
-                        onchange: move |evt| mls_group_policy.set(evt.value()),
-                        option { value: "default", "Default" }
-                        option { value: "always-encrypt", "Always Encrypt" }
-                        option { value: "prefer-plaintext", "Prefer Plaintext" }
-                    }
-                    div { class: "muted", "Current: {crypto_state}" }
-                    div { class: "event", "data-testid": "key-backup-guidance",
-                        div { class: "event-head",
-                            span { "Key backup" }
-                            span { "recovery setup" }
-                        }
-                        div { class: "muted",
-                            "The recovery backup id is generated when a backup is created; it is not something to type by hand. Use the recovery flow to create a vault/recovery key, or use the lower-level manual page only when debugging a specific backup envelope."
-                        }
-                        div { class: "actions",
-                            Link {
-                                class: "primary",
-                                "data-testid": "key-backup-open-recovery",
-                                to: Route::Recovery,
-                                UiIcon { name: "key" }
-                                "Open Recovery"
+                                div { class: "event-head",
+                                    span { "Encryption" }
+                                    span { "MLS / E2EE" }
+                                }
+                                label { "MLS Group Policy" }
+                                select {
+                                    value: "{mls_group_policy}",
+                                    onchange: move |evt| mls_group_policy.set(evt.value()),
+                                    option { value: "default", "Default" }
+                                    option { value: "always-encrypt", "Always Encrypt" }
+                                    option { value: "prefer-plaintext", "Prefer Plaintext" }
+                                }
+                                div { class: "muted", "Current: {crypto_state}" }
                             }
-                            Link {
-                                class: "secondary",
-                                "data-testid": "key-backup-open-manual",
-                                to: Route::SettingsSecurity,
-                                UiIcon { name: "archive" }
-                                "Manual backup tools"
-                            }
-                        }
-                        div { class: "muted",
-                            "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. Encrypted-history recovery key setup is handled by the panel below."
-                        }
-                    }
-                }
                             // X11.1 — persistent MLS recovery-key entry.
                             // Always reachable here (Security & recovery),
                             // shows live backup status, and lets the user
@@ -1523,6 +1498,37 @@ pub fn SettingsPanel(
                                 account_did,
                                 device_id,
                                 state_store,
+                            }
+                            details { class: "event", "data-testid": "key-backup-guidance",
+                                summary { class: "event-head",
+                                    span { "Advanced key backup diagnostics" }
+                                    span { class: "badge amber", "developer tools" }
+                                }
+                                div { class: "muted",
+                                    "Encrypted history recovery above creates key backup envelopes automatically. The recovery backup id is generated when a backup is created; it is not something to type by hand."
+                                }
+                                div { class: "muted",
+                                    "Use these links only for protocol diagnostics or when debugging a specific backup envelope."
+                                }
+                                div { class: "actions",
+                                    Link {
+                                        class: "primary",
+                                        "data-testid": "key-backup-open-recovery",
+                                        to: Route::Recovery,
+                                        UiIcon { name: "key" }
+                                        "Recovery vault"
+                                    }
+                                    Link {
+                                        class: "secondary",
+                                        "data-testid": "key-backup-open-manual",
+                                        to: Route::SettingsSecurity,
+                                        UiIcon { name: "archive" }
+                                        "Manual backup tools"
+                                    }
+                                }
+                                div { class: "muted",
+                                    "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
+                                }
                             }
                         }
                     }

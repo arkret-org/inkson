@@ -249,17 +249,24 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({ pa
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
 });
 
-test("settings encryption replaces manual key backup inputs with guidance", async ({ page }) => {
+test("settings encryption keeps key backup under advanced diagnostics", async ({ page }) => {
   await page.goto("/settings/encryption", { waitUntil: "domcontentloaded" });
+  const recovery = latestTestId(page, "settings-mls-recovery");
   const guidance = latestTestId(page, "key-backup-guidance");
+  await expect(recovery).toBeVisible();
   await expect(guidance).toBeVisible();
+  await expect(guidance.locator("summary")).toContainText(
+    "Advanced key backup diagnostics",
+  );
+  await expect(guidance).not.toHaveAttribute("open", "");
+  await guidance.locator("summary").click();
   await expect(guidance).toContainText(
     "backup id is generated when a backup is created",
   );
+  await expect(latestTestId(page, "key-backup-open-manual")).toBeVisible();
   await expect(page.getByTestId("key-backup-id-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-passphrase-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-setup")).toHaveCount(0);
-  await expect(latestTestId(page, "settings-mls-recovery")).toBeVisible();
 });
 
 test("recovery passkey quick unlock stays additive to the 24-word key", async ({ page }) => {

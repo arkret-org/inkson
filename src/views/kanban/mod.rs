@@ -417,7 +417,7 @@ pub fn KanbanPanel(
     let mut card_edit_scope = use_signal(CardEditScope::default);
     let mut card_detail_sidebar_visible = use_signal(|| true);
     let mut card_detail_actions_open = use_signal(|| false);
-    let mut card_detail_tab = use_signal(CardDetailContentTab::default);
+    let mut card_detail_tab = use_signal(card_detail_tab_from_current_url);
     let mut card_detail_discussion_mounted_for = use_signal(|| Option::<String>::None);
     let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
     let mut card_detail_overlay_press_started = use_signal(|| false);
@@ -491,7 +491,11 @@ pub fn KanbanPanel(
                 editing_card_detail.set(false);
                 card_detail_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
-                card_detail_tab.set(CardDetailContentTab::Description);
+                let routed_tab = card_detail_tab_from_current_url();
+                if routed_tab == CardDetailContentTab::Discussion {
+                    card_detail_discussion_mounted_for.set(Some(card.primary_flow_id.clone()));
+                }
+                card_detail_tab.set(routed_tab);
                 card_synthesis_history_open_id.set(None);
                 card_synthesis_selected_revision_id.set(None);
                 card_detail_overlay_press_started.set(false);
@@ -2134,6 +2138,7 @@ pub fn KanbanPanel(
                                             &selected_board_space_id(),
                                             &c.id,
                                         ));
+                                        replace_card_detail_tab_query(CardDetailContentTab::Description);
                                     }
                                 },
                                 div { class: "event-head",
@@ -2587,7 +2592,6 @@ pub fn KanbanPanel(
             if let Some(ref card) = selected_card() {
                 {
                     let card_id_label = short_protocol_id(&card.id);
-                    let card_link_path = flow_detail_deep_link_path(&selected_realm_id, &card.id);
                     let board_route_after_close =
                         kanban_card_detail_board_route(&selected_realm_id, &selected_board_space_id());
                     let route_is_card_detail = matches!(
@@ -2634,6 +2638,11 @@ pub fn KanbanPanel(
                         String::new()
                     };
                     let active_detail_tab = card_detail_tab();
+                    let card_link_path = flow_detail_deep_link_path_with_tab(
+                        &selected_realm_id,
+                        &card.id,
+                        active_detail_tab,
+                    );
                     let description_tab_class = if active_detail_tab == CardDetailContentTab::Description {
                         "card-detail-tab active"
                     } else {
@@ -3120,7 +3129,10 @@ pub fn KanbanPanel(
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
                                                         disabled: editing_card_detail(),
-                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Description),
+                                                        onclick: move |_| {
+                                                            card_detail_tab.set(CardDetailContentTab::Description);
+                                                            replace_card_detail_tab_query(CardDetailContentTab::Description);
+                                                        },
                                                         "Description"
                                                     }
                                                     button {
@@ -3130,7 +3142,10 @@ pub fn KanbanPanel(
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
                                                         disabled: editing_card_detail(),
-                                                        onclick: move |_| card_detail_tab.set(CardDetailContentTab::Synthesis),
+                                                        onclick: move |_| {
+                                                            card_detail_tab.set(CardDetailContentTab::Synthesis);
+                                                            replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
+                                                        },
                                                         "Synthesis"
                                                     }
                                                     button {
@@ -3145,6 +3160,7 @@ pub fn KanbanPanel(
                                                             move |_| {
                                                                 card_detail_discussion_mounted_for.set(Some(flow_id.clone()));
                                                                 card_detail_tab.set(CardDetailContentTab::Discussion);
+                                                                replace_card_detail_tab_query(CardDetailContentTab::Discussion);
                                                             }
                                                         },
                                                         "Discussion"
@@ -4743,11 +4759,83 @@ fn kanban_card_detail_board_route(realm_id: &str, board_id: &str) -> Route {
     }
 }
 
+fn card_detail_tab_slug(tab: CardDetailContentTab) -> &'static str {
+    match tab {
+        CardDetailContentTab::Description => "description",
+        CardDetailContentTab::Synthesis => "synthesis",
+        CardDetailContentTab::Discussion => "discussion",
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn card_detail_tab_from_slug(value: &str) -> Option<CardDetailContentTab> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "description" => Some(CardDetailContentTab::Description),
+        "synthesis" => Some(CardDetailContentTab::Synthesis),
+        "discussion" => Some(CardDetailContentTab::Discussion),
+        _ => None,
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn card_detail_tab_from_href(href: &str) -> Option<CardDetailContentTab> {
+    let url = url::Url::parse(href).ok()?;
+    url.query_pairs()
+        .find_map(|(key, value)| (key == "tab").then(|| card_detail_tab_from_slug(&value)))
+        .flatten()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn card_detail_tab_from_current_url() -> CardDetailContentTab {
+    web_sys::window()
+        .and_then(|window| window.location().href().ok())
+        .as_deref()
+        .and_then(card_detail_tab_from_href)
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn card_detail_tab_from_current_url() -> CardDetailContentTab {
+    CardDetailContentTab::default()
+}
+
+fn replace_card_detail_tab_query(tab: CardDetailContentTab) {
+    let Ok(encoded_slug) = serde_json::to_string(card_detail_tab_slug(tab)) else {
+        return;
+    };
+    let script = format!(
+        r#"
+(() => {{
+  const tab = {encoded_slug};
+  const url = new URL(window.location.href);
+  if (!url.pathname.includes("/task/")) {{
+    return;
+  }}
+  url.searchParams.set("tab", tab);
+  window.history.replaceState(null, "", `${{url.pathname}}${{url.search}}${{url.hash}}`);
+}})();
+"#
+    );
+    let _ = document::eval(&script);
+}
+
 fn flow_detail_deep_link_path(realm_id: &str, flow_id: &str) -> String {
     format!(
         "/kanban/{}/task/{}",
         card_detail_route_realm_id(realm_id),
         flow_id.trim()
+    )
+}
+
+fn flow_detail_deep_link_path_with_tab(
+    realm_id: &str,
+    flow_id: &str,
+    tab: CardDetailContentTab,
+) -> String {
+    format!(
+        "{}?tab={}",
+        flow_detail_deep_link_path(realm_id, flow_id),
+        card_detail_tab_slug(tab)
     )
 }
 
@@ -6726,6 +6814,57 @@ mod tests {
         assert_eq!(
             flow_detail_deep_link_path("", "ck:flow:abc"),
             format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ck:flow:abc")
+        );
+    }
+
+    #[test]
+    fn card_detail_tab_deep_link_round_trips() {
+        assert_eq!(
+            card_detail_tab_slug(CardDetailContentTab::Description),
+            "description"
+        );
+        assert_eq!(
+            card_detail_tab_from_slug("SYNTHESIS"),
+            Some(CardDetailContentTab::Synthesis)
+        );
+        assert_eq!(
+            card_detail_tab_from_slug("discussion"),
+            Some(CardDetailContentTab::Discussion)
+        );
+        assert_eq!(card_detail_tab_from_slug("activity"), None);
+    }
+
+    #[test]
+    fn card_detail_tab_reads_url_query() {
+        assert_eq!(
+            card_detail_tab_from_href(
+                "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=discussion"
+            ),
+            Some(CardDetailContentTab::Discussion)
+        );
+        assert_eq!(
+            card_detail_tab_from_href(
+                "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=synthesis"
+            ),
+            Some(CardDetailContentTab::Synthesis)
+        );
+        assert_eq!(
+            card_detail_tab_from_href(
+                "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:flow:f?tab=bad"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn card_detail_share_link_carries_current_tab() {
+        assert_eq!(
+            flow_detail_deep_link_path_with_tab(
+                "ck:space:ops",
+                "ck:flow:abc",
+                CardDetailContentTab::Discussion
+            ),
+            "/kanban/ck:space:ops/task/ck:flow:abc?tab=discussion"
         );
     }
 

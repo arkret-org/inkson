@@ -2010,22 +2010,32 @@
 .topbar-current-surface {
   display: none;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-radius: 999px;
-  padding: 3px 8px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  font-size: 11px;
-  font-weight: 750;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 72%, var(--accent-2));
+  border-radius: 8px;
+  padding: 0 12px 0 8px;
+  color: var(--text-on-accent);
+  background:
+    linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent-2) 70%, var(--accent)) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 28%, transparent),
+    0 7px 18px color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 13px;
+  font-weight: 850;
 }
 
 .topbar-current-surface .ui-icon {
-  width: 13px;
-  height: 13px;
-  color: var(--accent);
+  box-sizing: content-box;
+  width: 16px;
+  height: 16px;
+  padding: 3px;
+  border-radius: 6px;
+  color: currentColor;
+  background: color-mix(in srgb, var(--surface-solid) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .realm-context-bar {
