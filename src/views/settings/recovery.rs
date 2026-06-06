@@ -130,6 +130,24 @@ fn save_state(
     }
 }
 
+fn recovery_passphrase_state_confirmed(state: &RecoveryPassphraseState) -> bool {
+    state.status == "active" && !state.fingerprint.trim().is_empty()
+}
+
+pub(crate) fn recovery_passphrase_configured(
+    state_store: &LocalStateStore,
+    account_did: &str,
+) -> bool {
+    if account_did.trim().is_empty() {
+        return false;
+    }
+    state_store
+        .load_private_data(account_did, RECOVERY_PASSPHRASE_STATE_KEY)
+        .and_then(|raw| serde_json::from_str::<RecoveryPassphraseState>(&raw).ok())
+        .map(|state| recovery_passphrase_state_confirmed(&state))
+        .unwrap_or(false)
+}
+
 fn generate_words() -> Vec<String> {
     let mut buf = [0u8; WORD_COUNT * 2];
     if getrandom::fill(&mut buf).is_err() {
@@ -456,5 +474,26 @@ mod tests {
     #[test]
     fn wordlist_has_at_least_256_entries() {
         assert!(WORDLIST.len() >= 256);
+    }
+
+    #[test]
+    fn recovery_passphrase_requires_active_status_and_fingerprint() {
+        assert!(!recovery_passphrase_state_confirmed(
+            &RecoveryPassphraseState::default()
+        ));
+        assert!(!recovery_passphrase_state_confirmed(
+            &RecoveryPassphraseState {
+                status: "verification pending".to_owned(),
+                fingerprint: "sha256:abc".to_owned(),
+                updated_at: String::new(),
+            }
+        ));
+        assert!(recovery_passphrase_state_confirmed(
+            &RecoveryPassphraseState {
+                status: "active".to_owned(),
+                fingerprint: "sha256:abc".to_owned(),
+                updated_at: String::new(),
+            }
+        ));
     }
 }

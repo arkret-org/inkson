@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
+use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
 
 /// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
@@ -8,10 +9,12 @@ use crate::views::helpers::{ApiCallError, with_authed_api};
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
 /// is `true` — which the boot-time detection in `App` sets when this device
 /// is missing usable local MLS history and the server holds an
-/// `mls_account_secret` backup. The user supplies their recovery passphrase
+/// `mls_account_secret` backup. The user supplies their recovery key
 /// and we call
 /// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]
-/// to import the account secret and restore every `mls_history` backup.
+/// to import the account secret and restore every `mls_history` backup. The
+/// method name reflects the wire `passphrase_kdf` recipient method; the UI
+/// presents it as a generated recovery key.
 #[component]
 pub fn MlsUnlockPrompt(
     base_url: Signal<String>,
@@ -34,11 +37,15 @@ pub fn MlsUnlockPrompt(
         if busy() {
             return;
         }
-        let pass = passphrase();
-        if pass.is_empty() {
+        let raw_pass = passphrase();
+        if raw_pass.trim().is_empty() {
             status.set(crate::i18n::tr("mls_unlock.status.enter_passphrase"));
             return;
         }
+        let Some(pass) = normalize_recovery_key_input(&raw_pass) else {
+            status.set(crate::i18n::tr("mls_unlock.status.invalid_recovery_key"));
+            return;
+        };
         let base = base_url();
         let session = token();
         let actor = actor_did();
@@ -166,6 +173,57 @@ pub fn MlsUnlockPrompt(
             }
             if !status().is_empty() {
                 div { class: "muted", "data-testid": "mls-unlock-status", "{status}" }
+            }
+        }
+    }
+}
+
+/// Fresh-device recovery diagnostic shown when encrypted Realm/history exists
+/// but this account has no recovery-key-backed `mls_account_secret` backup on
+/// the server. In that state `MlsUnlockPrompt` cannot ask for a recovery key
+/// because there is no account-secret backup to open, so the app must tell the
+/// user to create the recovery backup from an existing unlocked device instead
+/// of silently rendering empty encrypted surfaces.
+#[component]
+pub fn MlsRecoverySetupMissingBanner(
+    mut needs_mls_recovery_setup: Signal<bool>,
+    actor_did: Signal<String>,
+) -> Element {
+    if !needs_mls_recovery_setup() {
+        return rsx! {};
+    }
+
+    let actor = actor_did();
+    if !actor.trim().is_empty() {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        if matches!(
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor.trim()),
+            Ok(Some(_))
+        ) {
+            return rsx! {};
+        }
+    }
+
+    rsx! {
+        div {
+            class: "event mls-recovery-missing-banner",
+            "data-testid": "mls-recovery-missing-banner",
+            role: "region",
+            "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
+            div { class: "event-head",
+                strong { {crate::i18n::tr("mls_recovery_missing.title")} }
+                span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }
+            }
+            div { class: "muted",
+                {crate::i18n::tr("mls_recovery_missing.description")}
+            }
+            div { class: "mls-unlock-row",
+                button {
+                    class: "secondary",
+                    "data-testid": "mls-recovery-missing-dismiss",
+                    onclick: move |_| needs_mls_recovery_setup.set(false),
+                    {crate::i18n::tr("mls_recovery_missing.button_dismiss")}
+                }
             }
         }
     }

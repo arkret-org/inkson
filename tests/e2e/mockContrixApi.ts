@@ -182,7 +182,7 @@ export async function mockCokretApi(page: Page) {
         scope: "openid profile",
       });
     }
-    if (!url.pathname.startsWith("/_cokret/")) {
+    if (!url.pathname.startsWith("/_cokret/") && !url.pathname.startsWith("/_soland/")) {
       return route.continue();
     }
 
@@ -348,10 +348,10 @@ export async function mockCokretApi(page: Page) {
       let syncToken = "sx:e2e:event";
       const submittedEvents = Array.isArray(body.events) ? body.events : [body];
       for (const event of submittedEvents) {
-        if (event.kind !== "ck.realm.create") {
+        const raw = JSON.stringify(event);
+        if (event.kind !== "ck.realm.create" && !raw.includes("ck.realm.create")) {
           continue;
         }
-        const raw = JSON.stringify(event);
         const id =
           event.realm_id ??
           event.payload?.realm_id ??

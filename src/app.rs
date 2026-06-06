@@ -589,6 +589,7 @@ pub fn RouterView() -> Element {
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
+    let mut notifications_drawer_open = use_signal(|| false);
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
@@ -607,6 +608,11 @@ pub fn RouterView() -> Element {
     // would lose history. Consumed by `MlsBackupPrompt`. Mutually exclusive
     // with `needs_mls_unlock`: restore (unlock) always wins.
     let needs_mls_backup = use_signal(|| false);
+    // Fresh-device diagnostic: encrypted Realm/history exists, but the server
+    // has no passphrase-backed account-secret backup to unlock. This is
+    // distinct from `needs_mls_unlock`: there is nothing this browser can
+    // decrypt until an existing device creates the recovery backup.
+    let needs_mls_recovery_setup = use_signal(|| false);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -916,6 +922,7 @@ pub fn RouterView() -> Element {
         let mut seen_detection_key = mls_unlock_detection_key_seen;
         let mut needs_mls_unlock = needs_mls_unlock;
         let mut needs_mls_backup = needs_mls_backup;
+        let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
         let mut restore_payload_cache = mls_restore_payload_cache;
         let state_store_for_detection = state_store;
         use_effect(move || {
@@ -927,6 +934,7 @@ pub fn RouterView() -> Element {
             if session.trim().is_empty() {
                 needs_mls_unlock.set(false);
                 needs_mls_backup.set(false);
+                needs_mls_recovery_setup.set(false);
                 restore_payload_cache.set(None);
                 return;
             }
@@ -956,6 +964,8 @@ pub fn RouterView() -> Element {
             //      detection re-run and re-evaluate the backup prompt.
             let has_local_mls_snapshot =
                 !state_store_for_detection.read().mls_snapshots().is_empty();
+            let has_encrypted_realm_projection =
+                local_state_has_encrypted_realm(&state_store_for_detection.read());
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
                 &actor,
@@ -963,7 +973,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
@@ -996,6 +1006,7 @@ pub fn RouterView() -> Element {
                             restore_payload_cache.set(Some(payload));
                             needs_mls_unlock.set(true);
                             needs_mls_backup.set(false);
+                            needs_mls_recovery_setup.set(false);
                         } else {
                             restore_payload_cache.set(None);
                             needs_mls_unlock.set(false);
@@ -1007,6 +1018,16 @@ pub fn RouterView() -> Element {
                                     &device,
                                 );
                             needs_mls_backup.set(should_backup);
+                            let should_recovery_setup = {
+                                let store = state_store_for_detection.read();
+                                mls_recovery_setup_missing(
+                                    &payload,
+                                    &store,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                )
+                            };
+                            needs_mls_recovery_setup.set(!should_backup && should_recovery_setup);
                         }
                     }
                     Err(error) => {
@@ -1098,6 +1119,7 @@ pub fn RouterView() -> Element {
         let last_error_for_bootstrap = last_error;
         let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
         let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
+        let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         use_effect(move || {
             let selected = selected_realm_id();
@@ -1137,6 +1159,9 @@ pub fn RouterView() -> Element {
                 .read()
                 .mls_snapshot_for(&bootstrap_realm_id)
                 .is_some();
+            let has_encrypted_realm_projection = state_store_for_bootstrap
+                .read()
+                .realm_projection_is_mls_encrypted(&bootstrap_realm_id);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
                 &actor,
@@ -1144,7 +1169,7 @@ pub fn RouterView() -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -1227,6 +1252,7 @@ pub fn RouterView() -> Element {
                             restore_payload_cache_for_bootstrap.set(Some(payload));
                             needs_mls_unlock_for_bootstrap.set(true);
                             needs_mls_backup_for_bootstrap.set(false);
+                            needs_mls_recovery_setup_for_bootstrap.set(false);
                         } else {
                             let should_backup =
                                 crate::mls::account_recovery::mls_backup_prompt_required(
@@ -1236,6 +1262,17 @@ pub fn RouterView() -> Element {
                                     &detect_device,
                                 );
                             needs_mls_backup_for_bootstrap.set(should_backup);
+                            let should_recovery_setup = {
+                                let store = state_store_for_probe.read();
+                                mls_recovery_setup_missing(
+                                    &payload,
+                                    &store,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                )
+                            };
+                            needs_mls_recovery_setup_for_bootstrap
+                                .set(!should_backup && should_recovery_setup);
                         }
                     }
                     Err(error) => {
@@ -1502,6 +1539,12 @@ pub fn RouterView() -> Element {
     } else {
         route.clone()
     };
+    let show_recovery_setup_prompt = has_session
+        && !matches!(
+            &content_route,
+            Route::Recovery | Route::SettingsRecovery | Route::Recover
+        )
+        && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
     rsx! {
         style { "{STYLE}" }
@@ -1545,6 +1588,12 @@ pub fn RouterView() -> Element {
                     return;
                 }
                 if key == "Escape" {
+                    if notifications_drawer_open() {
+                        notifications_drawer_open.set(false);
+                        event.prevent_default();
+                        event.stop_propagation();
+                        return;
+                    }
                     if shortcut_help_open() {
                         shortcut_help_open.set(false);
                         event.prevent_default();
@@ -1609,6 +1658,47 @@ pub fn RouterView() -> Element {
             // policy-deny dispatcher. Renders nothing when no error
             // is queued.
             crate::components::CircleErrorToast { i18n: i18n_signal }
+            if show_recovery_setup_prompt {
+                div {
+                    class: "event recovery-setup-banner",
+                    "data-testid": "recovery-setup-banner",
+                    role: "region",
+                    "aria-label": "Recovery setup is incomplete",
+                    div { class: "event-head",
+                        strong { "Recovery setup is incomplete" }
+                        span { class: "muted", "first-time setup" }
+                    }
+                    div { class: "muted",
+                        "Set up at least one recovery method before relying on this account. A recovery key or encrypted vault is stored client-side/server-side as ciphertext only; Cokret cannot recover the plaintext for you."
+                    }
+                    div { class: "actions",
+                        Link {
+                            class: "primary",
+                            "data-testid": "recovery-setup-open-recovery",
+                            to: Route::Recovery,
+                            UiIcon { name: "key" }
+                            "Configure recovery"
+                        }
+                        Link {
+                            class: "secondary",
+                            "data-testid": "recovery-setup-open-encryption",
+                            to: Route::SettingsSection { section: "encryption".to_owned() },
+                            UiIcon { name: "lock" }
+                            "Encrypted history status"
+                        }
+                    }
+                    div { class: "muted",
+                        "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up."
+                    }
+                }
+            }
+            // Fresh-device diagnostic: encrypted history exists, but no
+            // passphrase-backed account-secret backup is available to unlock
+            // on this browser.
+            crate::components::MlsRecoverySetupMissingBanner {
+                needs_mls_recovery_setup,
+                actor_did: account_did,
+            }
             // Step 3 of the account-MLS-secret auto-unlock flow: a
             // recovery-passphrase banner that restores encrypted history on
             // a fresh device. Renders nothing unless boot detection flagged
@@ -1667,12 +1757,25 @@ pub fn RouterView() -> Element {
                     },
                     UiIcon { name: theme_toggle_icon }
                 }
-                Link {
-                    class: "btn icon sm ghost topbar-notifications-link",
+                button {
+                    r#type: "button",
+                    class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
                     "data-testid": "mobile-topbar-notifications-button",
-                    to: Route::Notifications,
                     title: "Notifications",
                     "aria-label": "Notifications",
+                    "aria-expanded": "{notifications_drawer_open()}",
+                    onclick: move |event: dioxus::events::MouseEvent| {
+                        event.stop_propagation();
+                        mobile_nav_open.set(false);
+                        account_menu_open.set(false);
+                        server_menu_open.set(false);
+                        if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                            palette_open.set(false);
+                            topbar_search_expanded.set(false);
+                            global_query.set(String::new());
+                        }
+                        notifications_drawer_open.toggle();
+                    },
                     UiIcon { name: "inbox" }
                     span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                 }
@@ -2556,12 +2659,25 @@ pub fn RouterView() -> Element {
                                 span { "data-testid": "last-error", "{err}" }
                             }
                         }
-                        Link {
-                            class: "btn icon sm ghost topbar-notifications-link",
+                        button {
+                            r#type: "button",
+                            class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
                             "data-testid": "topbar-notifications-button",
-                            to: Route::Notifications,
                             title: crate::i18n::tr("nav.notifications"),
                             "aria-label": crate::i18n::tr("nav.notifications"),
+                            "aria-expanded": "{notifications_drawer_open()}",
+                            onclick: move |event: dioxus::events::MouseEvent| {
+                                event.stop_propagation();
+                                mobile_nav_open.set(false);
+                                account_menu_open.set(false);
+                                server_menu_open.set(false);
+                                if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                                    palette_open.set(false);
+                                    topbar_search_expanded.set(false);
+                                    global_query.set(String::new());
+                                }
+                                notifications_drawer_open.toggle();
+                            },
                             UiIcon { name: "inbox" }
                             span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
@@ -3364,6 +3480,49 @@ pub fn RouterView() -> Element {
                 }
             }
             }
+            if notifications_drawer_open() {
+                div {
+                    class: "notifications-drawer-layer",
+                    "data-testid": "notifications-drawer",
+                    button {
+                        r#type: "button",
+                        class: "notifications-drawer-scrim",
+                        "data-testid": "notifications-drawer-scrim",
+                        "aria-label": "Close notifications",
+                        onclick: move |_| notifications_drawer_open.set(false),
+                    }
+                    aside {
+                        class: "notifications-drawer-panel",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        "aria-label": crate::i18n::tr("nav.notifications"),
+                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                        div { class: "notifications-drawer-header",
+                            div { class: "notifications-drawer-title",
+                                UiIcon { name: "inbox" }
+                                span { {crate::i18n::tr("nav.notifications")} }
+                            }
+                            button {
+                                r#type: "button",
+                                class: "btn icon sm ghost",
+                                "data-testid": "notifications-drawer-close",
+                                title: crate::i18n::tr("common.close"),
+                                "aria-label": crate::i18n::tr("common.close"),
+                                onclick: move |_| notifications_drawer_open.set(false),
+                                UiIcon { name: "x" }
+                            }
+                        }
+                        crate::views::notifications::NotificationsPanel {
+                            base_url: base_url(),
+                            account_did: account_did(),
+                            device_id: device_id(),
+                            token,
+                            state_store,
+                            on_navigate: EventHandler::new(move |_| notifications_drawer_open.set(false)),
+                        }
+                    }
+                }
+            }
             // A6.4 — shortcut help overlay; toggled by the `?` global
             // key handler on the shell div above.
             crate::components::shortcut_help::ShortcutHelpOverlay {
@@ -3950,6 +4109,43 @@ fn server_key(server_url: &str) -> String {
 
 fn same_server_url(left: &str, right: &str) -> bool {
     server_key(left) == server_key(right)
+}
+
+fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> bool {
+    state_store
+        .load()
+        .realm_tree_projections
+        .values()
+        .any(crate::security_state::realm_projection_is_encrypted)
+}
+
+fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_did: &str) -> bool {
+    let actor = actor_did.trim();
+    if actor.is_empty() {
+        return false;
+    }
+    !(crate::views::recovery::recovery_options_configured(state_store, actor)
+        || crate::views::settings::recovery::recovery_passphrase_configured(state_store, actor)
+        || crate::components::mls_recovery_backup_configured(state_store, actor))
+}
+
+fn mls_recovery_setup_missing(
+    list_payload: &Value,
+    state_store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+) -> bool {
+    if crate::mls::account_recovery::select_mls_account_secret_backup(list_payload).is_some() {
+        return false;
+    }
+    if matches!(
+        crate::mls::runtime::load_account_mls_secret(secure_store, actor_did),
+        Ok(Some(_))
+    ) {
+        return false;
+    }
+    local_state_has_encrypted_realm(state_store)
+        || !crate::mls::account_recovery::select_mls_history_backups(list_payload).is_empty()
 }
 
 fn mls_welcome_bootstrap_key(
@@ -5653,6 +5849,63 @@ mod tests {
         assert!(!missing_welcome.to_ascii_lowercase().contains("passphrase"));
         assert!(missing_welcome.contains("MLS Welcome"));
         assert!(missing_welcome.contains("encrypted MLS history backup"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
+        let mut store = isolated_store("mls-recovery-missing");
+        store.save_realm_tree_projection(
+            "ck:realm:encrypted".to_owned(),
+            serde_json::json!({
+                "summary": {
+                    "title": "Encrypted",
+                    "encryption_profile": "mls_rfc9420",
+                }
+            }),
+        );
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let payload = serde_json::json!({ "backups": [] });
+
+        assert!(mls_recovery_setup_missing(
+            &payload,
+            &store,
+            &secure,
+            "did:web:alice.example",
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
+        let mut store = isolated_store("mls-recovery-backed-up");
+        store.save_realm_tree_projection(
+            "ck:realm:encrypted".to_owned(),
+            serde_json::json!({
+                "summary": {
+                    "title": "Encrypted",
+                    "encryption_profile": "mls_rfc9420",
+                }
+            }),
+        );
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let payload = serde_json::json!({
+            "backups": [{
+                "backup_id": "ck:backup:passphrase",
+                "encryption": { "recipient_method": "passphrase_kdf" },
+                "contents": [{
+                    "item_type": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_TYPE,
+                    "secret_id": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID,
+                }],
+            }]
+        });
+
+        assert!(!mls_recovery_setup_missing(
+            &payload,
+            &store,
+            &secure,
+            "did:web:alice.example",
+        ));
     }
 
     #[test]

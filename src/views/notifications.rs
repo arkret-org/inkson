@@ -60,6 +60,7 @@ pub fn NotificationsPanel(
     device_id: String,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
+    #[props(default)] on_navigate: Option<EventHandler<()>>,
 ) -> Element {
     let initial_state = state_store.read().load();
     let initial_notifications = hydrate_notifications(
@@ -449,6 +450,7 @@ pub fn NotificationsPanel(
                     Link {
                         class: "secondary",
                         to: Route::SettingsSection { section: "notifications".to_owned() },
+                        onclick: move |_| if let Some(handler) = on_navigate.as_ref() { handler.call(()); },
                         UiIcon { name: "settings" }
                         {crate::i18n::tr("notifications.settings_card_open")}
                     }

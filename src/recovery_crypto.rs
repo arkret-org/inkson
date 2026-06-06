@@ -55,8 +55,7 @@ pub const VAULT_SALT_LEN: usize = 16;
 pub const VAULT_NONCE_LEN: usize = 24;
 
 /// Length of the high-entropy Recovery Key in bytes. 32 bytes = 256 bits
-/// of entropy; encoded as four groups of 6 base32-style characters this
-/// gives the user a memorable, copy-pasteable string.
+/// of entropy; encoded as a 24-word BIP-39 mnemonic for user custody.
 pub const RECOVERY_KEY_BYTES: usize = 32;
 
 /// Length of the producer-generated `nonce_salt` (key-management.md §7.5: "至少
@@ -316,52 +315,58 @@ pub fn open_vault(
     Ok(plaintext)
 }
 
-/// Generate a fresh Recovery Key as a human-readable string: 6 groups of
-/// 5-6 characters drawn from a Crockford-style alphabet (0-9 + A-Z minus
-/// `I/L/O/U` to avoid look-alikes). 30 characters of base32 ≈ 150 bits
-/// of entropy, which is plenty for a fallback secret.
+/// Generate a fresh Recovery Key as a BIP-39 English mnemonic.
+///
+/// We use 32 bytes of OS randomness, encoded as 24 words with the BIP-39
+/// checksum. The returned string is lowercase words separated by single spaces.
+/// This is easier to write down while keeping the same 256-bit secret material.
 pub fn generate_recovery_key() -> Result<String> {
     let mut bytes = [0u8; RECOVERY_KEY_BYTES];
     fill(&mut bytes).map_err(|err| anyhow!("recovery key rng: {err}"))?;
     Ok(format_recovery_key(&bytes))
 }
 
-/// Render the recovery-key string from raw bytes — split out so the
+/// Render the recovery-key mnemonic from raw bytes — split out so the
 /// generator is testable without consuming entropy.
 pub fn format_recovery_key(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    let mut bits: u64 = 0;
-    let mut nbits: u32 = 0;
-    let mut groups: Vec<String> = Vec::with_capacity(6);
-    let mut current = String::with_capacity(5);
-    let mut emitted = 0usize;
-    for &b in bytes {
-        bits = (bits << 8) | u64::from(b);
-        nbits += 8;
-        while nbits >= 5 && emitted < 30 {
-            nbits -= 5;
-            let idx = ((bits >> nbits) & 0x1F) as usize;
-            current.push(ALPHABET[idx] as char);
-            emitted += 1;
-            if current.len() == 5 {
-                groups.push(std::mem::take(&mut current));
-            }
-        }
-        if emitted >= 30 {
-            break;
-        }
+    bip39::Mnemonic::from_entropy_in(bip39::Language::English, bytes)
+        .map(|mnemonic| mnemonic.words().collect::<Vec<_>>().join(" "))
+        .expect("RECOVERY_KEY_BYTES is valid BIP-39 entropy length")
+}
+
+/// Normalize user-entered recovery-key material before using it as a KEK
+/// source.
+///
+/// Only the current 24-word BIP-39 Recovery Key format is accepted.
+/// Valid phrases are canonicalized to lowercase words with single spaces.
+pub fn normalize_recovery_key_input(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-    if !current.is_empty() {
-        groups.push(current);
+
+    let collapsed = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
     }
-    groups.join("-")
+
+    if collapsed.split_whitespace().count() != 24 {
+        return None;
+    }
+
+    let mnemonic_candidate = collapsed.to_ascii_lowercase();
+    let mnemonic =
+        bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic_candidate.as_str()).ok()?;
+    Some(mnemonic.words().collect::<Vec<_>>().join(" "))
 }
 
 /// SHA-256 the recovery key (UTF-8) and return `"sha256:<hex>"`. We only
 /// persist the digest on disk so the plaintext is gone the moment the
 /// user dismisses the "copy / print" affordance.
 pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
-    let digest = Sha256::digest(recovery_key.as_bytes());
+    let canonical = normalize_recovery_key_input(recovery_key)
+        .expect("recovery key fingerprint requires a valid 24-word BIP-39 key");
+    let digest = Sha256::digest(canonical.as_bytes());
     format!("sha256:{}", hex_lower(&digest))
 }
 
@@ -696,20 +701,11 @@ mod tests {
     }
 
     #[test]
-    fn recovery_key_format_is_grouped() {
+    fn recovery_key_format_is_bip39_mnemonic() {
         let key = format_recovery_key(&[0xFFu8; RECOVERY_KEY_BYTES]);
-        let groups: Vec<&str> = key.split('-').collect();
-        assert!(
-            groups.len() >= 5,
-            "expected 5-6 dash-delimited groups, got: {key}"
-        );
-        for g in &groups {
-            assert!(!g.is_empty());
-            assert!(g.chars().all(|c| {
-                let alphabet = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-                alphabet.contains(&(c as u8))
-            }));
-        }
+        let words: Vec<&str> = key.split_whitespace().collect();
+        assert_eq!(words.len(), 24, "expected 24 BIP-39 words, got: {key}");
+        assert!(bip39::Mnemonic::parse_in(bip39::Language::English, key.as_str()).is_ok());
     }
 
     #[test]
@@ -720,8 +716,42 @@ mod tests {
     }
 
     #[test]
+    fn recovery_key_input_accepts_only_bip39_24_word_keys() {
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let noisy_phrase = phrase
+            .split_whitespace()
+            .map(str::to_ascii_uppercase)
+            .collect::<Vec<_>>()
+            .join("   ");
+        assert_eq!(normalize_recovery_key_input(&noisy_phrase), Some(phrase));
+
+        assert_eq!(
+            normalize_recovery_key_input(" h5bf5-xg2y7-zrw32-yrc2d-ks3ke-09c84 "),
+            None,
+            "dash-delimited recovery codes are not accepted"
+        );
+
+        let custom_passphrase = " exact  custom  passphrase ";
+        assert_eq!(
+            normalize_recovery_key_input(custom_passphrase),
+            None,
+            "custom passphrases are not accepted"
+        );
+
+        let twelve_word_passphrase = "\
+            ABANDON abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\
+        ";
+        assert_eq!(
+            normalize_recovery_key_input(twelve_word_passphrase),
+            None,
+            "shorter BIP-39 mnemonics are not accepted as recovery keys"
+        );
+    }
+
+    #[test]
     fn fingerprint_is_stable_and_hex() {
-        let fp = fingerprint_recovery_key("EAGLE-HARP-SUNDAY-ROOK-9F2C-Q1A0");
+        let phrase = format_recovery_key(&[0x00u8; RECOVERY_KEY_BYTES]);
+        let fp = fingerprint_recovery_key(&phrase);
         assert!(fp.starts_with("sha256:"));
         assert_eq!(fp.len(), "sha256:".len() + 64);
         assert!(
@@ -729,7 +759,13 @@ mod tests {
                 .skip("sha256:".len())
                 .all(|c| c.is_ascii_hexdigit())
         );
-        let fp2 = fingerprint_recovery_key("EAGLE-HARP-SUNDAY-ROOK-9F2C-Q1A0");
+        let fp2 = fingerprint_recovery_key(
+            &phrase
+                .split_whitespace()
+                .map(str::to_ascii_uppercase)
+                .collect::<Vec<_>>()
+                .join("   "),
+        );
         assert_eq!(fp, fp2);
     }
 

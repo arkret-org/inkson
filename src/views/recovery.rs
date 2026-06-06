@@ -7,7 +7,7 @@
 //!   XChaCha20-Poly1305 before being POSTed to `PUT /_cokret/self/keys/backups/{backup_id}` via
 //!   [`crate::api::CokretApi::put_key_backup`]. The server never sees the passphrase or the
 //!   plaintext.
-//! - **Recovery Key**: 256 bits of entropy, formatted as Crockford-base32 groups. The plaintext
+//! - **Recovery Key**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. The plaintext
 //!   only lives in memory between Generate and the user's Copy / Print interaction; only a SHA-256
 //!   fingerprint plus rotation timestamp are persisted via `LocalStateStore::save_private_data`.
 //! - **Social Recovery**: guardian list + Shamir threshold + last-rehearsal timestamp persisted as
@@ -174,6 +174,22 @@ mod restore_parse_tests {
     fn parse_backup_summary_rejects_missing_id() {
         assert!(parse_backup_summary(&json!({})).is_none());
     }
+
+    #[test]
+    fn recovery_state_without_user_material_is_not_configured() {
+        assert!(!recovery_state_has_user_material(&RecoveryState::default()));
+    }
+
+    #[test]
+    fn recovery_state_with_key_or_vault_is_configured() {
+        let mut keyed = RecoveryState::default();
+        keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
+        assert!(recovery_state_has_user_material(&keyed));
+
+        let mut vaulted = RecoveryState::default();
+        vaulted.vault_backup_id = "ck:backup:abc".to_owned();
+        assert!(recovery_state_has_user_material(&vaulted));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +263,29 @@ fn save_state(state_store: &mut Signal<LocalStateStore>, account_key: &str, stat
             .write()
             .save_private_data(account_key, RECOVERY_STATE_KEY, payload);
     }
+}
+
+fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
+    !state.vault_backup_id.trim().is_empty()
+        || !state.recovery_key_fingerprint.trim().is_empty()
+        || state
+            .guardians
+            .iter()
+            .any(|guardian| !guardian.did.trim().is_empty() || !guardian.label.trim().is_empty())
+}
+
+pub(crate) fn recovery_options_configured(
+    state_store: &LocalStateStore,
+    account_key: &str,
+) -> bool {
+    if account_key.trim().is_empty() {
+        return false;
+    }
+    state_store
+        .load_private_data(account_key, RECOVERY_STATE_KEY)
+        .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
+        .map(|state| recovery_state_has_user_material(&state))
+        .unwrap_or(false)
 }
 
 fn fmt_relative(iso: &str) -> String {

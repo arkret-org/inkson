@@ -489,6 +489,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("chat.empty_discussions", "No discussion tracks available.");
     dict.set("chat.empty_messages", "No messages yet.");
+    dict.set("chat.loading_messages", "Loading discussion...");
     // F-CHAT-DEAD-UI-1: discussion settings panel.
     dict.set("chat.settings.mute_notifications", "Mute notifications");
     dict.set("chat.settings.read_receipts", "Read receipts");
@@ -626,30 +627,31 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.social_section", "Social Recovery");
     dict.set("mls_unlock.aria_label", "Unlock encrypted history");
     dict.set("mls_unlock.title", "Unlock encrypted history");
-    dict.set("mls_unlock.subtitle", "account MLS secret");
+    dict.set("mls_unlock.subtitle", "24-word recovery key");
     dict.set(
         "mls_unlock.description",
-        "This device doesn't have your account MLS history secret yet. Enter your recovery passphrase to restore encrypted realms from your account backup.",
+        "This device doesn't have your encrypted history key yet. Enter the 24-word recovery key from your first device to restore encrypted realms from your account backup.",
     );
     dict.set(
         "mls_unlock.loading_hint",
-        "Deriving the recovery key and restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
+        "Restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
     );
-    dict.set("mls_unlock.placeholder", "Recovery passphrase");
+    dict.set("mls_unlock.placeholder", "24-word recovery key");
     dict.set("mls_unlock.button_idle", "Unlock history");
     dict.set("mls_unlock.button_busy", "Unlocking...");
     dict.set(
         "mls_unlock.status.enter_passphrase",
-        "Enter your recovery passphrase to unlock encrypted history.",
+        "Enter your 24-word recovery key to unlock encrypted history.",
+    );
+    dict.set(
+        "mls_unlock.status.invalid_recovery_key",
+        "Enter the 24 words exactly as shown on the device that created the backup.",
     );
     dict.set(
         "mls_unlock.status.fetching",
         "Looking up encrypted history backups...",
     );
-    dict.set(
-        "mls_unlock.status.restoring_prefix",
-        "Deriving recovery key and restoring",
-    );
+    dict.set("mls_unlock.status.restoring_prefix", "Restoring");
     dict.set(
         "mls_unlock.status.restoring_suffix",
         "encrypted backup(s). This can take a few seconds.",
@@ -657,46 +659,60 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "Restored");
     dict.set("mls_unlock.status.restored_suffix", "encrypted space(s).");
     dict.set("mls_unlock.status.failed_suffix", "failed");
+    dict.set(
+        "mls_recovery_missing.aria_label",
+        "Encrypted history recovery is not configured",
+    );
+    dict.set("mls_recovery_missing.title", "Recovery backup is missing");
+    dict.set(
+        "mls_recovery_missing.subtitle",
+        "encrypted history cannot unlock here",
+    );
+    dict.set(
+        "mls_recovery_missing.description",
+        "This browser can see an encrypted Realm, but the server does not have a recovery-key backup for it. Open an existing unlocked device, create the encrypted-history recovery backup, then reload this browser.",
+    );
+    dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 
     // One-time account-MLS-secret BACKUP prompt (mirror of mls_unlock).
     dict.set("mls_backup.aria_label", "Back up encrypted history");
     dict.set("mls_backup.title", "Protect your encrypted history");
-    dict.set("mls_backup.subtitle", "account MLS secret");
+    dict.set("mls_backup.subtitle", "24 recovery words");
     dict.set(
         "mls_backup.description",
-        "You're using encryption but haven't set a recovery passphrase yet. Without one, switching browsers or devices will lose your encrypted history. Set a passphrase to back up your account secret.",
+        "You're using encryption, but this account does not have an encrypted-history recovery backup yet. Create a 24-word recovery key so a fresh browser or device can restore the same history.",
     );
     dict.set(
         "mls_backup.warning.passphrase_loss",
-        "Important: this passphrase is never stored. If you lose it you cannot recover encrypted history on a new device (devices already set up keep working).",
+        "Save the 24 recovery words when they appear. They are shown once and are not stored by Cokret; existing devices keep working if you lose them, but new devices cannot restore this history.",
     );
-    dict.set("mls_backup.placeholder", "Recovery passphrase");
-    dict.set("mls_backup.placeholder_confirm", "Confirm passphrase");
-    dict.set("mls_backup.button_idle", "Create backup");
+    dict.set("mls_backup.button_idle", "Create recovery key");
     dict.set("mls_backup.button_busy", "Backing up...");
     dict.set("mls_backup.button_dismiss", "Remind me later");
+    dict.set("mls_backup.button_saved", "I saved the key");
     dict.set(
-        "mls_backup.hint.too_weak",
-        "Choose a stronger passphrase: use 24+ characters or several random words (minimum strength is Good, 3/5).",
+        "mls_backup.generated_key_label",
+        "Your 24-word recovery key",
     );
-    dict.set("mls_backup.hint.mismatch", "Passphrases don't match.");
     dict.set(
-        "mls_backup.status.enter_passphrase",
-        "Enter a recovery passphrase to back up your account secret.",
-    );
-    dict.set("mls_backup.status.mismatch", "Passphrases don't match.");
-    dict.set(
-        "mls_backup.status.too_weak",
-        "Choose a stronger passphrase (minimum strength is Good, 3/5).",
+        "mls_backup.generated_key_warning",
+        "Store these words now. They will disappear when you close this prompt.",
     );
     dict.set(
         "mls_backup.status.uploading",
         "Encrypting and uploading backup...",
     );
-    dict.set("mls_backup.status.created", "Backup created.");
+    dict.set(
+        "mls_backup.status.created",
+        "Backup created. Save the 24 recovery words now.",
+    );
+    dict.set(
+        "mls_backup.status.generate_failed",
+        "Recovery key generation failed:",
+    );
 
-    // X11.1 — persistent MLS recovery-passphrase settings section.
-    dict.set("settings.mls_recovery.title", "MLS recovery passphrase");
+    // X11.1 — persistent MLS recovery-key settings section.
+    dict.set("settings.mls_recovery.title", "Encrypted history recovery");
     dict.set(
         "settings.mls_recovery.status.loading",
         "Checking backup status…",
@@ -707,24 +723,15 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "settings.mls_recovery.status.backed_up",
-        "✓ Backed up — your account secret is protected by a recovery passphrase.",
+        "Backed up — encrypted history can be restored with your 24-word recovery key.",
     );
     dict.set(
         "settings.mls_recovery.status.not_backed_up",
-        "⚠ Not backed up — set a recovery passphrase so a fresh browser or device can restore your encrypted history.",
+        "Not backed up — create a 24-word recovery key so a fresh browser or device can restore your encrypted history.",
     );
-    dict.set(
-        "settings.mls_recovery.passphrase_label",
-        "Recovery passphrase",
-    );
-    dict.set(
-        "settings.mls_recovery.strength_prefix",
-        "Passphrase strength",
-    );
-    dict.set("settings.mls_recovery.strength_min", "Minimum: good (3/5).");
     dict.set(
         "settings.mls_recovery.submit",
-        "Set / Replace recovery passphrase",
+        "Create / replace recovery key words",
     );
 
     // Space-admin view (section labels)
@@ -1508,6 +1515,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("chat.empty_discussions", "暂无可用讨论 track。");
     dict.set("chat.empty_messages", "尚无消息。");
+    dict.set("chat.loading_messages", "正在加载讨论...");
     // F-CHAT-DEAD-UI-1: 与 en dict 同步的讨论设置面板文案。
     dict.set("chat.settings.mute_notifications", "静音通知");
     dict.set("chat.settings.read_receipts", "已读回执");
@@ -1645,27 +1653,28 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.social_section", "社交恢复");
     dict.set("mls_unlock.aria_label", "解锁加密历史");
     dict.set("mls_unlock.title", "解锁加密历史");
-    dict.set("mls_unlock.subtitle", "账号 MLS secret");
+    dict.set("mls_unlock.subtitle", "24 词恢复密钥");
     dict.set(
         "mls_unlock.description",
-        "此设备还没有你的账号 MLS 历史 secret。输入恢复口令即可从账号备份恢复加密空间。",
+        "此设备还没有你的加密历史密钥。输入第一台设备上生成的 24 词恢复密钥，即可从账号备份恢复加密空间。",
     );
     dict.set(
         "mls_unlock.loading_hint",
-        "派生恢复密钥并批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
+        "批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
     );
-    dict.set("mls_unlock.placeholder", "恢复口令");
+    dict.set("mls_unlock.placeholder", "24 词恢复密钥");
     dict.set("mls_unlock.button_idle", "解锁历史");
     dict.set("mls_unlock.button_busy", "正在解锁…");
     dict.set(
         "mls_unlock.status.enter_passphrase",
-        "输入恢复口令以解锁加密历史。",
+        "输入 24 词恢复密钥以解锁加密历史。",
+    );
+    dict.set(
+        "mls_unlock.status.invalid_recovery_key",
+        "请完整输入创建备份时显示的 24 个恢复词。",
     );
     dict.set("mls_unlock.status.fetching", "正在查找加密历史备份…");
-    dict.set(
-        "mls_unlock.status.restoring_prefix",
-        "正在派生恢复密钥并恢复",
-    );
+    dict.set("mls_unlock.status.restoring_prefix", "正在恢复");
     dict.set(
         "mls_unlock.status.restoring_suffix",
         "个加密备份，可能需要几秒钟。",
@@ -1673,43 +1682,45 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "已恢复");
     dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
     dict.set("mls_unlock.status.failed_suffix", "个失败");
+    dict.set("mls_recovery_missing.aria_label", "加密历史尚未配置恢复");
+    dict.set("mls_recovery_missing.title", "缺少恢复备份");
+    dict.set("mls_recovery_missing.subtitle", "此浏览器无法解锁加密历史");
+    dict.set(
+        "mls_recovery_missing.description",
+        "此浏览器能看到加密 Realm，但服务器上没有可用的加密历史恢复备份。请在已有且已解锁的设备上创建加密历史恢复备份，然后刷新此浏览器。",
+    );
+    dict.set("mls_recovery_missing.button_dismiss", "关闭");
 
     // 一次性账号 MLS secret 备份提示（mls_unlock 的镜像）。
     dict.set("mls_backup.aria_label", "备份加密历史");
     dict.set("mls_backup.title", "保护你的加密历史");
-    dict.set("mls_backup.subtitle", "账号 MLS secret");
+    dict.set("mls_backup.subtitle", "24 个恢复词");
     dict.set(
         "mls_backup.description",
-        "你已在使用加密，但还没有设置恢复口令。一旦更换浏览器或设备，加密历史将无法恢复。请设置恢复口令以备份账号 secret。",
+        "你已在使用加密，但账号还没有加密历史恢复备份。创建一个 24 词恢复密钥后，新浏览器或新设备才能恢复同一份加密历史。",
     );
     dict.set(
         "mls_backup.warning.passphrase_loss",
-        "重要：此口令不会被保存在任何地方。一旦遗失，将无法在新设备上恢复加密历史（已设置好的设备仍可继续使用）。",
+        "24 个恢复词出现后请立即保存。Cokret 不会保存它们；遗失后，已设置好的设备仍可继续使用，但新设备无法恢复这份加密历史。",
     );
-    dict.set("mls_backup.placeholder", "恢复口令");
-    dict.set("mls_backup.placeholder_confirm", "确认口令");
-    dict.set("mls_backup.button_idle", "创建备份");
+    dict.set("mls_backup.button_idle", "创建恢复密钥");
     dict.set("mls_backup.button_busy", "正在备份…");
     dict.set("mls_backup.button_dismiss", "稍后提醒");
+    dict.set("mls_backup.button_saved", "我已保存密钥");
+    dict.set("mls_backup.generated_key_label", "你的 24 词恢复密钥");
     dict.set(
-        "mls_backup.hint.too_weak",
-        "请选择更强的口令：使用 24 个以上字符或若干随机单词（最低强度为良好，3/5）。",
-    );
-    dict.set("mls_backup.hint.mismatch", "两次输入的口令不一致。");
-    dict.set(
-        "mls_backup.status.enter_passphrase",
-        "输入恢复口令以备份你的账号 secret。",
-    );
-    dict.set("mls_backup.status.mismatch", "两次输入的口令不一致。");
-    dict.set(
-        "mls_backup.status.too_weak",
-        "请选择更强的口令（最低强度为良好，3/5）。",
+        "mls_backup.generated_key_warning",
+        "请现在保存这些词。关闭此提示后它们将不再显示。",
     );
     dict.set("mls_backup.status.uploading", "正在加密并上传备份…");
-    dict.set("mls_backup.status.created", "备份已创建。");
+    dict.set(
+        "mls_backup.status.created",
+        "备份已创建。请立即保存这 24 个恢复词。",
+    );
+    dict.set("mls_backup.status.generate_failed", "恢复密钥生成失败：");
 
-    // X11.1 — 持久化的 MLS 恢复口令设置区。
-    dict.set("settings.mls_recovery.title", "MLS 恢复口令");
+    // X11.1 — 持久化的 MLS 恢复密钥设置区。
+    dict.set("settings.mls_recovery.title", "加密历史恢复");
     dict.set("settings.mls_recovery.status.loading", "正在检查备份状态…");
     dict.set(
         "settings.mls_recovery.status.no_local_secret",
@@ -1717,16 +1728,13 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "settings.mls_recovery.status.backed_up",
-        "✓ 已备份——你的账号 secret 已由恢复口令保护。",
+        "已备份——可使用你的 24 词恢复密钥恢复加密历史。",
     );
     dict.set(
         "settings.mls_recovery.status.not_backed_up",
-        "⚠ 未备份——请设置恢复口令，以便新浏览器或新设备能够恢复你的加密历史。",
+        "未备份——请创建 24 词恢复密钥，以便新浏览器或新设备能够恢复你的加密历史。",
     );
-    dict.set("settings.mls_recovery.passphrase_label", "恢复口令");
-    dict.set("settings.mls_recovery.strength_prefix", "口令强度");
-    dict.set("settings.mls_recovery.strength_min", "最低：良好（3/5）。");
-    dict.set("settings.mls_recovery.submit", "设置 / 替换恢复口令");
+    dict.set("settings.mls_recovery.submit", "创建 / 替换恢复词");
 
     // Space-admin view
     dict.set("realm_admin.title", "Realm 设置");

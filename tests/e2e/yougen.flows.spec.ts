@@ -154,6 +154,14 @@ test("authenticated login route returns to the workspace", async ({ page }) => {
   await expect(page).toHaveURL(/\/$/);
 });
 
+test("first authenticated session prompts recovery setup", async ({ page }) => {
+  const banner = latestTestId(page, "recovery-setup-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Recovery setup is incomplete");
+  await expect(latestTestId(page, "recovery-setup-open-recovery")).toBeVisible();
+  await expect(latestTestId(page, "recovery-setup-open-encryption")).toBeVisible();
+});
+
 test("dashboard summarizes unread notifications from sync projection", async ({ page }) => {
   await refreshServer(page);
 
@@ -239,6 +247,56 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({ pa
   await expect(page.getByTestId("topbar-crumbs")).toContainText("Settings");
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Settings / Settings");
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
+});
+
+test("settings encryption replaces manual key backup inputs with guidance", async ({ page }) => {
+  await page.goto("/settings/encryption", { waitUntil: "domcontentloaded" });
+  const guidance = latestTestId(page, "key-backup-guidance");
+  await expect(guidance).toBeVisible();
+  await expect(guidance).toContainText(
+    "backup id is generated when a backup is created",
+  );
+  await expect(page.getByTestId("key-backup-id-input")).toHaveCount(0);
+  await expect(page.getByTestId("key-backup-passphrase-input")).toHaveCount(0);
+  await expect(page.getByTestId("key-backup-setup")).toHaveCount(0);
+  await expect(latestTestId(page, "settings-mls-recovery")).toBeVisible();
+});
+
+test("mls recovery backup generates 24 recovery words", async ({ page }) => {
+  await refreshServer(page);
+
+  await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel).toBeVisible();
+  await page.getByTestId("realm-title-input").fill("Recovery Words Space");
+  await page.getByTestId("realm-summary-input").fill("Created to verify recovery words");
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("new-realm-next-button").click();
+  await page.getByTestId("seed-members-input").fill("did:web:bob.example");
+
+  const realmCreateRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/_cokret/self/events") &&
+      request.method() === "POST" &&
+      (request.postData() ?? "").includes("ck.realm.create"),
+  );
+  await page.getByTestId("create-realm-button").click();
+  await realmCreateRequest;
+
+  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-submit")).toBeVisible();
+  await expect(page.getByTestId("mls-backup-passphrase")).toHaveCount(0);
+  await expect(page.getByTestId("mls-backup-confirm")).toHaveCount(0);
+
+  await latestTestId(page, "mls-backup-submit").click();
+  const generatedKeyField = latestTestId(page, "mls-backup-generated-key");
+  await expect(generatedKeyField).toBeVisible();
+  const generatedRecoveryKey = await generatedKeyField.inputValue();
+  expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+  expect(generatedRecoveryKey).not.toMatch(/[A-Z0-9]{5}-[A-Z0-9]{5}/);
+  await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
+  await expect(latestTestId(page, "mls-backup-saved")).toBeVisible();
 });
 
 test("login page delegates account lifecycle to coauth OIDC", async ({ page }) => {
@@ -752,8 +810,11 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
 
 test("notifications are derived from index projections and respect per-realm mute rules", async ({ page }) => {
   await refreshServer(page);
+  const workspaceUrl = page.url();
   await page.getByTestId("topbar-notifications-button").click();
 
+  expect(page.url()).toBe(workspaceUrl);
+  await expect(page.getByTestId("notifications-drawer")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Realm");
   await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification(s).");
@@ -764,6 +825,8 @@ test("notifications are derived from index projections and respect per-realm mut
     .getByTestId("mute-realm-button")
     .click();
   await expect(page.getByTestId("notifications-panel")).not.toContainText("Alice sent a message in Demo Realm");
+  await page.getByTestId("notifications-drawer-close").click();
+  await expect(page.getByTestId("notifications-drawer")).toBeHidden();
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
@@ -788,6 +851,23 @@ test("notifications are derived from index projections and respect per-realm mut
   expect(acceptBody.payload.invite_ref).toBe("ck:invite:01904100-0000-7000-8000-000000000099");
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
   await expect(page.getByTestId("notifications-status")).toContainText("Joined Realm");
+});
+
+test("topbar notifications drawer keeps the active realm navigation visible", async ({ page }) => {
+  await refreshServer(page);
+  await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  const workspaceUrl = page.url();
+
+  await page.getByTestId("topbar-notifications-button").click();
+
+  expect(page.url()).toBe(workspaceUrl);
+  await expect(page.getByTestId("notifications-drawer")).toBeVisible();
+  await expect(page.getByTestId("realm-context-bar")).toBeVisible();
+
+  await page.getByTestId("notifications-drawer-close").click();
+  await expect(page.getByTestId("notifications-drawer")).toBeHidden();
+  expect(page.url()).toBe(workspaceUrl);
 });
 
 test("setup, onboarding, and space timeline flow works", async ({ page }) => {
@@ -840,7 +920,7 @@ test("setup, onboarding, and space timeline flow works", async ({ page }) => {
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText(/created ck:realm:/);
   await expect(page.getByTestId("realm-lifecycle-flow")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
-  await expect(page.getByTestId("mls-backup-banner")).toBeVisible();
+  await expect(latestTestId(page, "mls-backup-banner")).toBeVisible();
   await expect(page.getByTestId("realm-lifecycle-flow").getByTestId("selected-realm-id")).toContainText("ck:realm:");
 
   await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
