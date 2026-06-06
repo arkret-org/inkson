@@ -39,7 +39,21 @@ pub fn DashboardPanel(
     let has_session = !token().trim().is_empty();
     let sync_cursor_label = short_protocol_id(&sync_cursor);
     let frontier_state_label = short_protocol_id(&frontier_state);
-    let realm_tree_snapshot = realm_tree_nodes();
+    let raw_realm_tree_snapshot = realm_tree_nodes();
+    let pinned_realm_ids: std::collections::BTreeSet<String> = state_store
+        .read()
+        .realm_remarks()
+        .into_iter()
+        .filter_map(|(realm_id, remark)| remark.pinned.then_some(realm_id))
+        .collect();
+    let realm_tree_snapshot: Vec<RealmTreeNode> =
+        crate::realm_tree::realm_tree_items_with_pinned_realms(
+            &raw_realm_tree_snapshot,
+            &pinned_realm_ids,
+        )
+        .into_iter()
+        .map(|item| item.node)
+        .collect();
     let has_realms = realm_tree_snapshot
         .iter()
         .any(|space| space.kind == RealmTreeNodeKind::Realm);

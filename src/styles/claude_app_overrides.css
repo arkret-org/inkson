@@ -1795,9 +1795,52 @@
   width: 14px;
   height: 14px;
 }
-.sidebar-row:hover .sidebar-row-add-action,
-.sidebar-row:focus-within .sidebar-row-add-action {
+.sidebar-row-pin-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 6px 0 6px 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface, #20242d) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border, #3a4150) 70%, transparent);
+  color: var(--muted, #9ca3af);
+  opacity: 0;
+  transition: opacity 80ms ease, background-color 80ms ease,
+              color 80ms ease, transform 80ms ease,
+              box-shadow 80ms ease;
+}
+.sidebar-row-pin-action svg,
+.realm-pin-badge svg {
+  width: 13px;
+  height: 13px;
+}
+.sidebar-row-pin-action.is-active {
   opacity: 1;
+  color: #ffb547;
+  border-color: color-mix(in srgb, #ffb547 48%, transparent);
+  background: color-mix(in srgb, #ffb547 14%, transparent);
+}
+.sidebar-row:hover .sidebar-row-add-action,
+.sidebar-row:focus-within .sidebar-row-add-action,
+.sidebar-row:hover .sidebar-row-pin-action,
+.sidebar-row:focus-within .sidebar-row-pin-action {
+  opacity: 1;
+}
+.sidebar-row-pin-action:hover,
+.sidebar-row-pin-action:focus-visible {
+  color: #1a1a1a;
+  background: #ffb547;
+  border-color: #ffb547;
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(255, 181, 71, 0.2);
+  outline: none;
+}
+.sidebar-row-pin-action:active {
+  transform: translateY(0);
 }
 .sidebar-row-add-action:hover,
 .sidebar-row-add-action:focus-visible {

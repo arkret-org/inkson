@@ -34,6 +34,9 @@ pub enum Route {
     #[route("/chat/:realm_id", ChatRealmPage)]
     Chat { realm_id: String },
 
+    #[route("/direct/:realm_id/:flow_id", DirectConversationPage)]
+    DirectConversation { realm_id: String, flow_id: String },
+
     #[route("/directory", crate::app::RouterView)]
     Directory,
 
@@ -198,6 +201,12 @@ fn ChatRealmPage(realm_id: String) -> Element {
 }
 
 #[component]
+fn DirectConversationPage(realm_id: String, flow_id: String) -> Element {
+    let _ = (realm_id, flow_id);
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn RealmPage(realm_id: String) -> Element {
     let _ = realm_id;
     rsx! { crate::app::RouterView {} }
@@ -272,7 +281,7 @@ impl Route {
             Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
                 View::Timeline
             }
-            Route::Chat { .. } => View::Chat,
+            Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
             Route::Contacts | Route::ContactsNew => View::Contacts,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
@@ -319,6 +328,7 @@ impl Route {
             | Route::TimelineRealm { realm_id }
             | Route::TimelineMessage { realm_id, .. }
             | Route::Chat { realm_id }
+            | Route::DirectConversation { realm_id, .. }
             | Route::KanbanRealm { realm_id }
             | Route::KanbanBoard { realm_id, .. }
             | Route::KanbanBoardTask { realm_id, .. }

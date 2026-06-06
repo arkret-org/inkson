@@ -354,7 +354,15 @@ pub(crate) fn descendant_node_ids(nodes: &[RealmTreeNode], root_node_id: &str) -
     result
 }
 
+#[cfg(test)]
 pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
+    realm_tree_items_with_pinned_realms(nodes, &BTreeSet::new())
+}
+
+pub(crate) fn realm_tree_items_with_pinned_realms(
+    nodes: &[RealmTreeNode],
+    pinned_realm_ids: &BTreeSet<String>,
+) -> Vec<RealmTreeItem> {
     let order: BTreeMap<&str, usize> = nodes
         .iter()
         .enumerate()
@@ -392,7 +400,15 @@ pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
         })
         .map(|node| node.id.as_str())
         .collect();
-    roots.sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
+    roots.sort_by_key(|id| {
+        let is_pinned_collaboration_realm = by_id.get(id).copied().is_some_and(|node| {
+            realm_tree_node_is_collaboration_pin_candidate(node, pinned_realm_ids)
+        });
+        (
+            usize::from(!is_pinned_collaboration_realm),
+            order.get(id).copied().unwrap_or(usize::MAX),
+        )
+    });
 
     fn push_item<'a>(
         id: &'a str,
@@ -453,6 +469,35 @@ pub(crate) fn realm_tree_items(nodes: &[RealmTreeNode]) -> Vec<RealmTreeItem> {
         }
     }
     items
+}
+
+fn realm_tree_node_is_collaboration_pin_candidate(
+    node: &RealmTreeNode,
+    pinned_realm_ids: &BTreeSet<String>,
+) -> bool {
+    node.kind == RealmTreeNodeKind::Realm
+        && pinned_realm_ids.contains(node.id.as_str())
+        && !realm_tree_node_looks_like_direct_conversation(node)
+}
+
+pub(crate) fn realm_tree_node_looks_like_direct_conversation(node: &RealmTreeNode) -> bool {
+    let category = node.category.as_deref().unwrap_or_default();
+    direct_conversation_marker(category)
+        || node
+            .tags
+            .iter()
+            .any(|tag| direct_conversation_marker(tag.as_str()))
+}
+
+fn direct_conversation_marker(value: &str) -> bool {
+    let normalized = value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' ', '.'], "_");
+    matches!(
+        normalized.as_str(),
+        "dm" | "direct" | "direct_message" | "direct_conversation"
+    )
 }
 
 pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<RealmTreeNode> {
@@ -655,6 +700,54 @@ mod tests {
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[2].node.id, "ck:space:deep");
         assert_eq!(items[2].depth, 2);
+    }
+
+    #[test]
+    fn pinned_realms_sort_before_unpinned_roots_without_splitting_subtrees() {
+        let mut a_child = preview("ck:space:a-child", "A child", None);
+        a_child.realm_id = "ck:realm:a".to_owned();
+        let mut b_child = preview("ck:space:b-child", "B child", None);
+        b_child.realm_id = "ck:realm:b".to_owned();
+        let nodes = vec![
+            preview("ck:realm:a", "A", None),
+            a_child,
+            preview("ck:realm:b", "B", None),
+            b_child,
+        ];
+        let pinned = BTreeSet::from(["ck:realm:b".to_owned()]);
+
+        let items = realm_tree_items_with_pinned_realms(&nodes, &pinned);
+        let ids: Vec<_> = items
+            .iter()
+            .map(|item| (item.node.id.as_str(), item.depth))
+            .collect();
+
+        assert_eq!(
+            ids,
+            vec![
+                ("ck:realm:b", 0),
+                ("ck:space:b-child", 1),
+                ("ck:realm:a", 0),
+                ("ck:space:a-child", 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn pinned_sort_does_not_promote_direct_conversation_realms() {
+        let mut dm = preview("ck:realm:dm", "DM", None);
+        dm.category = Some("direct_conversation".to_owned());
+        let nodes = vec![
+            dm,
+            preview("ck:realm:work", "Work", None),
+            preview("ck:realm:later", "Later", None),
+        ];
+        let pinned = BTreeSet::from(["ck:realm:dm".to_owned(), "ck:realm:later".to_owned()]);
+
+        let items = realm_tree_items_with_pinned_realms(&nodes, &pinned);
+        let ids: Vec<_> = items.iter().map(|item| item.node.id.as_str()).collect();
+
+        assert_eq!(ids, vec!["ck:realm:later", "ck:realm:dm", "ck:realm:work"]);
     }
 
     #[test]

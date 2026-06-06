@@ -294,6 +294,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.login", "Login");
     dict.set("nav.audit", "Audit");
     dict.set("nav.devices", "Devices");
+    dict.set("nav.collaboration", "Collaboration");
+    dict.set("nav.direct_messages", "Direct");
+    dict.set("nav.scope_current", "Current");
+    dict.set("nav.scope_descendants", "With children");
+    dict.set("direct.empty", "No direct conversations");
+    dict.set("direct.sign_in", "Sign in to load direct conversations");
+    dict.set("direct.open", "Open direct conversation");
+    dict.set("direct.unavailable", "Direct conversation unavailable");
 
     // CKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
@@ -816,6 +824,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("message.unpin", "Unpin");
     dict.set("pinned_bar.empty", "No pinned messages.");
     dict.set("pinned_bar.scroll_to", "Jump to message");
+    // Actor-private Realm list pinning.
+    dict.set("realm.pin", "Pin Realm");
+    dict.set("realm.unpin", "Unpin Realm");
+    dict.set("realm.pinned", "Pinned Realm");
+    dict.set("realm.pin_failed", "Realm pin account-data save failed");
     dict.set("chat.empty.title", "No discussion track available");
     dict.set(
         "chat.empty.description",
@@ -1394,6 +1407,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.login", "登录");
     dict.set("nav.audit", "审计");
     dict.set("nav.devices", "设备");
+    dict.set("nav.collaboration", "协作");
+    dict.set("nav.direct_messages", "私聊");
+    dict.set("nav.scope_current", "当前");
+    dict.set("nav.scope_descendants", "含子项");
+    dict.set("direct.empty", "暂无私聊");
+    dict.set("direct.sign_in", "登录后加载私聊");
+    dict.set("direct.open", "打开私聊");
+    dict.set("direct.unavailable", "暂不可发送");
 
     dict.set("login.server", "服务器");
     dict.set("login.connection_test", "连接测试");
@@ -1792,6 +1813,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("message.unpin", "取消钉选");
     dict.set("pinned_bar.empty", "暂无钉选消息。");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
+    // Actor-private Realm list pinning.
+    dict.set("realm.pin", "置顶 Realm");
+    dict.set("realm.unpin", "取消置顶 Realm");
+    dict.set("realm.pinned", "已置顶 Realm");
+    dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
     dict.set("chat.empty.title", "暂无可用讨论 track");
     dict.set(
         "chat.empty.description",

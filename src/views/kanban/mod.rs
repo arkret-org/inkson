@@ -3714,6 +3714,7 @@ pub fn KanbanPanel(
                                                             state_store,
                                                             initial_flow_id: card.primary_flow_id.clone(),
                                                             embedded: true,
+                                                            direct_mode: false,
                                                         }
                                                     }
                                                 }

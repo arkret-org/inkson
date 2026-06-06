@@ -78,9 +78,67 @@ pub struct ContactResponse {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DirectConversationSummary {
+    pub realm_id: String,
+    pub main_flow_id: String,
+    #[serde(default)]
+    pub binding_event_ref: Option<String>,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContactListRow {
+    pub peer: String,
+    pub state: String,
+    #[serde(default)]
+    pub request_event_ref: Option<String>,
+    #[serde(default)]
+    pub response_event_ref: Option<String>,
+    #[serde(default)]
+    pub tombstone_event_ref: Option<String>,
+    #[serde(default)]
+    pub granted_by_me: Vec<String>,
+    #[serde(default)]
+    pub granted_to_me: Vec<String>,
+    #[serde(default)]
+    pub bidirectional_scopes: Vec<String>,
+    #[serde(default)]
+    pub effective_scopes: Vec<String>,
+    #[serde(default)]
+    pub direct_conversation: Option<DirectConversationSummary>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContactsResponse {
-    pub contacts: Vec<ContactResponse>,
+    #[serde(default)]
+    pub contacts: Vec<ContactListRow>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DirectConversationResolveRequest {
+    pub peer: String,
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct DirectConversationResolveResponse {
+    pub state: String,
+    #[serde(default)]
+    pub realm_id: Option<String>,
+    #[serde(default)]
+    pub main_flow_id: Option<String>,
+    #[serde(default)]
+    pub binding_event_ref: Option<String>,
+    #[serde(default)]
+    pub created: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

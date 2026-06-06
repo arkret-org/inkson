@@ -394,6 +394,41 @@ impl RealmRemark {
         }
     }
 
+    /// Build the next private Realm remark after toggling only `pinned`.
+    ///
+    /// This intentionally starts from the existing remark when one is present
+    /// so local_name / note / tags and verified snapshots survive pin/unpin.
+    /// The account-data key supplies the canonical Realm id, so the subject is
+    /// re-normalized to match that key before writing.
+    pub fn with_pinned_preserving_fields(
+        realm_id: impl Into<String>,
+        existing: Option<&Self>,
+        pinned: bool,
+        updated_at: Option<String>,
+    ) -> Self {
+        let realm_id = realm_id.into();
+        let mut next = existing
+            .cloned()
+            .unwrap_or_else(|| Self::new(realm_id.clone(), ""));
+        if next.version == 0 {
+            next.version = 1;
+        }
+        next.subject = RemarkSubject {
+            kind: "realm".to_owned(),
+            id: realm_id,
+        };
+        next.pinned = pinned;
+
+        if let Some(updated_at) = updated_at {
+            if next.saved_at.is_none() && !next.is_empty() {
+                next.saved_at = Some(updated_at.clone());
+            }
+            next.updated_at = Some(updated_at);
+        }
+
+        next
+    }
+
     /// True when the remark carries no user content — the canonical
     /// "tombstoned" form. Callers SHOULD delete the underlying account_data
     /// entry rather than ship an empty payload.
@@ -719,12 +754,18 @@ pub fn build_account_data_set(
     key: &AccountDataKey,
     value: Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
+    let value_field = if private_account_data_key_prefix(key.as_wire()).is_some() {
+        "encrypted_payload"
+    } else {
+        "body"
+    };
+    let mut payload = serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
-        "body": value,
         "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-    }))
+    });
+    payload[value_field] = value;
+    OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(payload)
 }
 
 pub fn build_account_data_tombstone(
@@ -738,6 +779,106 @@ pub fn build_account_data_tombstone(
         "tombstone": true,
         "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     }))
+}
+
+pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
+    [
+        cokret_sdk::ACCOUNT_DATA_TYPE_REMINDER,
+        cokret_sdk::ACCOUNT_DATA_TYPE_SCHEDULED_SEND,
+        cokret_sdk::ACCOUNT_DATA_TYPE_SNOOZE,
+        cokret_sdk::ACCOUNT_DATA_TYPE_SAVED,
+        cokret_sdk::ACCOUNT_DATA_TYPE_DRAFT,
+        cokret_sdk::ACCOUNT_DATA_TYPE_SEARCH_INDEX_MANIFEST,
+    ]
+    .into_iter()
+    .find(|prefix| {
+        key.strip_prefix(*prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+    })
+}
+
+pub fn validate_private_account_data_key(key: &str) -> anyhow::Result<()> {
+    cokret_sdk::validate_private_account_data_key(key)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn reminder_account_data_key(id: &str) -> anyhow::Result<String> {
+    cokret_sdk::reminder_account_data_key(id).map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn scheduled_send_account_data_key(planned_message_id: &str) -> anyhow::Result<String> {
+    let planned_message_id = cokret_sdk::MessageId::new(planned_message_id.to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(cokret_sdk::scheduled_send_account_data_key(
+        &planned_message_id,
+    ))
+}
+
+pub fn snooze_account_data_key(namespace_key: &[u8], target_ref: &str) -> anyhow::Result<String> {
+    cokret_sdk::snooze_account_data_key(namespace_key, target_ref)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn saved_account_data_key(
+    namespace_key: &[u8],
+    collection_title: &str,
+    target_ref: &str,
+) -> anyhow::Result<String> {
+    cokret_sdk::saved_account_data_key(namespace_key, collection_title, target_ref)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn draft_account_data_key(
+    namespace_key: &[u8],
+    kind: cokret_sdk::DraftKind,
+    target_ref: &str,
+    draft_slot: &str,
+) -> anyhow::Result<String> {
+    cokret_sdk::draft_account_data_key(namespace_key, kind, target_ref, draft_slot)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn search_index_manifest_account_data_key(
+    namespace_key: &[u8],
+    realm_id: &str,
+) -> anyhow::Result<String> {
+    let realm_id = cokret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    cokret_sdk::search_index_manifest_account_data_key(namespace_key, &realm_id)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn build_private_account_data_set(
+    realm_id: &str,
+    actor: &str,
+    key: &str,
+    encrypted_payload: Value,
+) -> anyhow::Result<OperationBuilder> {
+    validate_private_account_data_key(key)?;
+    Ok(
+        OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
+            "key": key,
+            "owner": actor,
+            "encrypted_payload": encrypted_payload,
+            "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        })),
+    )
+}
+
+pub fn build_private_account_data_tombstone(
+    realm_id: &str,
+    actor: &str,
+    key: &str,
+) -> anyhow::Result<OperationBuilder> {
+    validate_private_account_data_key(key)?;
+    Ok(
+        OperationBuilder::new(realm_id, actor, "ck.account_data.set").body(serde_json::json!({
+            "key": key,
+            "owner": actor,
+            "tombstone": true,
+            "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        })),
+    )
 }
 
 #[cfg(test)]
@@ -935,6 +1076,68 @@ mod tests {
             ..RealmRemark::default()
         };
         assert!(!r2.is_empty());
+    }
+
+    #[test]
+    fn realm_remark_pinned_builder_preserves_private_fields() {
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let existing = RealmRemark {
+            version: 1,
+            subject: RemarkSubject {
+                kind: "realm".to_owned(),
+                id: realm_id.to_owned(),
+            },
+            local_name: "Acme Eng".to_owned(),
+            note: "Private note".to_owned(),
+            tags: vec!["work".to_owned()],
+            pinned: false,
+            verified_title_at_save: Some("Engineering".to_owned()),
+            verified_owning_organizations_at_save: vec!["did:web:acme.example".to_owned()],
+            saved_at: Some("2026-06-01T00:00:00Z".to_owned()),
+            updated_at: Some("2026-06-01T00:00:00Z".to_owned()),
+        };
+
+        let next = RealmRemark::with_pinned_preserving_fields(
+            realm_id,
+            Some(&existing),
+            true,
+            Some("2026-06-06T00:00:00Z".to_owned()),
+        );
+
+        assert!(next.pinned);
+        assert_eq!(next.local_name, existing.local_name);
+        assert_eq!(next.note, existing.note);
+        assert_eq!(next.tags, existing.tags);
+        assert_eq!(next.verified_title_at_save, existing.verified_title_at_save);
+        assert_eq!(
+            next.verified_owning_organizations_at_save,
+            existing.verified_owning_organizations_at_save
+        );
+        assert_eq!(next.saved_at, existing.saved_at);
+        assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00Z"));
+    }
+
+    #[test]
+    fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
+        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let existing = RealmRemark::with_pinned_preserving_fields(
+            realm_id,
+            None,
+            true,
+            Some("2026-06-06T00:00:00Z".to_owned()),
+        );
+        assert!(!existing.is_empty());
+
+        let next = RealmRemark::with_pinned_preserving_fields(
+            realm_id,
+            Some(&existing),
+            false,
+            Some("2026-06-06T00:01:00Z".to_owned()),
+        );
+
+        assert!(!next.pinned);
+        assert_eq!(next.subject.id, realm_id);
+        assert!(next.is_empty());
     }
 
     #[test]
@@ -1206,6 +1409,78 @@ mod tests {
         assert_eq!(op.payload["owner"], "did:web:alice");
         assert_eq!(op.payload["body"]["send"], false);
         assert!(op.payload["updated_at"].is_string());
+    }
+
+    #[test]
+    fn productivity_account_data_keys_use_sdk_private_derivation() {
+        let ns = b"yougen-account-data-test-key";
+        let target_ref = "ck:flow:01904100-0000-7000-8000-000000000001";
+        let snooze = snooze_account_data_key(ns, target_ref).unwrap();
+        let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
+        let draft =
+            draft_account_data_key(ns, cokret_sdk::DraftKind::Message, target_ref, "main").unwrap();
+        let manifest = search_index_manifest_account_data_key(
+            ns,
+            "ck:realm:01904100-0000-7000-8000-000000000001",
+        )
+        .unwrap();
+
+        for key in [&snooze, &saved, &draft, &manifest] {
+            assert!(validate_private_account_data_key(key).is_ok());
+            assert!(!key.contains("ck:flow:"));
+            assert!(!key.contains("Focus"));
+        }
+    }
+
+    #[test]
+    fn scheduled_send_key_requires_message_typed_id() {
+        assert!(
+            scheduled_send_account_data_key("ck:message:01904100-0000-7000-8000-000000000001")
+                .is_ok()
+        );
+        assert!(scheduled_send_account_data_key("not-a-message-id").is_err());
+    }
+
+    #[test]
+    fn private_account_data_builders_emit_encrypted_payload() {
+        let key = "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001";
+        let op = build_private_account_data_set(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            key,
+            json!({"ciphertext": "opaque"}),
+        )
+        .unwrap()
+        .build("node");
+        assert_eq!(op.kind, "ck.account_data.set");
+        assert_eq!(op.payload["key"], key);
+        assert!(op.payload.get("body").is_none());
+        assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+
+        let tombstone = build_private_account_data_tombstone(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            key,
+        )
+        .unwrap()
+        .build("node");
+        assert_eq!(tombstone.payload["tombstone"], true);
+    }
+
+    #[test]
+    fn generic_builder_does_not_put_private_values_under_body() {
+        let key = AccountDataKey::Custom(
+            "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+        );
+        let op = build_account_data_set(
+            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice",
+            &key,
+            json!({"ciphertext": "opaque"}),
+        )
+        .build("node");
+        assert!(op.payload.get("body").is_none());
+        assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
     }
 
     #[test]

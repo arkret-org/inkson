@@ -9,13 +9,13 @@
 
 use dioxus::prelude::*;
 
-use crate::models::ContactResponse;
+use crate::models::ContactListRow;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
 pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
     let mut target = use_signal(String::new);
-    let mut scope = use_signal(|| "message".to_owned());
+    let mut scope = use_signal(|| "direct_message".to_owned());
     let mut status = use_signal(|| "ready".to_owned());
 
     rsx! {
@@ -40,8 +40,9 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
                             value: "{scope}",
                             onchange: move |evt| scope.set(evt.value()),
                             option { value: "invite", "invite" }
-                            option { value: "message", "message" }
-                            option { value: "call", "call" }
+                            option { value: "direct_message", "direct_message" }
+                            option { value: "voice_call", "voice_call" }
+                            option { value: "video_call", "video_call" }
                         }
                         div { class: "actions",
                             button {
@@ -87,7 +88,7 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
 
 #[component]
 pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
-    let mut contacts = use_signal(Vec::<ContactResponse>::new);
+    let mut contacts = use_signal(Vec::<ContactListRow>::new);
     let mut status = use_signal(|| "loading".to_owned());
     let mut loaded = use_signal(|| false);
 
@@ -132,15 +133,19 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                                     li {
                                         class: "event",
                                         "data-testid": "contact-row",
-                                        "data-requester": "{contact.requester}",
-                                        "data-target": "{contact.target}",
-                                        "data-status": "{contact.status}",
+                                        "data-peer": "{contact.peer}",
+                                        "data-state": "{contact.state}",
                                         div { class: "event-head",
-                                            span { "{contact.status}" }
-                                            span { class: "mono", title: "{contact.target}", "{short_protocol_id(&contact.target)}" }
+                                            span { "{contact.state}" }
+                                            span { class: "mono", title: "{contact.peer}", "{short_protocol_id(&contact.peer)}" }
                                         }
                                         div { class: "muted",
-                                            "{contact.requester} -> {contact.target}"
+                                            "scopes: {contact.bidirectional_scopes.join(\", \")}"
+                                        }
+                                        if let Some(summary) = &contact.direct_conversation {
+                                            div { class: "muted mono",
+                                                "dm {short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_flow_id)}"
+                                            }
                                         }
                                     }
                                 }

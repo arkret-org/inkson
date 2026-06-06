@@ -380,11 +380,37 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
 /// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
-fn push_realm_remark_account_data(
+pub(crate) fn push_realm_remark_account_data(
     base_url: String,
     api_token: String,
     realm_id: String,
     remark: crate::account_data::RealmRemark,
+) {
+    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, None);
+}
+
+pub(crate) fn push_realm_remark_account_data_with_failure_status(
+    base_url: String,
+    api_token: String,
+    realm_id: String,
+    remark: crate::account_data::RealmRemark,
+    failure_status: Signal<String>,
+) {
+    push_realm_remark_account_data_impl(
+        base_url,
+        api_token,
+        realm_id,
+        remark,
+        Some((failure_status, crate::i18n::tr("realm.pin_failed"))),
+    );
+}
+
+fn push_realm_remark_account_data_impl(
+    base_url: String,
+    api_token: String,
+    realm_id: String,
+    remark: crate::account_data::RealmRemark,
+    mut failure_status: Option<(Signal<String>, String)>,
 ) {
     let key = crate::account_data::realm_remark_account_data_key(&realm_id);
     spawn(async move {
@@ -400,6 +426,9 @@ fn push_realm_remark_account_data(
                     "account_data DELETE for {key_for_log} failed: {}; local state still authoritative",
                     err.display()
                 );
+                if let Some((status, label)) = failure_status.as_mut() {
+                    status.set(format!("{label}: {}", err.display()));
+                }
             }
             return;
         }
@@ -407,6 +436,9 @@ fn push_realm_remark_account_data(
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!("Realm remark serialisation failed: {error}");
+                if let Some((status, label)) = failure_status.as_mut() {
+                    status.set(format!("{label}: {error}"));
+                }
                 return;
             }
         };
@@ -422,12 +454,18 @@ fn push_realm_remark_account_data(
                 tracing::debug!(
                     "soland ck.account_data.set for {key_for_log} returned {status}; local state still authoritative"
                 );
+                if let Some((status_signal, label)) = failure_status.as_mut() {
+                    status_signal.set(format!("{label}: HTTP {status}"));
+                }
             }
             Err(err) => {
                 tracing::warn!(
                     "ck.account_data.set for {key_for_log} failed: {}",
                     err.display()
                 );
+                if let Some((status, label)) = failure_status.as_mut() {
+                    status.set(format!("{label}: {}", err.display()));
+                }
             }
         }
     });
@@ -2413,6 +2451,55 @@ pub fn SettingsPanel(
                                                             realm_remark_inputs.set(current);
                                                         }
                                                     },
+                                                }
+                                                button {
+                                                    class: if remark.pinned { "secondary active" } else { "secondary" },
+                                                    "data-testid": "realm-remark-pin-toggle",
+                                                    title: if remark.pinned { crate::i18n::tr("realm.unpin") } else { crate::i18n::tr("realm.pin") },
+                                                    "aria-pressed": if remark.pinned { "true" } else { "false" },
+                                                    onclick: {
+                                                        let id = realm_id.clone();
+                                                        let existing = remark.clone();
+                                                        let next_pinned = !remark.pinned;
+                                                        move |_| {
+                                                            let id = id.clone();
+                                                            let now_rfc3339 = chrono::Utc::now()
+                                                                .to_rfc3339_opts(
+                                                                    chrono::SecondsFormat::Secs,
+                                                                    true,
+                                                                );
+                                                            let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
+                                                                id.clone(),
+                                                                Some(&existing),
+                                                                next_pinned,
+                                                                Some(now_rfc3339),
+                                                            );
+                                                            state_store
+                                                                .write()
+                                                                .set_realm_remark(id.clone(), next.clone());
+                                                            realm_remarks_snapshot.set(
+                                                                state_store.read().realm_remarks(),
+                                                            );
+                                                            let action_status = if next_pinned {
+                                                                crate::i18n::tr("realm.pinned")
+                                                            } else {
+                                                                crate::i18n::tr("realm.unpin")
+                                                            };
+                                                            status.set(format!(
+                                                                "{action_status}: {}",
+                                                                short_protocol_id(&id)
+                                                            ));
+                                                            push_realm_remark_account_data_with_failure_status(
+                                                                base_url(),
+                                                                token(),
+                                                                id,
+                                                                next,
+                                                                status,
+                                                            );
+                                                        }
+                                                    },
+                                                    UiIcon { name: "pin" }
+                                                    span { {if remark.pinned { crate::i18n::tr("realm.pinned") } else { crate::i18n::tr("realm.pin") }} }
                                                 }
                                                 button {
                                                     class: "secondary",

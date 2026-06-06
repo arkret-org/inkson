@@ -143,8 +143,7 @@ impl CokretApi {
     }
 
     pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
-        self.post_json("_soland/self/contacts/request", json!({"target": target}))
-            .await
+        self.request_contact_scoped(target, "direct_message").await
     }
 
     pub async fn request_contact_scoped(
@@ -153,8 +152,8 @@ impl CokretApi {
         scope: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "_soland/self/contacts/request",
-            json!({"target": target, "consent_scope": scope}),
+            "_cokret/self/contacts/request",
+            json!({"target": target, "requested_scopes": [scope]}),
         )
         .await
     }
@@ -165,14 +164,29 @@ impl CokretApi {
         action: &str,
     ) -> anyhow::Result<ContactResponse> {
         self.post_json(
-            "_soland/self/contacts/respond",
+            "_cokret/self/contacts/respond",
             json!({"requester": requester, "action": action}),
         )
         .await
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
-        self.get_json("_soland/self/contacts").await
+        self.get_json("_cokret/self/contacts").await
+    }
+
+    pub async fn direct_conversation_resolve(
+        &self,
+        peer: &str,
+        create: bool,
+    ) -> anyhow::Result<crate::models::DirectConversationResolveResponse> {
+        self.post_json(
+            "_cokret/self/direct-conversations/resolve",
+            json!({
+                "peer": peer,
+                "create": create,
+            }),
+        )
+        .await
     }
 
     pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsResponse> {

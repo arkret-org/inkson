@@ -115,6 +115,7 @@ pub fn ChatPanel(
     state_store: Signal<LocalStateStore>,
     initial_flow_id: String,
     embedded: bool,
+    direct_mode: bool,
 ) -> Element {
     let navigator = use_navigator();
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
@@ -367,12 +368,13 @@ pub fn ChatPanel(
     // twice more per render.
     let messages_for_reply_lookup = &all_messages_snapshot;
     let messages_for_composer_lookup = &all_messages_snapshot;
-    let left_open = !embedded && left_panel_open();
+    let left_open = !embedded && !direct_mode && left_panel_open();
     let active_right_panel = if embedded { None } else { right_panel() };
     let right_open = active_right_panel.is_some();
     let shell_class = format!(
-        "discussion-shell{}{}{}",
+        "discussion-shell{}{}{}{}",
         if embedded { " embedded" } else { "" },
+        if direct_mode { " direct-mode" } else { "" },
         if left_open { "" } else { " left-collapsed" },
         if right_open { "" } else { " right-collapsed" }
     );
@@ -673,7 +675,7 @@ pub fn ChatPanel(
     let composer_class = "discussion-composer";
 
     rsx! {
-        div { class: "{shell_class}", "data-testid": "chat-panel",
+        div { class: "{shell_class}", "data-testid": "chat-panel", "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
             if left_open {
                 aside { class: "discussion-panel discussion-sidebar-panel", "data-testid": "discussion-list-panel",
                     div { class: "discussion-panel-head",
@@ -752,7 +754,7 @@ pub fn ChatPanel(
                         }
                     }
                 }
-            } else if !embedded {
+            } else if !embedded && !direct_mode {
                 div { class: "discussion-rail discussion-left-rail", "data-testid": "discussion-list-rail",
                     button {
                         class: "secondary icon-button",
@@ -764,7 +766,7 @@ pub fn ChatPanel(
                 }
             }
 
-            if !embedded && create_dialog_open() {
+            if !embedded && !direct_mode && create_dialog_open() {
                 div { class: "discussion-modal-backdrop", "data-testid": "channel-create-modal",
                     div { class: "discussion-modal", role: "dialog", "aria-modal": "true", "aria-label": "New Flow",
                         div { class: "discussion-modal-head",
