@@ -172,6 +172,16 @@ export async function mockCokretApi(page: Page) {
         body: "<!doctype html><main data-testid=\"coauth-login\"><h1>Sign in</h1><p>coauth</p><a href=\"/register\">Create account</a><a href=\"/recovery\">Lost password or account</a></main>",
       });
     }
+    if (url.hostname === "auth.local.host" && url.pathname === "/oauth/token") {
+      return json(route, {
+        access_token: "sx_playwright_oidc_token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        refresh_token: "sx_playwright_oidc_refresh",
+        id_token: "sx_playwright_oidc_id",
+        scope: "openid profile",
+      });
+    }
     if (!url.pathname.startsWith("/_cokret/")) {
       return route.continue();
     }
@@ -291,79 +301,6 @@ export async function mockCokretApi(page: Page) {
         experimental_features: [],
         compat_surfaces: [],
         development_mode: true,
-      });
-    }
-
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/auth/bridge/describe") {
-      return json(route, {
-        contract: "cokret.rest.auth_bridge.v1",
-        version: "2026-05-04-scaffold",
-        api_base_path: "/_cokret",
-        oauth: {
-          discovery_path: "/.well-known/openid-configuration",
-          browser_bridge_session_path: "/_cokret/gate/account/auth/oidc/browser-bridge/session",
-          exchange_describe_path: "/_cokret/gate/account/auth/oidc/exchange/describe",
-          exchange_path: "/_cokret/gate/account/auth/oidc/exchange",
-          supported_flows: ["authorization_code_pkce_browser"],
-        },
-        cokret: {
-          login_path: "/_cokret/gate/account/auth/login",
-          logout_path: "/_cokret/gate/account/auth/logout",
-          providers_path: "/_cokret/gate/account/auth/providers",
-          session_grants_path: "/_cokret/gate/account/session-grants",
-          session_grants_introspect_path: "/_cokret/gate/account/session-grants/introspect",
-          session_grant_scope: "urn:cokret:principal-server:session.bind",
-        },
-        todos: [],
-      });
-    }
-
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/auth/oidc/browser-bridge/session") {
-      const body = await route.request().postDataJSON();
-      const redirectUri = body.redirect_uri ?? "http://127.0.0.1:4527/auth/callback";
-      const principalAudience = body.principal_audience ?? "did:web:server.local";
-      const authorizeUrl = new URL("https://auth.local.host/authorize");
-      authorizeUrl.searchParams.set("response_type", "code");
-      authorizeUrl.searchParams.set("client_id", "01GFWR28C4KNE04WG3HKXB7C9R");
-      authorizeUrl.searchParams.set("redirect_uri", redirectUri);
-      authorizeUrl.searchParams.set("scope", "openid");
-      authorizeUrl.searchParams.set("state", "oidc-state-e2e");
-      authorizeUrl.searchParams.set("nonce", "oidc-nonce-e2e");
-      authorizeUrl.searchParams.set("resource", principalAudience);
-      authorizeUrl.searchParams.set("code_challenge_method", "S256");
-      authorizeUrl.searchParams.set("code_challenge", "oidc-code-challenge-e2e");
-      return json(route, {
-        contract: "cokret.rest.auth_bridge.oidc_browser_session.v1",
-        version: "2026-05-04-scaffold",
-        authorize_url: authorizeUrl.toString(),
-        callback_uri: redirectUri,
-        issuer: "https://auth.local.host/",
-        authorization_endpoint: "https://auth.local.host/authorize",
-        token_endpoint: "https://auth.local.host/oauth/token",
-        userinfo_endpoint: "https://auth.local.host/oauth/userinfo",
-        client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-        state: "oidc-state-e2e",
-        nonce: "oidc-nonce-e2e",
-        code_verifier: "oidc-code-verifier-e2e",
-        code_challenge: "oidc-code-challenge-e2e",
-        code_challenge_method: "S256",
-        principal_audience: principalAudience,
-        todo: "mock browser bridge session",
-      });
-    }
-
-    if (url.hostname === "auth.local.host" && url.pathname === "/_cokret/gate/account/integration/describe") {
-      return json(route, {
-        contract: "cokret.rest.integration_manifest.v1",
-        version: "2026-05-04-scaffold",
-        service: "coauth",
-        service_kind: "account_authority",
-        api_base_path: "/_cokret",
-        describe_path: "/_cokret/gate/account/integration/describe",
-        dependencies: [],
-        surfaces: [],
-        examples: {},
-        todos: [],
       });
     }
 
@@ -537,7 +474,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/update$/) && route.request().method() === "PUT") {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/update$/) && route.request().method() === "PUT") {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         ok: true,
@@ -546,7 +483,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/notify$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/notify$/)) {
       return json(route, {
         ok: true,
         accepted: ["did:web:remote.example"],
@@ -554,7 +491,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/messages$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/messages$/)) {
       return json(route, {
         ok: true,
         mimi_message_id: "mimi-msg-e2e",
@@ -573,7 +510,7 @@ export async function mockCokretApi(page: Page) {
       });
     }
 
-    if (url.pathname.match(/^\/_cokret\/open\/mimi\/rooms\/[^/]+\/group-info$/)) {
+    if (url.pathname.match(/^\/_cokret\/open\/mimi\/flows\/[^/]+\/group-info$/)) {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
       return json(route, {
         room_id: roomId,
@@ -632,7 +569,7 @@ export async function mockCokretApi(page: Page) {
         blob_ref: "ck:blob:sha256:e2e",
         media_type: "application/octet-stream",
         size: 23,
-        proxy_url: "/_cokret/open/mimi/proxy-download/ck:blob:sha256:e2e",
+        proxy_url: "https://mimi.example.com/proxy/ck:blob:sha256:e2e",
         receipt: { kind: "ck.open.mimi.proxy_download", direct_object_store_url: null },
       });
     }
@@ -645,31 +582,6 @@ export async function mockCokretApi(page: Page) {
         actor: body.actor,
         device_id: body.device_id,
         expires_at: "2026-04-28T12:00:00Z",
-      });
-    }
-
-    if (url.pathname === "/_cokret/gate/auth/passkey/challenge") {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        challenge: "playwright-passkey-challenge",
-        rp_id: "127.0.0.1",
-        user_did: body.user_did,
-        expires_at: "2026-04-28T12:05:00Z",
-      });
-    }
-
-    if (url.pathname === "/_cokret/gate/auth/oidc/authorize") {
-      return json(route, {
-        redirect_url: "https://idp.example/authorize?state=oidc-state-e2e",
-        state: "oidc-state-e2e",
-      });
-    }
-
-    if (url.pathname === "/_cokret/gate/auth/token/refresh") {
-      return json(route, {
-        access_token: "sx_playwright_refreshed",
-        token_type: "Bearer",
-        expires_at: "2026-04-28T13:00:00Z",
       });
     }
 

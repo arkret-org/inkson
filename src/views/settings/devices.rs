@@ -13,9 +13,9 @@
 //!
 //! The pair flow on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — generates a one-time pairing payload by calling `POST
-//!   /_cokret/self/devices/pairing-challenge`. The coauth-side unauthenticated `POST
-//!   /_cokret/gate/auth/passkey/*` endpoints that would let a fresh device kick off the pair flow
-//!   without first authenticating do not yet exist — see the `TODO(G3.Y1-followup)` comments below.
+//!   /_cokret/self/devices/pairing-challenge`. The spec-level account pairing surface is `POST
+//!   /_cokret/gate/account/device-pair`; the local soland device endpoints below are still scaffold
+//!   wiring that must be reconciled before conformance.
 //! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
 //!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
 //! - `pair-device-status` — feedback area.
@@ -34,9 +34,7 @@
 //! - `POST /_cokret/self/devices/{device_id}/revoke` — implemented (soland)
 //! - `POST /_cokret/self/devices/pairing-challenge` — scaffold (soland)
 //! - `POST /_cokret/self/devices/authorize-pairing` — scaffold (soland)
-//! - `POST /_cokret/gate/auth/passkey/begin` — TODO(G3.Y1-followup): coauth does not yet expose an
-//!   unauthenticated entry point that lets a brand-new device claim a pairing intent without first
-//!   holding a bearer token.
+//! - `POST /_cokret/gate/account/device-pair` — spec-level target for device pairing.
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -1004,12 +1002,11 @@ fn render_pair_flow(
                         ));
                         spawn(async move {
                             // TODO(G3.Y1-followup): the body shape
-                            // here is a placeholder. Once coauth's
-                            // unauthenticated passkey endpoints land
-                            // (`POST /_cokret/gate/auth/passkey/begin`,
-                            // `POST /_cokret/gate/auth/passkey/finish`), the
-                            // device should mint a DPoP proof against
-                            // that endpoint, not call soland directly.
+                            // here is a placeholder. Once the spec-level
+                            // `POST /_cokret/gate/account/device-pair`
+                            // path is wired end to end, the device should
+                            // mint a DPoP proof against that endpoint, not
+                            // call soland directly.
                             let body = json!({
                                 "payload": payload,
                                 "device_id": local_device,

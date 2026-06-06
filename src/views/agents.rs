@@ -1691,7 +1691,6 @@ pub fn PersonalAgentAdminPanel(
             // ───────────────────────────────────────────────────────
             // Sidecar thread ensure
             // (ck.self.agent.sidecar_thread.ensure)
-            // Default home_policy = context_realm_preferred (B-F).
             // ───────────────────────────────────────────────────────
             div { class: "event", "data-testid": "agent-admin-sidecar-ensure",
                 div { class: "event-head",
@@ -1699,12 +1698,12 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.self.agent.sidecar_thread.ensure" }
                 }
                 div { class: "muted",
-                    "Default home policy: context_realm_preferred (CKP-0009 §3 / B-F). Pass a context realm_id to bind the sidecar Circle to a specific Realm; leave blank for the active Realm."
+                    "Ensures the controller-private sidecar objects for the selected agent in a Realm."
                 }
                 div { class: "workflow-form",
                     input {
                         "data-testid": "agent-admin-sidecar-realm-input",
-                        placeholder: "optional context_realm_id",
+                        placeholder: "realm_id",
                         value: "{sidecar_realm}",
                         oninput: move |e| sidecar_realm.set(e.value()),
                     }
@@ -1712,7 +1711,9 @@ pub fn PersonalAgentAdminPanel(
                         button {
                             class: "primary",
                             "data-testid": "agent-admin-sidecar-ensure-button",
-                            disabled: selected_agent_id().is_empty(),
+                            disabled: selected_agent_id().is_empty()
+                                || sidecar_realm().trim().is_empty()
+                                || controller_did.trim().is_empty(),
                             onclick: {
                                 let base = base_url.clone();
                                 move |_| {
@@ -1721,15 +1722,11 @@ pub fn PersonalAgentAdminPanel(
                                     let base = base.clone();
                                     let api_token = token();
                                     let realm = sidecar_realm();
-                                    let realm_opt = if realm.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(realm.trim().to_owned())
-                                    };
+                                    let controller = controller_did.clone();
                                     let body = AgentSidecarThreadEnsureReqBody {
-                                        context_realm_id: realm_opt,
-                                        home_policy: crate::api::sidecar_home_policy_default()
-                                            .to_owned(),
+                                        realm_id: realm.trim().to_owned(),
+                                        controller_principal_id: controller,
+                                        agent_principal_id: id.clone(),
                                     };
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, move |api| {
@@ -1742,10 +1739,10 @@ pub fn PersonalAgentAdminPanel(
                                         .await
                                         {
                                             Ok(r) => last_op_status.set(format!(
-                                                "sidecar.ensure: {} circle={} created={}",
-                                                r.agent_principal_id,
-                                                short_protocol_id(&r.sidecar_circle_id),
-                                                r.created
+                                                "sidecar.ensure: circle={} flow={} relation={}",
+                                                short_protocol_id(&r.private_circle_id),
+                                                short_protocol_id(&r.private_flow_id),
+                                                short_protocol_id(&r.private_relation_id)
                                             )),
                                             Err(err) => last_op_status.set(format!(
                                                 "sidecar.ensure failed: {}", err.display()

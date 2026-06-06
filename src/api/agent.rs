@@ -141,25 +141,29 @@ impl CokretApi {
         .await
     }
 
-    /// `POST /_cokret/self/agents/{id}/sidecar-thread/ensure` —
+    /// `POST /_cokret/self/agent-sidecar-threads:ensure` —
     /// `ck.self.agent.sidecar_thread.ensure`. Idempotently derives the
     /// controller_agent_circle_key and ensures a sidecar Circle exists
-    /// between the controller and the native agent. Defaults
-    /// `home_policy = "context_realm_preferred"` per CKP-0009 §3 / B-F.
+    /// between the controller and the native agent.
     pub async fn agent_sidecar_thread_ensure(
         &self,
         agent_principal_id: &str,
         body: &AgentSidecarThreadEnsureReqBody,
     ) -> anyhow::Result<AgentSidecarThreadEnsureResBody> {
-        // Apply the spec-mandated default at the call site if the
-        // caller passed an empty discriminator.
         let mut body = body.clone();
-        if body.home_policy.trim().is_empty() {
-            body.home_policy = sidecar_home_policy_default().to_owned();
+        if body.agent_principal_id.trim().is_empty() {
+            body.agent_principal_id = agent_principal_id.to_owned();
+        } else if body.agent_principal_id.trim() != agent_principal_id.trim() {
+            anyhow::bail!("agent_principal_id path argument does not match request body");
         }
-        let agent_principal_id = path_component(agent_principal_id);
+        if body.realm_id.trim().is_empty() {
+            anyhow::bail!("realm_id is required");
+        }
+        if body.controller_principal_id.trim().is_empty() {
+            anyhow::bail!("controller_principal_id is required");
+        }
         self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/sidecar-thread/ensure"),
+            "_cokret/self/agent-sidecar-threads:ensure",
             serde_json::to_value(&body)?,
         )
         .await

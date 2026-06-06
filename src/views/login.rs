@@ -1,18 +1,21 @@
+#[cfg(test)]
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use crate::api::CokretApi;
+#[cfg(test)]
+use crate::coauth::CoauthSessionGrantInfo;
 use crate::coauth::{
-    CoauthApi, CoauthSessionGrantInfo, authorize_url_with_forced_reauthentication,
-    build_oidc_code_exchange_plan, build_session_grant_introspection_proof_bundle,
-    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-    extract_authorization_code_from_callback, extract_error_description_from_callback,
-    extract_error_from_callback, extract_state_from_callback,
-    oidc_scaffold_bundle_from_bridge_session, open_oidc_authorize_url, persist_oidc_scaffold,
-    resolve_principal_auth_server, restore_oidc_scaffold, session_grant_signing_key_from_pem,
+    CoauthApi, authorize_url_with_forced_reauthentication, build_oidc_code_exchange_plan,
+    build_oidc_scaffold_bundle, capture_current_browser_callback_url,
+    clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
+    extract_error_description_from_callback, extract_error_from_callback,
+    extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
+    resolve_principal_auth_server, restore_oidc_scaffold,
 };
 use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
+#[cfg(test)]
 use crate::models::DevLoginResponse;
 use crate::views::helpers::{persist_config, short_protocol_id};
 
@@ -341,22 +344,12 @@ pub(crate) async fn start_oidc_flow(
         .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
     let coauth = CoauthApi::new(&principal_auth.auth_server_url)
         .map_err(|error| format!("Invalid auth server URL: {error}"))?;
-    let bridge = coauth
-        .auth_bridge_describe()
+    let topology = coauth
+        .inspect_topology()
         .await
         .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let session = coauth
-        .start_oidc_browser_bridge(
-            &bridge.oauth.browser_bridge_session_path,
-            &crate::coauth::current_oidc_redirect_uri(),
-            "",
-            device_id,
-            Some(principal_auth.service_did.as_str()),
-            None,
-        )
-        .await
+    let mut bundle = build_oidc_scaffold_bundle(&topology, principal_server_url, "", device_id)
         .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
-    let mut bundle = oidc_scaffold_bundle_from_bridge_session(&session);
     bundle.authorize_url = authorize_url_with_forced_reauthentication(&bundle.authorize_url)
         .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
@@ -452,204 +445,63 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .clone()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "Server OIDC discovery did not publish a token endpoint.".to_owned())?;
-    let userinfo_endpoint = topology
-        .userinfo_endpoint
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server OIDC discovery did not publish a userinfo endpoint.".to_owned())?;
-    let login = coauth
-        .exchange_oidc_code(
-            &topology.oidc_exchange_path,
+    let tokens = coauth
+        .exchange_pkce_code_for_tokens(
+            &token_endpoint,
+            &plan.client_id,
             &authorization_code,
             &scaffold.code_verifier,
             &scaffold.callback_uri,
-            &topology.issuer,
-            &token_endpoint,
-            &userinfo_endpoint,
-            &plan.client_id,
-            actor_hint,
-            &device,
-            Some(&plan.principal_audience),
-            Some(&returned_state),
-            Some(&scaffold.expected_state),
-            Some(&scaffold.expected_nonce),
         )
         .await
-        .map_err(|error| format!("Server sign-in exchange failed: {error}"))?;
-    if login.status != "success" {
-        return Err(format!(
-            "Server sign-in returned {}: {}",
-            login.status,
-            login.error.unwrap_or_else(|| "unknown error".to_owned())
-        ));
+        .map_err(|error| format!("OIDC token exchange failed: {error}"))?;
+    let principal_target = principal_server_url;
+    if requires_oidc_refresh_token(&principal_target)
+        && !tokens
+            .refresh_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+    {
+        return Err(
+            "Server sign-in returned OIDC tokens without a refresh_token; refusing a production session without a secure refresh path."
+                .to_owned(),
+        );
     }
-
-    let principal_id = login
-        .viewer
-        .as_ref()
-        .map(|viewer| viewer.did.clone())
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            (!scaffold.principal_actor_did.trim().is_empty())
-                .then(|| scaffold.principal_actor_did.clone())
-        })
-        .ok_or_else(|| "Server sign-in did not return a principal ID.".to_owned())?;
-    let grant = login.session_grant.as_ref();
-    let principal_target = grant
-        .and_then(|grant| grant.principal_server.as_ref())
-        .map(|server| server.endpoint.clone())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(principal_server_url);
+    let bundle = tokens.to_persisted_bundle(Some(&plan.principal_audience));
+    if bundle.access_token.trim().is_empty() {
+        return Err("OIDC token exchange did not return an access token.".to_owned());
+    }
     let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
-    let oidc_bundle = match login.oidc_tokens.as_ref() {
-        Some(tokens) => {
-            if tokens
-                .refresh_token
-                .as_deref()
-                .is_some_and(|rt| !rt.trim().is_empty())
-                || !requires_oidc_refresh_token(&principal_target)
-            {
-                Some(tokens.to_persisted_bundle(Some(&plan.principal_audience)))
-            } else {
-                return Err(
-                    "Server sign-in returned OIDC tokens without a refresh_token; refusing a production session without a secure refresh path."
-                        .to_owned(),
-                );
-            }
-        }
-        None if requires_oidc_refresh_token(&principal_target) => {
-            return Err(
-                "Server sign-in did not return an OIDC token bundle; refusing a production session without a secure refresh-token handoff."
-                    .to_owned(),
-            );
-        }
-        None => None,
-    };
-
-    if let Some(bundle) = oidc_bundle.clone()
-        && !bundle.access_token.trim().is_empty()
-    {
-        match principal
-            .clone()
-            .with_bearer(bundle.access_token.clone())
-            .account_me()
-            .await
-        {
-            Ok(account) => {
-                let actor = if account.did.trim().is_empty() {
-                    principal_id
-                } else {
-                    account.did
-                };
-                let grant_fallback = if crate::oidc::lifecycle::has_refresh_token(&bundle) {
-                    None
-                } else {
-                    let grant = grant.ok_or_else(|| {
-                        "Server sign-in returned an OIDC bearer without refresh_token or session_grant; cannot create a durable session."
-                            .to_owned()
-                    })?;
-                    let bridge = principal.auth_bridge_describe().await.map_err(|error| {
-                        format!("Principal auth bridge describe failed: {error}")
-                    })?;
-                    Some(
-                        persisted_session_grant_from_parts(
-                            grant,
-                            &principal_target,
-                            &actor,
-                            &device,
-                            &bridge.auth.session_grant_exchange_path,
-                            None,
-                        )
-                        .map_err(|error| format!("Could not persist session grant: {error}"))?,
-                    )
-                };
-                let _ = clear_persisted_oidc_scaffold();
-                return Ok(CompletedLogin {
-                    principal_server_url: principal_target,
-                    actor,
-                    device_id: device,
-                    access_token: bundle.access_token.clone(),
-                    grant: grant_fallback,
-                    oidc_tokens: Some(bundle),
-                });
-            }
-            Err(error) if requires_oidc_refresh_token(&principal_target) => {
-                return Err(format!(
-                    "Principal server did not accept the OIDC bearer token: {error}"
-                ));
-            }
-            Err(_) => {
-                // Local/dev deployments may not have OAuth bearer
-                // introspection wired yet. Fall back to the legacy
-                // session-grant exchange below.
-            }
-        }
-    }
-
-    let grant = grant.ok_or_else(|| "Server sign-in did not return a session grant.".to_owned())?;
-    let bridge = principal
-        .auth_bridge_describe()
-        .await
-        .map_err(|error| format!("Principal auth bridge describe failed: {error}"))?;
-    let grant_id = grant
-        .id
-        .as_deref()
-        .ok_or_else(|| "Server sign-in did not return a session grant id.".to_owned())?;
-    let grant_audience = grant
-        .audience
-        .as_deref()
-        .ok_or_else(|| "Server sign-in did not return a session grant audience.".to_owned())?;
-    let session_grant_signing_key =
-        session_grant_signing_key_from_pem(&grant.session_private_key_pem).map_err(|error| {
-            format!("Server sign-in returned an invalid session grant key: {error}")
-        })?;
-    let proof = build_session_grant_introspection_proof_bundle(
-        grant_id,
-        &grant.grant_jwt,
-        grant_audience,
-        &session_grant_signing_key,
-    )
-    .map_err(|error| format!("Could not sign session grant proof: {error}"))?;
-    let session = principal
-        .exchange_session_grant_at_with_proof(
-            &bridge.auth.session_grant_exchange_path,
-            &grant.grant_jwt,
-            &principal_id,
-            &device,
-            Some(&proof),
-        )
-        .await
-        .map_err(|error| format!("Principal session exchange failed: {error}"))?;
-    let actor = match principal
+    let account = principal
         .clone()
-        .with_bearer(session.access_token.clone())
+        .with_bearer(bundle.access_token.clone())
         .account_me()
         .await
-    {
-        Ok(account) if !account.did.trim().is_empty() => account.did,
-        _ => session.actor.clone(),
+        .map_err(|error| {
+            format!("Principal server did not accept the OIDC bearer token: {error}")
+        })?;
+    let actor = if account.did.trim().is_empty() {
+        actor_hint.to_owned()
+    } else {
+        account.did
     };
-    let persisted_grant = persisted_session_grant_from_login(
-        grant,
-        &session,
-        &principal_target,
-        &actor,
-        &bridge.auth.session_grant_exchange_path,
-    )
-    .map_err(|error| format!("Could not persist session grant: {error}"))?;
+    if actor.trim().is_empty() {
+        return Err("Principal server did not return an account DID.".to_owned());
+    }
     let _ = clear_persisted_oidc_scaffold();
 
     Ok(CompletedLogin {
         principal_server_url: principal_target,
         actor,
-        device_id: session.device_id,
-        access_token: session.access_token,
-        grant: Some(persisted_grant),
-        oidc_tokens: None,
+        device_id: device,
+        access_token: bundle.access_token.clone(),
+        grant: None,
+        oidc_tokens: Some(bundle),
     })
 }
 
+#[cfg(test)]
 fn persisted_session_grant_from_login(
     grant: &CoauthSessionGrantInfo,
     session: &DevLoginResponse,
@@ -667,6 +519,7 @@ fn persisted_session_grant_from_login(
     )
 }
 
+#[cfg(test)]
 fn persisted_session_grant_from_parts(
     grant: &CoauthSessionGrantInfo,
     principal_server_url: &str,
@@ -700,6 +553,7 @@ fn persisted_session_grant_from_parts(
     })
 }
 
+#[cfg(test)]
 fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value.trim())
         .ok()

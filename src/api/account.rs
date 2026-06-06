@@ -5,20 +5,6 @@ struct PrincipalRealmLookupResponse {
     realm_id: String,
 }
 
-/// Preferred protocol-namespace location of the principal auth-bridge describe
-/// document. Auth server surfaces live under `/_cokret/gate/account/*`; older
-/// soland deployments still expose the principal bridge only in the product
-/// namespace below.
-const AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/account/auth/bridge/describe";
-
-/// Legacy product-namespace fallback for servers that have not yet aliased
-/// their auth bridge into the protocol namespace. Probed only when the
-/// canonical path returns `404 unrecognized_endpoint`.
-///
-/// TODO: drop once soland serves the bridge describe under `/_cokret/gate/account/...`
-/// (or advertises its location via `/_cokret/describe.auth_metadata`).
-const AUTH_BRIDGE_DESCRIBE_PATH_LEGACY: &str = "_soland/gate/auth/bridge/describe";
-
 impl CokretApi {
     pub async fn health(&self) -> anyhow::Result<HealthResponse> {
         self.get_json("health").await
@@ -34,25 +20,12 @@ impl CokretApi {
             .await
     }
 
-    /// Resolve the principal server's auth-bridge describe document from a
-    /// single bootstrap anchor. Prefers the protocol-namespace path
-    /// (`/_cokret/gate/account/auth/bridge/describe`) and falls back to the
-    /// legacy soland product path (`/_soland/gate/...`) only when the
-    /// protocol alias is absent (`404 unrecognized_endpoint`). All other
-    /// errors propagate unchanged.
     pub async fn auth_bridge_describe(
         &self,
     ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
-        match self
-            .get_json::<PrincipalAuthBridgeDescribeResponse>(AUTH_BRIDGE_DESCRIBE_PATH)
-            .await
-        {
-            Ok(describe) => Ok(describe),
-            Err(error) if is_endpoint_absent(&error) => {
-                self.get_json(AUTH_BRIDGE_DESCRIBE_PATH_LEGACY).await
-            }
-            Err(error) => Err(error),
-        }
+        anyhow::bail!(
+            "principal auth bridge describe is not part of the Cokret spec; yougen must not call private bridge paths"
+        )
     }
 
     pub async fn dev_login(

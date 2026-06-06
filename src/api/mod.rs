@@ -122,18 +122,6 @@ use crate::operation::{
     trim_realm_id, uuid_v7,
 };
 
-/// B-F / CKP-0009 §3 — default home-policy discriminator passed on
-/// `ck.self.agent.sidecar_thread.ensure`. The spec rolled the default from
-/// "default home realm" to "context realm preferred"; yougen MUST emit
-/// this token unless the caller explicitly overrides it.
-pub const SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED: &str = "context_realm_preferred";
-
-/// Returns the canonical default home-policy string for the
-/// `ck.self.agent.sidecar_thread.ensure` request body's `home_policy` field.
-pub fn sidecar_home_policy_default() -> &'static str {
-    SIDECAR_HOME_POLICY_CONTEXT_REALM_PREFERRED
-}
-
 /// Generic wrapper for soland's
 /// `/_cokret/self/projection/{spaces|flows}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
@@ -349,6 +337,7 @@ const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
 /// auth, or server error. Used during bootstrap to fall back from a canonical
 /// protocol-namespace path (`/_cokret/gate/...`) to a legacy vendor path
 /// (`/_soland/gate/...`) only when the canonical alias is genuinely absent.
+#[cfg(test)]
 pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<CokretApiError>()

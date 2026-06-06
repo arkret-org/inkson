@@ -1262,27 +1262,20 @@ pub struct AgentGrantDetachResBody {
     pub todos: Vec<String>,
 }
 
-/// CKP-0008 / CKP-0009 §6 + B-F: `ck.self.agent.sidecar_thread.ensure` MUST
-/// default `home_policy = "context_realm_preferred"`. This is encoded
-/// in the request body's optional `context_realm_id` plus the
-/// `home_policy` discriminator.
+/// `ck.self.agent.sidecar_thread.ensure` request schema.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentSidecarThreadEnsureReqBody {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_realm_id: Option<String>,
-    /// Default value emitted by yougen: `"context_realm_preferred"`
-    /// (B-F / CKP-0009 §3 sidecar home policy).
-    #[serde(default)]
-    pub home_policy: String,
+    pub realm_id: String,
+    pub controller_principal_id: String,
+    pub agent_principal_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentSidecarThreadEnsureResBody {
     pub ok: bool,
-    pub agent_principal_id: String,
-    pub sidecar_circle_id: String,
-    pub realm_id: String,
-    pub created: bool,
+    pub private_circle_id: String,
+    pub private_flow_id: String,
+    pub private_relation_id: String,
     #[serde(default)]
-    pub todos: Vec<String>,
+    pub pending_member_reconciliations: Vec<Value>,
 }

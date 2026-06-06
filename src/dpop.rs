@@ -202,7 +202,7 @@ mod tests {
     fn fixed_claims() -> DpopClaims {
         DpopClaims {
             htm: "POST".to_owned(),
-            htu: "https://soland.example/_cokret/gate/session_grants/exchange".to_owned(),
+            htu: "https://soland.example/_cokret/gate/account/session-grants".to_owned(),
             iat: 1_716_000_000,
             jti: "fixed-nonce-1234".to_owned(),
             nonce: None,

@@ -321,8 +321,8 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-/// G3.Y0 + G3.C1 — exchange the persisted session grant for a fresh
-/// one against coauth's `POST /_cokret/gate/account/session-grants/refresh` endpoint.
+/// Exchange the persisted session grant for a fresh one against coauth's
+/// private refresh endpoint.
 ///
 /// The endpoint requires:
 ///

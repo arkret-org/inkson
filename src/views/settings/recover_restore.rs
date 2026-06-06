@@ -16,10 +16,9 @@
 //! Coauth endpoints that the e2e harness exercises but that don't
 //! yet exist:
 //!
-//! - `POST /_cokret/gate/auth/passkey/begin` — TODO(G3.Y1-followup): coauth needs an
-//!   unauthenticated entry point that lets a brand-new device claim the recovered identity without
-//!   first holding a bearer token. Until then this view only exercises the on-device passphrase →
-//!   KEK → decrypt path; the server round-trip happens via the existing
+//! - `POST /_cokret/gate/account/device-pair` — spec-level target for letting a brand-new device
+//!   claim the recovered identity after local recovery proof. Until then this view only exercises
+//!   the on-device passphrase → KEK → decrypt path; the server round-trip happens via the existing
 //!   `/_cokret/self/keys/backups/{backup_id}` endpoint with a temporary placeholder token in tests.
 
 use dioxus::prelude::*;

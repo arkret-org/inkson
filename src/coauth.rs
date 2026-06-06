@@ -12,8 +12,6 @@ use crate::api::CokretApi;
 use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
-const COAUTH_AUTH_BRIDGE_DESCRIBE_PATH: &str = "_cokret/gate/account/auth/bridge/describe";
-const COAUTH_INTEGRATION_DESCRIBE_PATH: &str = "_cokret/gate/account/integration/describe";
 // These three constants are **only**
 // referenced by `build_authorize_url_preview` — the diagnostic /
 // inspector function that renders an example authorize URL without
@@ -213,7 +211,7 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// Canonical OIDC token endpoint response shape. Used by
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
-/// G3.Y0 — wire shape of `POST /_cokret/gate/account/session-grants/refresh` (G3.C1).
+/// Wire shape of coauth's private session-grant refresh response.
 /// Mirrors `coauth::handlers::cokret::RefreshSessionGrantResponse`. We
 /// keep the fields as `String` so the cotest harness can assert
 /// equality against the JSON body verbatim.
@@ -412,14 +410,20 @@ impl CoauthApi {
             .get_json::<OidcDiscoveryDocument>(".well-known/openid-configuration")
             .await
             .context("coauth OIDC discovery failed")?;
-        let bridge = self
-            .get_json::<CoauthAuthBridgeDescribe>(COAUTH_AUTH_BRIDGE_DESCRIBE_PATH)
-            .await
-            .context("coauth auth bridge describe failed")?;
-        let integration_manifest = self
-            .get_json::<CoauthIntegrationManifest>(COAUTH_INTEGRATION_DESCRIBE_PATH)
-            .await
-            .context("coauth integration describe failed")?;
+        let integration_manifest = CoauthIntegrationManifest {
+            contract: "cokret.spec_only.topology.v1".to_owned(),
+            version: "1.0".to_owned(),
+            service: "coauth".to_owned(),
+            service_kind: "account_authority".to_owned(),
+            api_base_path: "/_cokret".to_owned(),
+            describe_path: "/_cokret/describe".to_owned(),
+            dependencies: Vec::new(),
+            surfaces: Vec::new(),
+            examples: Value::Null,
+            todos: vec![
+                "coauth private bridge and integration descriptors are outside the Cokret spec and are not fetched by yougen".to_owned(),
+            ],
+        };
 
         Ok(CoauthTopologySnapshot {
             service_did: value_string(&server, "service_did"),
@@ -440,28 +444,38 @@ impl CoauthApi {
                 .map(serde_json::from_value)
                 .transpose()?
                 .unwrap_or_default(),
-            oidc_browser_bridge_session_path: bridge.oauth.browser_bridge_session_path,
-            oidc_exchange_describe_path: bridge.oauth.exchange_describe_path,
-            oidc_exchange_path: bridge.oauth.exchange_path,
-            auth_bridge_contract: bridge.contract,
-            auth_bridge_todos: bridge.todos,
+            oidc_browser_bridge_session_path: String::new(),
+            oidc_exchange_describe_path: String::new(),
+            oidc_exchange_path: String::new(),
+            auth_bridge_contract: String::new(),
+            auth_bridge_todos: vec![
+                "coauth auth bridge is outside the Cokret spec and is not fetched by yougen"
+                    .to_owned(),
+            ],
             integration_manifest,
         })
     }
 
     pub async fn auth_bridge_describe(&self) -> anyhow::Result<CoauthAuthBridgeDescribe> {
-        self.get_json(COAUTH_AUTH_BRIDGE_DESCRIBE_PATH).await
+        anyhow::bail!(
+            "coauth auth bridge is not part of the Cokret spec; yougen must not call private coauth paths"
+        )
     }
 
     pub async fn describe_oidc_exchange(
         &self,
         exchange_describe_path: &str,
     ) -> anyhow::Result<CoauthOidcExchangeDescribe> {
-        self.get_json(exchange_describe_path).await
+        let _ = exchange_describe_path;
+        anyhow::bail!(
+            "coauth OIDC exchange describe is not part of the Cokret spec; yougen must not call private coauth paths"
+        )
     }
 
     pub async fn integration_describe(&self) -> anyhow::Result<CoauthIntegrationManifest> {
-        self.get_json(COAUTH_INTEGRATION_DESCRIBE_PATH).await
+        anyhow::bail!(
+            "coauth integration describe is not part of the Cokret spec; yougen must not call private coauth paths"
+        )
     }
 
     /// List invite-quarantine entries from coauth's admin endpoint. Admins
@@ -469,7 +483,9 @@ impl CoauthApi {
     /// 403 - the caller surfaces an inline "limited to your own invites"
     /// hint and falls back to [`Self::invite_quarantine_self`].
     pub async fn invite_quarantine_list(&self) -> anyhow::Result<Value> {
-        self.get_json("_cokret/local/admin/invite-quarantine").await
+        anyhow::bail!(
+            "coauth invite quarantine is a private coauth surface; yougen must not call private coauth paths"
+        )
     }
 
     /// Per-user view of the caller's quarantined invites - surfaced for
@@ -477,7 +493,9 @@ impl CoauthApi {
     /// admin access. Backed by the same coauth admin endpoint via a
     /// self-scope query string.
     pub async fn invite_quarantine_self(&self) -> anyhow::Result<Value> {
-        self.get_json("_cokret/self/invite-quarantine/self").await
+        anyhow::bail!(
+            "coauth invite quarantine is a private coauth surface; yougen must not call private coauth paths"
+        )
     }
 
     /// Admin decision on a quarantined invite. `decision` is `"approve"`
@@ -490,15 +508,10 @@ impl CoauthApi {
         decision: &str,
         reason: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let mut body = serde_json::json!({"decision": decision});
-        if let Some(reason) = reason {
-            body["reason"] = serde_json::Value::String(reason.to_owned());
-        }
-        self.post_json(
-            &format!("_cokret/local/admin/invite-quarantine/{invite_id}/resolve"),
-            body,
+        let _ = (invite_id, decision, reason);
+        anyhow::bail!(
+            "coauth invite quarantine is a private coauth surface; yougen must not call private coauth paths"
         )
-        .await
     }
 
     pub async fn exchange_oidc_code(
@@ -518,25 +531,25 @@ impl CoauthApi {
         expected_state: Option<&str>,
         expected_nonce: Option<&str>,
     ) -> anyhow::Result<CoauthLoginResponse> {
-        self.post_json(
+        let _ = (
             exchange_path,
-            json!({
-                "authorization_code": authorization_code,
-                "code_verifier": code_verifier,
-                "redirect_uri": redirect_uri,
-                "issuer": issuer,
-                "token_endpoint": token_endpoint,
-                "userinfo_endpoint": userinfo_endpoint,
-                "client_id": client_id,
-                "login_hint": login_hint,
-                "device_id": device_id,
-                "principal_audience": principal_audience,
-                "state": state,
-                "expected_state": expected_state,
-                "expected_nonce": expected_nonce,
-            }),
+            authorization_code,
+            code_verifier,
+            redirect_uri,
+            issuer,
+            token_endpoint,
+            userinfo_endpoint,
+            client_id,
+            login_hint,
+            device_id,
+            principal_audience,
+            state,
+            expected_state,
+            expected_nonce,
+        );
+        anyhow::bail!(
+            "coauth OIDC exchange is not part of the Cokret spec; yougen must not call private coauth paths"
         )
-        .await
     }
 
     /// Real OIDC token-endpoint exchange. Drives the PKCE authorization-code
@@ -712,7 +725,7 @@ impl CoauthApi {
         .await
     }
 
-    /// G3.Y0 + G3.C1 — call coauth's `POST /_cokret/gate/account/session-grants/refresh`
+    /// Private coauth session-grant refresh is intentionally unavailable to yougen.
     /// with a DPoP proof and the prior grant JWT. On success returns
     /// the rotated grant (single-use semantics: the old grant is now
     /// revoked).
@@ -726,32 +739,10 @@ impl CoauthApi {
         audience: Option<&str>,
         dpop_proof: &str,
     ) -> anyhow::Result<RefreshSessionGrantResponse> {
-        let endpoint = self.endpoint("_cokret/gate/account/session-grants/refresh")?;
-        let body = json!({
-            "grant_jwt": grant_jwt,
-            "audience": audience,
-        });
-        let response = self
-            .http
-            .post(endpoint)
-            .header("DPoP", dpop_proof)
-            .json(&body)
-            .send()
-            .await
-            .context("session-grant refresh POST failed")?;
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .context("read session-grant refresh body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "session-grant refresh returned {status}: {body}",
-                status = status,
-                body = text.chars().take(512).collect::<String>(),
-            );
-        }
-        serde_json::from_str(&text).context("parse session-grant refresh response")
+        let _ = (grant_jwt, audience, dpop_proof);
+        anyhow::bail!(
+            "coauth session-grant refresh is not part of the Cokret spec; yougen must not call private coauth paths"
+        )
     }
 
     pub async fn start_oidc_browser_bridge(
@@ -763,17 +754,17 @@ impl CoauthApi {
         principal_audience: Option<&str>,
         client_id_hint: Option<&str>,
     ) -> anyhow::Result<CoauthOidcBrowserBridgeSession> {
-        self.post_json(
+        let _ = (
             session_path,
-            json!({
-                "redirect_uri": redirect_uri,
-                "login_hint": login_hint,
-                "device_id": device_id,
-                "principal_audience": principal_audience,
-                "client_id_hint": client_id_hint,
-            }),
+            redirect_uri,
+            login_hint,
+            device_id,
+            principal_audience,
+            client_id_hint,
+        );
+        anyhow::bail!(
+            "coauth OIDC browser bridge is not part of the Cokret spec; yougen must not call private coauth paths"
         )
-        .await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
@@ -838,7 +829,6 @@ pub async fn resolve_principal_auth_server_url(
 #[derive(Clone, Debug)]
 pub(crate) struct PrincipalAuthServerResolution {
     pub auth_server_url: String,
-    pub service_did: String,
 }
 
 pub(crate) async fn resolve_principal_auth_server(
@@ -854,12 +844,8 @@ pub(crate) async fn resolve_principal_auth_server(
         .ok_or_else(|| {
             anyhow::anyhow!("principal server did not publish auth_metadata.auth_server_url")
         })?;
-    Ok(validate_server_url(auth_server_url)?.to_string()).map(|auth_server_url| {
-        PrincipalAuthServerResolution {
-            auth_server_url,
-            service_did: description.service_did.to_string(),
-        }
-    })
+    Ok(validate_server_url(auth_server_url)?.to_string())
+        .map(|auth_server_url| PrincipalAuthServerResolution { auth_server_url })
 }
 
 pub fn active_oidc_redirect_uri() -> String {
@@ -1123,9 +1109,9 @@ pub fn authorize_url_with_forced_reauthentication(authorize_url: &str) -> anyhow
 /// Session-grant introspection proof claims. Mirrors
 /// coauth's `SessionGrantIntrospectionProofClaims` (see
 /// `coauth/crates/backend/src/handlers/cokret.rs:575`). soland forwards
-/// the proof to coauth's `/_cokret/gate/account/session-grants/introspect` endpoint
-/// when calling `validate_session_grant_binding` — the JWS MUST verify
-/// against the session_public_key registered with the grant, and the
+/// the proof to coauth's private introspection endpoint when validating
+/// a session-grant binding — the JWS MUST verify against
+/// the session_public_key registered with the grant, and the
 /// claims MUST match `grant_id` / `grant_jwt_hash` / `audience` /
 /// `challenge` / `issued_at` / `expires_at` exactly.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2118,11 +2104,9 @@ mod tests {
                 grant_types: vec!["authorization_code".to_owned()],
                 token_endpoint_auth_method: Some("none".to_owned()),
             }],
-            oidc_browser_bridge_session_path:
-                "_cokret/gate/account/auth/oidc/browser-bridge/session".to_owned(),
-            oidc_exchange_describe_path: "_cokret/gate/account/auth/oidc/exchange/describe"
-                .to_owned(),
-            oidc_exchange_path: "_cokret/gate/account/auth/oidc/exchange".to_owned(),
+            oidc_browser_bridge_session_path: String::new(),
+            oidc_exchange_describe_path: String::new(),
+            oidc_exchange_path: String::new(),
             auth_bridge_contract: "auth-bridge".to_owned(),
             auth_bridge_todos: Vec::new(),
             integration_manifest: CoauthIntegrationManifest {
@@ -2130,7 +2114,7 @@ mod tests {
                 version: "1".to_owned(),
                 service: "coauth".to_owned(),
                 service_kind: "auth".to_owned(),
-                api_base_path: "/_cokret/gate".to_owned(),
+                api_base_path: "/_cokret".to_owned(),
                 describe_path: "describe".to_owned(),
                 dependencies: Vec::new(),
                 surfaces: Vec::new(),

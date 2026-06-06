@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 /// 每个文件允许出现 `_soland/` 的最大行数(相对 `yougen/src/` 的 POSIX 路径)。
 /// 基线锚定 2026-06-04 审计现状(共 34 行 / 14 文件)。迁移完成后**只允许下调**。
 const BASELINE: &[(&str, usize)] = &[
-    ("api/account.rs", 17),
+    ("api/account.rs", 13),
     ("api/directory.rs", 2),
     ("api/keys.rs", 1),
     ("api/mod.rs", 1),

@@ -1080,9 +1080,8 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub server_trust_domain: Option<String>,
     /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
-    /// Used to mint `DPoP:` proofs for session-grant issuance and the
-    /// G3.C1 `POST /_cokret/gate/account/session-grants/refresh` endpoint, which both
-    /// require a key the server can bind to `cnf.jkt`.
+    /// Used to mint `DPoP:` proofs for session-grant issuance and private
+    /// refresh flows that both require a key the server can bind to `cnf.jkt`.
     ///
     /// Production callers store the private seed in `SecureKeyStore`
     /// under `auth.dpop.device_key.v1`; this state record keeps the
@@ -1213,8 +1212,8 @@ pub struct PersistedSessionGrant {
     pub device_id: String,
     /// Principal-server base URL where the grant is exchanged.
     pub principal_server_url: String,
-    /// `session_grant_exchange_path` discovered from the principal
-    /// auth-bridge `/_cokret/gate/account/auth/bridge/describe`.
+    /// `session_grant_exchange_path` for the canonical
+    /// `/_cokret/gate/account/session-grants` operation.
     pub session_grant_exchange_path: String,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.
