@@ -1873,6 +1873,8 @@ pub fn RouterView() -> Element {
                     "data-testid": "mobile-nav-toggle",
                     title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
                     "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
+                    "aria-controls": "mobile-navigation-drawer",
+                    "aria-expanded": "{mobile_nav_open()}",
                     onclick: move |_| mobile_nav_open.toggle(),
                     if mobile_nav_open() {
                         UiIcon { name: "x" }
@@ -1925,6 +1927,7 @@ pub fn RouterView() -> Element {
                 }
             }
             nav {
+                id: "mobile-navigation-drawer",
                 class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
                 "data-testid": "mobile-nav-drawer",
                 div { class: "mobile-status", "data-testid": "mobile-connection-status",

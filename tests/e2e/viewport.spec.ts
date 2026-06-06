@@ -1,75 +1,171 @@
-// P5 — responsive viewport coverage for the web build.
+// Responsive viewport coverage for the web build.
 //
-// Only the web mode is exercised here; mobile native artifacts remain
-// out of the local 1.0 milestone (see `_yougen_todos.md` §5.2). The
-// tests use `test.skip()` so the suite stays green while fixtures
-// catch up; remove the `skip` flag once the mock-API harness
-// pre-loads the topbar elements at narrow widths.
+// Native iOS / Android artifacts are still host-shell stubs, so this
+// suite exercises the shared Dioxus UI in web mode at phone and narrow
+// tablet widths.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { mockCokretApi } from "./mockCokretApi";
 
+const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
-const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air
+const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout
+
+async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
+  await page.setViewportSize(viewport);
+  await mockCokretApi(page);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "yougen.config.v1",
+      JSON.stringify({
+        server_url: "https://local.host",
+        account_did: "did:web:alice.example",
+        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+        session_token: "sx:e2e-token",
+      }),
+    );
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
+  await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const metrics = await page.evaluate(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    return {
+      clientWidth: root.clientWidth,
+      scrollWidth: Math.max(root.scrollWidth, body.scrollWidth),
+    };
+  });
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+}
 
 test.describe("responsive viewport — mobile", () => {
-  test.use({ viewport: MOBILE_VIEWPORT });
+  test("dashboard uses the mobile shell without horizontal overflow", async ({ page }) => {
+    await bootAuthenticatedShell(page);
 
-  test.skip("dashboard renders core surfaces at mobile width", async ({ page }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("topbar-root")).toBeVisible();
+    await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+    await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
     await expect(page.getByTestId("mobile-theme-toggle")).toBeVisible();
-    // The desktop topbar theme toggle is hidden at mobile width.
-    await expect(page.getByTestId("theme-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar")).toBeHidden();
+    await expect(page.locator(".workspace-header")).toBeHidden();
+
+    const layout = await page.evaluate(() => {
+      const shellbar = document
+        .querySelector('[data-testid="mobile-shellbar"]')
+        ?.getBoundingClientRect();
+      const main = document
+        .querySelector('[data-testid="main-view"]')
+        ?.getBoundingClientRect();
+      return shellbar && main
+        ? {
+            shellbarBottom: shellbar.bottom,
+            mainTop: main.top,
+            mainHeight: main.height,
+            mainBottom: main.bottom,
+            viewportHeight: window.innerHeight,
+          }
+        : null;
+    });
+    expect(layout).not.toBeNull();
+    expect(layout!.mainTop).toBeGreaterThanOrEqual(layout!.shellbarBottom - 1);
+    expect(layout!.mainHeight).toBeGreaterThan(280);
+    expect(layout!.mainBottom).toBeLessThanOrEqual(layout!.viewportHeight + 1);
+    await expectNoHorizontalOverflow(page);
   });
 
-  test.skip("onboarding stepper stays single-column at mobile width", async ({ page }) => {
-    await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("onboarding-panel")).toBeVisible();
-    await expect(page.getByTestId("onboarding-step-did")).toBeVisible();
+  test("drawer stays within the phone viewport", async ({ page }) => {
+    await bootAuthenticatedShell(page);
+
+    await page.getByTestId("mobile-nav-toggle").click();
+    await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
+    await expect(page.getByTestId("mobile-dashboard-nav-button")).toBeVisible();
+    await expect(page.getByTestId("mobile-directory-nav-button")).toBeVisible();
+
+    const drawer = await page.getByTestId("mobile-nav-drawer").boundingBox();
+    expect(drawer).not.toBeNull();
+    expect(drawer!.y).toBeGreaterThanOrEqual(MOBILE_VIEWPORT.height * 0.05);
+    expect(drawer!.y + drawer!.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height + 1);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("timeline composer remains reachable at mobile width", async ({ page }) => {
+    await bootAuthenticatedShell(page);
+    await page.goto(`/timeline/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
+
+    await expect(page.getByTestId("timeline")).toBeVisible();
+    await expect(page.getByTestId("composer")).toBeVisible();
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+    await page.getByTestId("composer-input").scrollIntoViewIfNeeded();
+
+    const metrics = await page.evaluate(() => {
+      const workspace = document.querySelector(".workspace-body")?.getBoundingClientRect();
+      const composer = document
+        .querySelector('[data-testid="composer"]')
+        ?.getBoundingClientRect();
+      const input = document
+        .querySelector('[data-testid="composer-input"]')
+        ?.getBoundingClientRect();
+      return workspace && composer && input
+        ? {
+            composerRight: composer.right,
+            inputRight: input.right,
+            workspaceRight: workspace.right,
+            inputBottom: input.bottom,
+            workspaceBottom: workspace.bottom,
+          }
+        : null;
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.composerRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
+    expect(metrics!.inputRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
+    expect(metrics!.inputBottom).toBeLessThanOrEqual(metrics!.workspaceBottom + 1);
+    await expectNoHorizontalOverflow(page);
   });
 });
 
-test.describe("responsive viewport — tablet", () => {
-  test.use({ viewport: TABLET_VIEWPORT });
+test.describe("responsive viewport — narrow tablet", () => {
+  test("kanban keeps columns scrollable inside the content pane", async ({ page }) => {
+    await bootAuthenticatedShell(page, TABLET_VIEWPORT);
+    await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
 
-  test.skip("dashboard fits sidebar + main area at tablet width", async ({ page }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("topbar-root")).toBeVisible();
-    // At tablet width the desktop topbar should still render.
-    await expect(page.getByTestId("theme-toggle")).toBeVisible();
-  });
+    await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
 
-  test.skip("agents panel registers form is reachable at tablet width", async ({ page }) => {
-    await page.goto("/agents", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("agents-panel")).toBeVisible();
-    await expect(page.getByTestId("agent-register-form")).toBeVisible();
+    const metrics = await page.evaluate(() => {
+      const workspace = document.querySelector(".workspace-body")?.getBoundingClientRect();
+      const board = document.querySelector('[data-testid="kanban-board-grid"]');
+      const boardRect = board?.getBoundingClientRect();
+      return workspace && board && boardRect
+        ? {
+            boardRight: boardRect.right,
+            workspaceRight: workspace.right,
+            boardScrollWidth: board.scrollWidth,
+            boardClientWidth: board.clientWidth,
+          }
+        : null;
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.boardRight).toBeLessThanOrEqual(metrics!.workspaceRight + 1);
+    expect(metrics!.boardScrollWidth).toBeGreaterThanOrEqual(metrics!.boardClientWidth);
+    await expectNoHorizontalOverflow(page);
   });
 });
 
 test.describe("ARIA — keyboard + screen reader", () => {
-  test.skip("recovery options expose radiogroup semantics", async ({ page }) => {
-    await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("recovery-vault").click({ trial: false });
-    await expect(page.getByTestId("recovery-vault")).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByTestId("recovery-social")).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByTestId("recovery-key")).toHaveAttribute("aria-checked", "false");
-  });
+  test("mobile navigation controls expose expanded state", async ({ page }) => {
+    await bootAuthenticatedShell(page);
 
-  test.skip("agent register form inputs carry aria-label", async ({ page }) => {
-    await page.goto("/agents", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("agent-register-did")).toHaveAttribute("aria-label", /agent did/i);
-    await expect(page.getByTestId("agent-register-protocol")).toHaveAttribute("aria-label", /protocol/i);
-    await expect(page.getByTestId("agent-register-capabilities")).toHaveAttribute("aria-label", /capabilit/i);
-  });
-
-  test.skip("theme switcher exposes radiogroup semantics", async ({ page }) => {
-    await page.goto("/settings", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("theme-switcher")).toHaveAttribute("role", "radiogroup");
-    const lightOption = page.getByTestId("theme-switcher-light");
-    const darkOption = page.getByTestId("theme-switcher-dark");
-    const systemOption = page.getByTestId("theme-switcher-system");
-    await expect(lightOption).toHaveAttribute("role", "radio");
-    await expect(darkOption).toHaveAttribute("role", "radio");
-    await expect(systemOption).toHaveAttribute("role", "radio");
+    const toggle = page.getByTestId("mobile-nav-toggle");
+    await expect(toggle).toHaveAttribute("aria-label", "Open menu");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toHaveAttribute("aria-controls", "mobile-navigation-drawer");
+    await page.getByTestId("mobile-nav-toggle").click();
+    await expect(toggle).toHaveAttribute("aria-label", "Close menu");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
   });
 });

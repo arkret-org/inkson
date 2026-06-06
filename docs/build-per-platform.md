@@ -27,6 +27,18 @@ ls
 
 All commands below run from `cokret/yougen/`.
 
+The `justfile` mirrors the same build plan for local use:
+
+| Task | Purpose |
+| --- | --- |
+| `just web-build` | Dioxus web/WASM release build. |
+| `just desktop-build` | Native desktop release build for the current host. |
+| `just package-windows` | Local unsigned MSI wrapper around `scripts/windows-msi-local.ps1`. |
+| `just package-macos` | Local unsigned `.app` bundle wrapper around `scripts/macos-bundle-local.ps1`. |
+| `just package-linux` | Local Linux package evidence wrapper around `scripts/linux-package-local.ps1`. |
+| `just check-linux` / `check-windows` / `check-macos` | Best-effort Rust cross-target checks after installing the target. |
+| `just check-ios` / `check-android` / `check-mobile-stubs` | Rust-side mobile host-bridge stub checks; they do not produce app-store artifacts. |
+
 ---
 
 ## 1. macOS desktop
@@ -157,17 +169,37 @@ local 1.0 plan.
 
 ## 5. Cross-compile checks
 
-To verify the mobile keystore stubs still build (no real artifact):
+Install targets before cross-checking:
 
 ```bash
-cargo check --target aarch64-apple-ios --features mobile-ios
-cargo check --target aarch64-linux-android --features mobile-android
+rustup target add \
+  wasm32-unknown-unknown \
+  x86_64-unknown-linux-gnu \
+  x86_64-pc-windows-gnu \
+  aarch64-apple-darwin \
+  aarch64-apple-ios \
+  aarch64-linux-android
 ```
 
-Both targets are **stubs only** — they install host-bridge wrappers
+Then run the best-effort checks:
+
+```bash
+just check-linux
+just check-windows
+just check-macos
+just check-mobile-stubs
+```
+
+The iOS and Android targets are **stubs only** — they install host-bridge wrappers
 around the `HostSecretBridge` trait. There is no real JNI or
 Security.framework FFI inside yougen. See
 `docs/platform-stub-roadmap.md` for the path to real artifacts.
+
+Gitea CI mirrors this shape in `.gitea/workflows/smoke.yml`: web/WASM
+and Linux checks are required, while Windows, macOS, iOS, and Android
+target checks are marked best-effort until dedicated runners/toolchains
+exist. A separate responsive viewport job runs
+`tests/e2e/viewport.spec.ts` against the Dioxus web build.
 
 ---
 

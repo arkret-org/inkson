@@ -61,3 +61,129 @@ jobs:
       - name: Rust tests
         working-directory: yougen
         run: cargo test --locked
+
+  platform-checks:
+    name: Web and cross-platform checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout yougen
+        uses: actions/checkout@v4
+        with:
+          path: yougen
+
+      - name: Checkout cokret-rust-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/cokret-rust-sdk
+          path: cokret-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout chime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/chime
+          path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: |
+            wasm32-unknown-unknown
+            x86_64-unknown-linux-gnu
+            x86_64-pc-windows-gnu
+            aarch64-apple-darwin
+            aarch64-apple-ios
+            aarch64-linux-android
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version 0.7.9 --locked
+
+      - name: Web wasm check
+        working-directory: yougen
+        run: cargo check --locked --target wasm32-unknown-unknown
+
+      - name: Dioxus web build
+        working-directory: yougen
+        run: dx build --platform web --release
+
+      - name: Linux target check
+        working-directory: yougen
+        run: cargo check --locked --target x86_64-unknown-linux-gnu
+
+      - name: Windows target check
+        working-directory: yougen
+        continue-on-error: true
+        run: cargo check --locked --target x86_64-pc-windows-gnu
+
+      - name: macOS target check
+        working-directory: yougen
+        continue-on-error: true
+        run: cargo check --locked --target aarch64-apple-darwin
+
+      - name: iOS host-bridge stub check
+        working-directory: yougen
+        continue-on-error: true
+        run: cargo check --locked --target aarch64-apple-ios --features mobile-ios
+
+      - name: Android host-bridge stub check
+        working-directory: yougen
+        continue-on-error: true
+        run: cargo check --locked --target aarch64-linux-android --features mobile-android
+
+  responsive-e2e:
+    name: Responsive viewport e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout yougen
+        uses: actions/checkout@v4
+        with:
+          path: yougen
+
+      - name: Checkout cokret-rust-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/cokret-rust-sdk
+          path: cokret-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout chime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/chime
+          path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version 0.7.9 --locked
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: yougen/package-lock.json
+
+      - name: Install browser dependencies
+        working-directory: yougen
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run responsive viewport tests
+        working-directory: yougen
+        run: npm run e2e:viewport
