@@ -799,6 +799,15 @@ impl ResolveHandleResponse {
                 .and_then(|claim| claim.get("member_delivery_binding"))
                 .is_some()
     }
+
+    pub fn member_delivery_binding_value(&self) -> Option<Value> {
+        self.member_delivery_binding.clone().or_else(|| {
+            self.handle_claim
+                .as_ref()
+                .and_then(|claim| claim.get("member_delivery_binding"))
+                .cloned()
+        })
+    }
 }
 
 /// Structured mention node embedded in message body. Spec b56cab1

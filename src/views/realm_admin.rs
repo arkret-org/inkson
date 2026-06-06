@@ -1267,8 +1267,8 @@ pub fn RealmAdminPanel(
                                     spawn(async move {
                                         match authed_api_with_sync(&base, api_token, wait_for) {
                                             Ok(api) => {
-                                                let invitee_did = match api
-                                                    .resolve_invitee_did_for_invite(
+                                                let invitee = match api
+                                                    .resolve_invitee_for_invite(
                                                         &target,
                                                         &realm,
                                                         &actor,
@@ -1281,25 +1281,30 @@ pub fn RealmAdminPanel(
                                                         return;
                                                     }
                                                 };
-                                                let invitee_label = if invitee_did == target {
-                                                    invitee_did.clone()
+                                                let invitee_label = if invitee.did == target {
+                                                    invitee.did.clone()
                                                 } else {
-                                                    format!("{target} -> {invitee_did}")
+                                                    format!("{target} -> {}", invitee.did)
                                                 };
-                                                let op = cx_ops::invite_create_structured(
+                                                let op = cx_ops::invite_create_structured_with_member_delivery_binding(
                                                     &realm,
                                                     &actor,
                                                     &invite_id,
-                                                    &invitee_did,
+                                                    &invitee.did,
                                                     None,
+                                                    invitee.member_delivery_binding.clone(),
                                                 )
                                                 .build("yougen");
                                                 let op_id = op.local_operation_id().to_owned();
+                                                status_msg.set(format!(
+                                                    "submitting invite for {}",
+                                                    invitee_label
+                                                ));
                                                 match api.submit_event_envelope(&op).await {
                                                     Ok(submitted) => {
                                                         realm_invites.write().push(InviteRecord {
                                                             invite_id: invite_id.clone(),
-                                                            target: invitee_did.clone(),
+                                                            target: invitee.did.clone(),
                                                             role: None,
                                                             state: "pending".to_owned(),
                                                             operation_id: Some(op_id.clone()),
@@ -1318,7 +1323,7 @@ pub fn RealmAdminPanel(
                                                                 json!({
                                                                     "kind": "ck.invite.create",
                                                                     "invite_id": invite_id,
-                                                                    "invitee": invitee_did,
+                                                                    "invitee": invitee.did,
                                                                     "state": "pending",
                                                                     "event_id": submitted.event_id,
                                                                 }),

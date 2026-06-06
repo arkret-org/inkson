@@ -49,9 +49,9 @@ const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
 const STYLE: &str = include_str!("styles/app.css");
 
-const CLAUDE_STYLE: &str = include_str!("styles/claude_design.css");
+const DESIGN_STYLE: &str = include_str!("styles/design.css");
 
-const CLAUDE_APP_OVERRIDES: &str = include_str!("styles/claude_app_overrides.css");
+const APP_OVERRIDES: &str = include_str!("styles/app_overrides.css");
 
 fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
     store
@@ -1604,8 +1604,8 @@ pub fn RouterView() -> Element {
 
         return rsx! {
             style { "{STYLE}" }
-            style { "{CLAUDE_STYLE}" }
-            style { "{CLAUDE_APP_OVERRIDES}" }
+            style { "{DESIGN_STYLE}" }
+            style { "{APP_OVERRIDES}" }
             document::Title { "{document_title}" }
             main {
                 class: auth_class,
@@ -1692,8 +1692,8 @@ pub fn RouterView() -> Element {
 
     rsx! {
         style { "{STYLE}" }
-        style { "{CLAUDE_STYLE}" }
-        style { "{CLAUDE_APP_OVERRIDES}" }
+        style { "{DESIGN_STYLE}" }
+        style { "{APP_OVERRIDES}" }
         document::Title { "{document_title}" }
         div {
             class: shell_class,

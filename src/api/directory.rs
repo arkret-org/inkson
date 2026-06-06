@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct InviteeResolution {
+    pub did: String,
+    pub handle: Option<String>,
+    pub member_delivery_binding: Option<Value>,
+}
+
 impl CokretApi {
     pub async fn search_realms(
         &self,
@@ -178,12 +185,28 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<String> {
+        Ok(self
+            .resolve_invitee_for_invite(target, realm_id, actor_id)
+            .await?
+            .did)
+    }
+
+    pub async fn resolve_invitee_for_invite(
+        &self,
+        target: &str,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<InviteeResolution> {
         let target = target.trim();
         if target.is_empty() {
             anyhow::bail!("invitee is required");
         }
         if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-            return Ok(target.to_owned());
+            return Ok(InviteeResolution {
+                did: target.to_owned(),
+                handle: None,
+                member_delivery_binding: None,
+            });
         }
 
         let handle = canonical_invitee_handle(target)?;
@@ -206,7 +229,14 @@ impl CokretApi {
         })?;
         cokret_sdk::Did::new(invitee.to_owned())
             .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{invitee}`: {err}"))?;
-        Ok(invitee.to_owned())
+        let invitee = invitee.to_owned();
+        let member_delivery_binding = resolved.member_delivery_binding_value();
+        let handle = resolved.handle;
+        Ok(InviteeResolution {
+            did: invitee,
+            handle: Some(handle),
+            member_delivery_binding,
+        })
     }
 
     /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
