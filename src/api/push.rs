@@ -32,7 +32,7 @@ impl CokretApi {
         Ok(map_chime_register_response(response.body))
     }
 
-    pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
+    pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkOutcome> {
         let request = crate::push::build_unregister_request(device_id, None)?;
         self.unregister_push_device_with_request(&request).await
     }
@@ -40,13 +40,13 @@ impl CokretApi {
     pub async fn unregister_push_device_with_request(
         &self,
         request: &UnregisterDeviceRequest,
-    ) -> anyhow::Result<OkResBody> {
+    ) -> anyhow::Result<OkOutcome> {
         let response = self
             .push_client(None, None)
             .unregister_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(OkResBody {
+        Ok(OkOutcome {
             ok: response.body.ok,
         })
     }

@@ -96,7 +96,7 @@ impl CokretApi {
         handle: &str,
         display_name: Option<&str>,
         device_id: Option<&str>,
-    ) -> anyhow::Result<AccountResponse> {
+    ) -> anyhow::Result<AccountRegisterOutcome> {
         self.post_json(
             "_soland/self/account/register",
             json!({
@@ -109,7 +109,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn account_me(&self) -> anyhow::Result<AccountResponse> {
+    pub async fn account_me(&self) -> anyhow::Result<AccountRegisterOutcome> {
         self.get_json("_soland/self/account/me").await
     }
 
@@ -130,7 +130,7 @@ impl CokretApi {
         display_name: Option<&str>,
         bio: Option<&str>,
         avatar_url: Option<&str>,
-    ) -> anyhow::Result<UpdateProfileResponse> {
+    ) -> anyhow::Result<AccountUpdateProfileOutcome> {
         self.post_json(
             "_soland/self/account/profile",
             json!({
@@ -178,7 +178,7 @@ impl CokretApi {
         &self,
         peer: &str,
         create: bool,
-    ) -> anyhow::Result<crate::models::DirectConversationResolveResponse> {
+    ) -> anyhow::Result<crate::models::DirectConversationResolveOutcome> {
         self.post_json(
             "_cokret/self/direct-conversations/resolve",
             json!({
@@ -311,11 +311,11 @@ impl CokretApi {
         }
     }
 
-    pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeResBody> {
+    pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeOutcome> {
         self.get_json("_cokret/root/identity/describe").await
     }
 
-    pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveResBody> {
+    pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveOutcome> {
         self.post_json(
             "_cokret/root/identity/resolve",
             json!({"did": did, "requested_evidence_kinds": []}),

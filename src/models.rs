@@ -28,7 +28,7 @@ pub struct LogoutResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AccountResponse {
+pub struct AccountRegisterOutcome {
     pub did: String,
     pub handle: String,
     pub display_name: Option<String>,
@@ -36,11 +36,11 @@ pub struct AccountResponse {
 }
 
 /// A4b — response shape for `POST /_soland/self/account/profile`. Mirrors
-/// soland's `UpdateProfileResponse` wire shape so the settings UI can
+/// soland's `AccountUpdateProfileOutcome` wire shape so the settings UI can
 /// reconcile its local cache with whatever the server actually stored
 /// (the server normalises empty strings to `None`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UpdateProfileResponse {
+pub struct AccountUpdateProfileOutcome {
     pub did: String,
     pub handle: String,
     #[serde(default)]
@@ -120,7 +120,7 @@ pub struct ContactsResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DirectConversationResolveRequest {
+pub struct DirectConversationResolveRequestBody {
     pub peer: String,
     #[serde(default)]
     pub create: bool,
@@ -129,7 +129,7 @@ pub struct DirectConversationResolveRequest {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct DirectConversationResolveResponse {
+pub struct DirectConversationResolveOutcome {
     pub state: String,
     #[serde(default)]
     pub realm_id: Option<String>,
@@ -320,12 +320,12 @@ impl ServerDescriptionExt for ServerDescription {
 
 // R35: `ck.identity.describe` body. The SDK's canonical type is
 // `IdentityDescription` (same fields, with `service_did: Did` validated on
-// construction); the SDK's own `IdentityDescribeResBody` is a transparent
+// construction); the SDK's own `IdentityDescribeOutcome` is a transparent
 // newtype around it. We re-export the inner struct under the yougen-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
 pub use cokret_sdk::model::{
-    IdentityDescription as IdentityDescribeResBody, IdentityResolveResBody,
+    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -340,13 +340,13 @@ pub struct SyncDescribeResBody {
 }
 
 /// Wire-shape sync response — re-exports the SDK's canonical
-/// [`cokret_sdk::model::SyncResBody`] so client + server can never
+/// [`cokret_sdk::model::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
 /// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
 /// own a custom `ClientSyncResponse` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
-pub use cokret_sdk::model::SyncResBody as ClientSyncResponse;
+pub use cokret_sdk::model::SyncOutcome as ClientSyncResponse;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SearchRealmsResponse {
@@ -355,7 +355,7 @@ pub struct SearchRealmsResponse {
 }
 
 /// soland's directory `describe` wire body. Named distinctly from the SDK
-/// core `cokret_sdk::model::DirectoryDescribeResBody` (which wraps a typed
+/// core `cokret_sdk::model::DirectoryDescribeOutcome` (which wraps a typed
 /// `DirectoryDescription`) because this soland surface has a different,
 /// flat shape; sharing the SDK name would mislead readers into expecting
 /// the same wire contract.
@@ -649,7 +649,7 @@ mod tests {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BackfillResBody {
+pub struct BackfillOutcome {
     #[serde(default)]
     pub events: Vec<Value>,
     pub prev_cursor: Option<String>,
@@ -659,7 +659,7 @@ pub struct BackfillResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SnapshotHeadResponse {
+pub struct SnapshotHeadState {
     pub snapshot_ref: String,
     pub state_digest: String,
     #[serde(default)]
@@ -668,10 +668,10 @@ pub struct SnapshotHeadResponse {
     pub signature: Value,
 }
 
-pub use cokret_sdk::model::AuthzCheckResBody;
+pub use cokret_sdk::model::AuthzCheckOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EffectiveGrantsResBody {
+pub struct GrantList {
     #[serde(default)]
     pub grants: Vec<Value>,
     pub state_digest: Option<String>,
@@ -694,11 +694,11 @@ pub struct PushRegisterResponse {
 }
 
 pub use cokret_sdk::model::{
-    DeviceMessagesSendResBody, KeysClaimResBody, KeysQueryResBody, KeysUploadResBody, OkResBody,
+    DeviceMessagesPutOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceMessagesReceiveResBody {
+pub struct DeviceMessagesGetOutcome {
     pub events: Vec<Value>,
     #[serde(default)]
     pub next_cursor: Option<String>,
@@ -706,10 +706,10 @@ pub struct DeviceMessagesReceiveResBody {
     pub limited: bool,
 }
 
-pub use cokret_sdk::model::BlobUploadResBody;
+pub use cokret_sdk::model::BlobUploadOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ModerationReportResBody {
+pub struct ModerationReportOutcome {
     pub report_id: String,
     pub status: String,
     #[serde(default)]
@@ -904,7 +904,7 @@ pub struct MlsRotateResponse {
 // ── Policy Check ─────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PolicyCheckResBody {
+pub struct PolicyCheckOutcome {
     pub decision: String,
     #[serde(default)]
     pub obligations: Vec<Value>,
@@ -916,14 +916,14 @@ pub struct PolicyCheckResBody {
 // ── Identity (extended) ──────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitDidOperationResBody {
+pub struct DidOperationSubmitOutcome {
     pub ok: bool,
     pub operation_id: String,
     pub status: String,
 }
 
 /// soland's events `describe` wire body. Named distinctly from the SDK
-/// core `cokret_sdk::model::EventsDescribeResBody` (which has a different
+/// core `cokret_sdk::model::EventsDescribeOutcome` (which has a different
 /// field set: supported_event_schemas/supported_reducer_profiles/...)
 /// because this soland surface emits a different shape; sharing the SDK
 /// name would mislead readers into expecting the same wire contract.
@@ -964,7 +964,7 @@ pub struct SubmitEventResponse {
 /// the broadcast fanout) or surface a structured rejection. No event id is
 /// minted because ephemeral signals are never durable.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct EphemeralSubmitResponse {
+pub struct EphemeralSubmitOutcome {
     #[serde(default)]
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1055,7 +1055,7 @@ pub struct CallRecordingStartResponse {
 // ── MIMI Provider Facade ─────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProviderDirectoryResBody {
+pub struct MimiProviderDirectory {
     pub service_did: Option<String>,
     pub service_type: String,
     #[serde(default)]
@@ -1084,7 +1084,7 @@ pub struct MimiProviderProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiKeyMaterialResBody {
+pub struct MimiKeyMaterialOutcome {
     pub ok: bool,
     #[serde(default)]
     pub key_packages: Vec<Value>,
@@ -1093,7 +1093,7 @@ pub struct MimiKeyMaterialResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiRoomUpdateResBody {
+pub struct MimiRoomUpdateOutcome {
     pub ok: bool,
     pub room_id: Option<String>,
     #[serde(default)]
@@ -1101,7 +1101,7 @@ pub struct MimiRoomUpdateResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiNotifyResBody {
+pub struct MimiNotifyOutcome {
     pub ok: bool,
     #[serde(default)]
     pub accepted: Vec<String>,
@@ -1110,7 +1110,7 @@ pub struct MimiNotifyResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiSubmitMessageResBody {
+pub struct MimiSubmitMessageOutcome {
     pub ok: bool,
     pub mimi_message_id: Option<String>,
     pub mapped_operation_id: Option<String>,
@@ -1120,7 +1120,7 @@ pub struct MimiSubmitMessageResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiGroupInfoResBody {
+pub struct MimiGroupInfoOutcome {
     /// R20: wire field name `room_id` is preserved because it comes verbatim
     /// from the MIMI draft (`draft-ietf-mimi-room-policy-03`), which is
     /// interop-exempt from the `Room → Realm` rename
@@ -1139,7 +1139,7 @@ pub struct MimiGroupInfoResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiConsentResBody {
+pub struct MimiRequestConsentOutcome {
     pub ok: bool,
     pub consent_id: Option<String>,
     pub state: Option<String>,
@@ -1148,7 +1148,7 @@ pub struct MimiConsentResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiIdentifierQueryResBody {
+pub struct MimiIdentifierQueryOutcome {
     pub query: String,
     pub reachable: bool,
     pub mapped_did: Option<String>,
@@ -1160,7 +1160,7 @@ pub struct MimiIdentifierQueryResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiReportAbuseResBody {
+pub struct MimiReportAbuseOutcome {
     pub ok: bool,
     pub report_id: Option<String>,
     pub status: Option<String>,
@@ -1169,7 +1169,7 @@ pub struct MimiReportAbuseResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MimiProxyDownloadResBody {
+pub struct MimiProxyDownloadOutcome {
     pub ok: bool,
     pub blob_ref: String,
     pub media_type: Option<String>,

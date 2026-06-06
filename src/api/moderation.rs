@@ -7,7 +7,7 @@ impl CokretApi {
         target_ref: &str,
         report_reason_code: &str,
         reporter: &str,
-    ) -> anyhow::Result<ModerationReportResBody> {
+    ) -> anyhow::Result<ModerationReportOutcome> {
         self.post_json(
             "_cokret/self/moderation/report",
             json!({

@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     /// Query durable events through the current `/_cokret/self/events` surface.
-    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillResBody> {
+    pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillOutcome> {
         self.get_json(&events_query_path(realm_id)).await
     }
 
@@ -112,7 +112,7 @@ impl CokretApi {
         &self,
         did: &str,
         operation: Value,
-    ) -> anyhow::Result<SubmitDidOperationResBody> {
+    ) -> anyhow::Result<DidOperationSubmitOutcome> {
         self.post_json(
             "_cokret/root/identity/submit-did-operation",
             json!({"did": did, "operation": operation}),
@@ -133,9 +133,9 @@ impl CokretApi {
     /// Anonymous-health probes go through a separate route.
     pub async fn events_frontier_account_client(
         &self,
-    ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientResponse> {
+    ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientState> {
         let body: Value = self.get_json("_cokret/self/events/frontier").await?;
-        let frontier: cokret_sdk::EventsFrontierAccountClientResponse =
+        let frontier: cokret_sdk::EventsFrontierAccountClientState =
             serde_json::from_value(body).map_err(|err| {
                 anyhow::anyhow!(
                     "events/frontier account_client decode failed (round 4 wire shape): {err}"
@@ -253,8 +253,8 @@ impl CokretApi {
     /// `ck.self.events.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_cokret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
-    /// [`cokret_sdk::EventsSubmitBatchRequest`],
-    /// [`cokret_sdk::EventsSubmitFederationRequest`]) by JSON shape, not
+    /// [`cokret_sdk::EventsSubmitBatchRequestBody`],
+    /// [`cokret_sdk::EventsSubmitFederationRequestBody`]) by JSON shape, not
     /// by URL suffix. The federation shape is S2S only and yougen MUST
     /// NEVER serialise it.
     ///
@@ -302,7 +302,7 @@ impl CokretApi {
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<_, _>>()?;
-        let body = cokret_sdk::EventsSubmitBatchRequest {
+        let body = cokret_sdk::EventsSubmitBatchRequestBody {
             events: events_value,
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
@@ -333,7 +333,7 @@ impl CokretApi {
     pub async fn submit_ephemeral_envelope(
         &self,
         envelope: &cokret_sdk::EphemeralEnvelope,
-    ) -> anyhow::Result<EphemeralSubmitResponse> {
+    ) -> anyhow::Result<EphemeralSubmitOutcome> {
         // Defensive re-validation. The constructor already enforced this,
         // but a caller could mutate a raw envelope in place between build
         // and submit. Fail fast with the canonical error code rather than
@@ -372,7 +372,7 @@ impl CokretApi {
         target_device_id: &str,
         message_type: &str,
         content: Value,
-    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
         if !message_type.starts_with("ck.key.verification.") {
             anyhow::bail!(
                 "to-device ephemeral submit: message_type {message_type:?} is not in the ck.key.verification.* family"

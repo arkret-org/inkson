@@ -518,7 +518,7 @@ pub struct HandleClaimRow {
 /// rows (YG-DIR-2). The primary handle (per §3.2.1, computed server-side
 /// and echoed in `primary_handle`) is flagged so the UI can mark it.
 pub fn handle_claim_rows(
-    res: &cokret_sdk::model::DirectoryListHandlesForSubjectResBody,
+    res: &cokret_sdk::model::DirectorySubjectHandleList,
 ) -> Vec<HandleClaimRow> {
     let primary = res
         .primary_handle
@@ -774,7 +774,7 @@ mod tests {
     fn handle_claim_rows_flags_primary_and_projects_fields() {
         use cokret_sdk::Handle;
         use cokret_sdk::model::{
-            DirectoryListHandlesForSubjectResBody, HandleBindingState, HandleClaim,
+            DirectorySubjectHandleList, HandleBindingState, HandleClaim,
         };
         let now = chrono::Utc::now();
         let subject =
@@ -788,7 +788,7 @@ mod tests {
             expires_at: Some(now + chrono::Duration::days(30)),
             ..Default::default()
         };
-        let res = DirectoryListHandlesForSubjectResBody {
+        let res = DirectorySubjectHandleList {
             subject,
             claims: vec![claim],
             primary_handle: Some(Handle::parse("alice:acme.example").unwrap()),

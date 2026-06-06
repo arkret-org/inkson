@@ -37,7 +37,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadResBody> {
+    pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadOutcome> {
         let request = self
             .http
             .post(self.endpoint("_cokret/self/blob/upload")?)
@@ -56,7 +56,7 @@ impl CokretApi {
         &self,
         bytes: Vec<u8>,
         content_type: &str,
-    ) -> anyhow::Result<BlobUploadResBody> {
+    ) -> anyhow::Result<BlobUploadOutcome> {
         self.upload_blob_bytes_scoped(bytes, content_type, None, None)
             .await
     }
@@ -73,7 +73,7 @@ impl CokretApi {
         content_type: &str,
         realm_id: Option<&str>,
         filename: Option<&str>,
-    ) -> anyhow::Result<BlobUploadResBody> {
+    ) -> anyhow::Result<BlobUploadOutcome> {
         let content_type = if content_type.trim().is_empty() {
             "application/octet-stream"
         } else {
@@ -98,7 +98,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         asset: &crate::blob::EncryptedClientAsset,
-    ) -> anyhow::Result<BlobUploadResBody> {
+    ) -> anyhow::Result<BlobUploadOutcome> {
         let envelope = serde_json::to_string(&asset.envelope)?;
         let request = self
             .http

@@ -4208,7 +4208,7 @@ mod tests {
     use super::*;
 
     /// The Welcome-receive shuttle iterates `events[]` from
-    /// `DeviceMessagesReceiveResBody` and surfaces only
+    /// `DeviceMessagesGetOutcome` and surfaces only
     /// `ck.mls.welcome` payloads.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

@@ -49,8 +49,8 @@ impl CokretApi {
         &self,
         address: &str,
         token: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::DirectoryResolveTargetResBody> {
-        let body = cokret_sdk::model::DirectoryResolveTargetReqBody {
+    ) -> anyhow::Result<cokret_sdk::model::DirectoryTargetResolutionOutcome> {
+        let body = cokret_sdk::model::DirectoryResolveTargetRequestBody {
             address: address.to_owned(),
             requester: None,
             proofs: Vec::new(),
@@ -63,7 +63,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadResponse> {
+    pub async fn snapshot_head(&self, realm_id: &str) -> anyhow::Result<SnapshotHeadState> {
         self.get_json(&format!("_cokret/self/snapshot/head?realm_id={realm_id}"))
             .await
     }
@@ -217,7 +217,7 @@ impl CokretApi {
     /// handle?" panel (YG-DIR-1/2) and the own-handles list (YG-HC-2).
     ///
     /// The response is validated with
-    /// [`cokret_sdk::model::DirectoryListHandlesForSubjectResBody::validate`]
+    /// [`cokret_sdk::model::DirectorySubjectHandleList::validate`]
     /// which fails closed unless every `claims[].subject` byte-equals the
     /// response `subject`.
     ///
@@ -229,8 +229,8 @@ impl CokretApi {
         subject: &str,
         realm_id: Option<&str>,
         intent: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::model::DirectoryListHandlesForSubjectResBody> {
-        use cokret_sdk::model::DirectoryListHandlesForSubjectReqBody;
+    ) -> anyhow::Result<cokret_sdk::model::DirectorySubjectHandleList> {
+        use cokret_sdk::model::DirectoryListHandlesForSubjectRequestBody;
 
         let subject_did = cokret_sdk::Did::new(subject.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
@@ -241,7 +241,7 @@ impl CokretApi {
             ),
             None => None,
         };
-        let body = DirectoryListHandlesForSubjectReqBody {
+        let body = DirectoryListHandlesForSubjectRequestBody {
             subject: subject_did,
             realm_id: realm,
             intent: intent
@@ -255,7 +255,7 @@ impl CokretApi {
             cursor: None,
             limit: None,
         };
-        let res: cokret_sdk::model::DirectoryListHandlesForSubjectResBody = self
+        let res: cokret_sdk::model::DirectorySubjectHandleList = self
             .post_json(
                 "_cokret/find/directory/list-handles-for-subject",
                 serde_json::to_value(&body)?,

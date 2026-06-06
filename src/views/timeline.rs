@@ -1760,7 +1760,7 @@ pub fn TimelinePanel(
                                 match api.upload_blob(ATTACHMENT_BYTES).await {
                                     Ok(blob) => {
                                         let local_hash = sha256_hex(ATTACHMENT_BYTES);
-                                        // SDK `BlobUploadResBody` carries typed
+                                        // SDK `BlobUploadOutcome` carries typed
                                         // `Hash` / `BlobRef` / `Option<String>` fields;
                                         // flatten them to the display-only `String`s
                                         // the local `BlobAttachment` keeps.

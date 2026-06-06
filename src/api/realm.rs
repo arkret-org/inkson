@@ -308,7 +308,7 @@ impl CokretApi {
         actor: &str,
         action: &str,
         realm_id: &str,
-    ) -> anyhow::Result<AuthzCheckResBody> {
+    ) -> anyhow::Result<AuthzCheckOutcome> {
         self.post_json(
             "_cokret/self/authz/check",
             json!({
@@ -320,7 +320,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<EffectiveGrantsResBody> {
+    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<GrantList> {
         self.get_json(&format!(
             "_cokret/self/authz/effective-grants?subject={subject}"
         ))
@@ -650,7 +650,7 @@ impl CokretApi {
         actor: &str,
         action: &str,
         resource: &str,
-    ) -> anyhow::Result<PolicyCheckResBody> {
+    ) -> anyhow::Result<PolicyCheckOutcome> {
         self.post_json(
             "_cokret/self/policy/check",
             json!({"actor": actor, "action": action, "resource": resource}),

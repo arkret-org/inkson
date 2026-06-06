@@ -2,7 +2,7 @@ use super::*;
 
 impl CokretApi {
     #[cfg(feature = "demo-crypto")]
-    pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadResBody> {
+    pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
         self.ensure_demo_crypto_fallback_allowed("keys/upload demo device_signature")?;
         self.post_json(
             "_cokret/self/keys/upload",
@@ -22,7 +22,7 @@ impl CokretApi {
     }
 
     #[cfg(not(feature = "demo-crypto"))]
-    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadResBody> {
+    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
         anyhow::bail!(
             "upload_keys ships a dev `device_signature` placeholder and requires the `demo-crypto` build feature"
         )
@@ -33,7 +33,7 @@ impl CokretApi {
         actor: &str,
         device_id: &str,
         algorithm: &str,
-    ) -> anyhow::Result<KeysClaimResBody> {
+    ) -> anyhow::Result<KeysClaimOutcome> {
         self.post_json(
             "_cokret/self/keys/claim",
             json!({"one_time_keys": {actor: {device_id: algorithm}}}),
@@ -45,7 +45,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<KeysQueryResBody> {
+    ) -> anyhow::Result<KeysQueryOutcome> {
         self.post_json(
             "_cokret/self/keys/query",
             json!({"device_keys": {actor: [device_id]}}),
@@ -58,7 +58,7 @@ impl CokretApi {
         &self,
         actor: &str,
         device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
         self.ensure_demo_crypto_fallback_allowed("device_messages opaque test ciphertext")?;
         self.send_device_message_envelope(
             "yougen-txn-1",
@@ -75,7 +75,7 @@ impl CokretApi {
         &self,
         _actor: &str,
         _device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
         anyhow::bail!(
             "send_to_device ships an opaque test ciphertext and requires the `demo-crypto` build feature"
         )
@@ -96,7 +96,7 @@ impl CokretApi {
         target_device_id: &str,
         message_type: &str,
         content: serde_json::Value,
-    ) -> anyhow::Result<DeviceMessagesSendResBody> {
+    ) -> anyhow::Result<DeviceMessagesPutOutcome> {
         let path = "_cokret/self/device_messages";
         let payload =
             build_device_message_envelope(target_actor, target_device_id, message_type, content);
@@ -109,7 +109,7 @@ impl CokretApi {
             .await
     }
 
-    pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesReceiveResBody> {
+    pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
         self.get_json("_cokret/self/device_messages").await
     }
 
@@ -260,7 +260,7 @@ impl CokretApi {
     /// `ck.devices.revoke` (`POST /_cokret/self/devices/{device_id}/revoke`) —
     /// NOT spec's `ck.admin.revoke_device` (`POST /_soland/admin/devices/{id}/revoke`),
     /// which is an operator-scope endpoint we don't expose from the UI.
-    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkResBody> {
+    pub async fn revoke_device(&self, device_id: &str) -> anyhow::Result<OkOutcome> {
         self.post_json(
             &format!("_cokret/self/devices/{device_id}/revoke"),
             json!({}),

@@ -75,7 +75,7 @@ fn yougen_accepts_server_contract_payloads() {
     );
     assert_eq!(describe.supported_bindings[0]["base_path"], "/_cokret");
 
-    let identity: yougen::models::IdentityDescribeResBody = serde_json::from_value(json!({
+    let identity: yougen::models::IdentityDescribeOutcome = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
@@ -85,7 +85,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: yougen::models::IdentityResolveResBody = serde_json::from_value(json!({
+    let resolved_identity: yougen::models::IdentityResolveOutcome = serde_json::from_value(json!({
         "did_document": {
             "did": "did:web:alice.example",
             "document": {"id": "did:web:alice.example"}
@@ -194,7 +194,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(submit.status, "accepted");
 
-    let snapshot: yougen::models::SnapshotHeadResponse = serde_json::from_value(json!({
+    let snapshot: yougen::models::SnapshotHeadState = serde_json::from_value(json!({
         "snapshot_ref": "ck:snapshot:ck:realm:0196419b-0000-7000-8000-000000000000:head",
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "frontier": {"realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000"},
@@ -213,7 +213,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(login.token_type, "Bearer");
 
-    let authz: yougen::models::AuthzCheckResBody = serde_json::from_value(json!({
+    let authz: yougen::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,
         "grants": [{"actor": "did:web:alice.example"}],
@@ -222,7 +222,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(authz.decision, cokret_sdk::model::AuthzDecision::Allow);
 
-    let grants: yougen::models::EffectiveGrantsResBody = serde_json::from_value(json!({
+    let grants: yougen::models::GrantList = serde_json::from_value(json!({
         "grants": [{"subject": "did:web:alice.example"}],
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00Z"
@@ -237,21 +237,21 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(invites.invites.is_empty());
 
-    let keys: yougen::models::KeysUploadResBody = serde_json::from_value(json!({
+    let keys: yougen::models::KeysUploadOutcome = serde_json::from_value(json!({
         "one_time_key_counts": {"signed_curve25519": 1},
         "fallback_keys": {}
     }))
     .unwrap();
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
-    let claimed: yougen::models::KeysClaimResBody = serde_json::from_value(json!({
+    let claimed: yougen::models::KeysClaimOutcome = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"ck:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
         "failures": {}
     }))
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
 
-    let device_send: yougen::models::DeviceMessagesSendResBody = serde_json::from_value(json!({
+    let device_send: yougen::models::DeviceMessagesPutOutcome = serde_json::from_value(json!({
         "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
@@ -259,7 +259,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
-    let device_receive: yougen::models::DeviceMessagesReceiveResBody =
+    let device_receive: yougen::models::DeviceMessagesGetOutcome =
         serde_json::from_value(json!({
             "events": [],
             "next_cursor": "ck:cursor:device-messages",
@@ -276,13 +276,13 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(push.registration_id.as_deref(), Some("ck:push:dev_alice"));
 
-    let ok: yougen::models::OkResBody = serde_json::from_value(json!({"ok": true})).unwrap();
+    let ok: yougen::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
     // Spec rename: blob upload response uses `size_bytes` and
     // `content_digest`; no serde aliases in aggressive migration mode.
     let blob_digest = format!("sha256:{}", "ab".repeat(32));
-    let blob: yougen::models::BlobUploadResBody = serde_json::from_value(json!({
+    let blob: yougen::models::BlobUploadOutcome = serde_json::from_value(json!({
         "blob_ref": format!("ck:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
@@ -296,7 +296,7 @@ fn yougen_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    let report: yougen::models::ModerationReportResBody = serde_json::from_value(json!({
+    let report: yougen::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
         "status": "queued",
         "routed_to": ["did:web:server.local#moderation"]
@@ -459,7 +459,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     // Spec-aligned wire shape per `cokret-spec/.../client-sync.md §2`:
     // flat `realms` keyed by realm id, explicit top-level
     // `left_realms`, flat arrays for `to_device` / `account_data` /
-    // `presence`. The SDK's `SyncResBody` is the single source of
+    // `presence`. The SDK's `SyncOutcome` is the single source of
     // truth; yougen no longer owns a custom deserializer.
     let sync = parse_sync(json!({
         "cursor": "sx:v1-bucket",
