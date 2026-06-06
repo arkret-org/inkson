@@ -38,7 +38,12 @@ type FlowProjection = {
   fields?: Record<string, unknown>;
 };
 
-export async function mockCokretApi(page: Page) {
+type MockCokretApiOptions = {
+  advertiseListHandlesForSubject?: boolean;
+};
+
+export async function mockCokretApi(page: Page, options: MockCokretApiOptions = {}) {
+  const advertiseListHandlesForSubject = options.advertiseListHandlesForSubject ?? true;
   let messageCounter = 0;
   const createdRealms: Array<{ id: string; title: string; summary: string; encryption_profile: string }> = [];
   const timelineEvents: Array<Record<string, unknown>> = [];
@@ -259,6 +264,9 @@ export async function mockCokretApi(page: Page) {
           "ck.self.events.subscribe",
           "ck.find.directory.search_realms",
           "ck.find.directory.resolve_realm",
+          ...(advertiseListHandlesForSubject
+            ? ["ck.find.directory.list_handles_for_subject"]
+            : []),
           "ck.self.authz.check",
           "ck.realm.create",
           "ck.space.create",
@@ -789,6 +797,32 @@ export async function mockCokretApi(page: Page) {
           id: "did:web:alice.example",
           alsoKnownAs: [`acct:${body.handle}`],
         },
+      });
+    }
+
+    if (url.pathname === "/_cokret/find/directory/list-handles-for-subject") {
+      const body = await route.request().postDataJSON();
+      const subject = body.subject ?? "did:web:alice.example";
+      return json(route, {
+        subject,
+        primary_handle: "alice:local.host",
+        as_of: "2026-04-28T12:00:00Z",
+        has_more: false,
+        claims: [
+          {
+            subject,
+            handle: "alice:local.host",
+            issuer: "did:web:server.local",
+            issuer_service_did: "did:web:server.local",
+            binding_state: "verified",
+            claim_kind: "handle_binding",
+            visibility: "public",
+            audience: "did:web:server.local",
+            created_at: "2026-04-28T12:00:00Z",
+            verified_at: "2026-04-28T12:00:00Z",
+            expires_at: "2027-04-28T12:00:00Z",
+          },
+        ],
       });
     }
 

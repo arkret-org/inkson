@@ -14,7 +14,7 @@ use crate::config::{
 };
 use crate::conformance::{
     PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
-    PROFILE_PUSH_GATEWAY, profile_ready,
+    profile_ready,
 };
 use crate::i18n::{Locale, TextDirection};
 use crate::local_state::{
@@ -43,6 +43,7 @@ const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const NAVIGATION_SCOPE_PREFERENCE_KEY: &str = "layout.realm_tree.scope";
 const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
 const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
+const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 220.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
@@ -586,6 +587,9 @@ pub fn RouterView() -> Element {
     let mut server_menu_open = use_signal(|| false);
     let mut account_menu_open = use_signal(|| false);
     let mut account_session_state = use_signal(|| "Session idle".to_owned());
+    let mut personal_handles = use_signal(Vec::<String>::new);
+    let mut personal_handles_status = use_signal(|| "Not published".to_owned());
+    let mut personal_handles_lookup_key = use_signal(String::new);
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
@@ -867,6 +871,8 @@ pub fn RouterView() -> Element {
                     last_error,
                     server_description,
                     server_probe_status,
+                    personal_handles,
+                    personal_handles_status,
                     theme,
                     sync_generation,
                     sync_bootstrap_complete,
@@ -1091,6 +1097,9 @@ pub fn RouterView() -> Element {
         .as_ref()
         .map(|description| description.service_did.as_str().to_owned())
         .unwrap_or_default();
+    let can_list_handles_for_subject = active_server_description
+        .as_ref()
+        .is_some_and(|description| description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT));
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
     let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
@@ -1100,7 +1109,82 @@ pub fn RouterView() -> Element {
         use_effect(move || {
             if matches!(redirect_route, Route::Login) && !token().trim().is_empty() {
                 let _ = redirect_navigator.push(Route::Dashboard);
+            } else if matches!(redirect_route, Route::Recovery) {
+                let _ = redirect_navigator.replace(Route::SettingsRecovery);
             }
+        });
+    }
+    {
+        use_effect(move || {
+            let lookup_base_url = base_url();
+            let lookup_actor = account_did();
+            let lookup_token = token();
+            let lookup_supported = server_description().as_ref().is_some_and(|description| {
+                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
+            });
+            let key = format!(
+                "{}|{}|{}|{}",
+                lookup_base_url,
+                lookup_actor,
+                !lookup_token.trim().is_empty(),
+                lookup_supported,
+            );
+            if personal_handles_lookup_key() == key {
+                return;
+            }
+            personal_handles_lookup_key.set(key);
+            if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
+                personal_handles.set(Vec::new());
+                personal_handles_status.set("No authenticated session".to_owned());
+                return;
+            }
+            if !lookup_supported {
+                if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
+                }
+                return;
+            }
+            personal_handles_status.set("Loading handles".to_owned());
+            let base = lookup_base_url.clone();
+            let actor = lookup_actor.clone();
+            let api_token = lookup_token.clone();
+            spawn(async move {
+                match CokretApi::new(&base) {
+                    Ok(api) => match api
+                        .with_bearer(api_token)
+                        .list_handles_for_subject(&actor, None, Some("display"))
+                        .await
+                    {
+                        Ok(res) => {
+                            let handles = display_handles_from_directory_response(&res);
+                            if handles.is_empty() {
+                                personal_handles_status.set("No handles published".to_owned());
+                            } else {
+                                personal_handles_status.set(format!("{} handle(s)", handles.len()));
+                            }
+                            personal_handles.set(handles);
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                ?err,
+                                "directory list_handles_for_subject failed; keeping account handle fallback"
+                            );
+                            if personal_handles().is_empty() {
+                                personal_handles_status.set("Not published".to_owned());
+                            }
+                        }
+                    },
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            "directory list_handles_for_subject skipped for invalid server URL"
+                        );
+                        if personal_handles().is_empty() {
+                            personal_handles_status.set("Not published".to_owned());
+                        }
+                    }
+                }
+            });
         });
     }
     let active_server_label = normalize_server_url(&base_url());
@@ -1108,13 +1192,24 @@ pub fn RouterView() -> Element {
     let device_id_value = device_id();
     let account_did_label = short_protocol_id(&account_did_value);
     let device_id_label = short_protocol_id(&device_id_value);
+    let personal_handles_value = personal_handles();
+    let account_handles_label =
+        account_handles_display(&personal_handles_value, &personal_handles_status());
+    let account_handles_title = if personal_handles_value.is_empty() {
+        account_handles_label.clone()
+    } else {
+        personal_handles_value.join(", ")
+    };
     let account_label = if has_session {
         account_did_label.clone()
     } else {
         "Not signed in".to_owned()
     };
     let account_detail = if has_session {
-        format!("device {device_id_label}")
+        personal_handles_value
+            .first()
+            .map(|handle| format!("@{handle}"))
+            .unwrap_or_else(|| format!("device {device_id_label}"))
     } else {
         "Refresh server metadata, then sign in".to_owned()
     };
@@ -1128,7 +1223,6 @@ pub fn RouterView() -> Element {
     let kanban_ready = profile_ready(active_server_description.as_ref(), PROFILE_KANBAN_MVP);
     let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
     let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
-    let push_ready = profile_ready(active_server_description.as_ref(), PROFILE_PUSH_GATEWAY);
     let event_write_ready = active_server_description
         .as_ref()
         .map(|description| description.supports_event_envelope_write_plane())
@@ -1725,7 +1819,7 @@ pub fn RouterView() -> Element {
                         Link {
                             class: "primary",
                             "data-testid": "recovery-setup-open-recovery",
-                            to: Route::Recovery,
+                            to: Route::SettingsRecovery,
                             UiIcon { name: "key" }
                             "Configure recovery"
                         }
@@ -1865,6 +1959,8 @@ pub fn RouterView() -> Element {
                                     last_error,
                                     server_description,
                                     server_probe_status,
+                                    personal_handles,
+                                    personal_handles_status,
                                     theme,
                                     sync_generation,
                                     sync_bootstrap_complete,
@@ -2008,6 +2104,9 @@ pub fn RouterView() -> Element {
                                                     status,
                                                     account_did,
                                                     device_id,
+                                                    personal_handles,
+                                                    personal_handles_status,
+                                                    personal_handles_lookup_key,
                                                     sync_generation,
                                                 });
                                                 server_menu_open.set(false);
@@ -2033,6 +2132,8 @@ pub fn RouterView() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        personal_handles,
+                                                        personal_handles_status,
                                                         theme,
                                                         sync_generation,
                                                         sync_bootstrap_complete,
@@ -2798,6 +2899,15 @@ pub fn RouterView() -> Element {
                                             }
                                         }
                                         div { class: "account-menu__row",
+                                            strong { "Handles" }
+                                            span {
+                                                class: "mono",
+                                                "data-testid": "account-menu-handles",
+                                                title: "{account_handles_title}",
+                                                "{account_handles_label}"
+                                            }
+                                        }
+                                        div { class: "account-menu__row",
                                             strong { "Device" }
                                             div { class: "account-menu__value",
                                                 span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_label}" }
@@ -2877,6 +2987,15 @@ pub fn RouterView() -> Element {
                                                             Ok(api) => match api.with_bearer(api_token.clone()).account_me().await {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
+                                                                    if let Some(handle) =
+                                                                        normalize_personal_handle(&account.handle)
+                                                                    {
+                                                                        personal_handles.set(vec![handle]);
+                                                                        personal_handles_status.set("1 handle".to_owned());
+                                                                    } else {
+                                                                        personal_handles.set(Vec::new());
+                                                                        personal_handles_status.set("Not published".to_owned());
+                                                                    }
                                                                     account_did.set(canonical_actor.clone());
                                                                     persist_config(
                                                                         config_store,
@@ -2906,8 +3025,21 @@ pub fn RouterView() -> Element {
                                                                                     .account_me()
                                                                                     .await
                                                                                     .ok()
-                                                                                    .map(|account| account.did)
-                                                                                    .filter(|did| !did.trim().is_empty()),
+                                                                                    .and_then(|account| {
+                                                                                        if let Some(handle) =
+                                                                                            normalize_personal_handle(&account.handle)
+                                                                                        {
+                                                                                            personal_handles.set(vec![handle]);
+                                                                                            personal_handles_status
+                                                                                                .set("1 handle".to_owned());
+                                                                                        } else {
+                                                                                            personal_handles.set(Vec::new());
+                                                                                            personal_handles_status
+                                                                                                .set("Not published".to_owned());
+                                                                                        }
+                                                                                        (!account.did.trim().is_empty())
+                                                                                            .then_some(account.did)
+                                                                                    }),
                                                                                 Err(_) => None,
                                                                             }
                                                                             .unwrap_or_else(|| actor.clone());
@@ -2990,6 +3122,9 @@ pub fn RouterView() -> Element {
                                                 sync_cursor.set("-".to_owned());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
+                                                personal_handles.set(Vec::new());
+                                                personal_handles_status.set("Not published".to_owned());
+                                                personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
                                                 session_boot_state.set(SessionBootState::Unauthenticated);
                                                 // Bump the SyncEngine generation so any
@@ -3274,20 +3409,25 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
-                    Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => rsx! {
+                    Route::Settings
+                    | Route::SettingsSection { .. }
+                    | Route::NotificationsSettings
+                    | Route::SettingsRecovery
+                    | Route::Recovery => rsx! {
                         crate::views::settings::SettingsPanel {
                             base_url,
                             account_did,
                             device_id,
                             token,
-                            crypto_state: crypto_state(),
+                            personal_handles: personal_handles(),
+                            personal_handles_status: personal_handles_status(),
+                            can_list_handles_for_subject,
                             config_store,
                             state_store,
                             push_state,
                             locale,
                             theme,
                             status,
-                            push_ready,
                         }
                     },
                     // G3.Y1 — device management + QR pairing live on
@@ -3300,14 +3440,6 @@ pub fn RouterView() -> Element {
                             account_did,
                             device_id,
                             token,
-                            state_store,
-                        }
-                    },
-                    Route::SettingsRecovery => rsx! {
-                        crate::views::settings::recovery::SettingsRecoveryPanel {
-                            base_url,
-                            token,
-                            account_did,
                             state_store,
                         }
                     },
@@ -3457,15 +3589,6 @@ pub fn RouterView() -> Element {
                             }
                         } else {
                             DeferredFeatureGate { feature: "experimental-webrtc" }
-                        }
-                    },
-                    Route::Recovery => rsx! {
-                        crate::views::recovery::RecoveryPanel {
-                            base_url: base_url(),
-                            token,
-                            state_store,
-                            account_did,
-                            device_id,
                         }
                     },
                     Route::Onboarding => rsx! {
@@ -3733,8 +3856,8 @@ fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
         ),
         (
             "Recovery",
-            "vault, social, recovery key (preview)",
-            Route::Recovery,
+            "vault, social, recovery key",
+            Route::SettingsRecovery,
         ),
         (
             "Verify device",
@@ -4140,13 +4263,51 @@ fn route_label(route: &Route) -> &'static str {
         Route::Recover => "Restore from backup",
         Route::SettingsDevices => "Devices",
         Route::SettingsDevicesPair => "Pair new device",
-        Route::SettingsRecovery => "Recovery passphrase",
+        Route::SettingsRecovery => "Recovery",
         Route::SettingsSecurity => "Key backup",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",
         Route::Agents => "Agents",
         Route::Search => "Search",
+    }
+}
+
+fn display_handles_from_directory_response(
+    res: &cokret_sdk::model::DirectoryListHandlesForSubjectResBody,
+) -> Vec<String> {
+    let mut seen = BTreeSet::<String>::new();
+    let mut handles = Vec::<String>::new();
+    let mut push_handle = |handle: String| {
+        if !handle.trim().is_empty() && seen.insert(handle.clone()) {
+            handles.push(handle);
+        }
+    };
+    if let Some(primary) = res.primary_handle.as_ref() {
+        push_handle(primary.canonical().to_owned());
+    }
+    for claim in &res.claims {
+        if let Some(handle) = claim.handle.as_ref() {
+            push_handle(handle.canonical().to_owned());
+        }
+    }
+    handles
+}
+
+fn normalize_personal_handle(handle: &str) -> Option<String> {
+    let normalized = handle.trim().trim_start_matches('@').trim();
+    (!normalized.is_empty()).then(|| normalized.to_owned())
+}
+
+fn account_handles_display(handles: &[String], fallback: &str) -> String {
+    if handles.is_empty() {
+        fallback.to_owned()
+    } else {
+        handles
+            .iter()
+            .map(|handle| format!("@{handle}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -4392,6 +4553,9 @@ struct ServerSelectionContext {
     status: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
+    personal_handles: Signal<Vec<String>>,
+    personal_handles_status: Signal<String>,
+    personal_handles_lookup_key: Signal<String>,
     /// SyncEngine generation counter — bumped to retire the
     /// previous-server engine after the cache wipe + URL repoint.
     sync_generation: Signal<u64>,
@@ -4415,6 +4579,9 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     let mut status = ctx.status;
     let mut state_store = ctx.state_store;
     let mut sync_generation = ctx.sync_generation;
+    let mut personal_handles = ctx.personal_handles;
+    let mut personal_handles_status = ctx.personal_handles_status;
+    let mut personal_handles_lookup_key = ctx.personal_handles_lookup_key;
     let server_changed = !same_server_url(&base_url(), &server_url);
 
     // A space cached against the previous server's view is meaningless
@@ -4452,6 +4619,9 @@ fn select_server(server_url: String, ctx: ServerSelectionContext) {
     device_queue.set(0);
     frontier_state.set("Not loaded".to_owned());
     crypto_state.set("Refresh session for selected server".to_owned());
+    personal_handles.set(Vec::new());
+    personal_handles_status.set("Not published".to_owned());
+    personal_handles_lookup_key.set(String::new());
     server_description.set(None);
     server_probe_status.set("server not probed".to_owned());
     status.set(ConnectionState::Offline.label().to_owned());
@@ -4681,6 +4851,8 @@ struct ConnectContext {
     last_error: Signal<Option<String>>,
     server_description: Signal<Option<ServerDescription>>,
     server_probe_status: Signal<String>,
+    personal_handles: Signal<Vec<String>>,
+    personal_handles_status: Signal<String>,
     /// A4a: shared UI theme signal so `/sync` can hydrate the theme
     /// from the remote `client.ui` account-data payload right after
     /// session bootstrap. Stub field — wire-up is tracked under A4a.
@@ -4722,6 +4894,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
         let mut last_error = ctx.last_error;
         let mut server_description = ctx.server_description;
         let mut server_probe_status = ctx.server_probe_status;
+        let mut personal_handles = ctx.personal_handles;
+        let mut personal_handles_status = ctx.personal_handles_status;
         let mut theme = ctx.theme;
         let navigator = ctx.navigator;
         let mut session_boot_state = ctx.session_boot_state;
@@ -4845,8 +5019,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
+                let mut account_handle = None::<String>;
                 let canonical_actor = match authed.account_me().await {
-                    Ok(account) if !account.did.trim().is_empty() => account.did,
+                    Ok(account) if !account.did.trim().is_empty() => {
+                        account_handle = normalize_personal_handle(&account.handle);
+                        account.did
+                    }
                     Ok(_) => {
                         last_error.set(Some(
                             "account_me: server returned empty actor DID; reusing local actor"
@@ -4859,7 +5037,10 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             session_token = refreshed;
                             authed = api.clone().with_bearer(session_token.clone());
                             match authed.account_me().await {
-                                Ok(account) if !account.did.trim().is_empty() => account.did,
+                                Ok(account) if !account.did.trim().is_empty() => {
+                                    account_handle = normalize_personal_handle(&account.handle);
+                                    account.did
+                                }
                                 Ok(_) => {
                                     last_error.set(Some(
                                         "account_me: refreshed session returned empty actor DID; reusing local actor"
@@ -4925,6 +5106,12 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                         actor.clone()
                     }
                 };
+                if let Some(handle) = account_handle {
+                    personal_handles.set(vec![handle]);
+                    personal_handles_status.set("1 handle".to_owned());
+                } else if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
+                }
                 if canonical_actor != actor {
                     // Account changed since the last persisted run (the
                     // server's `/account/me` disagrees with our cached
@@ -4981,7 +5168,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                     device.clone(),
                     session_token,
                 );
-                crypto_state.set(format!("session token loaded for {device}"));
+                crypto_state.set("Session active".to_owned());
 
                 // `connect()` always issues a full sync (`since=None`) —
                 // it's invoked on app boot, the mobile Refresh button,

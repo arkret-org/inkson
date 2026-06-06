@@ -81,12 +81,44 @@ async function writeLocalConfig(
   }, overrides);
 }
 
+async function writeLocalConfigAndReload(
+  page: import("@playwright/test").Page,
+  overrides: Partial<{
+    server_url: string;
+    account_did: string;
+    device_id: string;
+    session_token: string;
+  }>,
+) {
+  await page.evaluate((nextConfig) => {
+    const current = localStorage.getItem("yougen.config.v1");
+    const parsed = current ? JSON.parse(current) : {};
+    localStorage.setItem(
+      "yougen.config.v1",
+      JSON.stringify({
+        server_url: "https://local.host",
+        account_did: "did:web:alice.example",
+        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+        session_token: "sx:e2e-token",
+        ...parsed,
+        ...nextConfig,
+      }),
+    );
+    window.location.reload();
+  }, overrides);
+  await page.waitForLoadState("domcontentloaded");
+}
+
 async function readLocalConfig(page: import("@playwright/test").Page) {
   return page.evaluate(() => JSON.parse(localStorage.getItem("yougen.config.v1") ?? "{}"));
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  await mockCokretApi(page);
+  await mockCokretApi(page, {
+    advertiseListHandlesForSubject: !testInfo.title.startsWith(
+      "account menu falls back to account handle",
+    ),
+  });
   if (testInfo.title.startsWith("login page")) {
     return;
   }
@@ -193,6 +225,31 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
 });
 
+test("account menu falls back to account handle when handle directory lookup is not advertised", async ({
+  page,
+}) => {
+  let handleDirectoryRequests = 0;
+  const pageErrors: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/_cokret/find/directory/list-handles-for-subject") {
+      handleDirectoryRequests += 1;
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.message);
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await refreshServer(page);
+  await latestTestId(page, "account-menu-button").click();
+
+  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice.example");
+  await expect(latestTestId(page, "account-menu-handles")).not.toContainText("unavailable");
+  expect(handleDirectoryRequests).toBe(0);
+  expect(pageErrors).toEqual([]);
+});
+
 test("workspace header collapses and sidebar edge resizes the menu", async ({ page }) => {
   const sidebar = page.getByTestId("sidebar");
   const mainView = page.getByTestId("main-view");
@@ -249,36 +306,45 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({ pa
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
 });
 
-test("settings encryption replaces manual key backup inputs with guidance", async ({ page }) => {
+test("settings encryption keeps key backup under advanced diagnostics", async ({ page }) => {
   await page.goto("/settings/encryption", { waitUntil: "domcontentloaded" });
+  const recovery = latestTestId(page, "settings-mls-recovery");
   const guidance = latestTestId(page, "key-backup-guidance");
+  await expect(recovery).toBeVisible();
   await expect(guidance).toBeVisible();
+  await expect(guidance.locator("summary")).toContainText(
+    "Advanced key backup diagnostics",
+  );
+  await expect(guidance).not.toHaveAttribute("open", "");
+  await guidance.locator("summary").click();
   await expect(guidance).toContainText(
     "backup id is generated when a backup is created",
   );
+  await expect(latestTestId(page, "key-backup-open-manual")).toBeVisible();
   await expect(page.getByTestId("key-backup-id-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-passphrase-input")).toHaveCount(0);
   await expect(page.getByTestId("key-backup-setup")).toHaveCount(0);
-  await expect(latestTestId(page, "settings-mls-recovery")).toBeVisible();
 });
 
 test("recovery passkey quick unlock stays additive to the 24-word key", async ({ page }) => {
-  await page.goto("/recovery", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("recovery-panel")).toBeVisible();
+  await page.goto("/settings/recovery", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("settings-nav-item-recovery")).toHaveAttribute("aria-current", "page");
+  const recoveryPanel = latestTestId(page, "recovery-panel");
+  await expect(recoveryPanel).toBeVisible();
 
-  const passkeySection = page.getByTestId("passkey-recovery-section");
+  const passkeySection = recoveryPanel.getByTestId("passkey-recovery-section");
   await expect(passkeySection).toBeVisible();
   await expect(passkeySection).toContainText("browser-local WebAuthn PRF");
   await expect(passkeySection).toContainText("not a replacement");
-  await expect(page.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
-  await expect(page.getByTestId("passkey-wrap-create")).toBeDisabled();
-  await expect(page.getByTestId("passkey-wrap-unlock")).toBeDisabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-count")).toHaveText("0 saved");
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeDisabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-unlock")).toBeDisabled();
 
-  await page.getByTestId("recovery-key-regenerate").click();
-  await expect(page.getByTestId("recovery-key-status")).toContainText("New Recovery Key generated");
-  const recoveryWords = (await page.getByTestId("recovery-key-current").textContent()) ?? "";
+  await recoveryPanel.getByTestId("recovery-key-regenerate").click();
+  await expect(recoveryPanel.getByTestId("recovery-key-status")).toContainText("New Recovery Key generated");
+  const recoveryWords = (await recoveryPanel.getByTestId("recovery-key-current").textContent()) ?? "";
   expect(recoveryWords.trim().split(/\s+/)).toHaveLength(24);
-  await expect(page.getByTestId("passkey-wrap-create")).toBeEnabled();
+  await expect(recoveryPanel.getByTestId("passkey-wrap-create")).toBeEnabled();
   await expect(passkeySection).toContainText("24-word Recovery Key");
 });
 
@@ -350,18 +416,19 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
 test("connect refresh canonicalizes stale account DID but preserves device override", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
   const deviceId = "ck:device:01964137-0000-7000-8000-0000000000b0";
-  await writeLocalConfig(page, { account_did: staleDid, device_id: deviceId });
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "status-label")).toContainText("Online");
+  await writeLocalConfigAndReload(page, { account_did: staleDid, device_id: deviceId });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
   await refreshServer(page);
 
   await latestTestId(page, "account-menu-button").click();
-  await expect(latestTestId(page, "account-menu-session-crypto")).toContainText(
-    `session token loaded for ${deviceId}`,
+  await expect(latestTestId(page, "account-menu-session-crypto")).not.toContainText(
+    "session token loaded",
   );
+  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice:local.host");
   await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
-  await expect(latestTestId(page, "account-menu-device")).toContainText(deviceId);
+  await expect(latestTestId(page, "account-menu-device")).toHaveAttribute("title", deviceId);
   await expect.poll(() => readLocalConfig(page)).toMatchObject({
     account_did: "did:web:alice.example",
     device_id: deviceId,
@@ -370,12 +437,12 @@ test("connect refresh canonicalizes stale account DID but preserves device overr
 
 test("session refresh canonicalizes stale account DID in settings", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KREFRESH";
-  await writeLocalConfig(page, { account_did: staleDid });
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await writeLocalConfigAndReload(page, { account_did: staleDid });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
 
   await latestTestId(page, "account-menu-button").click();
-  await expect(latestTestId(page, "account-menu-did")).toContainText(staleDid);
+  await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
+  await expect(latestTestId(page, "account-menu-did")).not.toContainText(staleDid);
   await latestTestId(page, "account-menu-session-refresh").click();
   await expect(latestTestId(page, "account-menu-session-state")).toContainText(
     "Session refresh ok: did:web:alice.example",

@@ -67,11 +67,9 @@ pub enum Route {
     #[route("/settings/devices/pair", crate::app::RouterView)]
     SettingsDevicesPair,
 
-    /// G3.Y1 — recovery passphrase setup + confirmation. Distinct
-    /// from the existing `Route::Recovery` (`/recovery`) which hosts
-    /// the broader recovery-options aggregator; this one is the
-    /// single-purpose passphrase ceremony surfaced from the settings
-    /// sidebar.
+    /// Recovery settings. Hosts the broader recovery-options aggregator
+    /// under the Settings shell; `/recovery` remains a compatibility
+    /// route that redirects here.
     #[route("/settings/recovery", crate::app::RouterView)]
     SettingsRecovery,
 
@@ -285,16 +283,15 @@ impl Route {
             Route::Contacts | Route::ContactsNew => View::Contacts,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
-            Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => {
-                View::Settings
-            }
-            // G3.Y1 — new device / recovery / security panels render
-            // under the existing settings shell visually but are
-            // distinct top-level View variants so the sidebar +
-            // command-palette state machine can highlight them
-            // individually.
+            Route::Settings
+            | Route::SettingsSection { .. }
+            | Route::NotificationsSettings
+            | Route::SettingsRecovery
+            | Route::Recovery => View::Settings,
+            // G3.Y1 — device / security panels keep distinct View
+            // variants; recovery now lives inside the generic Settings
+            // shell so the Settings sidebar stays visible.
             Route::SettingsDevices | Route::SettingsDevicesPair => View::SettingsDevices,
-            Route::SettingsRecovery => View::SettingsRecovery,
             Route::SettingsSecurity => View::SettingsSecurity,
             Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
@@ -313,7 +310,6 @@ impl Route {
             | Route::KanbanTask { .. } => View::Kanban,
             Route::Notifications => View::Notifications,
             Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => View::Document,
-            Route::Recovery => View::Recovery,
             Route::Onboarding => View::Onboarding,
             Route::Quarantine => View::Quarantine,
             Route::Agents => View::Agents,
@@ -355,6 +351,7 @@ impl Route {
         match self {
             Route::SettingsSection { section } => Some(section.as_str()),
             Route::NotificationsSettings => Some("notifications"),
+            Route::SettingsRecovery | Route::Recovery => Some("recovery"),
             _ => None,
         }
     }
@@ -446,8 +443,8 @@ mod tests {
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,
-            // G3.Y1 — device / recovery / security panels each get
-            // their own dedicated View variant; verify the round-trip.
+            // G3.Y1 — device / security panels keep dedicated View
+            // variants; recovery round-trips through View::Settings.
             Route::SettingsDevices,
             Route::SettingsDevicesPair,
             Route::SettingsRecovery,

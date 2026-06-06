@@ -523,6 +523,34 @@ pub fn ChatPanel(
         // P0 decrypt-on-read identity: this device's actor + device id let the
         // message projection decrypt remote members' canonical encrypted_content
         // envelopes from the local MLS snapshot.
+        let local_decrypt_identity = Some((account_did.as_str(), device_id.as_str()));
+        let (local_messages, local_poll_cards, local_channels) = {
+            let store = state_store.read();
+            let snapshot = store.load();
+            (
+                chat_messages_from_local_state_with_sidecar(
+                    &snapshot,
+                    Some(&store),
+                    local_decrypt_identity,
+                ),
+                poll_cards_from_local_state(&snapshot),
+                channels_from_local_state(&snapshot),
+            )
+        };
+        if !local_channels.is_empty() {
+            merge_channels(&mut channels.write(), local_channels);
+        }
+        if selected_channel().trim().is_empty()
+            && let Some(first_channel) = channels.read().first()
+        {
+            selected_channel.set(first_channel.flow_id.clone());
+        }
+        if !local_messages.is_empty() {
+            merge_chat_messages(&mut messages.write(), local_messages);
+        }
+        if !local_poll_cards.is_empty() {
+            merge_poll_cards(&mut poll_cards.write(), local_poll_cards);
+        }
         let account_did_for_decrypt = account_did.clone();
         let device_id_for_decrypt = device_id.clone();
         let mut account_display_name_for_load = account_display_name;
@@ -536,15 +564,8 @@ pub fn ChatPanel(
                 initial_sync_finished_for_load.set(true);
                 return;
             };
-            let mut loaded_messages = {
-                let store = state_store.read();
-                chat_messages_from_local_state_with_sidecar(
-                    &store.load(),
-                    Some(&store),
-                    decrypt_identity,
-                )
-            };
-            let mut loaded_poll_cards = poll_cards_from_local_state(&state_store.read().load());
+            let mut loaded_messages = Vec::new();
+            let mut loaded_poll_cards = Vec::new();
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
                 && let Some(display_name) = clean_participant_display_name(

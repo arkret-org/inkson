@@ -58,6 +58,18 @@ struct PendingAvatarCrop {
     dimensions: (u32, u32),
 }
 
+fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
+    if handles.is_empty() {
+        fallback.to_owned()
+    } else {
+        handles
+            .iter()
+            .map(|handle| format!("@{handle}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
     let media_type = if media_type.trim().is_empty() {
         "application/octet-stream"
@@ -554,6 +566,7 @@ enum SettingsSection {
     Server,
     Storage,
     Encryption,
+    Recovery,
     Mimi,
     Notifications,
     Privacy,
@@ -572,6 +585,7 @@ impl SettingsSection {
         match slug.unwrap_or("server") {
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
+            "recovery" => Self::Recovery,
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
@@ -589,6 +603,7 @@ impl SettingsSection {
             Self::Server => "server",
             Self::Storage => "storage",
             Self::Encryption => "encryption",
+            Self::Recovery => "recovery",
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
@@ -604,7 +619,8 @@ impl SettingsSection {
         match self {
             Self::Server => "Account & server",
             Self::Storage => "Data & sync",
-            Self::Encryption => "Security & recovery",
+            Self::Encryption => "Security",
+            Self::Recovery => "Recovery",
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
@@ -616,62 +632,22 @@ impl SettingsSection {
         }
     }
 
-    fn eyebrow(self) -> &'static str {
+    fn route(self) -> Route {
         match self {
-            Self::Server => "Account",
-            Self::Storage => "Persistence",
-            Self::Encryption => "Security",
-            Self::Mimi => "Integrations",
-            Self::Notifications => "Notifications",
-            Self::Privacy => "Privacy",
-            Self::Consent => "Consent",
-            Self::Blocklist => "Blocklist",
-            Self::Capabilities => "Authorization",
-            Self::Theme => "Preferences",
-            Self::Release => "Advanced",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::Server => {
-                "Profile, identity, principal context, and delegated service configuration."
-            }
-            Self::Storage => {
-                "Persistence surfaces, sync channels, and export risk indicators for this client."
-            }
-            Self::Encryption => {
-                "Device trust, recovery posture, MLS defaults, and key backup workflows."
-            }
-            Self::Mimi => "Connected services and MIMI interoperability controls.",
-            Self::Notifications => {
-                "Notification rules, push registration, routing state, and per-Realm delivery controls."
-            }
-            Self::Privacy => {
-                "Actor-private preferences, disclosure policy, and selective sharing rules."
-            }
-            Self::Consent => {
-                "Per-peer consent grants — who may contact you, in what scope, until when. Spec identity/consent-model.md §2."
-            }
-            Self::Blocklist => {
-                "Actor-private personal blocklist. Spec governance/content-moderation.md §4 — client-side filter complementing server-side quarantine."
-            }
-            Self::Capabilities => {
-                "Capability grants held or issued by this actor, with delegation chain. Spec authz/capabilities.md §3."
-            }
-            Self::Theme => {
-                "Theme, locale, and client-facing defaults that stay private to this actor."
-            }
-            Self::Release => {
-                "Advanced diagnostics, release blockers, sync posture, and operational status in one place."
-            }
+            Self::Recovery => Route::SettingsRecovery,
+            _ => Route::SettingsSection {
+                section: self.slug().to_owned(),
+            },
         }
     }
 }
 
 const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
-    &[SettingsSection::Encryption, SettingsSection::Capabilities];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
+    SettingsSection::Encryption,
+    SettingsSection::Recovery,
+    SettingsSection::Capabilities,
+];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
@@ -724,14 +700,15 @@ pub fn SettingsPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
-    crypto_state: String,
+    personal_handles: Vec<String>,
+    personal_handles_status: String,
+    can_list_handles_for_subject: bool,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
     push_state: Signal<String>,
     mut locale: Signal<Locale>,
     mut theme: Signal<String>,
     status: Signal<String>,
-    push_ready: bool,
 ) -> Element {
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
@@ -822,6 +799,15 @@ pub fn SettingsPanel(
     } else {
         "No authenticated device session".to_owned()
     };
+    let account_handles_label =
+        format_settings_handle_list(&personal_handles, &personal_handles_status);
+    let account_handles_title = if personal_handles.is_empty() {
+        account_handles_label.clone()
+    } else {
+        personal_handles.join(", ")
+    };
+    let principal_short_label = short_protocol_id(&principal_label);
+    let device_short_label = short_protocol_id(&device_label);
     {
         let account_key = account_did();
         use_effect(move || {
@@ -850,7 +836,7 @@ pub fn SettingsPanel(
                                     class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
                                     "data-testid": "settings-nav-item-{section.slug()}",
                                     "aria-current": if active_section == section { "page" } else { "false" },
-                                    to: Route::SettingsSection { section: section.slug().to_owned() },
+                                    to: section.route(),
                                     strong { "{section.label()}" }
                                 }
                             }
@@ -862,66 +848,8 @@ pub fn SettingsPanel(
                 }
                 section { class: "settings-content-column",
                     div { class: "event settings-content-hero",
-                        div { class: "event-head",
-                            span { "{active_section.eyebrow()}" }
-                            span { if has_session { "authenticated" } else { "local state" } }
-                        }
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "{active_section.label()}" }
-                            HelpTip { text: active_section.description().to_owned() }
-                        }
-                        div { class: "actions",
-                            if active_section == SettingsSection::Server {
-                                span { class: "badge green", "Principal Server context" }
-                            }
-                            if active_section == SettingsSection::Encryption {
-                                span { class: "badge amber", "{crypto_state}" }
-                            }
-                            if active_section == SettingsSection::Notifications {
-                                span { class: "badge green", if push_ready { "Push gateway available" } else { "Push gateway not advertised" } }
-                            }
-                            if active_section == SettingsSection::Release {
-                                span { class: "badge amber", "Advanced diagnostics" }
-                            }
-                        }
-                    }
-
-                    div { class: "event", "data-testid": "settings-setup-recovery-hub",
-                        div { class: "event-head",
-                            span { "Setup & recovery" }
-                            HelpTip { text: "Identity bootstrap, device verification, recovery, and admin-side invite review now live behind Settings instead of the primary Realm / Space navigation." }
-                        }
-                        div { class: "actions",
-                            Link {
-                                class: "secondary",
-                                to: Route::Onboarding,
-                                UiIcon { name: "check" }
-                                "Onboarding"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::VerifyDevice,
-                                UiIcon { name: "check" }
-                                "Verify Device"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::Recovery,
-                                UiIcon { name: "archive" }
-                                "Recovery"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::Quarantine,
-                                UiIcon { name: "inbox" }
-                                "Invite Quarantine"
-                            }
-                            Link {
-                                class: "secondary",
-                                to: Route::SettingsSection { section: SettingsSection::Mimi.slug().to_owned() },
-                                UiIcon { name: "server" }
-                                "Integrations"
-                            }
                         }
                     }
 
@@ -930,29 +858,20 @@ pub fn SettingsPanel(
                         div { class: "settings-card-grid",
                             div { class: "event settings-card-span-2", "data-testid": "transport-invariant",
                                 div { class: "event-head",
-                                    span { "Principal Context" }
-                                    span { if has_session { "authenticated" } else { "not signed in" } }
+                                    span { "Server context" }
                                 }
                                 div { class: "metric-grid",
                                     div { class: "metric",
                                         strong { "Principal Server" }
                                         span { "{base_url}" }
-                                        div { class: "muted", "delegated service boundary" }
                                     }
                                     div { class: "metric",
-                                        strong { "Principal" }
-                                        span { "{principal_label}" }
-                                        div { class: "muted", if has_session { "signs Events; server cannot forge" } else { "loaded after server auth" } }
+                                        strong { "Session" }
+                                        span { if has_session { "Authenticated" } else { "Not signed in" } }
                                     }
                                     div { class: "metric",
-                                        strong { "Device" }
-                                        span { "{device_label}" }
-                                        div { class: "muted", if has_session { "local client identity" } else { "not bound yet" } }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Organization" }
-                                        span { "None selected" }
-                                        div { class: "muted", "Organizations are principals, not servers" }
+                                        strong { "Push" }
+                                        span { "{push_label}" }
                                     }
                                     // T1.3 — show the active proof mode so
                                     // the user can spot at a glance whether
@@ -961,35 +880,15 @@ pub fn SettingsPanel(
                                     div { class: "metric", "data-testid": "settings-proof-mode",
                                         strong { {crate::i18n::tr("settings.proof_mode.label")} }
                                         span { {crate::operation::current_proof_mode().label_en()} }
-                                        div { class: "muted", {crate::i18n::tr("settings.proof_mode.hint")} }
                                     }
-                                    // T5.2 — show the active signer DID, key
-                                    // id, algorithm, and proof freshness so
-                                    // the user can confirm the device is
-                                    // signing with the expected identity and
-                                    // when the last event was signed.
+                                    // T5.2 — show the active signer DID.
                                     {
                                         let status = crate::event_signer::signer_status();
-                                        let (signer_did, key_id, alg, mode_tag, freshness) = match &status {
-                                            Some(s) => (
-                                                s.signer_did.clone(),
-                                                s.verification_method.clone(),
-                                                s.algorithm.clone(),
-                                                s.mode_tag,
-                                                s.last_signed_at
-                                                    .clone()
-                                                    .unwrap_or_else(|| crate::i18n::tr("settings.signer.freshness.never")),
-                                            ),
-                                            None => (
-                                                "—".to_owned(),
-                                                "—".to_owned(),
-                                                "—".to_owned(),
-                                                "none",
-                                                crate::i18n::tr("settings.signer.freshness.never"),
-                                            ),
-                                        };
+                                        let signer_did = status
+                                            .as_ref()
+                                            .map(|s| s.signer_did.clone())
+                                            .unwrap_or_else(|| "—".to_owned());
                                         let signer_did_label = short_protocol_id(&signer_did);
-                                        let key_id_label = short_protocol_id(&key_id);
                                         rsx! {
                                             div {
                                                 class: "metric",
@@ -1000,36 +899,6 @@ pub fn SettingsPanel(
                                                     title: "{signer_did}",
                                                     "{signer_did_label}"
                                                 }
-                                                div {
-                                                    class: "muted",
-                                                    "data-testid": "settings-signer-key-id",
-                                                    title: "{key_id}",
-                                                    "{key_id_label} ({mode_tag} / {alg})"
-                                                }
-                                                div {
-                                                    class: "muted",
-                                                    "data-testid": "settings-signer-freshness",
-                                                    {format!("{}: {}", crate::i18n::tr("settings.signer.freshness.label"), freshness)}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                div { class: "actions",
-                                    span { class: "badge green", "HTTP/JSON" }
-                                    span { class: "badge blue", "v1 core" }
-                                    {
-                                        let mode = crate::operation::current_proof_mode();
-                                        let badge_class = match mode {
-                                            crate::operation::ProofMode::RealEd25519
-                                            | crate::operation::ProofMode::ExternalSigner => "badge green",
-                                            crate::operation::ProofMode::Production => "badge red",
-                                        };
-                                        rsx! {
-                                            span {
-                                                class: "{badge_class}",
-                                                "data-testid": "settings-proof-mode-badge",
-                                                {mode.label_en()}
                                             }
                                         }
                                     }
@@ -1045,8 +914,7 @@ pub fn SettingsPanel(
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.avatar.title")} }
-                                    span { title: "ck.self.account.update_profile", "Profile" }
+                                    span { "Account identity" }
                                 }
                                 div { class: "actions", style: "align-items: center; gap: 16px;",
                                     {
@@ -1389,11 +1257,47 @@ pub fn SettingsPanel(
                                         }
                                     }
                                 }
-                                div { class: "muted",
-                                    "Published via ck.self.account.update_profile; mirrored to other devices via client.ui.avatar_blob_ref."
+                                div { class: "metric-grid settings-account-identity-grid",
+                                    div { class: "metric",
+                                        strong { "DID" }
+                                        span {
+                                            class: "mono",
+                                            "data-testid": "settings-account-did",
+                                            title: "{principal_label}",
+                                            "{principal_short_label}"
+                                        }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Handles" }
+                                        span {
+                                            class: "mono",
+                                            "data-testid": "settings-account-handles",
+                                            title: "{account_handles_title}",
+                                            "{account_handles_label}"
+                                        }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Current device" }
+                                        span {
+                                            class: "mono",
+                                            "data-testid": "settings-account-device",
+                                            title: "{device_label}",
+                                            "{device_short_label}"
+                                        }
+                                    }
                                 }
                             }
 
+                        }
+                    }
+
+                    if active_section == SettingsSection::Recovery {
+                        crate::views::recovery::RecoveryPanel {
+                            base_url: base_url(),
+                            token,
+                            state_store,
+                            account_did,
+                            device_id,
                         }
                     }
 
@@ -1472,45 +1376,19 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Encryption {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "encryption-settings",
-                    div { class: "event-head", span { "Encryption" } span { "MLS / E2EE" } }
-                    label { "MLS Group Policy" }
-                    select {
-                        value: "{mls_group_policy}",
-                        onchange: move |evt| mls_group_policy.set(evt.value()),
-                        option { value: "default", "Default" }
-                        option { value: "always-encrypt", "Always Encrypt" }
-                        option { value: "prefer-plaintext", "Prefer Plaintext" }
-                    }
-                    div { class: "muted", "Current: {crypto_state}" }
-                    div { class: "event", "data-testid": "key-backup-guidance",
-                        div { class: "event-head",
-                            span { "Key backup" }
-                            span { "recovery setup" }
-                        }
-                        div { class: "muted",
-                            "The recovery backup id is generated when a backup is created; it is not something to type by hand. Use the recovery flow to create a vault/recovery key, or use the lower-level manual page only when debugging a specific backup envelope."
-                        }
-                        div { class: "actions",
-                            Link {
-                                class: "primary",
-                                "data-testid": "key-backup-open-recovery",
-                                to: Route::Recovery,
-                                UiIcon { name: "key" }
-                                "Open Recovery"
+                                div { class: "event-head",
+                                    span { "Encryption" }
+                                    span { "MLS / E2EE" }
+                                }
+                                label { "MLS Group Policy" }
+                                select {
+                                    value: "{mls_group_policy}",
+                                    onchange: move |evt| mls_group_policy.set(evt.value()),
+                                    option { value: "default", "Default" }
+                                    option { value: "always-encrypt", "Always Encrypt" }
+                                    option { value: "prefer-plaintext", "Prefer Plaintext" }
+                                }
                             }
-                            Link {
-                                class: "secondary",
-                                "data-testid": "key-backup-open-manual",
-                                to: Route::SettingsSecurity,
-                                UiIcon { name: "archive" }
-                                "Manual backup tools"
-                            }
-                        }
-                        div { class: "muted",
-                            "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. Encrypted-history recovery key setup is handled by the panel below."
-                        }
-                    }
-                }
                             // X11.1 — persistent MLS recovery-key entry.
                             // Always reachable here (Security & recovery),
                             // shows live backup status, and lets the user
@@ -1523,6 +1401,37 @@ pub fn SettingsPanel(
                                 account_did,
                                 device_id,
                                 state_store,
+                            }
+                            details { class: "event", "data-testid": "key-backup-guidance",
+                                summary { class: "event-head",
+                                    span { "Advanced key backup diagnostics" }
+                                    span { class: "badge amber", "developer tools" }
+                                }
+                                div { class: "muted",
+                                    "Encrypted history recovery above creates key backup envelopes automatically. The recovery backup id is generated when a backup is created; it is not something to type by hand."
+                                }
+                                div { class: "muted",
+                                    "Use these links only for protocol diagnostics or when debugging a specific backup envelope."
+                                }
+                                div { class: "actions",
+                                    Link {
+                                        class: "primary",
+                                        "data-testid": "key-backup-open-recovery",
+                                        to: Route::SettingsRecovery,
+                                        UiIcon { name: "key" }
+                                        "Recovery vault"
+                                    }
+                                    Link {
+                                        class: "secondary",
+                                        "data-testid": "key-backup-open-manual",
+                                        to: Route::SettingsSecurity,
+                                        UiIcon { name: "archive" }
+                                        "Manual backup tools"
+                                    }
+                                }
+                                div { class: "muted",
+                                    "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
+                                }
                             }
                         }
                     }
@@ -2738,12 +2647,14 @@ pub fn SettingsPanel(
                             }
                         }
                     }
-                    // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
-                    // §3.2.1 primary handle via list_handles_for_subject.
-                    crate::views::helpers::WhyThisHandlePanel {
-                        base_url: base_url(),
-                        token: token(),
-                        subject_id: account_did(),
+                    if can_list_handles_for_subject {
+                        // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
+                        // §3.2.1 primary handle via list_handles_for_subject.
+                        crate::views::helpers::WhyThisHandlePanel {
+                            base_url: base_url(),
+                            token: token(),
+                            subject_id: account_did(),
+                        }
                     }
                 }
 

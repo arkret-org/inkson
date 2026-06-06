@@ -139,7 +139,8 @@ pub enum View {
     /// Rendered for both `/settings/devices` and `/settings/devices/pair`
     /// because the pair flow is a single panel mounted on a sub-route.
     SettingsDevices,
-    /// G3.Y1 — passphrase ceremony surface at `/settings/recovery`.
+    /// G3.Y1 compatibility variant. `/settings/recovery` now renders
+    /// through `View::Settings` so the Settings sidebar remains visible.
     SettingsRecovery,
     /// G3.Y1 — local key-backup status + manual trigger at `/settings/security`.
     SettingsSecurity,
