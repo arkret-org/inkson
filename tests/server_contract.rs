@@ -349,6 +349,52 @@ fn server_description_gates_event_envelope_write_plane() {
             .is_empty()
     );
 
+    let soland_compat_surface = serde_json::to_value(
+        cokret_sdk::CompatSurfaceEntry::external_interop("soland_private_local_routes")
+            .with_extra_string("base_path", "/_soland")
+            .with_extra_string("status", "soland_private_local")
+            .with_notes(
+                "non-registry REST routes were moved out of /_cokret; clients should prefer \
+                 operation-registry canonical paths",
+            ),
+    )
+    .unwrap();
+    let soland_with_local_compat_surface = parse_server_description(json!({
+        "service_did": "did:web:local.host",
+        "trust_domain": "ck:trust_domain:local.host",
+        "service_type": "principal_server",
+        "protocol_version": "1.0",
+        "supported_profiles": [
+            "ck.profile.core_event_store.v1",
+            "ck.profile.principal_server_events_api.v1"
+        ],
+        "supported_operations": [
+            "ck.self.events.describe",
+            "ck.self.events.submit"
+        ],
+        "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
+        "supported_features": ["ck.feature.soland.events.describe"],
+        "auth_metadata": {"mode": "development"},
+        "limits": {"storage": "postgres"},
+        "plaintext_visibility": {"default": "encrypted"},
+        "implemented_features": ["ck.feature.soland.events.describe"],
+        "claimed_profiles": [
+            {
+                "profile_id": "ck.profile.core_event_store.v1",
+                "claim_kind": "self_claimed"
+            }
+        ],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [soland_compat_surface],
+        "development_mode": true,
+    }))
+    .unwrap();
+    assert_eq!(
+        soland_with_local_compat_surface.compat_surfaces[0].name,
+        "soland_private_local_routes"
+    );
+
     // A partial / pre-v2 describe payload now fails to deserialize at all —
     // the SDK type is strict per `service-describe.schema.json`, so yougen
     // can no longer accept a stripped-down describe and flag it post-hoc.
