@@ -423,8 +423,7 @@ fn refresh_notifications(
                     &response.account_data,
                 );
                 let joined_realms = joined_realm_ids(&response);
-                drop_joined_invite_notifications(&mut raw_notifications, &joined_realms);
-                append_invite_notifications(
+                merge_invite_notifications(
                     &mut raw_notifications,
                     invite_notifications,
                     &joined_realms,
@@ -731,6 +730,15 @@ fn append_invite_notifications(
         existing_targets.insert(target_realm);
         raw_notifications.push(notification);
     }
+}
+
+pub(crate) fn merge_invite_notifications(
+    raw_notifications: &mut Vec<Value>,
+    invites: Vec<Value>,
+    hidden_realms: &BTreeSet<String>,
+) {
+    drop_joined_invite_notifications(raw_notifications, hidden_realms);
+    append_invite_notifications(raw_notifications, invites, hidden_realms);
 }
 
 fn invite_notification_from_value(invite: &Value) -> Option<Value> {

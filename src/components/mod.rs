@@ -204,6 +204,9 @@ pub fn UiIcon(name: String) -> Element {
             "M12 17v5M5 17h14v-2.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 9.76V5h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 14.24Z"
         }
         "plus" => "M12 5v14M5 12h14",
+        "qr-code" => {
+            "M3 3h6v6H3V3Zm12 0h6v6h-6V3ZM3 15h6v6H3v-6Zm12 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-4 4h2v2h-2v-2Zm4 0h2v2h-2v-2Z"
+        }
         "panel-left-close" => {
             "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6-2v18m6-6-3-3 3-3"
         }

@@ -274,7 +274,17 @@ async fn run_iteration(
             if generation() != start_generation {
                 return IterationOutcome::Ok;
             }
-            apply_response(&response, is_full_sync, ctx);
+            let invite_notifications = match api.invites().await {
+                Ok(response) => Some(response.invites),
+                Err(error) if is_auth_expired_error(&error) => {
+                    return IterationOutcome::AuthExpired;
+                }
+                Err(error) => {
+                    tracing::debug!(?error, "sync engine could not refresh invite notifications");
+                    None
+                }
+            };
+            apply_response(&response, is_full_sync, ctx, invite_notifications);
             IterationOutcome::Ok
         }
         Ok(AccountSubscribeSnapshotOutcome::ReconnectAfter {
@@ -327,7 +337,12 @@ async fn run_iteration(
 /// the loop. `connect()` in `app.rs` shares the same code path — once
 /// the engine fully owns sync, `connect()` is just a "force one
 /// iteration now" entry that calls this.
-pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &SyncEngineContext) {
+pub fn apply_response(
+    response: &ClientSyncResponse,
+    is_full_sync: bool,
+    ctx: &SyncEngineContext,
+    invite_notifications: Option<Vec<Value>>,
+) {
     // Local mutable handles for the signals we touch — Signal<T> is
     // Copy so this is cheap.
     let mut state_store = ctx.state_store;
@@ -389,7 +404,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
             }
 
             apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
-            apply_notification_projection(store, response);
+            apply_notification_projection(store, response, invite_notifications);
             store.save_presence_projection(response.presence.clone());
         }); // store.batch — single coalesced flush happens here
     }
@@ -530,20 +545,38 @@ fn ingest_member_identity_events_from_projection(
     }
 }
 
-fn apply_notification_projection(store: &mut LocalStateStore, response: &ClientSyncResponse) {
-    if let Some(notification_projection) =
-        crate::views::notifications::notification_items_from_value(&response.notifications)
-    {
-        store.save_notification_projection(notification_projection);
-        return;
-    }
-    let notification_projection = response
+fn apply_notification_projection(
+    store: &mut LocalStateStore,
+    response: &ClientSyncResponse,
+    invite_notifications: Option<Vec<Value>>,
+) {
+    let projection_from_sync =
+        crate::views::notifications::notification_items_from_value(&response.notifications);
+    let account_notification_projection = response
         .account_data
         .iter()
         .filter(|entry| crate::views::notifications::is_notification_account_data(entry))
         .cloned()
         .collect::<Vec<_>>();
-    if !notification_projection.is_empty() {
+    let should_save_notification_projection = projection_from_sync.is_some()
+        || !account_notification_projection.is_empty()
+        || invite_notifications.is_some();
+    let mut notification_projection = projection_from_sync.unwrap_or_else(|| {
+        if account_notification_projection.is_empty() {
+            store.notification_projection()
+        } else {
+            account_notification_projection
+        }
+    });
+    if let Some(invites) = invite_notifications {
+        let joined_realms = response.realms.keys().cloned().collect::<BTreeSet<_>>();
+        crate::views::notifications::merge_invite_notifications(
+            &mut notification_projection,
+            invites,
+            &joined_realms,
+        );
+    }
+    if should_save_notification_projection {
         store.save_notification_projection(notification_projection);
     }
 }
@@ -630,7 +663,7 @@ fn apply_account_data(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -648,6 +681,48 @@ mod tests {
         }
     }
 
+    fn temp_store(tag: &str) -> LocalStateStore {
+        let path = std::env::temp_dir().join(format!(
+            "yougen-engine-{tag}-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn notification_projection_merges_pending_invites_from_authz() {
+        let mut store = temp_store("invite-notifications");
+        store.save_notification_projection(vec![json!({
+            "notification_id": "message-1",
+            "notification_kind": "message",
+            "realm_id": "ck:realm:existing",
+            "timestamp": "2026-06-01T00:00:00Z"
+        })]);
+        let response = empty_response("sx:invite");
+
+        apply_notification_projection(
+            &mut store,
+            &response,
+            Some(vec![json!({
+                "invite_id": "ck:invite:0196419b-0000-7000-8000-000000000010",
+                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000011",
+                "created_at": "2026-06-01T00:00:01Z"
+            })]),
+        );
+
+        let projection = store.notification_projection();
+        assert!(projection.iter().any(|entry| {
+            entry.get("notification_id").and_then(Value::as_str) == Some("message-1")
+        }));
+        assert!(projection.iter().any(|entry| {
+            entry.get("notification_id").and_then(Value::as_str)
+                == Some("invite:ck:realm:0196419b-0000-7000-8000-000000000011")
+        }));
+    }
+
     #[test]
     fn full_sync_response_prunes_cached_projection() {
         // Bench against the store directly — we don't need the dioxus
@@ -656,14 +731,7 @@ mod tests {
         // contract here is "after a full sync, server-reported ids
         // remain, plus nested Space containers under still-joined
         // Realms".
-        let path = std::env::temp_dir().join(format!(
-            "yougen-engine-prune-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let mut store = LocalStateStore::with_path(path);
+        let mut store = temp_store("prune");
         store.save_realm_tree_projection("ck:realm:a", json!({"summary": {"title": "A"}}));
         store.save_realm_tree_projection(
             "ck:space:child",
@@ -699,14 +767,7 @@ mod tests {
 
     #[test]
     fn incremental_response_forgets_left_realms() {
-        let path = std::env::temp_dir().join(format!(
-            "yougen-engine-left-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let mut store = LocalStateStore::with_path(path);
+        let mut store = temp_store("left");
         store.save_realm_tree_projection("ck:space:a", json!({"name": "A"}));
         store.save_realm_tree_projection("ck:space:b", json!({"name": "B"}));
         store.save_draft("ck:space:b", "draft-b");
