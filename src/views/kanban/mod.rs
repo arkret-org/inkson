@@ -3897,6 +3897,8 @@ pub fn KanbanPanel(
                                                             };
                                                             let picker_open = assignee_picker_open();
                                                             let edit_status = assignee_edit_status();
+                                                            let activity_items =
+                                                                card_activity_items(&card, &store.raw_operations);
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -3965,6 +3967,38 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                         },
                                                                                         UiIcon { name: "plus" }
+                                                                                    }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add assignee-clear",
+                                                                                        "aria-label": "Clear assignees",
+                                                                                        title: "Clear assignees",
+                                                                                        onclick: {
+                                                                                            let base = base_url.clone();
+                                                                                            let realm = selected_realm_id.clone();
+                                                                                            let actor = account_did.clone();
+                                                                                            let current_card = card.clone();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(BTreeSet::new());
+                                                                                                if dispatch_card_assignees_update(
+                                                                                                    base.clone(),
+                                                                                                    token,
+                                                                                                    realm.clone(),
+                                                                                                    actor.clone(),
+                                                                                                    current_card.clone(),
+                                                                                                    BTreeSet::new(),
+                                                                                                    columns,
+                                                                                                    selected_card,
+                                                                                                    state_store,
+                                                                                                    board_status,
+                                                                                                    assignee_edit_status,
+                                                                                                ) {
+                                                                                                    assignee_picker_open.set(false);
+                                                                                                    assignee_filter.set(String::new());
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "x" }
                                                                                     }
                                                                                 }
                                                                             }
@@ -4131,6 +4165,41 @@ pub fn KanbanPanel(
                                                                                                 }
                                                                                             },
                                                                                             UiIcon { name: "calendar" }
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-edit-button due-clear-button",
+                                                                                            "aria-label": "Clear due date",
+                                                                                            title: "Clear due date",
+                                                                                            onclick: {
+                                                                                                let base = base_url.clone();
+                                                                                                let realm = selected_realm_id.clone();
+                                                                                                let actor = account_did.clone();
+                                                                                                let device = device_id.clone();
+                                                                                                let current_card = card.clone();
+                                                                                                move |_| {
+                                                                                                    due_edit_value.set(String::new());
+                                                                                                    due_calendar_month.set(default_due_calendar_month());
+                                                                                                    due_picker_open.set(true);
+                                                                                                    save_card_due_edit(
+                                                                                                        base.clone(),
+                                                                                                        token,
+                                                                                                        realm.clone(),
+                                                                                                        actor.clone(),
+                                                                                                        device.clone(),
+                                                                                                        current_card.clone(),
+                                                                                                        String::new(),
+                                                                                                        selected_scope_security_encrypted,
+                                                                                                        due_picker_open,
+                                                                                                        due_edit_status,
+                                                                                                        columns,
+                                                                                                        selected_card,
+                                                                                                        state_store,
+                                                                                                        board_status,
+                                                                                                    );
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: "x" }
                                                                                         }
                                                                                     } else {
                                                                                         button {
@@ -4321,13 +4390,23 @@ pub fn KanbanPanel(
                                                         }
                                                         div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
                                                             h3 { "Activity" }
-                                                            div { class: "card-detail-activity-item",
-                                                                span { class: "card-detail-activity-dot" }
-                                                                div { "{card.activity_hint}" }
-                                                            }
-                                                            div { class: "card-detail-activity-item muted",
-                                                                span { class: "card-detail-activity-dot" }
-                                                                div { "{card.audit_hint}" }
+                                                            for item in activity_items.iter() {
+                                                                {
+                                                                    let item_class = item.class_name();
+                                                                    rsx! {
+                                                                        div {
+                                                                            key: "{item.key}",
+                                                                            class: "{item_class}",
+                                                                            span { class: "card-detail-activity-dot" }
+                                                                            div { class: "card-detail-activity-body",
+                                                                                strong { "{item.title}" }
+                                                                                if let Some(detail) = item.detail.as_deref() {
+                                                                                    span { "{detail}" }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -4876,6 +4955,251 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
     let mut out: Vec<String> = dids.into_iter().collect();
     out.sort();
     out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CardActivityStatus {
+    Info,
+    Pending,
+    Accepted,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CardActivityItem {
+    key: String,
+    title: String,
+    detail: Option<String>,
+    status: CardActivityStatus,
+}
+
+impl CardActivityItem {
+    fn class_name(&self) -> &'static str {
+        match self.status {
+            CardActivityStatus::Info => "card-detail-activity-item",
+            CardActivityStatus::Pending => "card-detail-activity-item pending",
+            CardActivityStatus::Accepted => "card-detail-activity-item accepted",
+            CardActivityStatus::Failed => "card-detail-activity-item failed",
+        }
+    }
+}
+
+fn card_activity_items(
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+) -> Vec<CardActivityItem> {
+    let mut records = raw_operations
+        .iter()
+        .filter(|record| raw_operation_targets_card(&record.payload, card))
+        .collect::<Vec<_>>();
+    records.sort_by_key(|record| std::cmp::Reverse(record.received_at));
+    let mut items = records
+        .into_iter()
+        .filter_map(|record| card_activity_item_from_raw_operation(record, card))
+        .take(5)
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        items = projection_card_activity_items(card);
+    }
+    if items.is_empty() {
+        items.push(CardActivityItem {
+            key: "empty".to_owned(),
+            title: "No visible activity yet".to_owned(),
+            detail: Some("Recent server events are not loaded in this view.".to_owned()),
+            status: CardActivityStatus::Info,
+        });
+    }
+    items
+}
+
+fn projection_card_activity_items(card: &KanbanCard) -> Vec<CardActivityItem> {
+    let mut items = Vec::new();
+    if !card.updated_at.trim().is_empty() {
+        items.push(CardActivityItem {
+            key: "projection-updated".to_owned(),
+            title: "Last updated".to_owned(),
+            detail: Some(compact_timestamp_label(&card.updated_at)),
+            status: CardActivityStatus::Info,
+        });
+    }
+    if !card.created_at.trim().is_empty() {
+        let mut detail = compact_timestamp_label(&card.created_at);
+        if !card.created_by.trim().is_empty() {
+            detail.push_str(" · ");
+            detail.push_str(&short_protocol_id(&card.created_by));
+        }
+        items.push(CardActivityItem {
+            key: "projection-created".to_owned(),
+            title: "Created".to_owned(),
+            detail: Some(detail),
+            status: CardActivityStatus::Info,
+        });
+    }
+    items
+}
+
+fn raw_operation_targets_card(payload: &Value, card: &KanbanCard) -> bool {
+    let ids = [card.id.trim(), card.primary_flow_id.trim()];
+    for path in [
+        &["assignment_flow_id"][..],
+        &["flow_id"][..],
+        &["target_ref"][..],
+        &["body", "flow_id"][..],
+        &["body", "target_ref"][..],
+        &["body", "from_ref"][..],
+        &["body", "object", "id"][..],
+        &["payload", "flow_id"][..],
+        &["payload", "target_ref"][..],
+        &["payload", "from_ref"][..],
+        &["payload", "object", "id"][..],
+    ] {
+        if let Some(value) = json_path_string(Some(payload), path)
+            && ids.iter().any(|id| !id.is_empty() && *id == value)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn card_activity_item_from_raw_operation(
+    record: &RawOperationRecord,
+    card: &KanbanCard,
+) -> Option<CardActivityItem> {
+    let payload = &record.payload;
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    let status = activity_status_from_payload(payload);
+    let title = json_path_string(Some(payload), &["activity_summary"])
+        .unwrap_or_else(|| activity_title_from_operation(&kind, payload, card));
+    let detail = raw_operation_activity_detail(&kind, payload, record);
+    Some(CardActivityItem {
+        key: json_path_string(Some(payload), &["operation_id"])
+            .unwrap_or_else(|| record.operation_id.clone()),
+        title,
+        detail: Some(detail),
+        status,
+    })
+}
+
+fn activity_status_from_payload(payload: &Value) -> CardActivityStatus {
+    match json_path_string(Some(payload), &["write_state"])
+        .unwrap_or_else(|| "queued".to_owned())
+        .as_str()
+    {
+        "queued" | "submitted" | "optimistic" => CardActivityStatus::Pending,
+        "accepted" => CardActivityStatus::Accepted,
+        "failed" | "soft_failed" | "quarantined" | "conflict" => CardActivityStatus::Failed,
+        _ => CardActivityStatus::Info,
+    }
+}
+
+fn activity_status_label(payload: &Value) -> &'static str {
+    match json_path_string(Some(payload), &["write_state"])
+        .unwrap_or_else(|| "queued".to_owned())
+        .as_str()
+    {
+        "queued" => "queued",
+        "submitted" => "submitted",
+        "accepted" => "accepted",
+        "failed" => "failed",
+        "soft_failed" => "soft failed",
+        "quarantined" => "quarantined",
+        "conflict" => "conflict",
+        _ => "local",
+    }
+}
+
+fn raw_operation_activity_detail(
+    kind: &str,
+    payload: &Value,
+    record: &RawOperationRecord,
+) -> String {
+    let timestamp = json_path_string(Some(payload), &["created_at"])
+        .unwrap_or_else(|| record.received_at.to_rfc3339());
+    let mut parts = vec![
+        kind.to_owned(),
+        activity_status_label(payload).to_owned(),
+        compact_timestamp_label(&timestamp),
+    ];
+    if let Some(actor) = json_path_string(Some(payload), &["actor_id"])
+        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
+    {
+        parts.push(short_protocol_id(&actor));
+    }
+    if let Some(event_id) = json_path_string(Some(payload), &["event_id"]) {
+        parts.push(short_protocol_id(&event_id));
+    }
+    parts.join(" · ")
+}
+
+fn activity_title_from_operation(kind: &str, payload: &Value, _card: &KanbanCard) -> String {
+    match kind {
+        "ck.relation.create" => {
+            let relation_kind = json_path_string(Some(payload), &["body", "kind"])
+                .or_else(|| json_path_string(Some(payload), &["body", "relation_kind"]));
+            if relation_kind.as_deref() == Some("assigned_to") {
+                let actor = json_path_string(Some(payload), &["assignment_actor_id"])
+                    .or_else(|| json_path_string(Some(payload), &["body", "to_ref"]))
+                    .map(|actor| short_protocol_id(&actor))
+                    .unwrap_or_else(|| "actor".to_owned());
+                format!("Assignee added: {actor}")
+            } else {
+                "Relation added".to_owned()
+            }
+        }
+        "ck.relation.tombstone" => {
+            if let Some(actor) = json_path_string(Some(payload), &["assignment_actor_id"]) {
+                format!("Assignee removed: {}", short_protocol_id(&actor))
+            } else {
+                "Relation removed".to_owned()
+            }
+        }
+        "ck.flow.update" => flow_update_activity_title(payload),
+        "ck.flow.move" => "Card moved".to_owned(),
+        "ck.flow.reorder" => "Card reordered".to_owned(),
+        "ck.flow.create" => "Card created".to_owned(),
+        _ => kind.to_owned(),
+    }
+}
+
+fn flow_update_activity_title(payload: &Value) -> String {
+    let patch = payload
+        .get("body")
+        .and_then(|body| body.get("patch"))
+        .or_else(|| payload.get("payload").and_then(|body| body.get("patch")));
+    if let Some(patch) = patch.and_then(Value::as_object) {
+        let fields = patch
+            .get("metadata.fields")
+            .or_else(|| patch.get("fields"))
+            .and_then(|op| {
+                (op.get("$op").and_then(Value::as_str) == Some("set"))
+                    .then(|| op.get("value"))
+                    .flatten()
+            })
+            .and_then(Value::as_object);
+        if let Some(fields) = fields {
+            if let Some(due) = fields
+                .get("due_at")
+                .or_else(|| fields.get("due"))
+                .and_then(Value::as_str)
+                .filter(|due| !due.trim().is_empty())
+            {
+                return format!("Due date set to {due}");
+            }
+            return "Card fields updated".to_owned();
+        }
+        if patch.contains_key("metadata.title") || patch.contains_key("title") {
+            return "Title updated".to_owned();
+        }
+        if patch.contains_key("metadata.summary") || patch.contains_key("summary") {
+            return "Summary updated".to_owned();
+        }
+        if patch.contains_key("body") || patch.contains_key("synthesis") {
+            return "Card content updated".to_owned();
+        }
+    }
+    "Card updated".to_owned()
 }
 
 fn card_author_display_label(
@@ -5909,6 +6233,29 @@ fn card_detail_update_patch(
     Ok(Value::Object(patch))
 }
 
+fn card_detail_activity_summary(current: &KanbanCard, draft: &CardDetailDraft) -> String {
+    let current_due = editor_value_for_optional_card_field(&current.due);
+    let next_due = draft.due.trim();
+    if current_due != next_due {
+        return if next_due.is_empty() || next_due == "—" {
+            "Due date cleared".to_owned()
+        } else {
+            format!("Due date set to {next_due}")
+        };
+    }
+    if current.labels != draft.labels {
+        return "Labels updated".to_owned();
+    }
+    if current.title.trim() != draft.title.trim()
+        || current.description.trim() != draft.description.trim()
+        || current.body.trim() != draft.body.trim()
+        || current.synthesis.trim() != draft.synthesis.trim()
+    {
+        return "Card details updated".to_owned();
+    }
+    "Card updated".to_owned()
+}
+
 fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
@@ -5917,8 +6264,6 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.labels = draft.labels.clone();
     card.due = display_optional_card_field(&draft.due);
     card.state = CardState::Queued;
-    card.activity_hint = "Local card update pending server sync.".to_owned();
-    card.audit_hint = "Card detail edit submitted as ck.flow.update payload.patch.".to_owned();
 }
 
 fn kanban_private_patch_path(path: &str) -> bool {
@@ -6482,6 +6827,7 @@ fn dispatch_card_detail_update(
             "created_at": op.created_at.clone(),
             "write_state": "queued",
             "body": op.payload.clone(),
+            "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
             "encrypted_payload_local": effective_security_encrypted,
@@ -6702,6 +7048,14 @@ impl CardAssignmentMutation {
         match self {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }
+    }
+}
+
+fn assignment_activity_summary(mutation: &CardAssignmentMutation) -> String {
+    let actor = short_protocol_id(mutation.actor_id());
+    match mutation {
+        CardAssignmentMutation::Create { .. } => format!("Assignee added: {actor}"),
+        CardAssignmentMutation::Tombstone { .. } => format!("Assignee removed: {actor}"),
     }
 }
 
@@ -6938,8 +7292,10 @@ fn dispatch_card_assignees_update(
                 "created_at": operation.created_at.clone(),
                 "write_state": "queued",
                 "body": operation.payload.clone(),
+                "assignment_flow_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),
+                "activity_summary": assignment_activity_summary(mutation),
             }),
         );
     }
@@ -7204,8 +7560,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 }),
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
-                activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
-                audit_hint: "Audit records ck.flow.track.member and ck.message.create without granting discussion access.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,
@@ -7236,8 +7590,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 locked_flow: None,
                 external_visibility: "No external discussions linked".to_owned(),
                 history_visibility: "shared history".to_owned(),
-                activity_hint: "Pending move is visible until the reducer accepts the board event.".to_owned(),
-                audit_hint: "Audit preview will include local pending event and final reducer receipt.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Queued,
                 lifecycle: FlowLifecycleState::Active,
@@ -7271,8 +7623,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 }),
                 external_visibility: "Internal discussions only".to_owned(),
                 history_visibility: "restricted history".to_owned(),
-                activity_hint: "Conflict banner links to the reducer result and competing event.".to_owned(),
-                audit_hint: "Audit trail preserves rejected ck.flow.move with cas_conflict.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Conflict,
                 lifecycle: FlowLifecycleState::Active,
@@ -8887,6 +9237,63 @@ mod tests {
     }
 
     #[test]
+    fn card_activity_items_show_local_flow_and_assignment_writes() {
+        let mut card = test_card("ck:flow:activity", "U");
+        card.primary_flow_id = card.id.clone();
+        let received_at = |value: &str| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let raw_operations = vec![
+            RawOperationRecord {
+                operation_id: "op-assignee".to_owned(),
+                realm_id: Some(TEST_REALM_ID.to_owned()),
+                received_at: received_at("2026-06-10T10:00:00Z"),
+                payload: json!({
+                    "kind": "ck.relation.tombstone",
+                    "operation_id": "op-assignee",
+                    "write_state": "accepted",
+                    "assignment_flow_id": card.id.clone(),
+                    "assignment_actor_id": "did:web:alice.example",
+                    "assignment_relation_id": "ck:relation:activity",
+                    "activity_summary": "Assignee removed: alice",
+                    "body": {
+                        "relation_id": "ck:relation:activity"
+                    }
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "op-due".to_owned(),
+                realm_id: Some(TEST_REALM_ID.to_owned()),
+                received_at: received_at("2026-06-10T11:00:00Z"),
+                payload: json!({
+                    "kind": "ck.flow.update",
+                    "operation_id": "op-due",
+                    "write_state": "queued",
+                    "activity_summary": "Due date cleared",
+                    "body": {
+                        "flow_id": card.id.clone(),
+                        "patch": {
+                            "metadata.fields": {
+                                "$op": "set",
+                                "value": { "labels": [] }
+                            }
+                        }
+                    }
+                }),
+            },
+        ];
+
+        let items = card_activity_items(&card, &raw_operations);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Due date cleared");
+        assert_eq!(items[0].status, CardActivityStatus::Pending);
+        assert_eq!(items[1].title, "Assignee removed: alice");
+        assert_eq!(items[1].status, CardActivityStatus::Accepted);
+    }
+
+    #[test]
     fn card_detail_update_patch_uses_flow_update_patch_paths() {
         let mut current = test_card("ck:flow:f1", "U");
         current.title = "Old".to_owned();
@@ -8973,6 +9380,38 @@ mod tests {
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].actor_id, "did:web:alice.example");
         assert!(after[0].relation_id.starts_with("ck:relation:"));
+    }
+
+    #[test]
+    fn card_assignment_mutations_clear_all_assignees() {
+        let mut current = test_card("ck:flow:0196419b-0000-7000-8000-000000000101", "U");
+        current.assigned_to_relations = vec![
+            CardAssignedToRelation {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000aa".to_owned(),
+                actor_id: "did:web:alice.example".to_owned(),
+            },
+            CardAssignedToRelation {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+                actor_id: "did:web:bob.example".to_owned(),
+            },
+        ];
+
+        let selected = BTreeSet::new();
+        let mutations = card_assignment_mutations(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "did:web:owner.example",
+            &current,
+            &selected,
+        )
+        .unwrap();
+
+        assert_eq!(mutations.len(), 2);
+        assert!(
+            mutations
+                .iter()
+                .all(|mutation| matches!(mutation, CardAssignmentMutation::Tombstone { .. }))
+        );
+        assert!(assignment_relations_after_mutations(&current, &selected, &mutations).is_empty());
     }
 
     #[test]
@@ -9461,6 +9900,40 @@ mod tests {
     }
 
     #[test]
+    fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
+        let mut card = test_card("ck:flow:edit-me", "U");
+        card.due = "2026-06-11".to_owned();
+        let columns = vec![KanbanColumn {
+            id: "ck:space:list-a".to_owned(),
+            title: "A".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![card],
+            state: SpaceContainerLifecycleState::Active,
+        }];
+        let queued = RawOperationRecord {
+            operation_id: "op-clear-due".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.flow.update",
+                "operation_id": "op-clear-due",
+                "write_state": "queued",
+                "body": {
+                    "flow_id": "ck:flow:edit-me",
+                    "patch": {
+                        "metadata.fields": {
+                            "$op": "set",
+                            "value": { "labels": [] }
+                        },
+                    },
+                },
+            }),
+        };
+        let overlaid = overlay_local_card_update_records(columns, &[queued], None);
+        assert_eq!(overlaid[0].cards[0].due, "—");
+    }
+
+    #[test]
     fn card_synthesis_track_entries_preserve_append_history() {
         let mut card = test_card("ck:flow:edit-me", "U");
         card.synthesis = "second synthesis".to_owned();
@@ -9876,8 +10349,6 @@ mod tests {
             locked_flow: None,
             external_visibility: String::new(),
             history_visibility: String::new(),
-            activity_hint: String::new(),
-            audit_hint: String::new(),
             security_encrypted: None,
             state: CardState::Synced,
             lifecycle: FlowLifecycleState::Active,

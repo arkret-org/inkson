@@ -182,8 +182,6 @@ pub(super) struct KanbanCard {
     pub(super) locked_flow: Option<LockedFlow>,
     pub(super) external_visibility: String,
     pub(super) history_visibility: String,
-    pub(super) activity_hint: String,
-    pub(super) audit_hint: String,
     /// Explicit Flow security state from projection metadata. `None`
     /// means the Flow inherits the active Realm / Space posture.
     pub(super) security_encrypted: Option<bool>,
@@ -242,8 +240,6 @@ pub(super) fn apply_card_assignment_projection(
     card.assignee = assignee_value_from_actor_ids(actor_ids);
     card.assigned_to_relations = relations;
     card.state = state;
-    card.activity_hint = "Assignment update pending server sync.".to_owned();
-    card.audit_hint = "Assignees are written through assigned_to Relation events.".to_owned();
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -940,8 +936,6 @@ pub(super) fn card_from_projection_item(
         locked_flow,
         external_visibility,
         history_visibility,
-        activity_hint: "Activity derived from ck.flow.move / ck.flow.update events.".to_owned(),
-        audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
         security_encrypted: crate::security_state::flow_projection_security_state(&item.object),
         state: CardState::Synced,
         lifecycle: FlowLifecycleState::Active,
@@ -1462,8 +1456,6 @@ pub(super) fn card_from_flow_projection(
         locked_flow,
         external_visibility,
         history_visibility,
-        activity_hint: "Activity derived from ck.flow.move / ck.flow.update events.".to_owned(),
-        audit_hint: "Audit trail in /audit shows the full Event Envelope chain.".to_owned(),
         security_encrypted: flow_projection_security_state(flow),
         state: CardState::Synced,
         lifecycle: flow_lifecycle_from_wire(&flow.state),
@@ -1504,8 +1496,6 @@ pub(super) fn local_created_card(
         locked_flow: None,
         external_visibility: "Not shared externally".to_owned(),
         history_visibility: "board default".to_owned(),
-        activity_hint: "Activity will populate after the first accepted Move.".to_owned(),
-        audit_hint: "Write queued locally until ck.self.events.submit succeeds.".to_owned(),
         security_encrypted: None,
         state,
         lifecycle: FlowLifecycleState::Active,
@@ -2052,6 +2042,8 @@ pub(super) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
             .and_then(Value::as_str)
         {
             card.due = display_optional_card_field(due);
+        } else {
+            card.due = display_optional_card_field("");
         }
     }
     card.state = update.state;
