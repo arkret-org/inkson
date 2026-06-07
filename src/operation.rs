@@ -1043,6 +1043,32 @@ pub mod cx_ops {
             }))
     }
 
+    /// Build a schema-legal `ck.relation.create` event. The Relation id is
+    /// server-normalized from the accepted event id; payload keeps only the
+    /// v1 `kind` / `from_ref` / `to_ref` endpoints.
+    pub fn relation_create(
+        realm_id: &str,
+        actor: &str,
+        kind: &str,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "ck.relation.create")
+            .target_ref(from_ref)
+            .body(json!({
+                "kind": kind,
+                "from_ref": from_ref,
+                "to_ref": to_ref,
+            }))
+    }
+
+    /// Build a `ck.relation.tombstone` event targeting an existing Relation.
+    pub fn relation_tombstone(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
+        OperationBuilder::new(realm_id, actor, "ck.relation.tombstone")
+            .target_ref(relation_id)
+            .body(json!({ "relation_id": relation_id }))
+    }
+
     /// Build a `ck.flow.update` delta operation using the canonical
     /// `ck.patch.v1` payload shape. Non-create Flow updates should carry
     /// only changed fields; callers are responsible for composing patch paths

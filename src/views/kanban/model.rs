@@ -176,6 +176,7 @@ pub(super) struct KanbanCard {
     pub(super) updated_at: String,
     pub(super) labels: Vec<String>,
     pub(super) assignee: String,
+    pub(super) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(super) due: String,
     pub(super) primary_flow_id: String,
     pub(super) locked_flow: Option<LockedFlow>,
@@ -194,6 +195,55 @@ pub(super) struct KanbanCard {
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a "[消息已撤回]" placeholder for it.
     pub(super) lifecycle: FlowLifecycleState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CardAssignedToRelation {
+    pub(super) relation_id: String,
+    pub(super) actor_id: String,
+}
+
+pub(super) fn card_assigned_actor_ids(card: &KanbanCard) -> Vec<String> {
+    let mut actor_ids = BTreeSet::new();
+    for relation in &card.assigned_to_relations {
+        let actor_id = relation.actor_id.trim();
+        if !actor_id.is_empty() {
+            actor_ids.insert(actor_id.to_owned());
+        }
+    }
+    if actor_ids.is_empty() {
+        for actor_id in card
+            .assignee
+            .split(',')
+            .map(str::trim)
+            .filter(|value| value.starts_with("did:"))
+            .filter(|value| !value.is_empty())
+        {
+            actor_ids.insert(actor_id.to_owned());
+        }
+    }
+    actor_ids.into_iter().collect()
+}
+
+pub(super) fn assignee_value_from_actor_ids(actor_ids: &BTreeSet<String>) -> String {
+    if actor_ids.is_empty() {
+        "—".to_owned()
+    } else {
+        actor_ids.iter().cloned().collect::<Vec<_>>().join(", ")
+    }
+}
+
+pub(super) fn apply_card_assignment_projection(
+    card: &mut KanbanCard,
+    actor_ids: &BTreeSet<String>,
+    relations: Vec<CardAssignedToRelation>,
+    state: CardState,
+) {
+    card.assignee = assignee_value_from_actor_ids(actor_ids);
+    card.assigned_to_relations = relations;
+    card.state = state;
+    card.activity_hint = "Assignment update pending server sync.".to_owned();
+    card.audit_hint = "Assignees are written through assigned_to Relation events.".to_owned();
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -297,7 +347,7 @@ pub(super) enum CardDetailContentTab {
 }
 
 /// Which tab the right-hand card-detail sidebar is showing.
-/// - `Details`: per-card metadata (Flow ID, Assignee, Due, Visibility) + Activity hints.
+/// - `Details`: per-card metadata (Flow ID, Assignees, Due, Visibility) + Activity hints.
 /// - `Members`: every actor in the surrounding Realm/Space — sourced from the cached space
 ///   projection (`members`/`participants`/`owners` keys). Each row is also marked when the actor
 ///   has authored an event against the current Flow (derived from local raw operations), so
@@ -878,6 +928,7 @@ pub(super) fn card_from_projection_item(
             })
             .unwrap_or_default(),
         assignee: "—".to_owned(),
+        assigned_to_relations: Vec::new(),
         due: item
             .object
             .get("fields")
@@ -1052,6 +1103,22 @@ pub(super) fn flow_projection_assignee(flow: &crate::api::FlowProjectionView) ->
         return None;
     }
     Some(flow.assigned_actor_ids.join(", "))
+}
+
+pub(super) fn flow_projection_assigned_to_relations(
+    flow: &crate::api::FlowProjectionView,
+) -> Vec<CardAssignedToRelation> {
+    flow.assigned_to_relations
+        .iter()
+        .filter_map(|relation| {
+            let relation_id = relation.relation_id.trim();
+            let actor_id = relation.actor_id.trim();
+            (!relation_id.is_empty() && !actor_id.is_empty()).then(|| CardAssignedToRelation {
+                relation_id: relation_id.to_owned(),
+                actor_id: actor_id.to_owned(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn flow_projection_security_state(
@@ -1388,6 +1455,7 @@ pub(super) fn card_from_flow_projection(
             .unwrap_or_default(),
         labels: flow_projection_labels(flow),
         assignee: flow_projection_assignee(flow).unwrap_or_else(|| "—".to_owned()),
+        assigned_to_relations: flow_projection_assigned_to_relations(flow),
         due: flow_projection_field_string(flow, None, &["due_at", "due"])
             .unwrap_or_else(|| "—".to_owned()),
         primary_flow_id: flow.flow_id.clone(),
@@ -1430,6 +1498,7 @@ pub(super) fn local_created_card(
         updated_at: String::new(),
         labels: vec!["draft".to_owned()],
         assignee: "yougen".to_owned(),
+        assigned_to_relations: Vec::new(),
         due: "unscheduled".to_owned(),
         primary_flow_id: flow_id,
         locked_flow: None,
@@ -1508,7 +1577,8 @@ pub(super) fn overlay_card_projection_with_operations_and_decrypt(
     let state = state_store.load();
     let columns = overlay_local_card_create_records(columns, &state.raw_operations, board_space_id);
     let columns = overlay_local_card_update_records(columns, remote_operations, decrypt_ctx);
-    overlay_local_card_update_records(columns, &state.raw_operations, decrypt_ctx)
+    let columns = overlay_local_card_update_records(columns, &state.raw_operations, decrypt_ctx);
+    overlay_local_card_assignment_records(columns, &state.raw_operations)
 }
 
 pub(super) fn flow_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
@@ -1689,6 +1759,114 @@ pub(super) fn overlay_local_card_update_records(
         }
     }
     columns
+}
+
+pub(super) fn overlay_local_card_assignment_records(
+    mut columns: Vec<KanbanColumn>,
+    raw_operations: &[RawOperationRecord],
+) -> Vec<KanbanColumn> {
+    for record in raw_operations
+        .iter()
+        .filter(|record| raw_operation_allows_overlay(&record.payload))
+    {
+        if raw_operation_kind_matches(&record.payload, "ck.relation.create") {
+            overlay_local_assignment_create(&mut columns, &record.payload);
+        } else if raw_operation_kind_matches(&record.payload, "ck.relation.tombstone") {
+            overlay_local_assignment_tombstone(&mut columns, &record.payload);
+        }
+    }
+    columns
+}
+
+fn overlay_local_assignment_create(columns: &mut [KanbanColumn], payload: &Value) {
+    let body = payload.get("body").or_else(|| payload.get("payload"));
+    let relation_kind = json_path_string(body, &["relation_kind"])
+        .or_else(|| json_path_string(body, &["kind"]))
+        .unwrap_or_default();
+    if relation_kind != "assigned_to" {
+        return;
+    }
+    let Some(flow_id) = json_path_string(body, &["from_ref"]) else {
+        return;
+    };
+    let Some(actor_id) = json_path_string(body, &["to_ref"])
+        .or_else(|| json_path_string(Some(payload), &["assignment_actor_id"]))
+    else {
+        return;
+    };
+    let Some(relation_id) = json_path_string(Some(payload), &["assignment_relation_id"])
+        .or_else(|| json_path_string(body, &["relation_id"]))
+        .or_else(|| json_path_string(body, &["id"]))
+    else {
+        return;
+    };
+    for column in columns.iter_mut() {
+        if let Some(card) = column.cards.iter_mut().find(|card| card.id == flow_id) {
+            let mut actor_ids = card_assigned_actor_ids(card)
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            actor_ids.insert(actor_id.clone());
+            let mut relations = card.assigned_to_relations.clone();
+            if !relations
+                .iter()
+                .any(|relation| relation.relation_id == relation_id)
+            {
+                relations.push(CardAssignedToRelation {
+                    relation_id,
+                    actor_id,
+                });
+            }
+            apply_card_assignment_projection(
+                card,
+                &actor_ids,
+                relations,
+                raw_operation_card_state(payload),
+            );
+            break;
+        }
+    }
+}
+
+fn overlay_local_assignment_tombstone(columns: &mut [KanbanColumn], payload: &Value) {
+    let body = payload.get("body").or_else(|| payload.get("payload"));
+    let Some(relation_id) = json_path_string(body, &["relation_id"])
+        .or_else(|| json_path_string(Some(payload), &["assignment_relation_id"]))
+    else {
+        return;
+    };
+    for column in columns.iter_mut() {
+        if let Some(card) = column.cards.iter_mut().find(|card| {
+            card.assigned_to_relations
+                .iter()
+                .any(|relation| relation.relation_id == relation_id)
+        }) {
+            let removed_actor = card
+                .assigned_to_relations
+                .iter()
+                .find(|relation| relation.relation_id == relation_id)
+                .map(|relation| relation.actor_id.clone())
+                .or_else(|| json_path_string(Some(payload), &["assignment_actor_id"]));
+            let mut actor_ids = card_assigned_actor_ids(card)
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            if let Some(actor_id) = removed_actor {
+                actor_ids.remove(actor_id.trim());
+            }
+            let relations = card
+                .assigned_to_relations
+                .iter()
+                .filter(|relation| relation.relation_id != relation_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            apply_card_assignment_projection(
+                card,
+                &actor_ids,
+                relations,
+                raw_operation_card_state(payload),
+            );
+            break;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

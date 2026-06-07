@@ -182,6 +182,8 @@ pub struct FlowProjectionView {
     #[serde(default)]
     pub assigned_actor_ids: Vec<String>,
     #[serde(default)]
+    pub assigned_to_relations: Vec<AssignedToRelationProjectionView>,
+    #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// `active` / `archived` / `redacted` per spec
     /// `common-fields.md §5.1`. `redacted` is the only irreversible
@@ -193,6 +195,12 @@ pub struct FlowProjectionView {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AssignedToRelationProjectionView {
+    pub relation_id: String,
+    pub actor_id: String,
 }
 
 /// Server-side Morph row from

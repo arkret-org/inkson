@@ -1799,6 +1799,168 @@ body {
   overflow-wrap: anywhere;
   font-weight: 700;
 }
+.assignee-editor {
+  position: relative;
+  min-width: 0;
+}
+.assignee-trigger {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 8px;
+  background: var(--surface-2, var(--ck-panel));
+  color: var(--text, var(--ck-ink));
+  font: inherit;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+.assignee-trigger:hover,
+.assignee-trigger:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.assignee-chip-list {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.assignee-chip {
+  max-width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px 2px 3px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 999px;
+  background: var(--surface, var(--ck-surface));
+}
+.assignee-avatar {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--text, var(--ck-ink));
+  font-size: 11px;
+  font-weight: 850;
+}
+.assignee-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assignee-empty {
+  color: var(--text-3, var(--ck-muted));
+  font-weight: 750;
+}
+.assignee-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--layer-local-popover);
+  width: min(320px, calc(100vw - 32px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 8px;
+  background: var(--surface, var(--ck-surface));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+.assignee-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.assignee-search .input {
+  min-height: 32px;
+}
+.assignee-options {
+  max-height: 240px;
+  display: grid;
+  gap: 2px;
+  overflow: auto;
+}
+.assignee-option {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text, var(--ck-ink));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.assignee-option:hover,
+.assignee-option:focus-visible {
+  background: var(--surface-2, var(--ck-panel));
+  outline: none;
+}
+.assignee-option.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.assignee-option-check {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.assignee-option-main {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.assignee-option-label,
+.assignee-option-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assignee-option-label {
+  font-weight: 800;
+}
+.assignee-option-meta,
+.assignee-option-empty,
+.assignee-edit-status {
+  color: var(--text-3, var(--ck-muted));
+  font-size: 12px;
+}
+.assignee-option-empty {
+  padding: 8px 6px;
+}
+.assignee-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.assignee-popover-actions .primary,
+.assignee-popover-actions .secondary {
+  min-height: 30px;
+  padding: 0 10px;
+}
 .card-detail-field-code {
   font-family: var(--font-mono);
   font-size: 11px;

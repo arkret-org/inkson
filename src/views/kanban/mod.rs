@@ -391,7 +391,9 @@ pub fn KanbanPanel(
             &state.raw_operations,
             &initial_board_space_id,
         );
-        overlay_local_card_update_records(initial_columns, &state.raw_operations, None)
+        let initial_columns =
+            overlay_local_card_update_records(initial_columns, &state.raw_operations, None);
+        overlay_local_card_assignment_records(initial_columns, &state.raw_operations)
     };
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
@@ -434,6 +436,10 @@ pub fn KanbanPanel(
     let mut card_edit_synthesis = use_signal(String::new);
     let mut card_edit_synthesis_target_id = use_signal(|| Option::<String>::None);
     let mut card_detail_edit_status = use_signal(String::new);
+    let mut assignee_picker_open = use_signal(|| false);
+    let mut assignee_filter = use_signal(String::new);
+    let mut assignee_selected_actor_ids = use_signal(BTreeSet::<String>::new);
+    let mut assignee_edit_status = use_signal(String::new);
     let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
     let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
@@ -490,6 +496,11 @@ pub fn KanbanPanel(
                 card_edit_due.set(draft.due);
                 editing_card_detail.set(false);
                 card_detail_edit_status.set(String::new());
+                assignee_picker_open.set(false);
+                assignee_filter.set(String::new());
+                assignee_selected_actor_ids
+                    .set(card_assigned_actor_ids(&card).into_iter().collect());
+                assignee_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
                 let routed_tab = card_detail_tab_from_current_url();
                 if routed_tab == CardDetailContentTab::Discussion {
@@ -2129,6 +2140,10 @@ pub fn KanbanPanel(
                                         card_edit_due.set(draft.due);
                                         editing_card_detail.set(false);
                                         card_detail_edit_status.set(String::new());
+                                        assignee_picker_open.set(false);
+                                        assignee_filter.set(String::new());
+                                        assignee_selected_actor_ids.set(card_assigned_actor_ids(&c).into_iter().collect());
+                                        assignee_edit_status.set(String::new());
                                         card_detail_actions_open.set(false);
                                         card_detail_tab.set(CardDetailContentTab::Description);
                                         card_synthesis_history_open_id.set(None);
@@ -2161,7 +2176,7 @@ pub fn KanbanPanel(
                                     }
                                 }
                                 div { class: "muted", "{card.description}" }
-                                div { class: "card-meta", "assignee {card.assignee} / due {card.due}" }
+                                div { class: "card-meta", "assignees {card.assignee} / due {card.due}" }
                                 div { class: "board-card-footer",
                                     {
                                         let gate = capability_gate_for_flow(
@@ -2743,6 +2758,10 @@ pub fn KanbanPanel(
                                     selected_card.set(None);
                                     editing_card_detail.set(false);
                                     card_detail_edit_status.set(String::new());
+                                    assignee_picker_open.set(false);
+                                    assignee_filter.set(String::new());
+                                    assignee_selected_actor_ids.set(BTreeSet::new());
+                                    assignee_edit_status.set(String::new());
                                     card_detail_actions_open.set(false);
                                     if route_is_card_detail {
                                         let _ = overlay_navigator.push(overlay_board_route.clone());
@@ -2862,16 +2881,6 @@ pub fn KanbanPanel(
                                                                 value: "{card_edit_labels}",
                                                                 placeholder: "release, ops",
                                                                 oninput: move |evt| card_edit_labels.set(evt.value()),
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-action-menu-field",
-                                                            label { "Assignee" }
-                                                            input {
-                                                                class: "input",
-                                                                "data-testid": "card-detail-assignee-input",
-                                                                value: "{card_edit_assignee}",
-                                                                placeholder: "assigned_to relation",
-                                                                disabled: true,
                                                             }
                                                         }
                                                         div { class: "card-detail-action-menu-field",
@@ -2996,6 +3005,10 @@ pub fn KanbanPanel(
                                                 selected_card.set(None);
                                                 editing_card_detail.set(false);
                                                 card_detail_edit_status.set(String::new());
+                                                assignee_picker_open.set(false);
+                                                assignee_filter.set(String::new());
+                                                assignee_selected_actor_ids.set(BTreeSet::new());
+                                                assignee_edit_status.set(String::new());
                                                 card_detail_actions_open.set(false);
                                                 if route_is_card_detail {
                                                     let _ = close_navigator.push(close_board_route.clone());
@@ -3814,10 +3827,55 @@ pub fn KanbanPanel(
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
                                                         {
-                                                            let assignee_label = {
+                                                            let assigned_actor_ids = card_assigned_actor_ids(&card);
+                                                            let assigned_people = {
                                                                 let store = state_store.read();
-                                                                display_user_reference(&card.assignee, &store)
+                                                                assigned_actor_ids
+                                                                    .iter()
+                                                                    .map(|actor_id| {
+                                                                        let label = assignee_label_for_actor(
+                                                                            &store,
+                                                                            &realm_context,
+                                                                            &realm_member_rows,
+                                                                            actor_id,
+                                                                        );
+                                                                        let initial = assignee_avatar_initial(&label);
+                                                                        (actor_id.clone(), label, initial)
+                                                                    })
+                                                                    .collect::<Vec<_>>()
                                                             };
+                                                            let assignee_title = if assigned_actor_ids.is_empty() {
+                                                                "unassigned".to_owned()
+                                                            } else {
+                                                                assigned_actor_ids.join(", ")
+                                                            };
+                                                            let picker_rows = assignment_picker_roster(&realm_member_rows, &card);
+                                                            let picker_filter = assignee_filter();
+                                                            let selected_actor_ids = assignee_selected_actor_ids();
+                                                            let picker_people = {
+                                                                let store = state_store.read();
+                                                                picker_rows
+                                                                    .iter()
+                                                                    .filter_map(|row| {
+                                                                        let label = assignee_label_for_actor(
+                                                                            &store,
+                                                                            &realm_context,
+                                                                            &realm_member_rows,
+                                                                            &row.actor_id,
+                                                                        );
+                                                                        assignee_filter_matches(&picker_filter, &label, &row.actor_id).then(|| {
+                                                                            (
+                                                                                row.actor_id.clone(),
+                                                                                label.clone(),
+                                                                                assignee_avatar_initial(&label),
+                                                                                short_protocol_id(&row.actor_id),
+                                                                            )
+                                                                        })
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                            };
+                                                            let picker_open = assignee_picker_open();
+                                                            let edit_status = assignee_edit_status();
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -3826,8 +3884,167 @@ pub fn KanbanPanel(
                                                                     dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
                                                                 }
                                                                 div {
-                                                                    dt { "Assignee" }
-                                                                    dd { title: "{card.assignee}", "{assignee_label}" }
+                                                                    dt { "Assignees" }
+                                                                    dd {
+                                                                        div {
+                                                                            class: "assignee-editor",
+                                                                            "data-testid": "card-detail-assignees",
+                                                                            button {
+                                                                                r#type: "button",
+                                                                                class: "assignee-trigger",
+                                                                                title: "{assignee_title}",
+                                                                                "aria-haspopup": "listbox",
+                                                                                "aria-expanded": "{picker_open}",
+                                                                                onclick: {
+                                                                                    let current_selection = assigned_actor_ids
+                                                                                        .iter()
+                                                                                        .cloned()
+                                                                                        .collect::<BTreeSet<_>>();
+                                                                                    move |_| {
+                                                                                        assignee_selected_actor_ids.set(current_selection.clone());
+                                                                                        assignee_filter.set(String::new());
+                                                                                        assignee_edit_status.set(String::new());
+                                                                                        assignee_picker_open.set(!assignee_picker_open());
+                                                                                    }
+                                                                                },
+                                                                                if assigned_people.is_empty() {
+                                                                                    span { class: "assignee-empty", "unassigned" }
+                                                                                } else {
+                                                                                    span { class: "assignee-chip-list",
+                                                                                        for (actor_id, label, initial) in assigned_people.iter() {
+                                                                                            span {
+                                                                                                key: "{actor_id}",
+                                                                                                class: "assignee-chip",
+                                                                                                title: "{actor_id}",
+                                                                                                span { class: "assignee-avatar", "{initial}" }
+                                                                                                span { class: "assignee-chip-label", "{label}" }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                UiIcon { name: "chevron-down" }
+                                                                            }
+                                                                            if picker_open {
+                                                                                div {
+                                                                                    class: "assignee-popover",
+                                                                                    "data-testid": "card-detail-assignees-picker",
+                                                                                    div { class: "assignee-search",
+                                                                                        UiIcon { name: "search" }
+                                                                                        input {
+                                                                                            class: "input",
+                                                                                            "data-testid": "card-detail-assignees-search",
+                                                                                            value: "{picker_filter}",
+                                                                                            placeholder: "Filter members",
+                                                                                            oninput: move |evt| assignee_filter.set(evt.value()),
+                                                                                        }
+                                                                                    }
+                                                                                    div {
+                                                                                        class: "assignee-options",
+                                                                                        role: "listbox",
+                                                                                        "aria-label": "Assignees",
+                                                                                        if picker_people.is_empty() {
+                                                                                            div { class: "assignee-option-empty", "No members match" }
+                                                                                        } else {
+                                                                                            for (actor_id, label, initial, compact_id) in picker_people.iter() {
+                                                                                                {
+                                                                                                    let selected = selected_actor_ids.contains(actor_id);
+                                                                                                    let option_class = if selected {
+                                                                                                        "assignee-option selected"
+                                                                                                    } else {
+                                                                                                        "assignee-option"
+                                                                                                    };
+                                                                                                    let target_actor_id = actor_id.clone();
+                                                                                                    rsx! {
+                                                                                                        button {
+                                                                                                            key: "{actor_id}",
+                                                                                                            r#type: "button",
+                                                                                                            class: "{option_class}",
+                                                                                                            role: "option",
+                                                                                                            "aria-selected": "{selected}",
+                                                                                                            onclick: move |_| {
+                                                                                                                let mut next = assignee_selected_actor_ids();
+                                                                                                                if next.contains(&target_actor_id) {
+                                                                                                                    next.remove(&target_actor_id);
+                                                                                                                } else {
+                                                                                                                    next.insert(target_actor_id.clone());
+                                                                                                                }
+                                                                                                                assignee_selected_actor_ids.set(next);
+                                                                                                            },
+                                                                                                            span { class: "assignee-option-check",
+                                                                                                                if selected {
+                                                                                                                    UiIcon { name: "check" }
+                                                                                                                }
+                                                                                                            }
+                                                                                                            span { class: "assignee-avatar", "{initial}" }
+                                                                                                            span { class: "assignee-option-main",
+                                                                                                                span { class: "assignee-option-label", "{label}" }
+                                                                                                                span { class: "assignee-option-meta", "{compact_id}" }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    if !edit_status.trim().is_empty() {
+                                                                                        div {
+                                                                                            class: "assignee-edit-status",
+                                                                                            role: "status",
+                                                                                            "aria-live": "polite",
+                                                                                            "{edit_status}"
+                                                                                        }
+                                                                                    }
+                                                                                    div { class: "assignee-popover-actions",
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "secondary",
+                                                                                            onclick: move |_| assignee_selected_actor_ids.set(BTreeSet::new()),
+                                                                                            "Clear"
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "secondary",
+                                                                                            onclick: move |_| {
+                                                                                                assignee_picker_open.set(false);
+                                                                                                assignee_filter.set(String::new());
+                                                                                                assignee_edit_status.set(String::new());
+                                                                                            },
+                                                                                            {crate::i18n::tr("common.cancel")}
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "primary",
+                                                                                            onclick: {
+                                                                                                let base = base_url.clone();
+                                                                                                let realm = selected_realm_id.clone();
+                                                                                                let actor = account_did.clone();
+                                                                                                let current_card = card.clone();
+                                                                                                move |_| {
+                                                                                                    if dispatch_card_assignees_update(
+                                                                                                        base.clone(),
+                                                                                                        token,
+                                                                                                        realm.clone(),
+                                                                                                        actor.clone(),
+                                                                                                        current_card.clone(),
+                                                                                                        assignee_selected_actor_ids(),
+                                                                                                        columns,
+                                                                                                        selected_card,
+                                                                                                        state_store,
+                                                                                                        board_status,
+                                                                                                        assignee_edit_status,
+                                                                                                    ) {
+                                                                                                        assignee_picker_open.set(false);
+                                                                                                        assignee_filter.set(String::new());
+                                                                                                    }
+                                                                                                }
+                                                                                            },
+                                                                                            {crate::i18n::tr("common.save")}
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
                                                                 div {
                                                                     dt { "Due" }
@@ -4398,35 +4615,6 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
     out
 }
 
-fn display_user_reference(value: &str, state_store: &LocalStateStore) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed == "—" {
-        return "unassigned".to_owned();
-    }
-    if trimmed.contains(',') {
-        let labels = trimmed
-            .split(',')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(|part| display_single_user_reference(part, state_store))
-            .collect::<Vec<_>>();
-        if !labels.is_empty() {
-            return labels.join(", ");
-        }
-    }
-    display_single_user_reference(trimmed, state_store)
-}
-
-fn display_single_user_reference(value: &str, state_store: &LocalStateStore) -> String {
-    let trimmed = value.trim();
-    if trimmed.starts_with("did:") {
-        return display_name_for_did(state_store, trimmed);
-    }
-    crate::identity_handle::parse_user_handle(trimmed)
-        .map(|handle| handle.display)
-        .unwrap_or_else(|| trimmed.to_owned())
-}
-
 fn card_author_display_label(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
@@ -4477,6 +4665,64 @@ fn member_display_label_for_actor(
         identity.as_ref(),
         cached_handle.as_deref(),
     ))
+}
+
+fn bare_member_row(actor_id: String) -> RealmMemberRow {
+    RealmMemberRow {
+        actor_id,
+        membership: None,
+        identity_event_ids: Vec::new(),
+        member_display_state_digest: None,
+        subject_id: None,
+        handle_claims: Vec::new(),
+        handle_claims_limited: false,
+    }
+}
+
+fn assignment_picker_roster(
+    member_rows: &[RealmMemberRow],
+    card: &KanbanCard,
+) -> Vec<RealmMemberRow> {
+    let mut rows = BTreeMap::<String, RealmMemberRow>::new();
+    for row in member_rows {
+        rows.entry(row.actor_id.clone())
+            .or_insert_with(|| row.clone());
+    }
+    for actor_id in card_assigned_actor_ids(card) {
+        rows.entry(actor_id.clone())
+            .or_insert_with(|| bare_member_row(actor_id));
+    }
+    rows.into_values().collect()
+}
+
+fn assignee_label_for_actor(
+    state_store: &LocalStateStore,
+    realm_context: &str,
+    member_rows: &[RealmMemberRow],
+    actor_id: &str,
+) -> String {
+    let context = CardAuthorDisplayContext {
+        realm_id: realm_context,
+        member_rows,
+    };
+    member_display_label_for_actor(state_store, Some(context), actor_id)
+        .unwrap_or_else(|| display_name_for_did(state_store, actor_id))
+}
+
+fn assignee_avatar_initial(label: &str) -> String {
+    label
+        .chars()
+        .find(|ch| ch.is_alphanumeric())
+        .map(|ch| ch.to_uppercase().collect::<String>())
+        .unwrap_or_else(|| "?".to_owned())
+}
+
+fn assignee_filter_matches(filter: &str, label: &str, actor_id: &str) -> bool {
+    let filter = filter.trim().to_lowercase();
+    if filter.is_empty() {
+        return true;
+    }
+    label.to_lowercase().contains(&filter) || actor_id.to_lowercase().contains(&filter)
 }
 
 fn compact_timestamp_label(value: &str) -> String {
@@ -6043,6 +6289,341 @@ fn dispatch_card_detail_update(
     true
 }
 
+#[derive(Clone)]
+enum CardAssignmentMutation {
+    Create {
+        actor_id: String,
+        relation_id: String,
+        operation: crate::operation::EventEnvelope,
+    },
+    Tombstone {
+        actor_id: String,
+        relation_id: String,
+        operation: crate::operation::EventEnvelope,
+    },
+}
+
+impl CardAssignmentMutation {
+    fn relation_id(&self) -> &str {
+        match self {
+            Self::Create { relation_id, .. } | Self::Tombstone { relation_id, .. } => relation_id,
+        }
+    }
+
+    fn actor_id(&self) -> &str {
+        match self {
+            Self::Create { actor_id, .. } | Self::Tombstone { actor_id, .. } => actor_id,
+        }
+    }
+
+    fn operation(&self) -> &crate::operation::EventEnvelope {
+        match self {
+            Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
+        }
+    }
+}
+
+fn relation_id_from_event_id(event_id: &str) -> Option<String> {
+    event_id
+        .strip_prefix("ck:event:")
+        .map(|suffix| format!("ck:relation:{suffix}"))
+}
+
+fn normalize_assignee_selection(
+    selected_actor_ids: BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut normalized = BTreeSet::new();
+    for actor_id in selected_actor_ids {
+        let actor_id = actor_id.trim();
+        if actor_id.is_empty() {
+            continue;
+        }
+        if !actor_id.starts_with("did:") {
+            return Err(format!("assignee actor id must be a DID: {actor_id}"));
+        }
+        normalized.insert(actor_id.to_owned());
+    }
+    Ok(normalized)
+}
+
+fn card_assignment_mutations(
+    realm_id: &str,
+    actor_did: &str,
+    current: &KanbanCard,
+    selected_actor_ids: &BTreeSet<String>,
+) -> Result<Vec<CardAssignmentMutation>, String> {
+    let current_actor_ids = card_assigned_actor_ids(current)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut relation_ids_by_actor = BTreeMap::<String, Vec<String>>::new();
+    for relation in &current.assigned_to_relations {
+        let relation_id = relation.relation_id.trim();
+        let actor_id = relation.actor_id.trim();
+        if relation_id.is_empty() || actor_id.is_empty() {
+            continue;
+        }
+        relation_ids_by_actor
+            .entry(actor_id.to_owned())
+            .or_default()
+            .push(relation_id.to_owned());
+    }
+
+    let mut mutations = Vec::new();
+    for actor_id in selected_actor_ids.difference(&current_actor_ids) {
+        let operation = crate::operation::cx_ops::relation_create(
+            realm_id,
+            actor_did,
+            "assigned_to",
+            &current.id,
+            actor_id,
+        )
+        .build("yougen");
+        let relation_id = relation_id_from_event_id(&operation.event_id).ok_or_else(|| {
+            format!(
+                "internal: cannot derive assigned_to relation id from {}",
+                operation.event_id
+            )
+        })?;
+        mutations.push(CardAssignmentMutation::Create {
+            actor_id: actor_id.clone(),
+            relation_id,
+            operation,
+        });
+    }
+
+    for actor_id in current_actor_ids.difference(selected_actor_ids) {
+        let Some(relation_ids) = relation_ids_by_actor.get(actor_id) else {
+            return Err(format!(
+                "assignment for {} is missing its relation_id; refresh before removing it",
+                short_protocol_id(actor_id)
+            ));
+        };
+        for relation_id in relation_ids {
+            let operation =
+                crate::operation::cx_ops::relation_tombstone(realm_id, actor_did, relation_id)
+                    .build("yougen");
+            mutations.push(CardAssignmentMutation::Tombstone {
+                actor_id: actor_id.clone(),
+                relation_id: relation_id.clone(),
+                operation,
+            });
+        }
+    }
+    Ok(mutations)
+}
+
+fn assignment_relations_after_mutations(
+    current: &KanbanCard,
+    selected_actor_ids: &BTreeSet<String>,
+    mutations: &[CardAssignmentMutation],
+) -> Vec<CardAssignedToRelation> {
+    let tombstoned = mutations
+        .iter()
+        .filter_map(|mutation| match mutation {
+            CardAssignmentMutation::Tombstone { relation_id, .. } => Some(relation_id.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut relations = current
+        .assigned_to_relations
+        .iter()
+        .filter(|relation| selected_actor_ids.contains(relation.actor_id.trim()))
+        .filter(|relation| !tombstoned.contains(relation.relation_id.trim()))
+        .cloned()
+        .collect::<Vec<_>>();
+    for mutation in mutations {
+        if let CardAssignmentMutation::Create {
+            actor_id,
+            relation_id,
+            ..
+        } = mutation
+            && selected_actor_ids.contains(actor_id)
+        {
+            relations.push(CardAssignedToRelation {
+                relation_id: relation_id.clone(),
+                actor_id: actor_id.clone(),
+            });
+        }
+    }
+    relations.sort_by(|left, right| {
+        left.actor_id
+            .cmp(&right.actor_id)
+            .then(left.relation_id.cmp(&right.relation_id))
+    });
+    relations.dedup_by(|left, right| left.relation_id == right.relation_id);
+    relations
+}
+
+fn update_card_assignees_in_columns(
+    columns: &mut [KanbanColumn],
+    flow_id: &str,
+    selected_actor_ids: &BTreeSet<String>,
+    relations: Vec<CardAssignedToRelation>,
+    state: CardState,
+) -> Option<KanbanCard> {
+    for column in columns.iter_mut() {
+        if let Some(card) = column.cards.iter_mut().find(|card| card.id == flow_id) {
+            apply_card_assignment_projection(card, selected_actor_ids, relations, state);
+            return Some(card.clone());
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_card_assignees_update(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_did: String,
+    current: KanbanCard,
+    selected_actor_ids: BTreeSet<String>,
+    mut columns: Signal<Vec<KanbanColumn>>,
+    mut selected_card: Signal<Option<KanbanCard>>,
+    mut state_store: Signal<LocalStateStore>,
+    mut board_status: Signal<String>,
+    mut assignee_edit_status: Signal<String>,
+) -> bool {
+    let selected_actor_ids = match normalize_assignee_selection(selected_actor_ids) {
+        Ok(selected) => selected,
+        Err(msg) => {
+            assignee_edit_status.set(msg.clone());
+            board_status.set(msg);
+            return false;
+        }
+    };
+    if actor_did.trim().is_empty() {
+        let msg = "sign in before editing assignees".to_owned();
+        assignee_edit_status.set(msg.clone());
+        board_status.set(msg);
+        return false;
+    }
+    if realm_id.trim().is_empty() {
+        let msg = "select a Realm before editing assignees".to_owned();
+        assignee_edit_status.set(msg.clone());
+        board_status.set(msg);
+        return false;
+    }
+
+    let mutations =
+        match card_assignment_mutations(&realm_id, &actor_did, &current, &selected_actor_ids) {
+            Ok(mutations) => mutations,
+            Err(msg) => {
+                assignee_edit_status.set(msg.clone());
+                board_status.set(msg);
+                return false;
+            }
+        };
+    if mutations.is_empty() {
+        board_status.set("No assignee changes to save".to_owned());
+        assignee_edit_status.set(String::new());
+        return true;
+    }
+
+    let optimistic_relations =
+        assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
+    let updated_card = {
+        let mut cols = columns.write();
+        update_card_assignees_in_columns(
+            &mut cols,
+            &current.id,
+            &selected_actor_ids,
+            optimistic_relations.clone(),
+            CardState::Queued,
+        )
+    };
+    let Some(updated_card) = updated_card else {
+        let msg = format!(
+            "internal: card {} not in board state",
+            short_protocol_id(&current.id)
+        );
+        assignee_edit_status.set(msg.clone());
+        board_status.set(msg);
+        return false;
+    };
+    selected_card.set(Some(updated_card));
+
+    for mutation in &mutations {
+        let operation = mutation.operation();
+        let operation_id = operation.local_operation_id().to_owned();
+        state_store.write().append_raw_operation(
+            operation_id.clone(),
+            Some(realm_id.clone()),
+            json!({
+                "kind": operation.kind.clone(),
+                "operation_id": operation_id,
+                "actor_id": operation.actor_id.clone(),
+                "created_at": operation.created_at.clone(),
+                "write_state": "queued",
+                "body": operation.payload.clone(),
+                "assignment_actor_id": mutation.actor_id(),
+                "assignment_relation_id": mutation.relation_id(),
+            }),
+        );
+    }
+
+    let operation_count = mutations.len();
+    board_status.set(format!(
+        "submitting {operation_count} assignee relation operation{}",
+        if operation_count == 1 { "" } else { "s" }
+    ));
+    assignee_edit_status.set("Saving...".to_owned());
+    let api_token = token();
+    let flow_id = current.id.clone();
+    spawn(async move {
+        for mutation in mutations {
+            let operation = mutation.operation().clone();
+            let operation_id = operation.local_operation_id().to_owned();
+            let kind = operation.kind.clone();
+            match with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.submit_event_envelope(&operation).await
+            })
+            .await
+            {
+                Ok(resp) => {
+                    state_store.write().update_raw_operation_write_state(
+                        &operation_id,
+                        "accepted",
+                        Some(resp.event_id.clone()),
+                        None,
+                    );
+                }
+                Err(err) => {
+                    let err_text = err.display().to_string();
+                    state_store.write().update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(err_text.clone()),
+                    );
+                    set_card_state_in_columns(&mut columns, &flow_id, CardState::SoftFailed);
+                    let selected = selected_card.read().clone();
+                    if let Some(mut card) = selected
+                        && card.id == flow_id
+                    {
+                        card.state = CardState::SoftFailed;
+                        selected_card.set(Some(card));
+                    }
+                    assignee_edit_status.set(format!("{kind} failed"));
+                    board_status.set(format!("{kind} operation failed: {err_text}"));
+                    return;
+                }
+            }
+        }
+        set_card_state_in_columns(&mut columns, &flow_id, CardState::Accepted);
+        let selected = selected_card.read().clone();
+        if let Some(mut card) = selected
+            && card.id == flow_id
+        {
+            card.state = CardState::Accepted;
+            selected_card.set(Some(card));
+        }
+        assignee_edit_status.set(String::new());
+        board_status.set("Assignees updated".to_owned());
+    });
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn select_kanban_board(
     board_id: String,
@@ -6232,6 +6813,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 updated_at: String::new(),
                 labels: vec!["legal".to_owned(), "beta".to_owned()],
                 assignee: "Alice".to_owned(),
+                assigned_to_relations: Vec::new(),
                 due: "May 08".to_owned(),
                 primary_flow_id: DEMO_FLOW_REVIEW_DISCUSSION_ID.to_owned(),
                 locked_flow: Some(LockedFlow {
@@ -6266,6 +6848,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 updated_at: String::new(),
                 labels: vec!["copy".to_owned(), "support".to_owned()],
                 assignee: "Bob".to_owned(),
+                assigned_to_relations: Vec::new(),
                 due: "May 10".to_owned(),
                 primary_flow_id: DEMO_FLOW_SUPPORT_DISCUSSION_ID.to_owned(),
                 locked_flow: None,
@@ -6297,6 +6880,7 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 updated_at: String::new(),
                 labels: vec!["security".to_owned(), "reviewed".to_owned()],
                 assignee: "Carol".to_owned(),
+                assigned_to_relations: Vec::new(),
                 due: "May 01".to_owned(),
                 primary_flow_id: DEMO_FLOW_SECURITY_REVIEW_ID.to_owned(),
                 locked_flow: Some(LockedFlow {
@@ -7208,6 +7792,7 @@ mod tests {
             list_space_id: None,
             rank: Some("U".to_owned()),
             assigned_actor_ids: Vec::new(),
+            assigned_to_relations: Vec::new(),
             fields: Map::new(),
             created_by: None,
             created_at: None,
@@ -7611,6 +8196,10 @@ mod tests {
             list_space_id: Some(list_id.to_owned()),
             rank: Some("U".to_owned()),
             assigned_actor_ids: vec!["did:web:alice.example".to_owned()],
+            assigned_to_relations: vec![crate::api::AssignedToRelationProjectionView {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-000000000004".to_owned(),
+                actor_id: "did:web:alice.example".to_owned(),
+            }],
             fields: Map::from_iter([
                 ("labels".to_owned(), json!(["demo", "db"])),
                 ("due_at".to_owned(), json!("2026-05-22")),
@@ -7635,6 +8224,13 @@ mod tests {
         assert_eq!(card.body, "Projection body content");
         assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
         assert_eq!(card.assignee, "did:web:alice.example");
+        assert_eq!(
+            card.assigned_to_relations,
+            vec![CardAssignedToRelation {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-000000000004".to_owned(),
+                actor_id: "did:web:alice.example".to_owned(),
+            }]
+        );
         assert_eq!(card.due, "2026-05-22");
     }
 
@@ -7893,6 +8489,68 @@ mod tests {
         assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
         assert_eq!(patch["metadata.fields"]["value"]["due_at"], "2026-05-20");
         assert!(patch["metadata.fields"]["value"].get("due").is_none());
+    }
+
+    #[test]
+    fn relation_id_from_event_id_retags_assignment_relation_ids() {
+        assert_eq!(
+            relation_id_from_event_id("ck:event:0196419b-0000-7000-8000-000000000004").as_deref(),
+            Some("ck:relation:0196419b-0000-7000-8000-000000000004")
+        );
+        assert!(relation_id_from_event_id("ck:message:bad").is_none());
+    }
+
+    #[test]
+    fn card_assignment_mutations_create_and_tombstone_relation_events() {
+        let mut current = test_card("ck:flow:0196419b-0000-7000-8000-000000000101", "U");
+        current.assignee = "did:web:bob.example".to_owned();
+        current.assigned_to_relations = vec![CardAssignedToRelation {
+            relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+            actor_id: "did:web:bob.example".to_owned(),
+        }];
+        let selected = BTreeSet::from(["did:web:alice.example".to_owned()]);
+
+        let mutations = card_assignment_mutations(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "did:web:owner.example",
+            &current,
+            &selected,
+        )
+        .unwrap();
+
+        assert_eq!(mutations.len(), 2);
+        let create = mutations
+            .iter()
+            .find(|mutation| matches!(mutation, CardAssignmentMutation::Create { .. }))
+            .expect("create mutation");
+        assert_eq!(create.actor_id(), "did:web:alice.example");
+        assert_eq!(create.operation().kind, "ck.relation.create");
+        assert_eq!(create.operation().payload["kind"], json!("assigned_to"));
+        assert_eq!(create.operation().payload["from_ref"], json!(current.id));
+        assert_eq!(
+            create.operation().payload["to_ref"],
+            json!("did:web:alice.example")
+        );
+        assert!(create.operation().payload.get("relation_id").is_none());
+
+        let tombstone = mutations
+            .iter()
+            .find(|mutation| matches!(mutation, CardAssignmentMutation::Tombstone { .. }))
+            .expect("tombstone mutation");
+        assert_eq!(
+            tombstone.relation_id(),
+            "ck:relation:0196419b-0000-7000-8000-0000000000bb"
+        );
+        assert_eq!(tombstone.operation().kind, "ck.relation.tombstone");
+        assert_eq!(
+            tombstone.operation().payload["relation_id"],
+            json!("ck:relation:0196419b-0000-7000-8000-0000000000bb")
+        );
+
+        let after = assignment_relations_after_mutations(&current, &selected, &mutations);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].actor_id, "did:web:alice.example");
+        assert!(after[0].relation_id.starts_with("ck:relation:"));
     }
 
     #[test]
@@ -8790,6 +9448,7 @@ mod tests {
             updated_at: String::new(),
             labels: Vec::new(),
             assignee: String::new(),
+            assigned_to_relations: Vec::new(),
             due: String::new(),
             primary_flow_id: String::new(),
             locked_flow: None,
