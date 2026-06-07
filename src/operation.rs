@@ -1223,6 +1223,19 @@ pub mod cx_ops {
         invitee: &str,
         role: Option<&str>,
     ) -> OperationBuilder {
+        invite_create_structured_with_member_delivery_binding(
+            realm_id, actor, invite_id, invitee, role, None,
+        )
+    }
+
+    pub fn invite_create_structured_with_member_delivery_binding(
+        realm_id: &str,
+        actor: &str,
+        invite_id: &str,
+        invitee: &str,
+        role: Option<&str>,
+        member_delivery_binding: Option<Value>,
+    ) -> OperationBuilder {
         let mut body = serde_json::Map::new();
         body.insert("invite_id".to_owned(), json!(invite_id));
         body.insert("invitee".to_owned(), json!(invitee));
@@ -1235,6 +1248,12 @@ pub mod cx_ops {
         );
         if let Some(role) = role {
             body.insert("x_role".to_owned(), json!(role));
+        }
+        if let Some(member_delivery_binding) = member_delivery_binding {
+            body.insert(
+                "x_member_delivery_binding".to_owned(),
+                member_delivery_binding,
+            );
         }
         OperationBuilder::new(realm_id, actor, "ck.invite.create").body(Value::Object(body))
     }
@@ -2714,6 +2733,26 @@ mod tests {
         assert!(create.payload.get("role").is_none());
         assert!(create.payload.get("state").is_none());
         assert_registered_payload_valid(&create);
+
+        let create_with_binding = cx_ops::invite_create_structured_with_member_delivery_binding(
+            "ck:realm:01904100-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            invite_id,
+            "did:web:remote.example:users:bob",
+            None,
+            Some(json!({
+                "recipient_service_did": "did:web:remote.example",
+                "recipient_service_type": "principal_server",
+                "binding_source": "explicit",
+                "delivery_modes": ["events", "sync"]
+            })),
+        )
+        .build("node");
+        assert_eq!(
+            create_with_binding.payload["x_member_delivery_binding"]["recipient_service_did"],
+            "did:web:remote.example"
+        );
+        assert_registered_payload_valid(&create_with_binding);
 
         let accept = cx_ops::invite_accept(
             "ck:realm:01904100-0000-7000-8000-000000000010",

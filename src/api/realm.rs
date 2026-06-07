@@ -439,17 +439,19 @@ impl CokretApi {
         target: &str,
         role: Option<&str>,
     ) -> anyhow::Result<SubmitEventResponse> {
-        let invitee_did = self
-            .resolve_invitee_did_for_invite(target, realm_id, actor_id)
+        let invitee = self
+            .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?;
-        let envelope = crate::operation::cx_ops::invite_create_structured(
-            realm_id,
-            actor_id,
-            invite_id,
-            &invitee_did,
-            role,
-        )
-        .build("yougen");
+        let envelope =
+            crate::operation::cx_ops::invite_create_structured_with_member_delivery_binding(
+                realm_id,
+                actor_id,
+                invite_id,
+                &invitee.did,
+                role,
+                invitee.member_delivery_binding,
+            )
+            .build("yougen");
         self.submit_event_envelope(&envelope).await
     }
 

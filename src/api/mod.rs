@@ -3060,6 +3060,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolved.subject_did(), Some("did:web:bob.example"));
+        assert_eq!(
+            resolved.member_delivery_binding_value().unwrap()["recipient_service_did"],
+            "did:web:local.host"
+        );
         validate_invite_handle_resolution(&resolved, realm_id).unwrap();
 
         let missing_binding: ResolveHandleResponse = serde_json::from_value(json!({

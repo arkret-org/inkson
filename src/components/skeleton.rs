@@ -4,7 +4,7 @@
 //! key-backup history. The component is intentionally CSS-driven; the
 //! Rust side only renders structural placeholders + the
 //! `aria-busy="true"` annotation. The pulsing animation lives in
-//! `src/styles/claude_design.css` under `.skeleton-*`.
+//! `src/styles/design.css` under `.skeleton-*`.
 //!
 //! Why three shapes:
 //!   * [`SkeletonLine`] — single-line text placeholders. Best for list rows where each row is one
