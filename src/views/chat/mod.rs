@@ -3888,6 +3888,7 @@ pub fn ChatPanel(
                                 let commit_op_id = commit_envelope
                                     .as_ref()
                                     .map(|commit| commit.local_operation_id().to_owned());
+                                let device_for_sidecar_backup = did.clone();
                                 // X9: capture identifiers needed by the
                                 // encrypted Ok(resp) arm to (A) clear the
                                 // optimistic bubble's `pending` flag and (B)
@@ -4064,6 +4065,13 @@ pub fn ChatPanel(
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
                                                 status_msg.set("Encrypted message sent".to_owned());
+                                                crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                                                    base_for_backup_trigger.clone(),
+                                                    token_for_backup_trigger.clone(),
+                                                    actor_for_backup_trigger.clone(),
+                                                    device_for_sidecar_backup.clone(),
+                                                    state_store,
+                                                );
 
                                             // X11.2 — first-write trigger.
                                             // After this encrypted send landed,

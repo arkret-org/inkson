@@ -5867,6 +5867,7 @@ fn dispatch_card_detail_update(
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_did.clone();
+    let device_for_sidecar_backup = device_id.clone();
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
@@ -5987,6 +5988,13 @@ fn dispatch_card_detail_update(
                     short_protocol_id(&resp.event_id)
                 ));
                 if effective_security_encrypted {
+                    crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                        base_for_backup_trigger.clone(),
+                        api_token.clone(),
+                        actor_for_backup_trigger.clone(),
+                        device_for_sidecar_backup.clone(),
+                        state_store,
+                    );
                     // X11.2 — first-write trigger. After this encrypted write
                     // landed, prompt if no account-secret recovery backup exists.
                     // The helper dedupes its server probe per account/session, so

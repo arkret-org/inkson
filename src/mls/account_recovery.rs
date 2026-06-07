@@ -1154,24 +1154,63 @@ pub async fn upload_mls_private_plaintext_backup(
     device_id: &str,
     sidecar_json: &[u8],
 ) -> Result<String> {
+    let previous_backup =
+        fetch_mls_private_plaintext_backup_body(api, actor_did, device_id).await?;
+    let (backup_id, _) = upload_mls_private_plaintext_backup_with_previous(
+        api,
+        secure_store,
+        actor_did,
+        device_id,
+        sidecar_json,
+        previous_backup.as_ref(),
+    )
+    .await?;
+    Ok(backup_id)
+}
+
+/// Fetch the current full `mls_private_plaintext` backup body, if any.
+///
+/// Callers that repeatedly update the sidecar can cache the returned/uploaded
+/// body locally and pass it to
+/// [`upload_mls_private_plaintext_backup_with_previous`], avoiding a backup-list
+/// request for every ordinary encrypted write.
+pub async fn fetch_mls_private_plaintext_backup_body(
+    api: &crate::api::CokretApi,
+    actor_did: &str,
+    device_id: &str,
+) -> Result<Option<Value>> {
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let Some(metadata) = select_mls_private_plaintext_backup(&list_payload) else {
+        return Ok(None);
+    };
+    let body = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+        api, &metadata, actor_did, device_id,
+    )
+    .await
+    .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?;
+    Ok(Some(body))
+}
+
+/// Upload a sidecar backup successor using a caller-provided predecessor body.
+///
+/// This is the no-list inner upload path for debounced write-side sidecar
+/// syncing. The predecessor body must be the full previous backup envelope
+/// selected by `select_mls_private_plaintext_backup` or returned from this
+/// function after a successful upload.
+pub async fn upload_mls_private_plaintext_backup_with_previous(
+    api: &crate::api::CokretApi,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_did: &str,
+    device_id: &str,
+    sidecar_json: &[u8],
+    previous_backup: Option<&Value>,
+) -> Result<(String, Value)> {
     let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
 
     let kek =
         derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
-
-    let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_backup = match select_mls_private_plaintext_backup(&list_payload) {
-        Some(metadata) => Some(
-            crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                api, &metadata, actor_did, device_id,
-            )
-            .await
-            .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?,
-        ),
-        None => None,
-    };
     // Fresh backup_id per series link (see `apply_next_series`).
     let backup_id = fresh_backup_id();
 
@@ -1182,12 +1221,12 @@ pub async fn upload_mls_private_plaintext_backup(
         &kek,
         sidecar_json,
     )?;
-    apply_next_series(previous_backup.as_ref(), &mut body);
-    api.put_key_backup(&backup_id, body)
+    apply_next_series(previous_backup, &mut body);
+    api.put_key_backup(&backup_id, body.clone())
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
 
-    Ok(backup_id)
+    Ok((backup_id, body))
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
 
 use dioxus::prelude::*;
 
@@ -8,8 +9,28 @@ use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input
 use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
+const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
+const MLS_PRIVATE_PLAINTEXT_BACKUP_MIN_INTERVAL: Duration = Duration::from_secs(300);
 static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<BTreeSet<String>>> =
     LazyLock::new(|| Mutex::new(BTreeSet::new()));
+static MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS: LazyLock<
+    Mutex<BTreeMap<String, MlsPrivatePlaintextBackupJob>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[derive(Clone, Default)]
+struct MlsPrivatePlaintextBackupJob {
+    base_url: String,
+    token: String,
+    actor_did: String,
+    device_id: String,
+    latest_sidecar_json: Vec<u8>,
+    latest_digest: String,
+    last_uploaded_digest: Option<String>,
+    last_upload_at: Option<chrono::DateTime<chrono::Utc>>,
+    cached_previous_body: Option<serde_json::Value>,
+    scheduled: bool,
+    in_flight: bool,
+}
 
 fn mls_backup_after_write_probe_key(base_url: &str, actor_did: &str) -> String {
     format!(
@@ -24,6 +45,200 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
         Ok(mut probes) => probes.insert(key),
         Err(_) => true,
     }
+}
+
+pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
+    base_url: String,
+    token: String,
+    actor_did: String,
+    device_id: String,
+    state_store: Signal<LocalStateStore>,
+) {
+    if base_url.trim().is_empty()
+        || token.trim().is_empty()
+        || actor_did.trim().is_empty()
+        || device_id.trim().is_empty()
+    {
+        return;
+    }
+    let sidecar_json = {
+        let store = state_store.read();
+        if !mls_recovery_backup_configured(&store, &actor_did) || store.private_plaintext_is_empty()
+        {
+            return;
+        }
+        store.private_plaintext_snapshot_json()
+    };
+    let digest = crate::canonical::sha256_digest(&sidecar_json);
+    let key = mls_backup_after_write_probe_key(&base_url, &actor_did);
+    let should_spawn = match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
+        Ok(mut jobs) => {
+            let job = jobs.entry(key.clone()).or_default();
+            if job.last_uploaded_digest.as_deref() == Some(digest.as_str()) {
+                return;
+            }
+            job.base_url = base_url;
+            job.token = token;
+            job.actor_did = actor_did;
+            job.device_id = device_id;
+            job.latest_sidecar_json = sidecar_json;
+            job.latest_digest = digest;
+            if job.scheduled || job.in_flight {
+                false
+            } else {
+                job.scheduled = true;
+                true
+            }
+        }
+        Err(_) => false,
+    };
+    if should_spawn {
+        spawn(async move {
+            run_mls_private_plaintext_backup_job(key).await;
+        });
+    }
+}
+
+async fn run_mls_private_plaintext_backup_job(key: String) {
+    loop {
+        let Some(delay) = next_mls_private_plaintext_backup_delay(&key) else {
+            return;
+        };
+        crate::api::sleep_for(delay).await;
+        let Some(job_snapshot) = take_mls_private_plaintext_backup_job_snapshot(&key) else {
+            return;
+        };
+        if job_snapshot.last_uploaded_digest.as_deref() == Some(job_snapshot.latest_digest.as_str())
+        {
+            finish_mls_private_plaintext_backup_job(
+                &key,
+                &job_snapshot.latest_digest,
+                None,
+                None,
+                None,
+            );
+            return;
+        }
+        let upload_digest = job_snapshot.latest_digest.clone();
+        let upload_result = upload_mls_private_plaintext_backup_job_snapshot(job_snapshot).await;
+        let rerun = match upload_result {
+            Ok((backup_id, body)) => {
+                tracing::debug!(
+                    backup_id = %backup_id,
+                    "MLS private plaintext sidecar backup uploaded after encrypted write"
+                );
+                finish_mls_private_plaintext_backup_job(
+                    &key,
+                    &upload_digest,
+                    Some(body),
+                    Some(upload_digest.clone()),
+                    Some(chrono::Utc::now()),
+                )
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "MLS private plaintext sidecar backup after encrypted write failed"
+                );
+                finish_mls_private_plaintext_backup_job(&key, &upload_digest, None, None, None)
+            }
+        };
+        if !rerun {
+            return;
+        }
+    }
+}
+
+fn next_mls_private_plaintext_backup_delay(key: &str) -> Option<Duration> {
+    let jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().ok()?;
+    let job = jobs.get(key)?;
+    let Some(last_upload_at) = job.last_upload_at else {
+        return Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE);
+    };
+    let elapsed = chrono::Utc::now().signed_duration_since(last_upload_at);
+    let min_interval = chrono::Duration::from_std(MLS_PRIVATE_PLAINTEXT_BACKUP_MIN_INTERVAL)
+        .unwrap_or_else(|_| chrono::Duration::seconds(300));
+    if elapsed >= min_interval {
+        Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
+    } else {
+        let remaining = min_interval - elapsed;
+        Some(Duration::from_millis(
+            u64::try_from(remaining.num_milliseconds()).unwrap_or(0),
+        ))
+    }
+}
+
+fn take_mls_private_plaintext_backup_job_snapshot(
+    key: &str,
+) -> Option<MlsPrivatePlaintextBackupJob> {
+    let mut jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().ok()?;
+    let job = jobs.get_mut(key)?;
+    job.scheduled = false;
+    job.in_flight = true;
+    Some(job.clone())
+}
+
+fn finish_mls_private_plaintext_backup_job(
+    key: &str,
+    uploaded_digest: &str,
+    cached_previous_body: Option<serde_json::Value>,
+    last_uploaded_digest: Option<String>,
+    last_upload_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    let Ok(mut jobs) = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() else {
+        return false;
+    };
+    let Some(job) = jobs.get_mut(key) else {
+        return false;
+    };
+    job.in_flight = false;
+    if let Some(body) = cached_previous_body {
+        job.cached_previous_body = Some(body);
+    }
+    if let Some(digest) = last_uploaded_digest {
+        job.last_uploaded_digest = Some(digest);
+    }
+    if let Some(uploaded_at) = last_upload_at {
+        job.last_upload_at = Some(uploaded_at);
+    }
+    if job.latest_digest != uploaded_digest
+        && job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str())
+    {
+        job.scheduled = true;
+        true
+    } else {
+        false
+    }
+}
+
+async fn upload_mls_private_plaintext_backup_job_snapshot(
+    job: MlsPrivatePlaintextBackupJob,
+) -> anyhow::Result<(String, serde_json::Value)> {
+    with_authed_api(&job.base_url, job.token, |api| async move {
+        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let previous_body = match job.cached_previous_body {
+            Some(body) => Some(body),
+            None => {
+                crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                    &api,
+                    &job.actor_did,
+                    &job.device_id,
+                )
+                .await?
+            }
+        };
+        crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
+            &api,
+            secure_store.as_ref(),
+            &job.actor_did,
+            &job.device_id,
+            &job.latest_sidecar_json,
+            previous_body.as_ref(),
+        )
+        .await
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!(err.display()))
 }
 
 pub(crate) fn mls_recovery_backup_configured(

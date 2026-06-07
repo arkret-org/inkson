@@ -1022,8 +1022,23 @@ pub fn RouterView() -> Element {
                     Ok(payload) => {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
+                        let configured_backup_id =
+                            crate::mls::account_recovery::select_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .and_then(|backup| {
+                                backup
+                                    .get("backup_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            });
                         {
                             let mut store = state_store_for_detection.write();
+                            if let Some(backup_id) = configured_backup_id.as_deref() {
+                                crate::components::mark_mls_recovery_backup_configured(
+                                    &mut store, &actor, backup_id,
+                                );
+                            }
                             let _ =
                                 crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     &payload,
@@ -1377,8 +1392,25 @@ pub fn RouterView() -> Element {
                     Ok(payload) => {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("yougen");
+                        let configured_backup_id =
+                            crate::mls::account_recovery::select_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .and_then(|backup| {
+                                backup
+                                    .get("backup_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            });
                         {
                             let mut store = state_store_for_probe.write();
+                            if let Some(backup_id) = configured_backup_id.as_deref() {
+                                crate::components::mark_mls_recovery_backup_configured(
+                                    &mut store,
+                                    &detect_actor,
+                                    backup_id,
+                                );
+                            }
                             let _ =
                                 crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     &payload,
