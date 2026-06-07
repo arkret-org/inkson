@@ -907,7 +907,6 @@ test("notifications are derived from index projections and respect per-realm mut
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText("Alice sent a message in Demo Realm");
-  await expect(page.getByTestId("notifications-status")).toContainText("Loaded 2 notification(s).");
 
   await page
     .getByTestId("notification-item")
@@ -953,7 +952,32 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
 
   expect(page.url()).toBe(workspaceUrl);
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
+  await expect(page.getByTestId("notifications-drawer-settings")).toBeVisible();
+  await expect(page.getByTestId("notifications-settings-hint")).toHaveCount(0);
   await expect(page.getByTestId("realm-context-bar")).toBeVisible();
+  await expect(page.getByTestId("notifications-panel")).toContainText("Latest");
+  await expect(page.getByTestId("notifications-panel")).not.toContainText("Notification settings");
+
+  const drawerLayout = await page.evaluate(() => {
+    const header = document.querySelector(".workspace-header")?.getBoundingClientRect();
+    const panel = document
+      .querySelector('[data-testid="notifications-drawer-panel"]')
+      ?.getBoundingClientRect();
+    return header && panel
+      ? {
+          headerBottom: header.bottom,
+          panelTop: panel.top,
+          panelRight: panel.right,
+          panelBottom: panel.bottom,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+        }
+      : null;
+  });
+  expect(drawerLayout).not.toBeNull();
+  expect(Math.abs(drawerLayout!.panelTop - drawerLayout!.headerBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(drawerLayout!.panelRight - drawerLayout!.viewportWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(drawerLayout!.panelBottom - drawerLayout!.viewportHeight)).toBeLessThanOrEqual(1);
 
   await page.getByTestId("notifications-drawer-close").click();
   await expect(page.getByTestId("notifications-drawer")).toBeHidden();

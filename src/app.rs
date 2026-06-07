@@ -3669,6 +3669,7 @@ pub fn RouterView() -> Element {
                     }
                     aside {
                         class: "notifications-drawer-panel",
+                        "data-testid": "notifications-drawer-panel",
                         role: "dialog",
                         "aria-modal": "true",
                         "aria-label": crate::i18n::tr("nav.notifications"),
@@ -3678,14 +3679,25 @@ pub fn RouterView() -> Element {
                                 UiIcon { name: "inbox" }
                                 span { {crate::i18n::tr("nav.notifications")} }
                             }
-                            button {
-                                r#type: "button",
-                                class: "btn icon sm ghost",
-                                "data-testid": "notifications-drawer-close",
-                                title: crate::i18n::tr("common.close"),
-                                "aria-label": crate::i18n::tr("common.close"),
-                                onclick: move |_| notifications_drawer_open.set(false),
-                                UiIcon { name: "x" }
+                            div { class: "notifications-drawer-actions",
+                                Link {
+                                    class: "btn icon sm ghost",
+                                    "data-testid": "notifications-drawer-settings",
+                                    title: crate::i18n::tr("notifications.tooltip.settings"),
+                                    "aria-label": crate::i18n::tr("notifications.tooltip.settings"),
+                                    to: Route::SettingsSection { section: "notifications".to_owned() },
+                                    onclick: move |_| notifications_drawer_open.set(false),
+                                    UiIcon { name: "settings" }
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "btn icon sm ghost",
+                                    "data-testid": "notifications-drawer-close",
+                                    title: crate::i18n::tr("common.close"),
+                                    "aria-label": crate::i18n::tr("common.close"),
+                                    onclick: move |_| notifications_drawer_open.set(false),
+                                    UiIcon { name: "x" }
+                                }
                             }
                         }
                         crate::views::notifications::NotificationsPanel {
@@ -3694,7 +3706,6 @@ pub fn RouterView() -> Element {
                             device_id: device_id(),
                             token,
                             state_store,
-                            on_navigate: EventHandler::new(move |_| notifications_drawer_open.set(false)),
                         }
                     }
                 }

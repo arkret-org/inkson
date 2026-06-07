@@ -844,25 +844,15 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.empty.create_button", "Create Flow");
 
     // Notifications panel (group tabs + toolbar tooltips)
-    dict.set("notifications.group.all", "All");
-    dict.set("notifications.group.realm", "Realm");
-    dict.set("notifications.group.type", "Type");
-    dict.set("notifications.group.time", "Time");
+    dict.set("notifications.feed_title", "Notification feed");
+    dict.set("notifications.view.latest", "Latest");
+    dict.set("notifications.view.realm", "Realm");
+    dict.set("notifications.view.type", "Type");
+    dict.set("notifications.tooltip.settings", "Notification settings");
     dict.set("notifications.tooltip.mark_all_read", "Mark all read");
     dict.set("notifications.tooltip.show_archived", "Show archived");
     dict.set("notifications.tooltip.hide_archived", "Hide archived");
     dict.set("notifications.tooltip.refresh", "Refresh notifications");
-    dict.set("notifications.settings_card", "Notification settings");
-    dict.set("notifications.settings_card_hint", "managed in Settings");
-    dict.set(
-        "notifications.settings_card_body",
-        "Notification rules, muted realms, and push delivery preferences now live in Settings.",
-    );
-    dict.set("notifications.settings_card_open", "Open settings");
-    dict.set(
-        "notifications.empty_body",
-        "No server-derived notifications loaded yet.",
-    );
     dict.set(
         "notifications.filtered_body",
         "All loaded notifications are currently hidden by archive, type, or per-Realm mute rules.",
@@ -1834,22 +1824,15 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.empty.create_button", "创建 Flow");
 
     // Notifications panel
-    dict.set("notifications.group.all", "全部");
-    dict.set("notifications.group.realm", "按 Realm");
-    dict.set("notifications.group.type", "按类型");
-    dict.set("notifications.group.time", "按时间");
+    dict.set("notifications.feed_title", "通知流");
+    dict.set("notifications.view.latest", "最新");
+    dict.set("notifications.view.realm", "Realm");
+    dict.set("notifications.view.type", "类型");
+    dict.set("notifications.tooltip.settings", "通知设置");
     dict.set("notifications.tooltip.mark_all_read", "全部标为已读");
     dict.set("notifications.tooltip.show_archived", "显示已归档");
     dict.set("notifications.tooltip.hide_archived", "隐藏已归档");
     dict.set("notifications.tooltip.refresh", "刷新通知");
-    dict.set("notifications.settings_card", "通知设置");
-    dict.set("notifications.settings_card_hint", "在「设置」中管理");
-    dict.set(
-        "notifications.settings_card_body",
-        "通知规则、静音空间、推送偏好现在统一在「设置」中管理。",
-    );
-    dict.set("notifications.settings_card_open", "打开设置");
-    dict.set("notifications.empty_body", "尚未加载到任何服务端通知。");
     dict.set(
         "notifications.filtered_body",
         "已加载的通知全部被归档、类型或空间静音规则过滤掉了。",

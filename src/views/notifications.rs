@@ -5,25 +5,22 @@ use cokret_sdk::push_rule_core::{
     reason_code as push_rule_reason_code,
 };
 use dioxus::prelude::*;
-use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use crate::components::{EmptyState, EmptyStateKind, HelpTip, UiIcon};
+use crate::components::{EmptyState, EmptyStateKind, UiIcon};
 use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore};
 use crate::models::ClientSyncResponse;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
     dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
 };
-use crate::routes::Route;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NotificationGroup {
-    All,
+    Latest,
     ByRealm,
     ByType,
-    ByTime,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,7 +57,6 @@ pub fn NotificationsPanel(
     device_id: String,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
-    #[props(default)] on_navigate: Option<EventHandler<()>>,
 ) -> Element {
     let initial_state = state_store.read().load();
     let initial_notifications = hydrate_notifications(
@@ -71,12 +67,10 @@ pub fn NotificationsPanel(
     );
 
     let mut notifications = use_signal(move || initial_notifications.clone());
-    let mut group_by = use_signal(|| NotificationGroup::ByTime);
+    let mut group_by = use_signal(|| NotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
-    let refresh_completed = use_signal(|| false);
-    let server_unread = use_signal(|| 0usize);
 
     if !did_bootstrap() {
         did_bootstrap.set(true);
@@ -86,8 +80,6 @@ pub fn NotificationsPanel(
             state_store,
             notifications,
             status_msg,
-            refresh_completed,
-            server_unread,
         );
     }
 
@@ -103,7 +95,7 @@ pub fn NotificationsPanel(
         .collect::<Vec<_>>();
 
     match group_by() {
-        NotificationGroup::All | NotificationGroup::ByTime => {
+        NotificationGroup::Latest => {
             visible_notifications.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
         }
         NotificationGroup::ByRealm => {
@@ -122,10 +114,6 @@ pub fn NotificationsPanel(
         }
     }
 
-    let unread_visible = visible_notifications
-        .iter()
-        .filter(|notification| !notification.read)
-        .count();
     let total_notifications = notifications().len();
 
     // F-NOTIF-VLIST-1: client-side paging — start by rendering only the
@@ -142,88 +130,60 @@ pub fn NotificationsPanel(
         .take(visible_window)
         .collect();
     let has_more_to_load = visible_total > visible_window;
-    let status_text = {
-        let current_status = status_msg();
-        if current_status.is_empty() {
-            if refresh_completed() {
-                notification_refresh_status(total_notifications, visible_total)
-            } else {
-                String::new()
-            }
-        } else {
-            current_status
-        }
-    };
+    let status_text = status_msg();
 
     rsx! {
-        div { class: "timeline", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
-            div { class: "event notification-toolbar", role: "status", "aria-live": "polite",
-                div { class: "event-head",
-                    span { "Notifications" }
-                    div { class: "section-tools",
-                        HelpTip { text: "Notifications are derived from sync account data and filtered by local mute rules. Push only wakes the client; notification bodies are resolved locally." }
-                        span { "data-testid": "unread-count", "{unread_visible}" }
-                        span { "{unread_visible} unread / {server_unread()} server" }
+        div { class: "timeline notifications-panel", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
+            div { class: "toolbar-row",
+                div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
+                    button {
+                        class: if group_by() == NotificationGroup::Latest { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(NotificationGroup::Latest),
+                        {crate::i18n::tr("notifications.view.latest")}
+                    }
+                    button {
+                        class: if group_by() == NotificationGroup::ByRealm { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(NotificationGroup::ByRealm),
+                        {crate::i18n::tr("notifications.view.realm")}
+                    }
+                    button {
+                        class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
+                        onclick: move |_| group_by.set(NotificationGroup::ByType),
+                        {crate::i18n::tr("notifications.view.type")}
                     }
                 }
-                div { class: "toolbar-row",
-                    div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
-                        button {
-                            class: if group_by() == NotificationGroup::All { "segment active" } else { "segment" },
-                            onclick: move |_| group_by.set(NotificationGroup::All),
-                            {crate::i18n::tr("notifications.group.all")}
-                        }
-                        button {
-                            class: if group_by() == NotificationGroup::ByRealm { "segment active" } else { "segment" },
-                            onclick: move |_| group_by.set(NotificationGroup::ByRealm),
-                            {crate::i18n::tr("notifications.group.realm")}
-                        }
-                        button {
-                            class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
-                            onclick: move |_| group_by.set(NotificationGroup::ByType),
-                            {crate::i18n::tr("notifications.group.type")}
-                        }
-                        button {
-                            class: if group_by() == NotificationGroup::ByTime { "segment active" } else { "segment" },
-                            onclick: move |_| group_by.set(NotificationGroup::ByTime),
-                            {crate::i18n::tr("notifications.group.time")}
-                        }
+                div { class: "icon-actions",
+                    button {
+                        class: "btn icon sm ghost",
+                        "data-testid": "mark-all-read-button",
+                        title: crate::i18n::tr("notifications.tooltip.mark_all_read"),
+                        "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
+                        onclick: {
+                            let base_url = base_url.clone();
+                            let account_did = account_did.clone();
+                            let device_id = device_id.clone();
+                            move |_| {
+                                mark_all_notifications_read(
+                                    base_url.clone(),
+                                    token(),
+                                    account_did.clone(),
+                                    device_id.clone(),
+                                    state_store,
+                                    notifications,
+                                    status_msg,
+                                );
+                            }
+                        },
+                        UiIcon { name: "check" }
                     }
-                    div { class: "icon-actions",
-                        button {
-                            class: "btn icon sm ghost",
-                            "data-testid": "mark-all-read-button",
-                            title: crate::i18n::tr("notifications.tooltip.mark_all_read"),
-                            "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
-                            onclick: {
-                                let base_url = base_url.clone();
-                                let account_did = account_did.clone();
-                                let device_id = device_id.clone();
-                                move |_| {
-                                    mark_all_notifications_read(
-                                        base_url.clone(),
-                                        token(),
-                                        account_did.clone(),
-                                        device_id.clone(),
-                                        state_store,
-                                        notifications,
-                                        status_msg,
-                                        server_unread,
-                                    );
-                                }
-                            },
-                            UiIcon { name: "check" }
-                        }
-                        button {
-                            class: "btn icon sm ghost",
-                            "data-testid": "toggle-archived",
-                            title: if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
-                            "aria-label": if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
-                            onclick: move |_| show_archived.set(!show_archived()),
-                            UiIcon { name: "archive" }
-                        }
+                    button {
+                        class: "btn icon sm ghost",
+                        "data-testid": "toggle-archived",
+                        title: if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
+                        "aria-label": if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
+                        onclick: move |_| show_archived.set(!show_archived()),
+                        UiIcon { name: "archive" }
                     }
-                    div { class: "icon-actions",
                     button {
                         class: "btn icon sm ghost",
                         "data-testid": "refresh-notifications",
@@ -238,17 +198,20 @@ pub fn NotificationsPanel(
                                     state_store,
                                     notifications,
                                     status_msg,
-                                    refresh_completed,
-                                    server_unread,
                                 );
                             }
                         },
                         UiIcon { name: "refresh" }
                     }
-                    }
                 }
-                if !status_text.is_empty() {
-                    div { class: "muted", "data-testid": "notifications-status", "{status_text}" }
+            }
+            if !status_text.is_empty() {
+                div {
+                    class: "muted notifications-status",
+                    "data-testid": "notifications-status",
+                    role: "status",
+                    "aria-live": "polite",
+                    "{status_text}"
                 }
             }
 
@@ -381,7 +344,6 @@ pub fn NotificationsPanel(
                                                 state_store,
                                                 notifications,
                                                 status_msg,
-                                                server_unread,
                                                 notification_id.clone(),
                                                 action_to_run,
                                             );
@@ -397,16 +359,9 @@ pub fn NotificationsPanel(
                 }
             }
 
-            if total_notifications == 0 {
+            if total_notifications > 0 && visible_notifications.is_empty() {
                 EmptyState {
-                    title: crate::i18n::tr("notifications.title"),
-                    kind: EmptyStateKind::Empty,
-                    message: Some(crate::i18n::tr("notifications.empty_body")),
-                    test_id: Some("notifications-empty".to_owned()),
-                }
-            } else if visible_notifications.is_empty() {
-                EmptyState {
-                    title: crate::i18n::tr("notifications.title"),
+                    title: crate::i18n::tr("notifications.feed_title"),
                     kind: EmptyStateKind::Filtered,
                     message: Some(crate::i18n::tr("notifications.filtered_body")),
                     test_id: Some("notifications-muted-empty".to_owned()),
@@ -437,25 +392,6 @@ pub fn NotificationsPanel(
                     }
                 }
             }
-
-            div { class: "event", "data-testid": "notifications-settings-hint",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("notifications.settings_card")} }
-                    span { {crate::i18n::tr("notifications.settings_card_hint")} }
-                }
-                div { class: "muted",
-                    {crate::i18n::tr("notifications.settings_card_body")}
-                }
-                div { class: "actions",
-                    Link {
-                        class: "secondary",
-                        to: Route::SettingsSection { section: "notifications".to_owned() },
-                        onclick: move |_| if let Some(handler) = on_navigate.as_ref() { handler.call(()); },
-                        UiIcon { name: "settings" }
-                        {crate::i18n::tr("notifications.settings_card_open")}
-                    }
-                }
-            }
         }
     }
 }
@@ -466,8 +402,6 @@ fn refresh_notifications(
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
-    mut refresh_completed: Signal<bool>,
-    mut server_unread: Signal<usize>,
 ) {
     spawn(async move {
         match with_authed_api(&base_url, access_token, |api| async move {
@@ -495,9 +429,6 @@ fn refresh_notifications(
                     invite_notifications,
                     &joined_realms,
                 );
-                let unread_count =
-                    notification_unread_count(Some(&response.notifications), &raw_notifications);
-                server_unread.set(unread_count);
                 let hydrated = {
                     let mut store = state_store.write();
                     store.save_notification_projection(raw_notifications.clone());
@@ -510,11 +441,9 @@ fn refresh_notifications(
                     )
                 };
                 notifications.set(hydrated);
-                refresh_completed.set(true);
                 status_msg.set(String::new());
             }
             Err(err) => {
-                refresh_completed.set(false);
                 status_msg.set(format!("Notification refresh: {}", err.display()));
             }
         }
@@ -529,7 +458,6 @@ fn mark_all_notifications_read(
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
-    mut server_unread: Signal<usize>,
 ) {
     let snapshot = notifications();
     let ids = snapshot
@@ -566,7 +494,6 @@ fn mark_all_notifications_read(
                 .collect::<Vec<_>>()
         }
     };
-    server_unread.set(0);
     if markers.is_empty() {
         status_msg.set("All loaded notifications marked read locally.".to_owned());
         return;
@@ -636,7 +563,6 @@ fn run_notification_action(
     state_store: Signal<LocalStateStore>,
     notifications: Signal<Vec<Notification>>,
     status_msg: Signal<String>,
-    server_unread: Signal<usize>,
     notification_id: String,
     action: NotificationAction,
 ) {
@@ -650,7 +576,6 @@ fn run_notification_action(
             state_store,
             notifications,
             status_msg,
-            server_unread,
             notification_id,
             realm_id,
             invite_id,
@@ -665,7 +590,6 @@ fn accept_invite_notification(
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
     mut status_msg: Signal<String>,
-    mut server_unread: Signal<usize>,
     notification_id: String,
     realm_id: String,
     invite_id: String,
@@ -719,10 +643,6 @@ fn accept_invite_notification(
                         .write()
                         .set_notification_archived(notification_id.clone(), true);
                 }
-                let unread_count =
-                    notification_unread_count(Some(&sync.notifications), &raw_notifications);
-                server_unread.set(unread_count);
-
                 let hydrated = {
                     let mut store = state_store.write();
                     apply_sync_projection_to_store(&mut store, &sync);
@@ -787,22 +707,6 @@ pub(crate) fn notification_items_from_value(value: &Value) -> Option<Vec<Value>>
         return Some(events.clone());
     }
     value.as_array().cloned()
-}
-
-fn notification_unread_count(
-    notification_response: Option<&Value>,
-    raw_notifications: &[Value],
-) -> usize {
-    notification_response
-        .and_then(|response| response.get("unread_count"))
-        .and_then(Value::as_u64)
-        .and_then(|count| usize::try_from(count).ok())
-        .unwrap_or_else(|| {
-            raw_notifications
-                .iter()
-                .filter(|value| !value.get("read").and_then(Value::as_bool).unwrap_or(false))
-                .count()
-        })
 }
 
 fn append_invite_notifications(
@@ -1199,21 +1103,6 @@ fn notification_overrides_realm_mute(notification: &Notification) -> bool {
     )
 }
 
-fn notification_refresh_status(loaded_count: usize, visible_count: usize) -> String {
-    if loaded_count == 0 || visible_count >= loaded_count {
-        format!("Loaded {loaded_count} notification(s).")
-    } else if visible_count == 0 {
-        format!(
-            "Loaded {loaded_count} notification(s); 0 visible after archive/type/realm filters."
-        )
-    } else {
-        let hidden_count = loaded_count - visible_count;
-        format!(
-            "Loaded {loaded_count} notification(s); {visible_count} visible after filters, {hidden_count} hidden."
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1328,22 +1217,6 @@ mod tests {
     }
 
     #[test]
-    fn notification_refresh_status_reports_filtered_notifications() {
-        assert_eq!(
-            notification_refresh_status(1, 0),
-            "Loaded 1 notification(s); 0 visible after archive/type/realm filters."
-        );
-        assert_eq!(
-            notification_refresh_status(3, 1),
-            "Loaded 3 notification(s); 1 visible after filters, 2 hidden."
-        );
-        assert_eq!(
-            notification_refresh_status(2, 2),
-            "Loaded 2 notification(s)."
-        );
-    }
-
-    #[test]
     fn read_cursor_targets_pick_latest_event_per_realm() {
         let realm_a = "ck:realm:01904100-0000-7000-8000-000000000002";
         let flow_a = "ck:flow:01904100-0000-7000-8000-000000000003";
@@ -1420,11 +1293,9 @@ mod tests {
 
         let fallback = raw_notifications_from_sources(None, &account_data);
         assert_eq!(fallback.len(), 1);
-        assert_eq!(notification_unread_count(None, &fallback), 1);
 
         let server_empty = json!({ "items": [], "unread_count": 0 });
         assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
-        assert_eq!(notification_unread_count(Some(&server_empty), &fallback), 0);
 
         let subscribe_delta = json!({
             "events": [{
@@ -1437,9 +1308,5 @@ mod tests {
         let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
         assert_eq!(from_subscribe.len(), 1);
         assert_eq!(from_subscribe[0]["notification_id"].as_str(), Some("n2"));
-        assert_eq!(
-            notification_unread_count(Some(&subscribe_delta), &from_subscribe),
-            1
-        );
     }
 }

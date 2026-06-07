@@ -2268,7 +2268,7 @@
 
 .notifications-drawer-layer {
   position: fixed;
-  inset: 0;
+  inset: var(--topbar-h) 0 0 0;
   z-index: var(--layer-modal);
   display: grid;
   justify-items: end;
@@ -2288,19 +2288,20 @@
 .notifications-drawer-panel {
   position: relative;
   z-index: calc(var(--layer-modal) + 1);
-  width: min(480px, calc(100vw - 24px));
-  height: calc(100dvh - 20px);
-  max-height: calc(100vh - 20px);
-  margin: 10px 10px 10px 0;
+  width: min(480px, 100vw);
+  height: 100%;
+  max-height: none;
+  margin: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
   background: var(--surface-solid, var(--surface));
   color: var(--text);
-  box-shadow: var(--shadow-lg);
+  box-shadow: -24px 0 56px rgba(4, 8, 14, 0.30);
   pointer-events: auto;
 }
 
@@ -2309,7 +2310,10 @@
 }
 
 .shell.rtl .notifications-drawer-panel {
-  margin: 10px 0 10px 10px;
+  margin: 0;
+  border-right: 1px solid var(--border);
+  border-left: 0;
+  box-shadow: 24px 0 56px rgba(4, 8, 14, 0.30);
 }
 
 .notifications-drawer-header {
@@ -2340,6 +2344,13 @@
   color: var(--accent);
 }
 
+.notifications-drawer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .notifications-drawer-panel > .timeline {
   flex: 1 1 auto;
   min-height: 0;
@@ -2347,15 +2358,13 @@
   padding: 12px;
 }
 
-.notifications-drawer-panel .notification-toolbar .event-head,
 .notifications-drawer-panel .toolbar-row,
 .notifications-drawer-panel .section-tools {
-  align-items: flex-start;
+  align-items: center;
 }
 
-.notifications-drawer-panel .notification-toolbar .event-head,
 .notifications-drawer-panel .toolbar-row {
-  gap: 10px;
+  gap: 8px;
 }
 
 .notifications-drawer-panel .toolbar-row,
@@ -2365,7 +2374,8 @@
 }
 
 .notifications-drawer-panel .segmented-control {
-  width: 100%;
+  flex: 1 1 220px;
+  width: auto;
 }
 
 .notifications-drawer-panel .segmented-control .segment {
@@ -2803,10 +2813,6 @@
   width: 32px;
   height: 32px;
   padding: 0;
-}
-
-.notification-toolbar .event-head {
-  align-items: center;
 }
 
 .account-menu-wrap {
@@ -3464,7 +3470,7 @@
   .notifications-drawer-panel,
   .shell.rtl .notifications-drawer-panel {
     width: 100vw;
-    height: 100dvh;
+    height: 100%;
     max-height: none;
     margin: 0;
     border: 0;

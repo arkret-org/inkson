@@ -634,6 +634,31 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/self/account/subscribe") {
       const demoTimelineEvents = timelineEvents.filter((event) => eventRealmId(event) === DEMO_REALM);
+      const notificationEvents = [
+        {
+          kind: "ck.notification",
+          notification_id: "notif-msg-1",
+          title: "New message",
+          body: "Alice sent a message in Demo Realm",
+          realm_id: DEMO_REALM,
+          notification_kind: "message",
+          type: "message",
+          timestamp: "2026-04-28T12:01:00Z",
+          read: false,
+        },
+        {
+          kind: "ck.notification",
+          notification_id: "notif-invite-1",
+          invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
+          title: "New invite",
+          body: "You were invited to review Demo Realm",
+          realm_id: DEMO_REALM,
+          notification_kind: "invite",
+          type: "invite",
+          timestamp: "2026-04-28T12:02:00Z",
+          read: false,
+        },
+      ];
       const frame = {
         kind: "delta",
         cursor: "ck:cursor:e2e-2",
@@ -695,34 +720,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           leave: {},
         },
         to_device: { messages: [{ type: "ck.mls.welcome", content: { ciphertext: "opaque" } }] },
-        account_data: { events: [
-          {
-            kind: "ck.notification",
-            notification_id: "notif-msg-1",
-            title: "New message",
-            body: "Alice sent a message in Demo Realm",
-            realm_id: DEMO_REALM,
-            notification_kind: "message",
-            type: "message",
-            timestamp: "2026-04-28T12:01:00Z",
-            read: false,
-          },
-          {
-            kind: "ck.notification",
-            notification_id: "notif-invite-1",
-            invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
-            title: "New invite",
-            body: "You were invited to review Demo Realm",
-            realm_id: DEMO_REALM,
-            notification_kind: "invite",
-            type: "invite",
-            timestamp: "2026-04-28T12:02:00Z",
-            read: false,
-          },
-        ] },
+        account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
         presence: { events: [] },
-        notifications: { events: [] },
+        notifications: { events: notificationEvents, unread_count: 2 },
       };
       return route.fulfill({
         status: 200,
