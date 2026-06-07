@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::sync::{LazyLock, Mutex};
+
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
@@ -5,6 +8,23 @@ use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input
 use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
+static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+fn mls_backup_after_write_probe_key(base_url: &str, actor_did: &str) -> String {
+    format!(
+        "{}|{}",
+        base_url.trim().trim_end_matches('/'),
+        actor_did.trim()
+    )
+}
+
+fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
+    match MLS_BACKUP_AFTER_WRITE_PROBES.lock() {
+        Ok(mut probes) => probes.insert(key),
+        Err(_) => true,
+    }
+}
 
 pub(crate) fn mls_recovery_backup_configured(
     state_store: &LocalStateStore,
@@ -70,9 +90,9 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
 /// the caller spawns this: if the server holds NO `mls_account_secret`
 /// backup yet AND a local account secret exists, flip `needs_mls_backup` on
 /// so [`MlsBackupPrompt`] surfaces promptly. Best-effort and self-contained:
-/// swallows every error and never blocks the write path. Reliable because it
-/// re-evaluates server+local state on each encrypted write rather than
-/// depending on the boot detection effect's `detection_key`.
+/// swallows every error and never blocks the write path. The server probe is
+/// intentionally session-deduped per `(base_url, actor_did)`: the prompt only
+/// needs a first-write kick, not a backup-list request after every message.
 pub async fn maybe_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
@@ -80,6 +100,9 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     mut needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_did.trim().is_empty() {
+        return;
+    }
+    if needs_mls_backup() {
         return;
     }
     // Local account secret must exist (encryption has been used) — otherwise
@@ -91,6 +114,10 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
             .unwrap_or(false)
     };
     if !has_local_secret {
+        return;
+    }
+    let probe_key = mls_backup_after_write_probe_key(&base_url, &actor_did);
+    if !mark_mls_backup_after_write_probe_started(probe_key) {
         return;
     }
     // Surface the prompt as soon as the local account secret exists. The

@@ -183,8 +183,8 @@ pub(super) struct SpaceParticipant {
 /// Encrypt a discussion message under the Realm MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. The caller
 /// wraps these into a spec-conforming `ck.schema.encrypted_envelope.v1` via
-/// [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it has the
-/// `ck.mls.commit` event id for `key_ref.group_state_ref`.
+/// [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it has the current
+/// MLS group-state reference for `key_ref.group_state_ref`.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban flow-content encryption.
@@ -234,8 +234,8 @@ pub(super) fn run_local_mls_encrypt(
         Some(schedule_hash),
         member_dids,
         Some((payload, aad)),
-        Some(commit_envelope),
-        Some(new_snapshot),
+        commit_envelope,
+        new_snapshot,
     )
 }
 
@@ -704,6 +704,21 @@ pub(super) fn is_local_handle_label(label: &str, base_url: &str) -> bool {
         || handle_domain.ends_with(&format!(".{server_domain}"))
 }
 
+pub(super) fn account_handle_display_from_server(
+    account_handle: &str,
+    server_url: &str,
+) -> Option<String> {
+    let trimmed = account_handle.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(handle) = mention_handle_label_from_value(trimmed) {
+        return Some(handle);
+    }
+    let server_domain = local_server_domain(server_url)?;
+    mention_handle_label_from_value(&format!("{trimmed}:{server_domain}"))
+}
+
 pub(super) fn is_leading_mention_punct(ch: char) -> bool {
     matches!(ch, '(' | '[' | '{' | '"' | '\'')
 }
@@ -1129,13 +1144,7 @@ pub(super) fn display_label_for_actor(
     participants
         .iter()
         .find(|participant| participant.did == did)
-        .and_then(|participant| {
-            participant
-                .handle_label
-                .clone()
-                .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
-                .or_else(|| participant.display_name.clone())
-        })
+        .and_then(participant_sender_label)
         .unwrap_or_else(|| crate::views::helpers::display_name_for_did(state_store, did))
 }
 
@@ -1158,6 +1167,17 @@ pub(super) fn short_principal_label(value: &str) -> String {
     }
 }
 
+pub(super) fn participant_sender_label(participant: &SpaceParticipant) -> Option<String> {
+    participant_handle_label(participant).or_else(|| participant.display_name.clone())
+}
+
+pub(super) fn participant_handle_label(participant: &SpaceParticipant) -> Option<String> {
+    participant
+        .handle_label
+        .clone()
+        .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
+}
+
 pub(super) fn sender_display_label(
     sender: &str,
     account_did: &str,
@@ -1165,13 +1185,21 @@ pub(super) fn sender_display_label(
     participants: &[SpaceParticipant],
 ) -> String {
     if is_own_message_sender(sender, account_did) {
-        return clean_participant_display_name(account_display_name, Some(account_did))
+        let own_participant = participants
+            .iter()
+            .find(|participant| participant.did == account_did.trim());
+        return own_participant
+            .and_then(participant_handle_label)
+            .or_else(|| clean_participant_display_name(account_display_name, Some(account_did)))
+            .or_else(|| own_participant.and_then(|participant| participant.display_name.clone()))
+            .or_else(|| crate::views::helpers::handle_display_from_did(account_did))
             .unwrap_or_else(|| "yougen".to_owned());
     }
     participants
         .iter()
         .find(|participant| participant.did == sender.trim())
-        .and_then(|participant| participant.display_name.clone())
+        .and_then(participant_sender_label)
+        .or_else(|| crate::views::helpers::handle_display_from_did(sender))
         .unwrap_or_else(|| short_principal_label(sender))
 }
 

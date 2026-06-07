@@ -568,12 +568,17 @@ pub fn ChatPanel(
             let mut loaded_poll_cards = Vec::new();
             if let Ok(account) = api.account_me().await
                 && account.did == account_did_for_load
-                && let Some(display_name) = clean_participant_display_name(
-                    account.display_name.as_deref().unwrap_or(""),
-                    Some(&account_did_for_load),
-                )
             {
-                account_display_name_for_load.set(display_name);
+                if let Some(display_name) =
+                    account_handle_display_from_server(&account.handle, &base).or_else(|| {
+                        clean_participant_display_name(
+                            account.display_name.as_deref().unwrap_or(""),
+                            Some(&account_did_for_load),
+                        )
+                    })
+                {
+                    account_display_name_for_load.set(display_name);
+                }
             }
             if let Ok(sync) = api.account_subscribe_snapshot(None).await {
                 {
@@ -1126,7 +1131,7 @@ pub fn ChatPanel(
 
                 // A6.3 pinned bar (above the chat feed). Lists every
                 // pinned message id with a short body preview. Clicking
-                // a pill scrolls (well, focuses) the corresponding
+                // an item scrolls (well, focuses) the corresponding
                 // message via its `data-testid` anchor.
                 //
                 // Local-only scaffolding — see TODO at `pinned_messages`
@@ -1155,36 +1160,46 @@ pub fn ChatPanel(
                                         {crate::i18n::tr("pinned_bar.empty")}
                                     }
                                 } else {
-                                    for (id, body) in pinned_view {
-                                        {
-                                            let id_for_click = id.clone();
-                                            let preview = if body.len() > 40 {
-                                                format!("{}…", &body[..40])
-                                            } else {
-                                                body
-                                            };
-                                            rsx! {
-                                                button {
-                                                    r#type: "button",
-                                                    class: "pinned-bar-item",
-                                                    "data-testid": "pinned-bar-item",
-                                                    title: crate::i18n::tr("pinned_bar.scroll_to"),
-                                                    onclick: move |_| {
-                                                        // Best-effort scroll: emit
-                                                        // a console hint via
-                                                        // status_msg so QA can see
-                                                        // the click registered.
-                                                        // Real scroll-into-view
-                                                        // wires into Dioxus's
-                                                        // mounted ref API; deferred
-                                                        // until A6.3 lands the
-                                                        // soland projection.
-                                                        status_msg.set(format!(
-                                                            "jump to pinned message {}",
-                                                            id_for_click
-                                                        ));
-                                                    },
-                                                    "{preview}"
+                                    div { class: "pinned-bar-head",
+                                        UiIcon { name: "pin" }
+                                        span { {crate::i18n::tr("pinned_bar.title")} }
+                                    }
+                                    div { class: "pinned-bar-list",
+                                        for (id, body) in pinned_view {
+                                            {
+                                                let id_for_click = id.clone();
+                                                let preview = if body.chars().count() > 40 {
+                                                    format!(
+                                                        "{}...",
+                                                        body.chars().take(40).collect::<String>()
+                                                    )
+                                                } else {
+                                                    body
+                                                };
+                                                rsx! {
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "pinned-bar-item",
+                                                        "data-testid": "pinned-bar-item",
+                                                        title: crate::i18n::tr("pinned_bar.scroll_to"),
+                                                        onclick: move |_| {
+                                                            // Best-effort scroll: emit
+                                                            // a console hint via
+                                                            // status_msg so QA can see
+                                                            // the click registered.
+                                                            // Real scroll-into-view
+                                                            // wires into Dioxus's
+                                                            // mounted ref API; deferred
+                                                            // until A6.3 lands the
+                                                            // soland projection.
+                                                            status_msg.set(format!(
+                                                                "jump to pinned message {}",
+                                                                id_for_click
+                                                            ));
+                                                        },
+                                                        UiIcon { name: "pin" }
+                                                        span { class: "pinned-bar-preview", "{preview}" }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1248,6 +1263,9 @@ pub fn ChatPanel(
                                 .as_ref()
                                 .map(|c| c.circle_id.clone())
                                 .unwrap_or_default();
+                            let message_is_pinned = pinned_messages()
+                                .iter()
+                                .any(|id| id == &msg.id);
                             rsx! {
                         div {
                             key: "{msg.id}",
@@ -1263,6 +1281,9 @@ pub fn ChatPanel(
                                 // that are still waiting on key material.
                                 if msg.crypto_state.is_pending() {
                                     base.push_str(" is-crypto-pending");
+                                }
+                                if message_is_pinned {
+                                    base.push_str(" is-pinned");
                                 }
                                 base.push_str(scope_class);
                                 base
@@ -1366,6 +1387,24 @@ pub fn ChatPanel(
                                 }
                             }
                             div { class: "msg-body",
+                                if message_is_pinned {
+                                    button {
+                                        r#type: "button",
+                                        class: "message-pin-indicator",
+                                        "data-testid": "message-pinned-button",
+                                        "aria-label": crate::i18n::tr("message.unpin"),
+                                        title: crate::i18n::tr("message.unpin"),
+                                        onclick: {
+                                            let msg_id = msg.id.clone();
+                                            move |_| {
+                                                let mut current = pinned_messages();
+                                                current.retain(|id| id != &msg_id);
+                                                pinned_messages.set(current);
+                                            }
+                                        },
+                                        UiIcon { name: "pin" }
+                                    }
+                                }
                                 div { class: "msg-head",
                                     span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
                                     {
@@ -3590,17 +3629,6 @@ pub fn ChatPanel(
                                     &secure_content_bytes,
                                 );
 
-                                let Some(real_commit_envelope) = real_commit_envelope.as_ref() else {
-                                    fail_optimistic_chat_send(
-                                        messages,
-                                        chat_draft,
-                                        status_msg,
-                                        &message_id,
-                                        &body,
-                                        "Send Secure requires MLS state ready on this device; wait for Welcome or restore MLS history".to_owned(),
-                                    );
-                                    return;
-                                };
                                 let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
                                     fail_optimistic_chat_send(
                                         messages,
@@ -3634,41 +3662,164 @@ pub fn ChatPanel(
                                     );
                                     return;
                                 }
-                                let mls_commit_epoch = real_commit_envelope.epoch;
-                                // base_epoch MUST be the SDK group's PRE-commit
-                                // epoch so next_epoch == base_epoch + 1 holds by
-                                // construction. `real_commit_envelope.epoch` is the
-                                // POST-commit epoch (self_update_commit merges the
-                                // pending commit); the anchor view only refreshes on
-                                // /sync and drifts behind the local snapshot, which
-                                // tripped the next_epoch == base_epoch + 1 violation.
-                                let prev_epoch = mls_commit_epoch.saturating_sub(1);
-                                let commit_event_id = format!("ck:event:{}", uuid_v7());
-                                let commit_event_id_typed =
-                                    match cokret_sdk::EventId::new(commit_event_id.clone()) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("MLS commit event id invalid: {err:?}"),
-                                            );
-                                            return;
-                                        }
+                                let base_group_state_ref =
+                                    chat_mls_base_epoch_ref(&anchor_view, &realm);
+                                let (group_state_ref, commit_envelope) =
+                                    if let Some(real_commit_envelope) =
+                                        real_commit_envelope.as_ref()
+                                    {
+                                        let mls_commit_epoch = real_commit_envelope.epoch;
+                                        // base_epoch MUST be the SDK group's PRE-commit
+                                        // epoch so next_epoch == base_epoch + 1 holds by
+                                        // construction. `real_commit_envelope.epoch` is the
+                                        // POST-commit epoch (self_update_commit merges the
+                                        // pending commit).
+                                        let prev_epoch = mls_commit_epoch.saturating_sub(1);
+                                        let commit_event_id =
+                                            format!("ck:event:{}", uuid_v7());
+                                        let commit_event_id_typed =
+                                            match cokret_sdk::EventId::new(
+                                                commit_event_id.clone(),
+                                            ) {
+                                                Ok(value) => value,
+                                                Err(err) => {
+                                                    fail_optimistic_chat_send(
+                                                        messages,
+                                                        chat_draft,
+                                                        status_msg,
+                                                        &message_id,
+                                                        &body,
+                                                        format!(
+                                                            "MLS commit event id invalid: {err:?}"
+                                                        ),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                        let realm_id =
+                                            match cokret_sdk::RealmId::new(trim_realm_id(&realm)) {
+                                                Ok(value) => value,
+                                                Err(err) => {
+                                                    fail_optimistic_chat_send(
+                                                        messages,
+                                                        chat_draft,
+                                                        status_msg,
+                                                        &message_id,
+                                                        &body,
+                                                        format!(
+                                                            "MLS commit Realm id invalid: {err:?}"
+                                                        ),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                        let policy_root = match chat_mls_policy_root(
+                                            &anchor_view,
+                                            &realm,
+                                            &local_schedule_hash,
+                                        ) {
+                                            Ok(value) => value,
+                                            Err(err) => {
+                                                fail_optimistic_chat_send(
+                                                    messages,
+                                                    chat_draft,
+                                                    status_msg,
+                                                    &message_id,
+                                                    &body,
+                                                    err,
+                                                );
+                                                return;
+                                            }
+                                        };
+                                        let governance_binding =
+                                            match cokret_sdk::MlsGovernanceBindingPayload::realm(
+                                                realm_id,
+                                                real_commit_envelope.group_id.clone(),
+                                                prev_epoch,
+                                                mls_commit_epoch,
+                                                chat_mls_membership_frontier(
+                                                    &anchor_view,
+                                                    &commit_event_id_typed,
+                                                ),
+                                                policy_root,
+                                            ) {
+                                                Ok(value) => value,
+                                                Err(err) => {
+                                                    fail_optimistic_chat_send(
+                                                        messages,
+                                                        chat_draft,
+                                                        status_msg,
+                                                        &message_id,
+                                                        &body,
+                                                        format!(
+                                                            "MLS governance binding failed: {err}"
+                                                        ),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                        let mls_commit_payload =
+                                            match cokret_sdk::MlsCommitPayload::new(
+                                                real_commit_envelope.group_id.clone(),
+                                                prev_epoch,
+                                                base_group_state_ref.clone(),
+                                                Vec::new(),
+                                                mls_commit_epoch,
+                                                real_commit_envelope.commit_digest.clone(),
+                                                governance_binding,
+                                            ) {
+                                                Ok(value) => value,
+                                                Err(err) => {
+                                                    fail_optimistic_chat_send(
+                                                        messages,
+                                                        chat_draft,
+                                                        status_msg,
+                                                        &message_id,
+                                                        &body,
+                                                        format!("MLS commit payload failed: {err}"),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                        // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
+                                        let commit_builder =
+                                            match crate::operation::cx_ops::mls_commit_with_governance(
+                                                &realm,
+                                                &actor,
+                                                &mls_commit_payload,
+                                            ) {
+                                                Ok(builder) => builder,
+                                                Err(err) => {
+                                                    fail_optimistic_chat_send(
+                                                        messages,
+                                                        chat_draft,
+                                                        status_msg,
+                                                        &message_id,
+                                                        &body,
+                                                        format!("MLS commit payload failed: {err}"),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                        let mut commit_envelope =
+                                            commit_builder.build("yougen");
+                                        commit_envelope.event_id = commit_event_id.clone();
+                                        (commit_event_id, Some(commit_envelope))
+                                    } else {
+                                        (base_group_state_ref, None)
                                     };
                                 // Wrap the MLS payload in the spec-canonical
                                 // `ck.schema.encrypted_envelope.v1` wire shape,
-                                // binding key_ref.group_state_ref to the
-                                // ck.mls.commit event that carries this epoch.
+                                // binding key_ref.group_state_ref to the current
+                                // MLS group state. Ordinary application messages
+                                // ride the current epoch; only forced epoch
+                                // advances produce a fresh ck.mls.commit event.
                                 let encrypted_envelope =
                                     match cokret_sdk::EncryptedEnvelopeV1::from_payload(
                                         &encrypted_payload,
                                         envelope_aad,
                                         cokret_sdk::AadVisibility::Hidden,
-                                        &commit_event_id,
+                                        &group_state_ref,
                                     ) {
                                         Ok(value) => value,
                                         Err(err) => {
@@ -3702,110 +3853,6 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                let realm_id = match cokret_sdk::RealmId::new(trim_realm_id(&realm)) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!("MLS commit Realm id invalid: {err:?}"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let policy_root = match chat_mls_policy_root(
-                                    &anchor_view,
-                                    &realm,
-                                    &local_schedule_hash,
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            err,
-                                        );
-                                        return;
-                                    }
-                                };
-                                let governance_binding =
-                                    match cokret_sdk::MlsGovernanceBindingPayload::realm(
-                                        realm_id,
-                                        real_commit_envelope.group_id.clone(),
-                                        prev_epoch,
-                                        mls_commit_epoch,
-                                        chat_mls_membership_frontier(
-                                            &anchor_view,
-                                            &commit_event_id_typed,
-                                        ),
-                                        policy_root,
-                                    ) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!(
-                                                    "MLS governance binding failed: {err}"
-                                                ),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                let mls_commit_payload =
-                                    match cokret_sdk::MlsCommitPayload::new(
-                                        real_commit_envelope.group_id.clone(),
-                                        prev_epoch,
-                                        chat_mls_base_epoch_ref(&anchor_view, &realm),
-                                        Vec::new(),
-                                        mls_commit_epoch,
-                                        real_commit_envelope.commit_digest.clone(),
-                                        governance_binding,
-                                    ) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("MLS commit payload failed: {err}"),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
-                                let commit_builder =
-                                    match crate::operation::cx_ops::mls_commit_with_governance(
-                                        &realm,
-                                        &actor,
-                                        &mls_commit_payload,
-                                    ) {
-                                        Ok(builder) => builder,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("MLS commit payload failed: {err}"),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                let mut commit_envelope = commit_builder.build("yougen");
-                                commit_envelope.event_id = commit_event_id;
                                 let mut message_payload =
                                     cokret_sdk::MessageCreatePayload::with_encrypted_content(
                                         flow_id_value(&flow_id),
@@ -3838,9 +3885,9 @@ pub fn ChatPanel(
                                     .iter()
                                     .map(|did| did.as_str().to_owned())
                                     .collect();
-                                let actor_for_backup = actor.clone();
-                                let device_for_backup = did.clone();
-                                let commit_op_id = commit_envelope.local_operation_id().to_owned();
+                                let commit_op_id = commit_envelope
+                                    .as_ref()
+                                    .map(|commit| commit.local_operation_id().to_owned());
                                 // X9: capture identifiers needed by the
                                 // encrypted Ok(resp) arm to (A) clear the
                                 // optimistic bubble's `pending` flag and (B)
@@ -3870,63 +3917,67 @@ pub fn ChatPanel(
                                 let message_id_for_failure = message_id.clone();
                                 spawn(async move {
                                     if let Ok(api) = authed_api_with_sync(&base, api_token, wait_for) {
-                                        // Submit MLS commit event first; if it fails,
-                                        // abort message send (covered_frontier won't bind).
-                                        match api.submit_event_envelope(&commit_envelope).await {
-                                            Ok(resp) => {
-                                                // X14 — persist-on-accept: the
-                                                // server accepted the commit, so
-                                                // NOW advance the local snapshot
-                                                // to the post-commit epoch. On a
-                                                // commit reject we skip this and
-                                                // the snapshot stays at the
-                                                // pre-commit epoch, so the next
-                                                // Send Secure retries at the
-                                                // correct `expected_prev_epoch`
-                                                // instead of skewing forever.
-                                                if let Some(snapshot) = new_mls_snapshot {
-                                                    state_store
-                                                        .write()
-                                                        .save_mls_snapshot(
+                                        if let Some(commit_envelope) = commit_envelope {
+                                            // Submit a forced MLS commit first; if it fails,
+                                            // abort message send (covered_frontier won't bind).
+                                            match api.submit_event_envelope(&commit_envelope).await {
+                                                Ok(resp) => {
+                                                    // X14 — persist-on-accept: the
+                                                    // server accepted the commit, so
+                                                    // NOW advance the local snapshot
+                                                    // to the post-commit epoch. On a
+                                                    // commit reject we skip this and
+                                                    // the snapshot stays at the
+                                                    // pre-commit epoch, so the next
+                                                    // Send Secure retries at the
+                                                    // correct `expected_prev_epoch`
+                                                    // instead of skewing forever.
+                                                    if let Some(snapshot) = new_mls_snapshot {
+                                                        state_store
+                                                            .write()
+                                                            .save_mls_snapshot(
+                                                                realm_for_record.clone(),
+                                                                snapshot,
+                                                            );
+                                                    }
+                                                    if let Some(commit_op_id) = commit_op_id {
+                                                        state_store.write().record_move_submission_with_event_id(
+                                                            commit_op_id,
+                                                            Some(resp.event_id.clone()),
                                                             realm_for_record.clone(),
-                                                            snapshot,
+                                                            "mls_commit".to_owned(),
+                                                            MoveSubmissionState::from_submit_state(
+                                                                "accepted", None,
+                                                            ),
+                                                            None,
+                                                            Some(anchor_for_record.clone()),
                                                         );
+                                                    }
                                                 }
-                                                state_store.write().record_move_submission_with_event_id(
-                                                    commit_op_id.clone(),
-                                                    Some(resp.event_id.clone()),
-                                                    realm_for_record.clone(),
-                                                    "mls_commit".to_owned(),
-                                                    MoveSubmissionState::from_submit_state(
-                                                        "accepted", None,
-                                                    ),
-                                                    None,
-                                                    Some(anchor_for_record.clone()),
-                                                );
-                                            }
-                                            Err(err) => {
-                                                let message = format!(
-                                                    "MLS commit event submit failed: {err}"
-                                                );
-                                                // P2: reconcile the optimistic
-                                                // bubble so it doesn't spin
-                                                // forever, and keep the draft.
-                                                if let Some(found) = messages
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| {
-                                                        candidate.id == message_id_for_failure
-                                                    })
-                                                {
-                                                    found.pending = false;
-                                                    found.failed = true;
-                                                    found.error = Some(message.clone());
+                                                Err(err) => {
+                                                    let message = format!(
+                                                        "MLS commit event submit failed: {err}"
+                                                    );
+                                                    // P2: reconcile the optimistic
+                                                    // bubble so it doesn't spin
+                                                    // forever, and keep the draft.
+                                                    if let Some(found) = messages
+                                                        .write()
+                                                        .iter_mut()
+                                                        .find(|candidate| {
+                                                            candidate.id == message_id_for_failure
+                                                        })
+                                                    {
+                                                        found.pending = false;
+                                                        found.failed = true;
+                                                        found.error = Some(message.clone());
+                                                    }
+                                                    if chat_draft().trim().is_empty() {
+                                                        chat_draft.set(body_for_restore.clone());
+                                                    }
+                                                    status_msg.set(message);
+                                                    return;
                                                 }
-                                                if chat_draft().trim().is_empty() {
-                                                    chat_draft.set(body_for_restore.clone());
-                                                }
-                                                status_msg.set(message);
-                                                return;
                                             }
                                         }
                                         match api.submit_event_envelope(&msg_op).await {
@@ -4012,29 +4063,7 @@ pub fn ChatPanel(
                                                 }
                                                 sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
-                                            status_msg.set("Encrypted message sent".to_owned());
-                                            let snapshot = state_store
-                                                .read()
-                                                .mls_snapshot_for(&realm_for_record);
-                                            if let Some(snapshot) = snapshot {
-                                                match crate::mls::runtime::upload_mls_snapshot_backup(
-                                                    &api,
-                                                    &snapshot,
-                                                    &actor_for_backup,
-                                                    &device_for_backup,
-                                                )
-                                                .await
-                                                {
-                                                    Ok(backup_id) => status_msg.set(format!(
-                                                        "Encrypted message sent; MLS history backup {} uploaded",
-                                                        short_protocol_id(&backup_id)
-                                                    )),
-                                                    Err(err) => status_msg.set(format!(
-                                                        "Encrypted message sent; MLS history backup failed: {}",
-                                                        err.user_message()
-                                                    )),
-                                                }
-                                            }
+                                                status_msg.set("Encrypted message sent".to_owned());
 
                                             // X11.2 — first-write trigger.
                                             // After this encrypted send landed,
@@ -4569,6 +4598,69 @@ mod tests {
                 &participants
             ),
             "carol.example"
+        );
+    }
+
+    #[test]
+    fn sender_display_label_prefers_full_handle_over_handle_localpart() {
+        let participants = vec![SpaceParticipant {
+            did: "did:web:local.host:users:alice".to_owned(),
+            display_name: Some("alice".to_owned()),
+            handle_label: None,
+            display_name_rank: 2,
+            role: SpaceParticipantRole::Member,
+            is_self: true,
+            is_agent: false,
+        }];
+
+        assert_eq!(
+            sender_display_label(
+                "did:web:local.host:users:alice",
+                "did:web:local.host:users:alice",
+                "alice",
+                &participants,
+            ),
+            "alice:local.host"
+        );
+    }
+
+    #[test]
+    fn sender_display_label_prefers_projection_handle_label() {
+        let participants = vec![SpaceParticipant {
+            did: "did:web:example.com:users:bob".to_owned(),
+            display_name: Some("bob".to_owned()),
+            handle_label: Some("bob:example.com".to_owned()),
+            display_name_rank: 2,
+            role: SpaceParticipantRole::Member,
+            is_self: false,
+            is_agent: false,
+        }];
+
+        assert_eq!(
+            sender_display_label(
+                "did:web:example.com:users:bob",
+                "did:web:local.host:users:alice",
+                "alice:local.host",
+                &participants,
+            ),
+            "bob:example.com"
+        );
+    }
+
+    #[test]
+    fn account_handle_display_from_server_expands_account_localpart() {
+        assert_eq!(
+            account_handle_display_from_server("alice", "https://local.host").as_deref(),
+            Some("alice:local.host")
+        );
+        assert_eq!(
+            account_handle_display_from_server("alice:example.com", "https://local.host")
+                .as_deref(),
+            Some("alice:example.com")
+        );
+        assert_eq!(
+            account_handle_display_from_server("  ", "https://local.host"),
+            None
         );
     }
 

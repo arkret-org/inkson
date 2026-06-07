@@ -834,6 +834,7 @@ pub fn english_translations() -> TranslationDict {
     // Message pinning (A6.3).
     dict.set("message.pin", "Pin");
     dict.set("message.unpin", "Unpin");
+    dict.set("pinned_bar.title", "Pinned messages");
     dict.set("pinned_bar.empty", "No pinned messages.");
     dict.set("pinned_bar.scroll_to", "Jump to message");
     // Actor-private Realm list pinning.
@@ -1819,6 +1820,7 @@ pub fn chinese_translations() -> TranslationDict {
     // 消息钉选 (A6.3)
     dict.set("message.pin", "钉选");
     dict.set("message.unpin", "取消钉选");
+    dict.set("pinned_bar.title", "钉选消息");
     dict.set("pinned_bar.empty", "暂无钉选消息。");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
     // Actor-private Realm list pinning.
