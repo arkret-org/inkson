@@ -1,5 +1,8 @@
 use super::*;
 
+const PRINCIPAL_LOCATOR_SCHEMA: &str = "ck.schema.principal_locator.v1";
+const INVITE_LOCATOR_RESOLVE_PATH: &str = "_cokret/open/invite-locators/resolve";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct InviteeResolution {
     pub did: String,
@@ -32,6 +35,150 @@ fn invitee_resolution(
         introduction_evidence,
         introduction_evidence_digest,
     })
+}
+
+fn string_field<'a>(value: &'a Value, field: &str) -> anyhow::Result<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|field_value| !field_value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invite target JSON must include non-empty `{field}`"))
+}
+
+fn validate_did_field(value: &str, field: &str) -> anyhow::Result<String> {
+    cokret_sdk::Did::new(value.to_owned()).map_err(|err| {
+        anyhow::anyhow!("invite target JSON field `{field}` is not a valid DID: {err}")
+    })?;
+    Ok(value.to_owned())
+}
+
+fn invitee_from_invite_address(address: Value) -> anyhow::Result<InviteeResolution> {
+    let subject_id = validate_did_field(string_field(&address, "subject_id")?, "subject_id")?;
+    let recipient_service_did = validate_did_field(
+        string_field(&address, "recipient_service_did")?,
+        "recipient_service_did",
+    )?;
+    invitee_resolution(
+        subject_id,
+        None,
+        &recipient_service_did,
+        json!({
+            "kind": "explicit_address",
+            "invite_address": address,
+        }),
+    )
+}
+
+fn invitee_from_principal_locator(locator: Value) -> anyhow::Result<InviteeResolution> {
+    let schema = string_field(&locator, "schema")?;
+    if schema != PRINCIPAL_LOCATOR_SCHEMA {
+        anyhow::bail!(
+            "principal locator schema must be `{PRINCIPAL_LOCATOR_SCHEMA}`, got `{schema}`"
+        );
+    }
+    let subject_id = validate_did_field(string_field(&locator, "subject_id")?, "subject_id")?;
+    let recipient_service_did = validate_did_field(
+        string_field(&locator, "recipient_service_did")?,
+        "recipient_service_did",
+    )?;
+    let service_type = locator
+        .get("service_type")
+        .and_then(Value::as_str)
+        .unwrap_or("principal_server");
+    if service_type != "principal_server" {
+        anyhow::bail!("principal locator service_type must be `principal_server`");
+    }
+    let proofs = locator
+        .get("proofs")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if proofs.is_empty() {
+        anyhow::bail!("principal locator must include at least one proof");
+    }
+    invitee_resolution(
+        subject_id,
+        None,
+        &recipient_service_did,
+        json!({
+            "kind": "locator_ref",
+            "principal_locator": locator,
+        }),
+    )
+}
+
+fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolution>> {
+    let value = match serde_json::from_str::<Value>(target) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if value.get("schema").and_then(Value::as_str) == Some(PRINCIPAL_LOCATOR_SCHEMA) {
+        return invitee_from_principal_locator(value).map(Some);
+    }
+    if value.get("subject_id").is_some() && value.get("recipient_service_did").is_some() {
+        return invitee_from_invite_address(value).map(Some);
+    }
+    anyhow::bail!("invite target JSON must be a principal locator or invite_address")
+}
+
+fn locator_url_token(url: &Url) -> anyhow::Result<String> {
+    if url
+        .query_pairs()
+        .any(|(key, _)| key == "token" || key == "locator_token")
+    {
+        anyhow::bail!("invite locator token must be carried in the URL fragment, not query");
+    }
+    let fragment = url
+        .fragment()
+        .map(str::trim)
+        .filter(|fragment| !fragment.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invite locator URL must include a #token fragment"))?;
+    url::form_urlencoded::parse(fragment.as_bytes())
+        .find(|(key, _)| key == "token" || key == "locator_token")
+        .map(|(_, value)| value.into_owned())
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("invite locator URL must include a non-empty #token fragment")
+        })
+}
+
+fn locator_url_origin(url: &Url) -> anyhow::Result<String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("invite locator URL must include a host"))?;
+    let mut origin = format!("{}://{host}", url.scheme());
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+    Ok(origin)
+}
+
+fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, String)>> {
+    let url = match Url::parse(target) {
+        Ok(url) => url,
+        Err(_) => return Ok(None),
+    };
+    if url.path() != "/_cokret/open/invite-locators/resolve" {
+        anyhow::bail!("invite locator URL path must be /_cokret/open/invite-locators/resolve");
+    }
+    let token = locator_url_token(&url)?;
+    Ok(Some((locator_url_origin(&url)?, token)))
+}
+
+fn reject_legacy_invite_target(target: &str) -> anyhow::Result<()> {
+    if cokret_sdk::Did::new(target.to_owned()).is_ok() {
+        anyhow::bail!(
+            "raw DID is not an invite target; paste an invite locator URL or invite_address JSON"
+        );
+    }
+    if canonical_invitee_handle(target).is_ok() {
+        anyhow::bail!(
+            "handle lookup is not used for invites; paste the recipient's invite locator URL or invite_address JSON"
+        );
+    }
+    Ok(())
 }
 
 impl CokretApi {
@@ -226,33 +373,24 @@ impl CokretApi {
     ) -> anyhow::Result<InviteeResolution> {
         let target = target.trim();
         if target.is_empty() {
-            anyhow::bail!("invitee is required");
+            anyhow::bail!("invite locator is required");
         }
-        let service_did = self.describe_cached().await?.service_did.to_string();
-        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-            return invitee_resolution(
-                target.to_owned(),
-                None,
-                &service_did,
-                json!({"kind": "explicit_address"}),
-            );
+        if let Some(invitee) = invitee_from_target_json(target)? {
+            return Ok(invitee);
+        }
+        if let Some((resolver_origin, locator_token)) = parse_invite_locator_url(target)? {
+            let resolver = CokretApi::new(&resolver_origin)?;
+            let locator: Value = resolver
+                .post_json(
+                    INVITE_LOCATOR_RESOLVE_PATH,
+                    json!({ "locator_token": locator_token }),
+                )
+                .await?;
+            return invitee_from_principal_locator(locator);
         }
 
-        let handle = canonical_invitee_handle(target)?;
-        let resolved = self.resolve_handle(&handle).await?;
-        let invitee = resolved.subject_did().ok_or_else(|| {
-            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
-        })?;
-        cokret_sdk::Did::new(invitee.to_owned())
-            .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{invitee}`: {err}"))?;
-        let invitee = invitee.to_owned();
-        let handle = resolved.handle;
-        invitee_resolution(
-            invitee,
-            Some(handle),
-            &service_did,
-            json!({"kind": "same_principal_server"}),
-        )
+        reject_legacy_invite_target(target)?;
+        anyhow::bail!("invite target must be an invite locator URL or invite_address JSON")
     }
 
     /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
@@ -312,5 +450,62 @@ impl CokretApi {
         res.validate()
             .map_err(|err| anyhow::anyhow!("list_handles_for_subject validation failed: {err}"))?;
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod invite_addressing_tests {
+    use super::*;
+
+    #[test]
+    fn locator_url_reads_token_from_fragment() {
+        let (origin, token) = parse_invite_locator_url(
+            "https://ps.bob.example:9443/_cokret/open/invite-locators/resolve#token=abc%20123",
+        )
+        .expect("valid locator url")
+        .expect("locator url parsed");
+        assert_eq!(origin, "https://ps.bob.example:9443");
+        assert_eq!(token, "abc 123");
+    }
+
+    #[test]
+    fn locator_url_rejects_query_token() {
+        let err = parse_invite_locator_url(
+            "https://ps.bob.example/_cokret/open/invite-locators/resolve?locator_token=abc",
+        )
+        .expect_err("query token must be rejected");
+        assert!(err.to_string().contains("fragment"));
+    }
+
+    #[test]
+    fn principal_locator_builds_locator_ref_evidence() {
+        let locator = json!({
+            "schema": PRINCIPAL_LOCATOR_SCHEMA,
+            "subject_id": "did:web:bob.example",
+            "recipient_service_did": "did:web:ps.bob.example",
+            "service_type": "principal_server",
+            "issued_at": "2026-06-07T00:00:00Z",
+            "expires_at": "2026-06-07T00:15:00Z",
+            "locator_ref_digest": "sha256:test",
+            "proofs": [{"type": "test"}],
+        });
+        let invitee = invitee_from_principal_locator(locator).expect("principal locator");
+        assert_eq!(invitee.did, "did:web:bob.example");
+        assert_eq!(
+            invitee.invite_delivery_target["recipient_service_did"],
+            "did:web:ps.bob.example"
+        );
+        assert_eq!(invitee.introduction_evidence["kind"], "locator_ref");
+    }
+
+    #[test]
+    fn invite_target_rejects_raw_did_and_handle() {
+        let did_err = reject_legacy_invite_target("did:web:bob.example")
+            .expect_err("raw DID is no longer an invite target");
+        assert!(did_err.to_string().contains("raw DID"));
+
+        let handle_err = reject_legacy_invite_target("bob:example.com")
+            .expect_err("handle must not drive invite delivery");
+        assert!(handle_err.to_string().contains("handle lookup"));
     }
 }

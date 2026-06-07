@@ -1430,7 +1430,11 @@ test("realm admin page handles metadata invites members and dangerous lifecycle"
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("updated");
 
-  await page.getByTestId("invite-target-input").fill("did:web:carol.example");
+  await page
+    .getByTestId("invite-target-input")
+    .fill(
+      "http://127.0.0.1:8787/_cokret/open/invite-locators/resolve#token=e2e-invite-locator",
+    );
   const inviteCommit = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());

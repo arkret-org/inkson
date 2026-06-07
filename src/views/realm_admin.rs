@@ -1235,7 +1235,7 @@ pub fn RealmAdminPanel(
                     input {
                         "data-testid": "invite-target-input",
                         value: "{invite_target}",
-                        placeholder: "DID or handle",
+                        placeholder: "Invite locator URL or invite_address JSON",
                         oninput: move |evt| invite_target.set(evt.value()),
                     }
                     div { class: "actions",
@@ -1253,7 +1253,7 @@ pub fn RealmAdminPanel(
                                     let api_token = token();
                                     let target = invite_target().trim().to_owned();
                                     if target.is_empty() {
-                                        status_msg.set("invite target is required".to_owned());
+                                        status_msg.set("invite locator is required".to_owned());
                                         return;
                                     }
                                     let wait_for = active_sync_token(sync_cursor());
@@ -1277,15 +1277,14 @@ pub fn RealmAdminPanel(
                                                 {
                                                     Ok(did) => did,
                                                     Err(error) => {
-                                                        status_msg.set(format!("invitee resolve failed: {error}"));
+                                                        status_msg.set(format!("invite locator resolve failed: {error}"));
                                                         return;
                                                     }
                                                 };
-                                                let invitee_label = if invitee.did == target {
-                                                    invitee.did.clone()
-                                                } else {
-                                                    format!("{target} -> {}", invitee.did)
-                                                };
+                                                let invitee_label = invitee
+                                                    .handle
+                                                    .clone()
+                                                    .unwrap_or_else(|| invitee.did.clone());
                                                 let op = cx_ops::invite_create_structured(
                                                     &realm,
                                                     &actor,

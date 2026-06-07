@@ -1,4 +1,4 @@
-import type { Page, Route } from "@playwright/test";
+import { expect, type Page, type Route } from "@playwright/test";
 import { mockCokretContract } from "./mockCokretContract";
 
 const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
@@ -768,6 +768,27 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           },
         ],
         next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/_cokret/open/invite-locators/resolve") {
+      expect(url.search).toBe("");
+      const body = await route.request().postDataJSON();
+      expect(body.locator_token).toBeTruthy();
+      return json(route, {
+        schema: "ck.schema.principal_locator.v1",
+        subject_id: "did:web:carol.example",
+        recipient_service_did: "did:web:server.local",
+        service_type: "principal_server",
+        issued_at: "2026-06-07T00:00:00Z",
+        expires_at: "2026-06-07T00:15:00Z",
+        locator_ref_digest: "sha256:e2e-invite-locator",
+        proofs: [
+          {
+            type: "principal_locator_dev",
+            issuer: "did:web:server.local",
+          },
+        ],
       });
     }
 

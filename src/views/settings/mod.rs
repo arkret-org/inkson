@@ -16,7 +16,9 @@ pub mod recovery;
 pub mod security;
 
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::{
+    STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
+};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
@@ -50,6 +52,8 @@ pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ck.push_rules";
 /// `ck.account_data` key used by do-not-disturb preferences.
 pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
 
+const INVITE_LOCATOR_TTL_MINUTES: i64 = 15;
+
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAvatarCrop {
     bytes: Vec<u8>,
@@ -77,6 +81,73 @@ fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
         media_type
     };
     format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
+}
+
+fn random_invite_locator_nonce() -> String {
+    let mut bytes = [0_u8; 24];
+    if getrandom::fill(&mut bytes).is_ok() {
+        BASE64_URL_SAFE_NO_PAD.encode(bytes)
+    } else {
+        crate::operation::uuid_v7()
+    }
+}
+
+fn build_invite_locator_token(account_did: &str) -> String {
+    let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(INVITE_LOCATOR_TTL_MINUTES))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    BASE64_URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "subject_id": account_did,
+            "nonce": random_invite_locator_nonce(),
+            "expires_at": expires_at,
+        }))
+        .unwrap_or_default(),
+    )
+}
+
+fn build_invite_locator_url(base_url: &str, locator_token: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    format!("{base}/_cokret/open/invite-locators/resolve#token={locator_token}")
+}
+
+fn render_invite_locator_qr_svg(locator_url: &str) -> String {
+    if locator_url.trim().is_empty() {
+        return String::new();
+    }
+    match qrcode::QrCode::with_error_correction_level(locator_url.as_bytes(), qrcode::EcLevel::M) {
+        Ok(code) => code
+            .render::<qrcode::render::svg::Color<'_>>()
+            .min_dimensions(192, 192)
+            .quiet_zone(true)
+            .build(),
+        Err(_) => String::new(),
+    }
+}
+
+fn copy_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
 }
 
 /// A4a — push the current `client.ui` payload (theme + sidebar
@@ -789,6 +860,34 @@ pub fn SettingsPanel(
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
     let has_session = !token().trim().is_empty();
+    let mut invite_locator_subject = use_signal(|| account_did());
+    let mut invite_locator_token = use_signal(|| {
+        let did = account_did();
+        if did.trim().is_empty() {
+            String::new()
+        } else {
+            build_invite_locator_token(&did)
+        }
+    });
+    {
+        let current_account = account_did();
+        use_effect(move || {
+            if current_account != invite_locator_subject() {
+                invite_locator_subject.set(current_account.clone());
+                invite_locator_token.set(if current_account.trim().is_empty() {
+                    String::new()
+                } else {
+                    build_invite_locator_token(&current_account)
+                });
+            }
+        });
+    }
+    let invite_locator_url = if has_session && !invite_locator_token().trim().is_empty() {
+        build_invite_locator_url(&base_url(), &invite_locator_token())
+    } else {
+        String::new()
+    };
+    let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
     let principal_label = if has_session {
         account_did()
     } else {
@@ -1284,6 +1383,79 @@ pub fn SettingsPanel(
                                             title: "{device_label}",
                                             "{device_short_label}"
                                         }
+                                    }
+                                }
+                            }
+
+                            div { class: "event settings-card-span-2", "data-testid": "settings-invite-locator-card",
+                                div { class: "event-head",
+                                    span { "Invite locator" }
+                                    span { if has_session { "15 min" } else { "offline" } }
+                                }
+                                if has_session {
+                                    div { class: "metric-grid",
+                                        div { class: "metric",
+                                            strong { "QR" }
+                                            if invite_locator_qr_svg.is_empty() {
+                                                div {
+                                                    class: "muted",
+                                                    "data-testid": "settings-invite-locator-qr-empty",
+                                                    "QR unavailable"
+                                                }
+                                            } else {
+                                                div {
+                                                    class: "qr-image",
+                                                    "data-testid": "settings-invite-locator-qr",
+                                                    role: "img",
+                                                    "aria-label": "Invite locator QR code",
+                                                    dangerous_inner_html: "{invite_locator_qr_svg}",
+                                                }
+                                            }
+                                        }
+                                        div { class: "metric",
+                                            strong { "URL" }
+                                            textarea {
+                                                class: "mono",
+                                                "data-testid": "settings-invite-locator-url",
+                                                readonly: true,
+                                                rows: "4",
+                                                value: "{invite_locator_url}",
+                                            }
+                                            div { class: "actions",
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "settings-invite-locator-copy",
+                                                    onclick: {
+                                                        let invite_url = invite_locator_url.clone();
+                                                        move |_| {
+                                                            copy_text_to_clipboard(&invite_url);
+                                                            status.set("Invite locator URL copied".to_owned());
+                                                        }
+                                                    },
+                                                    "Copy URL"
+                                                }
+                                                button {
+                                                    class: "secondary",
+                                                    "data-testid": "settings-invite-locator-refresh",
+                                                    onclick: move |_| {
+                                                        let did = account_did();
+                                                        invite_locator_token.set(if did.trim().is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            build_invite_locator_token(&did)
+                                                        });
+                                                        status.set("Invite locator refreshed".to_owned());
+                                                    },
+                                                    "Refresh"
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    div {
+                                        class: "muted",
+                                        "data-testid": "settings-invite-locator-signed-out",
+                                        "Sign in to show invite locator"
                                     }
                                 }
                             }
