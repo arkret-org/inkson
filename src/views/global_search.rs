@@ -67,6 +67,10 @@ pub fn result_snippet(result: &Value) -> String {
     "<no body>".to_owned()
 }
 
+pub fn result_actor_id(result: &Value) -> String {
+    string_field(result, &["actor_id", "source_actor_id"]).unwrap_or_default()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchDestination {
     pub route: Route,
@@ -253,11 +257,7 @@ pub fn GlobalSearchPanel(
                                 .and_then(Value::as_str)
                                 .unwrap_or("-")
                                 .to_owned();
-                            let sender = result
-                                .get("sender")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned();
+                            let sender = result_actor_id(&result);
                             let kind = result
                                 .get("kind")
                                 .and_then(Value::as_str)
@@ -402,6 +402,18 @@ mod tests {
 
         let empty = json!({});
         assert_eq!(result_snippet(&empty), "<no body>");
+    }
+
+    #[test]
+    fn result_actor_id_ignores_deprecated_sender_field() {
+        let row = json!({
+            "sender": "did:web:legacy.example",
+            "actor_id": "did:web:alice.example"
+        });
+        assert_eq!(result_actor_id(&row), "did:web:alice.example");
+
+        let legacy_only = json!({"sender": "did:web:legacy.example"});
+        assert!(result_actor_id(&legacy_only).is_empty());
     }
 
     #[test]

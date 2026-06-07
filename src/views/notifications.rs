@@ -1153,12 +1153,10 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
         realm_id: value_string(value, &["realm_id"]).unwrap_or_default(),
         flow_id: value_string(value, &["flow_id"]),
         flow_track: value_string(value, &["flow_track", "track_name"]),
-        // actor_id 优先(canonical envelope 主体);sender / sender_did 已废弃,
-        // 仅作向后兼容容忍服务端旧值(spec forbidden-wire-fields.json: sender → sender_actor_id)。
-        sender: value_string(
-            value,
-            &["actor_id", "sender_actor_id", "sender", "sender_did"],
-        ),
+        // Canonical notification attribution comes from the EventEnvelope
+        // actor_id. Deprecated sender/sender_did wire names are ignored in
+        // the default protocol path.
+        sender: value_string(value, &["actor_id"]),
         body: value_string(value, &["body", "summary", "preview"]),
         is_e2ee,
         local_decrypted: value_bool(value, "local_decrypted").unwrap_or(!is_e2ee),
@@ -1295,6 +1293,7 @@ mod tests {
             "notification_id": "n1",
             "event_kind": "ck.message.create",
             "notification_type": "mention",
+            "actor_id": "did:web:alice.example",
             "realm_id": "ck:realm:e2ee",
             "flow_id": "ck:flow:1",
             "track_name": "discussion",
@@ -1311,6 +1310,21 @@ mod tests {
         assert!(ctx.is_e2ee);
         assert!(!ctx.local_decrypted);
         assert_eq!(ctx.mentions_actor, Some(true));
+        assert_eq!(ctx.sender.as_deref(), Some("did:web:alice.example"));
+    }
+
+    #[test]
+    fn notification_eval_context_ignores_deprecated_sender_fields() {
+        let ctx = notification_eval_context(&json!({
+            "notification_id": "n1",
+            "event_kind": "ck.message.create",
+            "notification_type": "mention",
+            "sender": "did:web:legacy.example",
+            "sender_did": "did:web:legacy-did.example",
+            "sender_actor_id": "did:web:legacy-actor.example"
+        }));
+
+        assert_eq!(ctx.sender, None);
     }
 
     #[test]

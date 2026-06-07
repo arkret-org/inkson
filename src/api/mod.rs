@@ -1006,7 +1006,7 @@ pub fn build_read_cursor_advance_event(
     marker: &crate::local_state::ReadMarkerRecord,
 ) -> EventEnvelope {
     OperationBuilder::new(&marker.body.realm_id, &marker.actor, &marker.marker_type)
-        .body(marker.cx_read_cursor_payload())
+        .body(marker.ck_read_cursor_payload())
         .build(&marker.device_id)
 }
 

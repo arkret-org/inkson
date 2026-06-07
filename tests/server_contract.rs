@@ -259,13 +259,12 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(device_send.ok);
 
-    let device_receive: yougen::models::DeviceMessagesGetOutcome =
-        serde_json::from_value(json!({
-            "events": [],
-            "next_cursor": "ck:cursor:device-messages",
-            "limited": false
-        }))
-        .unwrap();
+    let device_receive: yougen::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
+        "events": [],
+        "next_cursor": "ck:cursor:device-messages",
+        "limited": false
+    }))
+    .unwrap();
     assert!(!device_receive.limited);
 
     let push: yougen::models::PushRegisterResponse = serde_json::from_value(json!({
@@ -480,7 +479,7 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
         }],
         "device_lists": {"changed": [], "left": []},
         "notifications": {"rooms": {"ck:realm:joined": {"count": 1}}},
-        "presence": [{"sender": "did:web:alice.example"}]
+        "presence": [{"actor_id": "did:web:alice.example"}]
     }))
     .unwrap();
     assert_eq!(sync.cursor, "sx:v1-bucket");
@@ -489,7 +488,8 @@ fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert_eq!(sync.to_device.len(), 1);
     assert_eq!(sync.account_data.len(), 1);
     assert_eq!(sync.notifications["rooms"]["ck:realm:joined"]["count"], 1);
-    assert_eq!(sync.presence[0]["sender"], "did:web:alice.example");
+    assert_eq!(sync.presence[0]["actor_id"], "did:web:alice.example");
+    assert!(sync.presence[0].get("sender").is_none());
 
     let frames = parse_events_subscribe_ndjson_text(
         r#"{"kind":"heartbeat","emitted_at":"2026-05-20T00:00:00Z"}
@@ -579,7 +579,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         results: vec![json!({
             "kind": "message",
             "space_id": "ck:space:contract",
-            "sender": "did:web:alice.example",
+            "actor_id": "did:web:alice.example",
             "content": {"body": "hello"}
         })],
         next_cursor: None,

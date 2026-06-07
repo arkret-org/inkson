@@ -9,7 +9,6 @@
 //! events. The actual upload bytes go to the Principal Server's
 //! `ck.self.blob.upload` endpoint; this module covers the durable event side.
 
-use anyhow::anyhow;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -18,16 +17,25 @@ pub use cokret_sdk::{
     Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, MediaMetadata,
     Thumbnail, safe_content_disposition, safe_content_type,
 };
-use getrandom::fill;
+use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::canonical::canonical_json_bytes;
 use crate::operation::OperationBuilder;
 
 pub const MLS_ATTACHMENT_AEAD_ALGORITHM: &str = "mls-rfc9420+xchacha20poly1305";
+pub const MLS_ATTACHMENT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 pub const MLS_ATTACHMENT_NONCE_LEN: usize = 24;
+pub const MLS_ATTACHMENT_NONCE_COUNTER_LEN: usize = 8;
+pub const MLS_ATTACHMENT_NONCE_PREFIX_LEN: usize =
+    MLS_ATTACHMENT_NONCE_LEN - MLS_ATTACHMENT_NONCE_COUNTER_LEN;
 pub const MLS_ATTACHMENT_KEY_LEN: usize = 32;
 pub const CIPHERTEXT_MEDIA_TYPE: &str = "application/octet-stream";
+const MLS_ATTACHMENT_NONCE_LABEL: &str = "cokret-aead-sender-nonce-prefix-v1";
+const MLS_ATTACHMENT_NONCE_PURPOSE: &str = "blob-attachment";
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncryptedClientAsset {
@@ -42,6 +50,101 @@ pub struct EncryptedClientAsset {
 pub struct EncryptedAttachmentBundle {
     pub attachment: EncryptedClientAsset,
     pub thumbnail: Option<EncryptedClientAsset>,
+}
+
+/// Caller-owned per-device counter for MLS attachment AEAD nonces.
+///
+/// The spec requires the counter to be persisted per `(device_id, key_ref,
+/// epoch, purpose)` so restarts never reuse a value. Yougen keeps this type
+/// at the API boundary: encryption callers must provide the monotonic state
+/// explicitly instead of falling back to a random nonce.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MlsAttachmentNonceState {
+    sender_device_id: String,
+    next_counter: u64,
+}
+
+impl MlsAttachmentNonceState {
+    pub fn new(sender_device_id: impl Into<String>, next_counter: u64) -> anyhow::Result<Self> {
+        let sender_device_id = sender_device_id.into();
+        if sender_device_id.trim().is_empty() {
+            anyhow::bail!("sender_device_id is required for attachment nonce derivation");
+        }
+        Ok(Self {
+            sender_device_id,
+            next_counter,
+        })
+    }
+
+    pub fn sender_device_id(&self) -> &str {
+        &self.sender_device_id
+    }
+
+    pub fn next_counter(&self) -> u64 {
+        self.next_counter
+    }
+
+    fn next_nonce(
+        &mut self,
+        mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+        epoch: u64,
+        key_ref: &Value,
+    ) -> anyhow::Result<DerivedMlsAttachmentNonce> {
+        let counter = self.next_counter;
+        let next_counter = counter
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("attachment nonce counter exhausted"))?;
+        let bytes = derive_mls_attachment_nonce(
+            mls_exported_secret,
+            epoch,
+            key_ref,
+            &self.sender_device_id,
+            counter,
+        )?;
+        self.next_counter = next_counter;
+        Ok(DerivedMlsAttachmentNonce { bytes, counter })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DerivedMlsAttachmentNonce {
+    bytes: [u8; MLS_ATTACHMENT_NONCE_LEN],
+    counter: u64,
+}
+
+fn derive_mls_attachment_nonce(
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    epoch: u64,
+    key_ref: &Value,
+    sender_device_id: &str,
+    counter: u64,
+) -> anyhow::Result<[u8; MLS_ATTACHMENT_NONCE_LEN]> {
+    if sender_device_id.trim().is_empty() {
+        anyhow::bail!("sender_device_id is required for attachment nonce derivation");
+    }
+    if !key_ref.is_object() && !key_ref.is_string() {
+        anyhow::bail!("key_ref must be an MLS key reference object or string");
+    }
+    let context = json!({
+        "key_ref": key_ref,
+        "epoch": epoch,
+        "device_id": sender_device_id,
+        "purpose": MLS_ATTACHMENT_NONCE_PURPOSE,
+        "aead_profile": MLS_ATTACHMENT_AEAD_PROFILE,
+    });
+    let context = canonical_json_bytes(&context)?;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(mls_exported_secret)
+        .map_err(|err| anyhow::anyhow!("attachment nonce hmac key: {err}"))?;
+    mac.update(MLS_ATTACHMENT_NONCE_LABEL.as_bytes());
+    mac.update(&[0]);
+    mac.update(&context);
+    let digest = mac.finalize().into_bytes();
+
+    let mut nonce = [0u8; MLS_ATTACHMENT_NONCE_LEN];
+    nonce[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
+        .copy_from_slice(&digest[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]);
+    nonce[MLS_ATTACHMENT_NONCE_PREFIX_LEN..].copy_from_slice(&counter.to_be_bytes());
+    Ok(nonce)
 }
 
 /// Content-address a blob payload as `ck:blob:sha256:<hex>`.
@@ -119,6 +222,7 @@ pub fn encrypt_mls_attachment_bundle(
     realm_id: &str,
     epoch: u64,
     key_ref: Value,
+    nonce_state: &mut MlsAttachmentNonceState,
 ) -> anyhow::Result<EncryptedAttachmentBundle> {
     let attachment = encrypt_mls_asset(
         attachment_plaintext,
@@ -127,6 +231,7 @@ pub fn encrypt_mls_attachment_bundle(
         realm_id,
         epoch,
         key_ref.clone(),
+        nonce_state,
     )?;
     let thumbnail = thumbnail_plaintext
         .map(|bytes| {
@@ -137,6 +242,7 @@ pub fn encrypt_mls_attachment_bundle(
                 realm_id,
                 epoch,
                 key_ref.clone(),
+                nonce_state,
             )
         })
         .transpose()?;
@@ -153,9 +259,9 @@ pub fn encrypt_mls_asset(
     realm_id: &str,
     epoch: u64,
     key_ref: Value,
+    nonce_state: &mut MlsAttachmentNonceState,
 ) -> anyhow::Result<EncryptedClientAsset> {
-    let mut nonce = [0u8; MLS_ATTACHMENT_NONCE_LEN];
-    fill(&mut nonce).map_err(|err| anyhow!("attachment nonce rng: {err}"))?;
+    let nonce = nonce_state.next_nonce(mls_exported_secret, epoch, &key_ref)?;
     encrypt_mls_asset_with_nonce(
         plaintext,
         asset_kind,
@@ -163,7 +269,9 @@ pub fn encrypt_mls_asset(
         realm_id,
         epoch,
         key_ref,
-        nonce,
+        nonce.bytes,
+        nonce_state.sender_device_id(),
+        nonce.counter,
     )
 }
 
@@ -175,12 +283,17 @@ fn encrypt_mls_asset_with_nonce(
     epoch: u64,
     key_ref: Value,
     nonce: [u8; MLS_ATTACHMENT_NONCE_LEN],
+    sender_device_id: &str,
+    nonce_counter: u64,
 ) -> anyhow::Result<EncryptedClientAsset> {
     if realm_id.trim().is_empty() {
         anyhow::bail!("realm_id is required for encrypted attachment AAD");
     }
     if !key_ref.is_object() && !key_ref.is_string() {
         anyhow::bail!("key_ref must be an MLS key reference object or string");
+    }
+    if sender_device_id.trim().is_empty() {
+        anyhow::bail!("sender_device_id is required for encrypted attachment metadata");
     }
     let asset_kind = match asset_kind {
         "attachment" | "thumbnail" => asset_kind,
@@ -196,12 +309,15 @@ fn encrypt_mls_asset_with_nonce(
                 aad: aad.as_bytes(),
             },
         )
-        .map_err(|err| anyhow!("xchacha20poly1305 attachment encrypt: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("xchacha20poly1305 attachment encrypt: {err}"))?;
     let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&ciphertext));
     let envelope = json!({
         "version": "cokret.encrypted_attachment.v1",
         "algorithm": MLS_ATTACHMENT_AEAD_ALGORITHM,
+        "aead_profile": MLS_ATTACHMENT_AEAD_PROFILE,
         "nonce": URL_SAFE_NO_PAD.encode(nonce),
+        "nonce_counter": nonce_counter,
+        "sender_device_id": sender_device_id,
         "key_ref": key_ref,
         "ciphertext_digest": ciphertext_digest,
         "media_type": CIPHERTEXT_MEDIA_TYPE,
@@ -258,6 +374,8 @@ mod tests {
             42,
             json!({"group_id": "ck:mls:group", "epoch": 42}),
             nonce,
+            "ck:device:alice",
+            3,
         )
         .unwrap();
 
@@ -267,6 +385,9 @@ mod tests {
             format!("sha256:{:x}", Sha256::digest(&asset.ciphertext))
         );
         assert_eq!(asset.envelope["algorithm"], MLS_ATTACHMENT_AEAD_ALGORITHM);
+        assert_eq!(asset.envelope["aead_profile"], MLS_ATTACHMENT_AEAD_PROFILE);
+        assert_eq!(asset.envelope["sender_device_id"], "ck:device:alice");
+        assert_eq!(asset.envelope["nonce_counter"], 3);
         assert_eq!(asset.envelope["media_type"], CIPHERTEXT_MEDIA_TYPE);
         assert_eq!(asset.envelope["ciphertext_digest"], asset.ciphertext_digest);
         let envelope = asset.envelope.to_string();
@@ -289,6 +410,7 @@ mod tests {
     #[test]
     fn encrypt_mls_attachment_bundle_encrypts_thumbnail_as_separate_asset() {
         let key = [9u8; MLS_ATTACHMENT_KEY_LEN];
+        let mut nonce_state = MlsAttachmentNonceState::new("ck:device:alice", 0).unwrap();
         let bundle = encrypt_mls_attachment_bundle(
             b"full-resolution plaintext",
             Some(b"thumbnail plaintext"),
@@ -296,6 +418,7 @@ mod tests {
             "ck:realm:encrypted",
             7,
             json!({"group_id": "ck:mls:group", "epoch": 7}),
+            &mut nonce_state,
         )
         .unwrap();
         let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");
@@ -303,6 +426,9 @@ mod tests {
         assert_ne!(bundle.attachment.ciphertext, b"full-resolution plaintext");
         assert_ne!(thumbnail.ciphertext, b"thumbnail plaintext");
         assert_ne!(bundle.attachment.nonce, thumbnail.nonce);
+        assert_eq!(nonce_counter(&bundle.attachment.nonce), 0);
+        assert_eq!(nonce_counter(&thumbnail.nonce), 1);
+        assert_eq!(nonce_state.next_counter(), 2);
         assert_ne!(
             bundle.attachment.ciphertext_digest,
             thumbnail.ciphertext_digest
@@ -312,5 +438,56 @@ mod tests {
             thumbnail.ciphertext_digest,
             format!("sha256:{:x}", Sha256::digest(&thumbnail.ciphertext))
         );
+    }
+
+    #[test]
+    fn mls_attachment_nonce_state_derives_monotonic_nonce_suffixes() {
+        let key = [11u8; MLS_ATTACHMENT_KEY_LEN];
+        let key_ref = json!({"group_id": "ck:mls:group", "epoch": 7});
+        let mut state = MlsAttachmentNonceState::new("ck:device:alice", 41).unwrap();
+
+        let first = state.next_nonce(&key, 7, &key_ref).unwrap();
+        let second = state.next_nonce(&key, 7, &key_ref).unwrap();
+
+        assert_eq!(nonce_counter(&first.bytes), 41);
+        assert_eq!(nonce_counter(&second.bytes), 42);
+        assert_eq!(state.next_counter(), 43);
+        assert_ne!(first.bytes, second.bytes);
+        assert_eq!(
+            &first.bytes[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
+            &second.bytes[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
+            "same sender/key_ref/epoch keeps a stable sender nonce prefix"
+        );
+    }
+
+    #[test]
+    fn mls_attachment_nonce_prefix_binds_sender_device_and_key_ref() {
+        let key = [13u8; MLS_ATTACHMENT_KEY_LEN];
+        let key_ref = json!({"group_id": "ck:mls:group", "epoch": 7});
+        let other_key_ref = json!({"group_id": "ck:mls:other", "epoch": 7});
+        let alice = derive_mls_attachment_nonce(&key, 7, &key_ref, "ck:device:alice", 0).unwrap();
+        let bob = derive_mls_attachment_nonce(&key, 7, &key_ref, "ck:device:bob", 0).unwrap();
+        let other_key =
+            derive_mls_attachment_nonce(&key, 7, &other_key_ref, "ck:device:alice", 0).unwrap();
+
+        assert_eq!(nonce_counter(&alice), 0);
+        assert_eq!(nonce_counter(&bob), 0);
+        assert_ne!(
+            &alice[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
+            &bob[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
+        );
+        assert_ne!(
+            &alice[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
+            &other_key[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
+        );
+    }
+
+    #[test]
+    fn mls_attachment_nonce_state_rejects_empty_sender_device() {
+        assert!(MlsAttachmentNonceState::new("  ", 0).is_err());
+    }
+
+    fn nonce_counter(nonce: &[u8; MLS_ATTACHMENT_NONCE_LEN]) -> u64 {
+        u64::from_be_bytes(nonce[MLS_ATTACHMENT_NONCE_PREFIX_LEN..].try_into().unwrap())
     }
 }

@@ -116,7 +116,7 @@ pub struct ReadMarkerRecord {
 }
 
 impl ReadMarkerRecord {
-    pub fn cx_read_cursor_payload(&self) -> Value {
+    pub fn ck_read_cursor_payload(&self) -> Value {
         json!({
             "id": &self.body.id,
             "schema": &self.body.schema,
@@ -129,10 +129,10 @@ impl ReadMarkerRecord {
         })
     }
 
-    pub fn cx_read_cursor_operation(&self) -> Value {
+    pub fn ck_read_cursor_operation(&self) -> Value {
         json!({
             "kind": &self.marker_type,
-            "payload": self.cx_read_cursor_payload(),
+            "payload": self.ck_read_cursor_payload(),
         })
     }
 }
@@ -4316,7 +4316,7 @@ mod tests {
             Some("discussion")
         );
         assert_eq!(
-            marker.cx_read_cursor_operation(),
+            marker.ck_read_cursor_operation(),
             serde_json::json!({
                 "kind": "ck.read_cursor.advance",
                 "payload": {

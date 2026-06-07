@@ -205,6 +205,7 @@ pub struct CriticalExtension {
 /// require them and non-reducer kinds (read marker, account_data, ...)
 /// must omit them entirely.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EventEnvelope {
     pub event_id: String,
     pub kind: String,
@@ -2005,6 +2006,23 @@ mod tests {
         let json = serde_json::to_string(&op).unwrap();
         let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(op, parsed);
+    }
+
+    #[test]
+    fn event_envelope_rejects_unknown_top_level_fields() {
+        let op = OperationBuilder::new("ck:realm:s1", "did:web:bob", "ck.message.create")
+            .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+            .build("node");
+        let mut value = serde_json::to_value(&op).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("sender".to_owned(), json!("did:web:legacy.example"));
+
+        assert!(
+            serde_json::from_value::<EventEnvelope>(value).is_err(),
+            "deprecated/unknown top-level envelope fields must fail closed"
+        );
     }
 
     #[test]
