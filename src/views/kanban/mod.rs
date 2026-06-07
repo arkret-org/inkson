@@ -2870,8 +2870,8 @@ pub fn KanbanPanel(
                                                                 class: "input",
                                                                 "data-testid": "card-detail-assignee-input",
                                                                 value: "{card_edit_assignee}",
-                                                                placeholder: "alice:example.com or did:web:...",
-                                                                oninput: move |evt| card_edit_assignee.set(evt.value()),
+                                                                placeholder: "assigned_to relation",
+                                                                disabled: true,
                                                             }
                                                         }
                                                         div { class: "card-detail-action-menu-field",
@@ -4403,6 +4403,22 @@ fn display_user_reference(value: &str, state_store: &LocalStateStore) -> String 
     if trimmed.is_empty() || trimmed == "—" {
         return "unassigned".to_owned();
     }
+    if trimmed.contains(',') {
+        let labels = trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(|part| display_single_user_reference(part, state_store))
+            .collect::<Vec<_>>();
+        if !labels.is_empty() {
+            return labels.join(", ");
+        }
+    }
+    display_single_user_reference(trimmed, state_store)
+}
+
+fn display_single_user_reference(value: &str, state_store: &LocalStateStore) -> String {
+    let trimmed = value.trim();
     if trimmed.starts_with("did:") {
         return display_name_for_did(state_store, trimmed);
     }
@@ -5208,7 +5224,10 @@ fn card_detail_update_patch(
 
     let mut patch = Map::new();
     if current.title.trim() != title {
-        patch.insert("title".to_owned(), json!({ "$op": "set", "value": title }));
+        patch.insert(
+            "metadata.title".to_owned(),
+            json!({ "$op": "set", "value": title }),
+        );
     }
 
     let description = draft.description.trim();
@@ -5218,7 +5237,7 @@ fn card_detail_update_patch(
         } else {
             json!({ "$op": "set", "value": description })
         };
-        patch.insert("summary".to_owned(), op);
+        patch.insert("metadata.summary".to_owned(), op);
     }
 
     let body = draft.body.trim();
@@ -5241,24 +5260,17 @@ fn card_detail_update_patch(
         patch.insert("synthesis".to_owned(), op);
     }
 
-    let current_assignee = editor_value_for_optional_card_field(&current.assignee);
     let current_due = editor_value_for_optional_card_field(&current.due);
-    let fields_changed = current.labels != draft.labels
-        || current_assignee != draft.assignee.trim()
-        || current_due != draft.due.trim();
+    let fields_changed = current.labels != draft.labels || current_due != draft.due.trim();
     if fields_changed {
         let mut fields = Map::new();
         fields.insert("labels".to_owned(), json!(draft.labels.clone()));
-        let assignee = draft.assignee.trim();
-        if !assignee.is_empty() && assignee != "—" {
-            fields.insert("assignee".to_owned(), json!(assignee));
-        }
         let due = draft.due.trim();
         if !due.is_empty() && due != "—" {
             fields.insert("due_at".to_owned(), json!(due));
         }
         patch.insert(
-            "fields".to_owned(),
+            "metadata.fields".to_owned(),
             json!({ "$op": "set", "value": Value::Object(fields) }),
         );
     }
@@ -5275,7 +5287,6 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.body = draft.body.trim().to_owned();
     card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
-    card.assignee = display_optional_card_field(&draft.assignee);
     card.due = display_optional_card_field(&draft.due);
     card.state = CardState::Queued;
     card.activity_hint = "Local card update pending server sync.".to_owned();
@@ -7196,6 +7207,7 @@ mod tests {
             board_space_id: None,
             list_space_id: None,
             rank: Some("U".to_owned()),
+            assigned_actor_ids: Vec::new(),
             fields: Map::new(),
             created_by: None,
             created_at: None,
@@ -7598,9 +7610,9 @@ mod tests {
             board_space_id: Some(board_id.to_owned()),
             list_space_id: Some(list_id.to_owned()),
             rank: Some("U".to_owned()),
+            assigned_actor_ids: vec!["did:web:alice.example".to_owned()],
             fields: Map::from_iter([
                 ("labels".to_owned(), json!(["demo", "db"])),
-                ("assignee".to_owned(), json!("Alice")),
                 ("due_at".to_owned(), json!("2026-05-22")),
             ]),
             created_by: Some("did:web:acme.example:users:alice".to_owned()),
@@ -7622,7 +7634,7 @@ mod tests {
         assert_eq!(card.description, "Loaded from projection");
         assert_eq!(card.body, "Projection body content");
         assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
-        assert_eq!(card.assignee, "Alice");
+        assert_eq!(card.assignee, "did:web:alice.example");
         assert_eq!(card.due, "2026-05-22");
     }
 
@@ -7739,14 +7751,13 @@ mod tests {
             "payload": {
                 "flow_id": flow_id,
                 "patch": {
-                    "summary": { "$op": "set", "value": "new summary" },
+                    "metadata.summary": { "$op": "set", "value": "new summary" },
                     "fields.body": { "$op": "set", "value": "new long description" },
                     "tracks.synthesis.body": { "$op": "set", "value": "new synthesis note" },
-                    "fields": {
+                    "metadata.fields": {
                         "$op": "set",
                         "value": {
                             "labels": ["remote"],
-                            "assignee": "did:web:bob.example",
                             "due_at": "2026-05-30"
                         }
                     }
@@ -7767,7 +7778,6 @@ mod tests {
         assert_eq!(card.body, "new long description");
         assert_eq!(card.synthesis, "new synthesis note");
         assert_eq!(card.labels, vec!["remote"]);
-        assert_eq!(card.assignee, "did:web:bob.example");
         assert_eq!(card.due, "2026-05-30");
         assert_eq!(card.state, CardState::Synced);
     }
@@ -7877,15 +7887,12 @@ mod tests {
         };
 
         let patch = card_detail_update_patch(&current, &draft).unwrap();
-        assert_eq!(patch["title"]["value"], "Launch checklist");
-        assert_eq!(patch["summary"]["value"], "Ship blockers only");
-        assert_eq!(patch["fields"]["value"]["labels"][0], "release");
-        assert_eq!(
-            patch["fields"]["value"]["assignee"],
-            "did:web:alice.example"
-        );
-        assert_eq!(patch["fields"]["value"]["due_at"], "2026-05-20");
-        assert!(patch["fields"]["value"].get("due").is_none());
+        assert_eq!(patch["metadata.title"]["value"], "Launch checklist");
+        assert_eq!(patch["metadata.summary"]["value"], "Ship blockers only");
+        assert_eq!(patch["metadata.fields"]["value"]["labels"][0], "release");
+        assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
+        assert_eq!(patch["metadata.fields"]["value"]["due_at"], "2026-05-20");
+        assert!(patch["metadata.fields"]["value"].get("due").is_none());
     }
 
     #[test]
@@ -8596,9 +8603,9 @@ mod tests {
         };
 
         let patch = card_detail_update_patch(&current, &draft).unwrap();
-        assert_eq!(patch["summary"]["$op"], "unset");
-        assert!(patch["fields"]["value"].get("assignee").is_none());
-        assert!(patch["fields"]["value"].get("due_at").is_none());
+        assert_eq!(patch["metadata.summary"]["$op"], "unset");
+        assert!(patch["metadata.fields"]["value"].get("assignee").is_none());
+        assert!(patch["metadata.fields"]["value"].get("due_at").is_none());
     }
 
     #[test]

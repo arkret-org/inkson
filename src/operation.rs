@@ -2605,11 +2605,11 @@ mod tests {
             "did:web:alice.example",
             "ck:flow:0196419b-0000-7000-8000-000000000004",
             json!({
-                "title": { "$op": "set", "value": "Launch checklist" },
-                "summary": { "$op": "set", "value": "Ship blockers only" },
-                "fields.labels": { "$op": "set", "value": ["release", "ops"] },
-                "fields.assignee": { "$op": "set", "value": "did:web:alice.example" },
-                "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+                "metadata.title": { "$op": "set", "value": "Launch checklist" },
+                "metadata.summary": { "$op": "set", "value": "Ship blockers only" },
+                "metadata.fields.labels": { "$op": "set", "value": ["release", "ops"] },
+                "metadata.fields.priority": { "$op": "set", "value": "high" },
+                "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
             }),
         )
         .build("node");
@@ -2617,11 +2617,11 @@ mod tests {
 
         assert!(!patch.is_empty());
         assert_eq!(op.kind, "ck.flow.update");
-        assert!(patch.contains_key("title"));
-        assert!(patch.contains_key("summary"));
-        assert!(patch.contains_key("fields.labels"));
-        assert!(patch.contains_key("fields.assignee"));
-        assert!(patch.contains_key("fields.due_at"));
+        assert!(patch.contains_key("metadata.title"));
+        assert!(patch.contains_key("metadata.summary"));
+        assert!(patch.contains_key("metadata.fields.labels"));
+        assert!(patch.contains_key("metadata.fields.priority"));
+        assert!(patch.contains_key("metadata.fields.due_at"));
         for value in patch.values() {
             let op = value["$op"].as_str().unwrap();
             assert!(ops.iter().any(|allowed| allowed == op));

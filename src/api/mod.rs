@@ -180,6 +180,8 @@ pub struct FlowProjectionView {
     #[serde(default)]
     pub rank: Option<String>,
     #[serde(default)]
+    pub assigned_actor_ids: Vec<String>,
+    #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// `active` / `archived` / `redacted` per spec
     /// `common-fields.md §5.1`. `redacted` is the only irreversible

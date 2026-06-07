@@ -39,6 +39,7 @@ type FlowProjection = {
   board_space_id?: string;
   list_space_id?: string;
   rank?: string;
+  assigned_actor_ids?: string[];
   fields?: Record<string, unknown>;
 };
 
@@ -115,9 +116,9 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       board_space_id: DEMO_BOARD_SPACE,
       list_space_id: DEMO_TODO_LIST,
       rank: "U",
+      assigned_actor_ids: ["did:web:alice.example"],
       fields: {
         labels: ["legal", "beta"],
-        assignee: "Alice",
         due_at: "May 08",
         discussion_visibility: "locked",
         discussion_ref_hash: "sha256:locked-private-decision",
@@ -133,7 +134,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       board_space_id: DEMO_BOARD_SPACE,
       list_space_id: DEMO_PROGRESS_LIST,
       rank: "U",
-      fields: { labels: ["copy", "support"], assignee: "Bob", due_at: "May 10" },
+      assigned_actor_ids: ["did:web:bob.example"],
+      fields: { labels: ["copy", "support"], due_at: "May 10" },
     },
     {
       flow_id: DEMO_FLOW_SECURITY_SIGNOFF,
@@ -144,7 +146,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       board_space_id: DEMO_BOARD_SPACE,
       list_space_id: DEMO_DONE_LIST,
       rank: "U",
-      fields: { labels: ["security", "reviewed"], assignee: "Carol", due_at: "May 01" },
+      assigned_actor_ids: ["did:web:carol.example"],
+      fields: { labels: ["security", "reviewed"], due_at: "May 01" },
     },
     {
       flow_id: DEMO_FLOW_SECONDARY_CARD,
@@ -155,7 +158,8 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       board_space_id: DEMO_SECOND_BOARD_SPACE,
       list_space_id: DEMO_SECOND_LIST,
       rank: "U",
-      fields: { labels: ["planning"], assignee: "Dana", due_at: "May 12" },
+      assigned_actor_ids: ["did:web:dana.example"],
+      fields: { labels: ["planning"], due_at: "May 12" },
     },
   ];
 

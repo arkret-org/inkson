@@ -877,13 +877,7 @@ pub(super) fn card_from_projection_item(
                     .collect()
             })
             .unwrap_or_default(),
-        assignee: item
-            .object
-            .get("fields")
-            .and_then(|f| f.get("assignee"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("—")
-            .to_owned(),
+        assignee: "—".to_owned(),
         due: item
             .object
             .get("fields")
@@ -1051,6 +1045,13 @@ pub(super) fn flow_projection_labels(flow: &crate::api::FlowProjectionView) -> V
         Some(Value::String(labels)) => parse_card_labels(labels),
         _ => Vec::new(),
     }
+}
+
+pub(super) fn flow_projection_assignee(flow: &crate::api::FlowProjectionView) -> Option<String> {
+    if flow.assigned_actor_ids.is_empty() {
+        return None;
+    }
+    Some(flow.assigned_actor_ids.join(", "))
 }
 
 pub(super) fn flow_projection_security_state(
@@ -1386,8 +1387,7 @@ pub(super) fn card_from_flow_projection(
             .or_else(|| flow_projection_field_string(flow, None, &["updated_at", "edited_at"]))
             .unwrap_or_default(),
         labels: flow_projection_labels(flow),
-        assignee: flow_projection_field_string(flow, None, &["assignee"])
-            .unwrap_or_else(|| "—".to_owned()),
+        assignee: flow_projection_assignee(flow).unwrap_or_else(|| "—".to_owned()),
         due: flow_projection_field_string(flow, None, &["due_at", "due"])
             .unwrap_or_else(|| "—".to_owned()),
         primary_flow_id: flow.flow_id.clone(),
@@ -1780,8 +1780,14 @@ pub(super) fn local_card_update_from_raw_operation(
         })
     }
 
-    let title = patch.get("title").and_then(extract_set_unset);
-    let summary = patch.get("summary").and_then(extract_set_unset);
+    let title = patch
+        .get("metadata.title")
+        .or_else(|| patch.get("title"))
+        .and_then(extract_set_unset);
+    let summary = patch
+        .get("metadata.summary")
+        .or_else(|| patch.get("summary"))
+        .and_then(extract_set_unset);
     let body_op = extract_private_for_paths(
         patch,
         KANBAN_BODY_PRIVATE_FIELD_PATHS,
@@ -1794,13 +1800,16 @@ pub(super) fn local_card_update_from_raw_operation(
         decrypt_ctx,
         &flow_id,
     );
-    let fields = patch.get("fields").and_then(|fields_op| {
-        if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
-            fields_op.get("value").cloned()
-        } else {
-            None
-        }
-    });
+    let fields = patch
+        .get("metadata.fields")
+        .or_else(|| patch.get("fields"))
+        .and_then(|fields_op| {
+            if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
+                fields_op.get("value").cloned()
+            } else {
+                None
+            }
+        });
 
     Some(LocalCardUpdate {
         flow_id,
@@ -1858,9 +1867,6 @@ pub(super) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
                 .iter()
                 .filter_map(|v| v.as_str().map(ToOwned::to_owned))
                 .collect();
-        }
-        if let Some(assignee) = fields.get("assignee").and_then(Value::as_str) {
-            card.assignee = display_optional_card_field(assignee);
         }
         if let Some(due) = fields
             .get("due_at")
