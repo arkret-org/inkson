@@ -405,14 +405,15 @@ impl CokretApi {
             .await
     }
 
-    /// Set Realm join_rule + history_visibility policy via two
-    /// `ck.realm.*` facet events.
+    /// Set Realm join_rule + history_visibility policy, optionally also
+    /// emitting `ck.realm.policy_components` for Join Policy gates.
     pub async fn set_realm_policy_events(
         &self,
         realm_id: &str,
         actor_id: &str,
         join_rule: &str,
         history_visibility: &str,
+        join_policy: Option<Value>,
     ) -> anyhow::Result<RealmPolicyResponse> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
@@ -426,7 +427,7 @@ impl CokretApi {
             ));
         }
         let join_rule = canonical_space_join_rule_v1(join_rule);
-        for event in [
+        let mut events = vec![
             build_realm_state_event(realm_id, actor_id, "ck.realm.join_rule", json!(join_rule))?,
             build_realm_state_event(
                 realm_id,
@@ -434,7 +435,19 @@ impl CokretApi {
                 "ck.realm.history_visibility",
                 json!(history_visibility),
             )?,
-        ] {
+        ];
+        if let Some(join_policy) = join_policy {
+            events.push(build_realm_state_event(
+                realm_id,
+                actor_id,
+                "ck.realm.policy_components",
+                json!({
+                    "policy_revision": 1,
+                    "join_policy": join_policy
+                }),
+            )?);
+        }
+        for event in events {
             self.submit_event_envelope(&event).await?;
         }
         Ok(RealmPolicyResponse {

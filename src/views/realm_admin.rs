@@ -856,6 +856,85 @@ pub fn RealmMembersPanel(
     }
 }
 
+fn split_policy_list(raw: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for value in raw
+        .split(|ch: char| ch == ',' || ch == ';' || ch.is_ascii_whitespace())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if !values.iter().any(|existing| existing == value) {
+            values.push(value.to_owned());
+        }
+    }
+    values
+}
+
+fn normalize_did_method_entry(value: &str) -> Result<String, String> {
+    let trimmed = value.trim().to_ascii_lowercase();
+    let method = trimmed.strip_prefix("did:").unwrap_or(trimmed.as_str());
+    if method.is_empty()
+        || !method
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(format!("invalid DID method: {value}"));
+    }
+    Ok(format!("did:{method}"))
+}
+
+fn normalize_did_list(raw: &str, label: &str) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    for value in split_policy_list(raw) {
+        cokret_sdk::Did::new(value.clone()).map_err(|err| format!("{label}: {err}"))?;
+        if !values.iter().any(|existing| existing == &value) {
+            values.push(value);
+        }
+    }
+    Ok(values)
+}
+
+fn build_principal_admission_join_policy(
+    enabled: bool,
+    methods_raw: &str,
+    allowed_dids_raw: &str,
+    denied_dids_raw: &str,
+) -> Result<Option<Value>, String> {
+    if !enabled {
+        return Ok(None);
+    }
+    let mut methods = Vec::new();
+    for method in split_policy_list(methods_raw) {
+        let method = normalize_did_method_entry(&method)?;
+        if !methods.iter().any(|existing| existing == &method) {
+            methods.push(method);
+        }
+    }
+    let allowed_dids = normalize_did_list(allowed_dids_raw, "allowed principal DID")?;
+    let denied_dids = normalize_did_list(denied_dids_raw, "denied principal DID")?;
+    if methods.is_empty() && allowed_dids.is_empty() && denied_dids.is_empty() {
+        return Err("principal admission requires a method, allowlist DID, or denylist DID".into());
+    }
+    let mut gate = json!({
+        "gate_id": "principal-admission",
+        "kind": "principal_admission",
+        "auto_resolve": true
+    });
+    if !methods.is_empty() {
+        gate["allowed_did_methods"] = json!(methods);
+    }
+    if !allowed_dids.is_empty() {
+        gate["allowed_principal_dids"] = json!(allowed_dids);
+    }
+    if !denied_dids.is_empty() {
+        gate["denied_principal_dids"] = json!(denied_dids);
+    }
+    Ok(Some(json!({
+        "gates": [gate],
+        "combinator": "all"
+    })))
+}
+
 #[component]
 pub fn RealmAdminPanel(
     base_url: String,
@@ -872,6 +951,10 @@ pub fn RealmAdminPanel(
     let mut metadata_summary = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
+    let mut principal_admission_enabled = use_signal(|| false);
+    let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
+    let mut principal_admission_allowed_dids = use_signal(String::new);
+    let mut principal_admission_denied_dids = use_signal(String::new);
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
@@ -1711,6 +1794,43 @@ pub fn RealmAdminPanel(
                 div { class: "muted", "Current: {join_rule}" }
             }
 
+            div { class: "event", "data-testid": "principal-admission-policy",
+                div { class: "event-head", span { "Principal Admission" } span { "hard gate" } }
+                label {
+                    input {
+                        r#type: "checkbox",
+                        checked: principal_admission_enabled(),
+                        onchange: move |evt| principal_admission_enabled.set(evt.value() == "true"),
+                    }
+                    " Enabled"
+                }
+                if principal_admission_enabled() {
+                    label { "Allowed DID methods" }
+                    input {
+                        "data-testid": "principal-admission-methods-input",
+                        value: "{principal_admission_methods}",
+                        placeholder: "did:webvh, did:web",
+                        oninput: move |evt| principal_admission_methods.set(evt.value()),
+                    }
+                    label { "Allowed principal DIDs" }
+                    textarea {
+                        "data-testid": "principal-admission-allowed-dids-input",
+                        value: "{principal_admission_allowed_dids}",
+                        placeholder: "did:web:alice.example",
+                        oninput: move |evt| principal_admission_allowed_dids.set(evt.value()),
+                    }
+                    label { "Denied principal DIDs" }
+                    textarea {
+                        "data-testid": "principal-admission-denied-dids-input",
+                        value: "{principal_admission_denied_dids}",
+                        placeholder: "did:web:blocked.example",
+                        oninput: move |evt| principal_admission_denied_dids.set(evt.value()),
+                    }
+                } else {
+                    div { class: "muted", "Disabled" }
+                }
+            }
+
             // History visibility selector
             div { class: "event", "data-testid": "history-visibility",
                 div { class: "event-head", span { "History Visibility" } span { "" } }
@@ -1751,12 +1871,31 @@ pub fn RealmAdminPanel(
                                 let api_token = token();
                                 let rule = join_rule();
                                 let vis = history_visibility();
+                                let join_policy = match build_principal_admission_join_policy(
+                                    principal_admission_enabled(),
+                                    &principal_admission_methods(),
+                                    &principal_admission_allowed_dids(),
+                                    &principal_admission_denied_dids(),
+                                ) {
+                                    Ok(policy) => policy,
+                                    Err(err) => {
+                                        status_msg.set(format!("policy failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.set_realm_policy_events(&realm, &actor, &rule, &vis).await
+                                            api.set_realm_policy_events(
+                                                &realm,
+                                                &actor,
+                                                &rule,
+                                                &vis,
+                                                join_policy,
+                                            )
+                                            .await
                                         },
                                     )
                                     .await
@@ -2665,6 +2804,29 @@ async fn run_device_revoke_from_snapshot(
         Err(err) => {
             status.set(format!("MLS Remove submit failed: {}", err.display()));
         }
+    }
+}
+
+#[cfg(test)]
+mod principal_admission_policy_tests {
+    use super::*;
+
+    #[test]
+    fn principal_admission_policy_normalizes_method() {
+        let policy = build_principal_admission_join_policy(true, "webvh", "", "")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            policy["gates"][0]["allowed_did_methods"],
+            json!(["did:webvh"])
+        );
+        assert_eq!(policy["gates"][0]["kind"], "principal_admission");
+    }
+
+    #[test]
+    fn principal_admission_policy_requires_selector() {
+        let err = build_principal_admission_join_policy(true, "", "", "").unwrap_err();
+        assert!(err.contains("requires"));
     }
 }
 
