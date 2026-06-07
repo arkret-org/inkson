@@ -605,14 +605,9 @@ fn accept_invite_notification(
             let submit = api
                 .join_realm_from_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;
-            let sync = match api
-                .account_subscribe_snapshot(Some(&submit.sync_token))
-                .await
-            {
-                Ok(sync) => sync,
-                Err(_) => api.account_subscribe_snapshot(None).await?,
-            };
-            let invite_notifications = api
+            let read_api = api.clone().with_wait_for(submit.sync_token);
+            let sync = read_api.account_subscribe_snapshot(None).await;
+            let invite_notifications = read_api
                 .invites()
                 .await
                 .map(|response| response.invites)
@@ -621,7 +616,7 @@ fn accept_invite_notification(
         })
         .await
         {
-            Ok((sync, invite_notifications)) => {
+            Ok((Ok(sync), invite_notifications)) => {
                 let push_rules = push_rules_from_account_data(&sync.account_data);
                 let dnd = dnd_settings_from_account_data(&sync.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
@@ -660,10 +655,40 @@ fn accept_invite_notification(
                     short_protocol_id(&accepted_realm)
                 ));
             }
+            Ok((Err(sync_err), _invite_notifications)) => {
+                hide_accepted_invite_notification(
+                    &mut state_store,
+                    &mut notifications,
+                    &notification_id,
+                    &accepted_realm,
+                );
+                status_msg.set(format!(
+                    "Joined Realm {}. Refresh pending: {}",
+                    short_protocol_id(&accepted_realm),
+                    sync_err
+                ));
+            }
             Err(err) => {
                 status_msg.set(format!("Accept invite failed: {}", err.display()));
             }
         }
+    });
+}
+
+fn hide_accepted_invite_notification(
+    state_store: &mut Signal<LocalStateStore>,
+    notifications: &mut Signal<Vec<Notification>>,
+    notification_id: &str,
+    accepted_realm: &str,
+) {
+    state_store
+        .write()
+        .set_notification_archived(notification_id.to_owned(), true);
+    notifications.with_mut(|items| {
+        items.retain(|notification| {
+            notification.id != notification_id
+                && !(notification.kind == "invite" && notification.realm_id == accepted_realm)
+        });
     });
 }
 
