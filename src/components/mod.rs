@@ -167,6 +167,9 @@ pub fn UiIcon(name: String) -> Element {
         }
         "bell" => "M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9m4 13a2 2 0 0 0 4 0",
         "board" => "M3 3h18v18H3V3Zm6 0v18m6-18v18M3 9h18",
+        "calendar" => {
+            "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
+        }
         "check" => "M20 6 9 17l-5-5",
         "chevron-down" => "m6 9 6 6 6-6",
         "chevron-left" => "m15 18-6-6 6-6",

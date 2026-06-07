@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{Datelike, Duration, NaiveDate};
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
@@ -440,6 +441,10 @@ pub fn KanbanPanel(
     let mut assignee_filter = use_signal(String::new);
     let mut assignee_selected_actor_ids = use_signal(BTreeSet::<String>::new);
     let mut assignee_edit_status = use_signal(String::new);
+    let mut due_picker_open = use_signal(|| false);
+    let mut due_edit_value = use_signal(String::new);
+    let mut due_calendar_month = use_signal(default_due_calendar_month);
+    let mut due_edit_status = use_signal(String::new);
     let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
     let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
@@ -501,6 +506,10 @@ pub fn KanbanPanel(
                 assignee_selected_actor_ids
                     .set(card_assigned_actor_ids(&card).into_iter().collect());
                 assignee_edit_status.set(String::new());
+                due_picker_open.set(false);
+                due_edit_value.set(editor_value_for_optional_card_field(&card.due));
+                due_calendar_month.set(due_calendar_month_for_value(&card.due));
+                due_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
                 let routed_tab = card_detail_tab_from_current_url();
                 if routed_tab == CardDetailContentTab::Discussion {
@@ -2144,6 +2153,10 @@ pub fn KanbanPanel(
                                         assignee_filter.set(String::new());
                                         assignee_selected_actor_ids.set(card_assigned_actor_ids(&c).into_iter().collect());
                                         assignee_edit_status.set(String::new());
+                                        due_picker_open.set(false);
+                                        due_edit_value.set(editor_value_for_optional_card_field(&c.due));
+                                        due_calendar_month.set(due_calendar_month_for_value(&c.due));
+                                        due_edit_status.set(String::new());
                                         card_detail_actions_open.set(false);
                                         card_detail_tab.set(CardDetailContentTab::Description);
                                         card_synthesis_history_open_id.set(None);
@@ -2762,6 +2775,10 @@ pub fn KanbanPanel(
                                     assignee_filter.set(String::new());
                                     assignee_selected_actor_ids.set(BTreeSet::new());
                                     assignee_edit_status.set(String::new());
+                                    due_picker_open.set(false);
+                                    due_edit_value.set(String::new());
+                                    due_calendar_month.set(default_due_calendar_month());
+                                    due_edit_status.set(String::new());
                                     card_detail_actions_open.set(false);
                                     if route_is_card_detail {
                                         let _ = overlay_navigator.push(overlay_board_route.clone());
@@ -3009,6 +3026,10 @@ pub fn KanbanPanel(
                                                 assignee_filter.set(String::new());
                                                 assignee_selected_actor_ids.set(BTreeSet::new());
                                                 assignee_edit_status.set(String::new());
+                                                due_picker_open.set(false);
+                                                due_edit_value.set(String::new());
+                                                due_calendar_month.set(default_due_calendar_month());
+                                                due_edit_status.set(String::new());
                                                 card_detail_actions_open.set(false);
                                                 if route_is_card_detail {
                                                     let _ = close_navigator.push(close_board_route.clone());
@@ -3889,26 +3910,29 @@ pub fn KanbanPanel(
                                                                         div {
                                                                             class: "assignee-editor",
                                                                             "data-testid": "card-detail-assignees",
-                                                                            button {
-                                                                                r#type: "button",
-                                                                                class: "assignee-trigger",
-                                                                                title: "{assignee_title}",
-                                                                                "aria-haspopup": "listbox",
-                                                                                "aria-expanded": "{picker_open}",
-                                                                                onclick: {
-                                                                                    let current_selection = assigned_actor_ids
-                                                                                        .iter()
-                                                                                        .cloned()
-                                                                                        .collect::<BTreeSet<_>>();
-                                                                                    move |_| {
-                                                                                        assignee_selected_actor_ids.set(current_selection.clone());
-                                                                                        assignee_filter.set(String::new());
-                                                                                        assignee_edit_status.set(String::new());
-                                                                                        assignee_picker_open.set(!assignee_picker_open());
-                                                                                    }
-                                                                                },
+                                                                            div { class: "assignee-chip-row", title: "{assignee_title}",
                                                                                 if assigned_people.is_empty() {
-                                                                                    span { class: "assignee-empty", "unassigned" }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add assignee-add-empty",
+                                                                                        "aria-haspopup": "listbox",
+                                                                                        "aria-expanded": "{picker_open}",
+                                                                                        title: "Add assignees",
+                                                                                        onclick: {
+                                                                                            let current_selection = assigned_actor_ids
+                                                                                                .iter()
+                                                                                                .cloned()
+                                                                                                .collect::<BTreeSet<_>>();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
+                                                                                                assignee_filter.set(String::new());
+                                                                                                assignee_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(!assignee_picker_open());
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "plus" }
+                                                                                        span { "Add assignees" }
+                                                                                    }
                                                                                 } else {
                                                                                     span { class: "assignee-chip-list",
                                                                                         for (actor_id, label, initial) in assigned_people.iter() {
@@ -3921,8 +3945,28 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                         }
                                                                                     }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add",
+                                                                                        "aria-label": "Add or remove assignees",
+                                                                                        "aria-haspopup": "listbox",
+                                                                                        "aria-expanded": "{picker_open}",
+                                                                                        title: "Add or remove assignees",
+                                                                                        onclick: {
+                                                                                            let current_selection = assigned_actor_ids
+                                                                                                .iter()
+                                                                                                .cloned()
+                                                                                                .collect::<BTreeSet<_>>();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
+                                                                                                assignee_filter.set(String::new());
+                                                                                                assignee_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(!assignee_picker_open());
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "plus" }
+                                                                                    }
                                                                                 }
-                                                                                UiIcon { name: "chevron-down" }
                                                                             }
                                                                             if picker_open {
                                                                                 div {
@@ -4048,14 +4092,231 @@ pub fn KanbanPanel(
                                                                 }
                                                                 div {
                                                                     dt { "Due" }
-                                                                    dd { "{card.due}" }
+                                                                    dd {
+                                                                        {
+                                                                            let due_editor_value = editor_value_for_optional_card_field(&card.due);
+                                                                            let due_has_value = !due_editor_value.is_empty();
+                                                                            let due_open = due_picker_open();
+                                                                            let due_status = due_edit_status();
+                                                                            let selected_date = parse_due_calendar_date(&due_edit_value());
+                                                                            let today_date = due_calendar_today();
+                                                                            let month = due_calendar_month();
+                                                                            let month_label = due_calendar_month_label(month);
+                                                                            let calendar_cells = due_calendar_cells(month);
+                                                                            rsx! {
+                                                                                div {
+                                                                                    class: "due-editor",
+                                                                                    "data-testid": "card-detail-due",
+                                                                                    if due_has_value {
+                                                                                        span {
+                                                                                            class: "due-pill",
+                                                                                            title: "{due_editor_value}",
+                                                                                            "{due_editor_value}"
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-edit-button",
+                                                                                            "aria-label": "Edit due date",
+                                                                                            "aria-haspopup": "dialog",
+                                                                                            "aria-expanded": "{due_open}",
+                                                                                            title: "Edit due date",
+                                                                                            onclick: {
+                                                                                                let current_due = due_editor_value.clone();
+                                                                                                move |_| {
+                                                                                                    due_edit_value.set(current_due.clone());
+                                                                                                    due_calendar_month.set(due_calendar_month_for_value(&current_due));
+                                                                                                    due_edit_status.set(String::new());
+                                                                                                    assignee_picker_open.set(false);
+                                                                                                    due_picker_open.set(!due_picker_open());
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: "calendar" }
+                                                                                        }
+                                                                                    } else {
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-add-button",
+                                                                                            "aria-haspopup": "dialog",
+                                                                                            "aria-expanded": "{due_open}",
+                                                                                            title: "Add due date",
+                                                                                            onclick: move |_| {
+                                                                                                due_edit_value.set(String::new());
+                                                                                                due_calendar_month.set(default_due_calendar_month());
+                                                                                                due_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(false);
+                                                                                                due_picker_open.set(!due_picker_open());
+                                                                                            },
+                                                                                            UiIcon { name: "plus" }
+                                                                                            span { "Add due date" }
+                                                                                        }
+                                                                                    }
+                                                                                    if due_open {
+                                                                                        div {
+                                                                                            class: "due-popover",
+                                                                                            "data-testid": "card-detail-due-picker",
+                                                                                            div { class: "due-popover-field",
+                                                                                                label { "Due date" }
+                                                                                                input {
+                                                                                                    class: "input",
+                                                                                                    "data-testid": "card-detail-due-inline-input",
+                                                                                                    value: "{due_edit_value}",
+                                                                                                    placeholder: "YYYY-MM-DD",
+                                                                                                    oninput: move |evt| {
+                                                                                                        let next = evt.value();
+                                                                                                        if let Some(date) = parse_due_calendar_date(&next) {
+                                                                                                            due_calendar_month.set(start_of_due_calendar_month(date));
+                                                                                                        }
+                                                                                                        due_edit_value.set(next);
+                                                                                                    },
+                                                                                                }
+                                                                                            }
+                                                                                            div { class: "due-calendar",
+                                                                                                div { class: "due-calendar-header",
+                                                                                                    button {
+                                                                                                        r#type: "button",
+                                                                                                        class: "due-calendar-nav",
+                                                                                                        "aria-label": "Previous month",
+                                                                                                        title: "Previous month",
+                                                                                                        onclick: move |_| {
+                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), -1));
+                                                                                                        },
+                                                                                                        UiIcon { name: "chevron-left" }
+                                                                                                    }
+                                                                                                    strong { class: "due-calendar-title", "{month_label}" }
+                                                                                                    button {
+                                                                                                        r#type: "button",
+                                                                                                        class: "due-calendar-nav",
+                                                                                                        "aria-label": "Next month",
+                                                                                                        title: "Next month",
+                                                                                                        onclick: move |_| {
+                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), 1));
+                                                                                                        },
+                                                                                                        UiIcon { name: "chevron-right" }
+                                                                                                    }
+                                                                                                }
+                                                                                                div {
+                                                                                                    class: "due-calendar-weekdays",
+                                                                                                    span { "Sun" }
+                                                                                                    span { "Mon" }
+                                                                                                    span { "Tue" }
+                                                                                                    span { "Wed" }
+                                                                                                    span { "Thu" }
+                                                                                                    span { "Fri" }
+                                                                                                    span { "Sat" }
+                                                                                                }
+                                                                                                div {
+                                                                                                    class: "due-calendar-grid",
+                                                                                                    role: "grid",
+                                                                                                    "aria-label": "Due date calendar",
+                                                                                                    for cell in calendar_cells.iter() {
+                                                                                                        {
+                                                                                                            let selected = selected_date.is_some_and(|date| date == cell.date);
+                                                                                                            let is_today = today_date == cell.date;
+                                                                                                            let mut day_class = String::from("due-calendar-day");
+                                                                                                            if !cell.in_current_month {
+                                                                                                                day_class.push_str(" outside");
+                                                                                                            }
+                                                                                                            if is_today {
+                                                                                                                day_class.push_str(" today");
+                                                                                                            }
+                                                                                                            if selected {
+                                                                                                                day_class.push_str(" selected");
+                                                                                                            }
+                                                                                                            let iso_date = cell.iso_date.clone();
+                                                                                                            let cell_label = format!("Select {iso_date}");
+                                                                                                            rsx! {
+                                                                                                                button {
+                                                                                                                    key: "{cell.iso_date}",
+                                                                                                                    r#type: "button",
+                                                                                                                    class: "{day_class}",
+                                                                                                                    role: "gridcell",
+                                                                                                                    "aria-label": "{cell_label}",
+                                                                                                                    "aria-pressed": "{selected}",
+                                                                                                                    onclick: move |_| {
+                                                                                                                        due_edit_value.set(iso_date.clone());
+                                                                                                                        due_calendar_month.set(due_calendar_month_for_value(&iso_date));
+                                                                                                                    },
+                                                                                                                    "{cell.day}"
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            if !due_status.trim().is_empty() {
+                                                                                                div {
+                                                                                                    class: "due-edit-status",
+                                                                                                    role: "status",
+                                                                                                    "aria-live": "polite",
+                                                                                                    "{due_status}"
+                                                                                                }
+                                                                                            }
+                                                                                            div { class: "due-popover-actions",
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "secondary",
+                                                                                                    onclick: move |_| {
+                                                                                                        due_edit_value.set(String::new());
+                                                                                                        due_calendar_month.set(default_due_calendar_month());
+                                                                                                    },
+                                                                                                    "Clear"
+                                                                                                }
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "secondary",
+                                                                                                    onclick: {
+                                                                                                        let cancel_due = due_editor_value.clone();
+                                                                                                        move |_| {
+                                                                                                            due_picker_open.set(false);
+                                                                                                            due_edit_value.set(cancel_due.clone());
+                                                                                                            due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
+                                                                                                            due_edit_status.set(String::new());
+                                                                                                        }
+                                                                                                    },
+                                                                                                    {crate::i18n::tr("common.cancel")}
+                                                                                                }
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "primary",
+                                                                                                    onclick: {
+                                                                                                        let base = base_url.clone();
+                                                                                                        let realm = selected_realm_id.clone();
+                                                                                                        let actor = account_did.clone();
+                                                                                                        let device = device_id.clone();
+                                                                                                        let current_card = card.clone();
+                                                                                                        move |_| {
+                                                                                                            save_card_due_edit(
+                                                                                                                base.clone(),
+                                                                                                                token,
+                                                                                                                realm.clone(),
+                                                                                                                actor.clone(),
+                                                                                                                device.clone(),
+                                                                                                                current_card.clone(),
+                                                                                                                due_edit_value(),
+                                                                                                                selected_scope_security_encrypted,
+                                                                                                                due_picker_open,
+                                                                                                                due_edit_status,
+                                                                                                                columns,
+                                                                                                                selected_card,
+                                                                                                                state_store,
+                                                                                                                board_status,
+                                                                                                            );
+                                                                                                        }
+                                                                                                    },
+                                                                                                    {crate::i18n::tr("common.save")}
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                        }
+                                                                    }
                                                                 }
                                                                 div {
                                                                     dt { "Visibility" }
                                                                     dd { "{card.external_visibility}" }
                                                                 }
-                                                            }
-                                                        }
                                                             }
                                                         }
                                                         div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
@@ -4069,6 +4330,8 @@ pub fn KanbanPanel(
                                                                 div { "{card.audit_hint}" }
                                                             }
                                                         }
+                                                    }
+                                                }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Members {
                                                         if realm_member_rows.is_empty() {
@@ -4911,6 +5174,56 @@ fn save_card_detail_edit(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn save_card_due_edit(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_did: String,
+    device_id: String,
+    current: KanbanCard,
+    due_value: String,
+    scope_security_encrypted: Option<bool>,
+    mut due_picker_open: Signal<bool>,
+    mut due_edit_status: Signal<String>,
+    columns: Signal<Vec<KanbanColumn>>,
+    selected_card: Signal<Option<KanbanCard>>,
+    state_store: Signal<LocalStateStore>,
+    board_status: Signal<String>,
+) -> bool {
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.due = due_value.trim().to_owned();
+    due_edit_status.set("Saving...".to_owned());
+    if dispatch_card_detail_update(
+        base_url,
+        token,
+        realm_id,
+        actor_did,
+        device_id,
+        current,
+        draft,
+        scope_security_encrypted,
+        None,
+        None,
+        columns,
+        selected_card,
+        state_store,
+        board_status,
+    ) {
+        due_edit_status.set(String::new());
+        due_picker_open.set(false);
+        true
+    } else {
+        let status = board_status();
+        due_edit_status.set(if status.trim().is_empty() {
+            "Unable to save due date.".to_owned()
+        } else {
+            status
+        });
+        false
+    }
+}
+
 fn projection_synthesis_revision(
     card: &KanbanCard,
     index: usize,
@@ -5228,6 +5541,75 @@ fn share_kanban_flow_link(path: &str) {
     let _ = document::eval(&script);
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DueCalendarCell {
+    date: NaiveDate,
+    day: u32,
+    in_current_month: bool,
+    iso_date: String,
+}
+
+fn default_due_calendar_month() -> NaiveDate {
+    start_of_due_calendar_month(due_calendar_today())
+}
+
+fn due_calendar_today() -> NaiveDate {
+    chrono::Utc::now().date_naive()
+}
+
+fn start_of_due_calendar_month(date: NaiveDate) -> NaiveDate {
+    date.with_day(1).expect("every month has day one")
+}
+
+fn due_calendar_month_for_value(value: &str) -> NaiveDate {
+    parse_due_calendar_date(value)
+        .map(start_of_due_calendar_month)
+        .unwrap_or_else(default_due_calendar_month)
+}
+
+fn parse_due_calendar_date(value: &str) -> Option<NaiveDate> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+        .ok()
+        .or_else(|| {
+            chrono::DateTime::parse_from_rfc3339(trimmed)
+                .ok()
+                .map(|timestamp| timestamp.date_naive())
+        })
+}
+
+fn due_calendar_month_label(month: NaiveDate) -> String {
+    month.format("%B %Y").to_string()
+}
+
+fn add_due_calendar_months(month: NaiveDate, delta: i32) -> NaiveDate {
+    let month = start_of_due_calendar_month(month);
+    let index = month.year() * 12 + month.month0() as i32 + delta;
+    let year = index.div_euclid(12);
+    let month0 = index.rem_euclid(12);
+    NaiveDate::from_ymd_opt(year, month0 as u32 + 1, 1).unwrap_or(month)
+}
+
+fn due_calendar_cells(month: NaiveDate) -> Vec<DueCalendarCell> {
+    let month = start_of_due_calendar_month(month);
+    let first_weekday_offset = month.weekday().num_days_from_sunday() as i64;
+    let first_cell = month - Duration::days(first_weekday_offset);
+    (0..42)
+        .map(|offset| {
+            let date = first_cell + Duration::days(offset);
+            DueCalendarCell {
+                date,
+                day: date.day(),
+                in_current_month: date.year() == month.year() && date.month() == month.month(),
+                iso_date: date.format("%Y-%m-%d").to_string(),
+            }
+        })
+        .collect()
+}
+
 fn card_summary_text(summary: &str) -> String {
     summary.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -5263,7 +5645,7 @@ fn parse_card_labels(raw: &str) -> Vec<String> {
 
 fn editor_value_for_optional_card_field(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed == "—" {
+    if trimmed.is_empty() || trimmed == "—" || trimmed.eq_ignore_ascii_case("unscheduled") {
         String::new()
     } else {
         trimmed.to_owned()
@@ -8462,6 +8844,46 @@ mod tests {
             parse_card_labels(" release, ops, release, ,OPS "),
             vec!["release".to_owned(), "ops".to_owned()]
         );
+    }
+
+    #[test]
+    fn due_calendar_parses_date_and_rfc3339_values() {
+        assert_eq!(
+            parse_due_calendar_date("2026-06-09"),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
+        );
+        assert_eq!(
+            parse_due_calendar_date("2026-06-09T18:30:00Z"),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
+        );
+        assert_eq!(parse_due_calendar_date("unscheduled"), None);
+    }
+
+    #[test]
+    fn due_calendar_month_navigation_crosses_years() {
+        let jan_2026 = NaiveDate::from_ymd_opt(2026, 1, 17).unwrap();
+        assert_eq!(
+            add_due_calendar_months(jan_2026, -1),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap()
+        );
+        let dec_2026 = NaiveDate::from_ymd_opt(2026, 12, 9).unwrap();
+        assert_eq!(
+            add_due_calendar_months(dec_2026, 1),
+            NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn due_calendar_cells_cover_sunday_first_six_week_grid() {
+        let month = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let cells = due_calendar_cells(month);
+        assert_eq!(cells.len(), 42);
+        assert_eq!(cells.first().unwrap().iso_date, "2026-05-31");
+        assert_eq!(cells[1].iso_date, "2026-06-01");
+        assert_eq!(cells.last().unwrap().iso_date, "2026-07-11");
+        assert!(!cells[0].in_current_month);
+        assert!(cells[1].in_current_month);
+        assert!(!cells.last().unwrap().in_current_month);
     }
 
     #[test]
