@@ -1096,7 +1096,10 @@ pub fn KanbanPanel(
         let handle_projection_realm_id = projection_realm_id.clone();
         let handle_token = token;
         use_effect(move || {
-            if card_detail_sidebar_tab() != CardDetailSidebarTab::Members {
+            let should_fetch_member_handles = card_detail_sidebar_tab()
+                == CardDetailSidebarTab::Members
+                || card_detail_tab() == CardDetailContentTab::Synthesis;
+            if !should_fetch_member_handles {
                 return;
             }
             if selected_card().is_none() {
@@ -2677,7 +2680,23 @@ pub fn KanbanPanel(
                     let synthesis_entries = {
                         let store = state_store.read();
                         let snapshot = store.load();
-                        card_synthesis_track_entries(card, &snapshot.raw_operations, &store)
+                        let projection = snapshot.realm_tree_projections.get(&selected_realm_id);
+                        let realm_context = member_roster_realm_context(
+                            &selected_realm_id,
+                            &projection_realm_id,
+                            projection,
+                        );
+                        let member_rows = realm_member_roster(projection);
+                        let author_context = CardAuthorDisplayContext {
+                            realm_id: &realm_context,
+                            member_rows: &member_rows,
+                        };
+                        card_synthesis_track_entries_with_author_context(
+                            card,
+                            &snapshot.raw_operations,
+                            &store,
+                            Some(author_context),
+                        )
                     };
                     let overlay_navigator = navigator;
                     let overlay_board_route = board_route_after_close.clone();
@@ -4155,6 +4174,12 @@ fn member_handle_fetch_key(realm_id: &str, subject_id: &str, digest: Option<&str
     )
 }
 
+#[derive(Clone, Copy)]
+struct CardAuthorDisplayContext<'a> {
+    realm_id: &'a str,
+    member_rows: &'a [RealmMemberRow],
+}
+
 /// Collect the sorted roster of realm members from a cached space
 /// projection. R3.2 roster wire shape per
 /// `account-subscribe-frame.schema.json#/$defs/member_roster_entry`:
@@ -4386,6 +4411,58 @@ fn display_user_reference(value: &str, state_store: &LocalStateStore) -> String 
         .unwrap_or_else(|| trimmed.to_owned())
 }
 
+fn card_author_display_label(
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+    actor_did: &str,
+) -> String {
+    let actor_did = actor_did.trim();
+    if actor_did.is_empty() {
+        return "Unknown author".to_owned();
+    }
+    if let Some(label) = member_display_label_for_actor(state_store, author_context, actor_did) {
+        return label;
+    }
+    display_name_for_did(state_store, actor_did)
+}
+
+fn member_display_label_for_actor(
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+    actor_did: &str,
+) -> Option<String> {
+    let actor_did = actor_did.trim();
+    let context = author_context?;
+    let realm_id = context.realm_id.trim();
+    if actor_did.is_empty() || realm_id.is_empty() {
+        return None;
+    }
+    let row = context.member_rows.iter().find(|row| {
+        row.actor_id.trim() == actor_did
+            || row
+                .subject_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|subject| subject == actor_did)
+    })?;
+    let identity = state_store.resolved_member_identity(realm_id, &row.actor_id);
+    let cached_handle =
+        member_handle_lookup_subject(row, identity.as_ref()).and_then(|subject_id| {
+            state_store
+                .cached_member_handle_lookup(
+                    &subject_id,
+                    Some(realm_id),
+                    row.member_display_state_digest.as_deref(),
+                )
+                .and_then(|entry| entry.primary_handle)
+        });
+    Some(member_display_label(
+        row,
+        identity.as_ref(),
+        cached_handle.as_deref(),
+    ))
+}
+
 fn compact_timestamp_label(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -4577,6 +4654,7 @@ fn projection_synthesis_revision(
     index: usize,
     body: String,
     state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> CardSynthesisRevision {
     let actor_did = card.created_by.trim().to_owned();
     let timestamp = if !card.updated_at.trim().is_empty() {
@@ -4584,11 +4662,7 @@ fn projection_synthesis_revision(
     } else {
         card.created_at.clone()
     };
-    let author_label = if actor_did.is_empty() {
-        "Unknown author".to_owned()
-    } else {
-        display_name_for_did(state_store, &actor_did)
-    };
+    let author_label = card_author_display_label(state_store, author_context, &actor_did);
     CardSynthesisRevision {
         id: format!("{}:projection-synthesis:{index}", card.id),
         body,
@@ -4602,6 +4676,7 @@ fn projection_synthesis_revision(
 fn synthesis_revision_from_raw_operation(
     record: &RawOperationRecord,
     state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> Option<(String, String, CardSynthesisRevision)> {
     let update = local_card_update_from_raw_operation(record, None)?;
     let payload = &record.payload;
@@ -4626,11 +4701,7 @@ fn synthesis_revision_from_raw_operation(
                 .received_at
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         });
-    let author_label = if actor_did.trim().is_empty() {
-        "Unknown author".to_owned()
-    } else {
-        display_name_for_did(state_store, &actor_did)
-    };
+    let author_label = card_author_display_label(state_store, author_context, &actor_did);
     let entry_id = json_path_string(Some(payload), &["synthesis_entry_id"])
         .unwrap_or_else(|| format!("{}:synthesis", update.flow_id));
     Some((
@@ -4670,15 +4741,27 @@ fn synthesis_entry_from_revisions(
     })
 }
 
+#[cfg(test)]
 fn card_synthesis_track_entries(
     card: &KanbanCard,
     raw_operations: &[RawOperationRecord],
     state_store: &LocalStateStore,
 ) -> Vec<CardSynthesisTrackEntry> {
+    card_synthesis_track_entries_with_author_context(card, raw_operations, state_store, None)
+}
+
+fn card_synthesis_track_entries_with_author_context(
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+    state_store: &LocalStateStore,
+    author_context: Option<CardAuthorDisplayContext<'_>>,
+) -> Vec<CardSynthesisTrackEntry> {
     let mut grouped = BTreeMap::<String, Vec<CardSynthesisRevision>>::new();
     for (_, entry_id, revision) in raw_operations
         .iter()
-        .filter_map(|record| synthesis_revision_from_raw_operation(record, state_store))
+        .filter_map(|record| {
+            synthesis_revision_from_raw_operation(record, state_store, author_context)
+        })
         .filter(|(flow_id, ..)| flow_id == &card.id)
     {
         grouped.entry(entry_id).or_default().push(revision);
@@ -4720,6 +4803,7 @@ fn card_synthesis_track_entries(
                     index,
                     current_body,
                     state_store,
+                    author_context,
                 ));
                 if let Some(rebuilt) =
                     synthesis_entry_from_revisions(entry.id.clone(), entry.revisions.clone())
@@ -4729,7 +4813,13 @@ fn card_synthesis_track_entries(
             }
             entries.push(entry);
         } else {
-            let revision = projection_synthesis_revision(card, index, current_body, state_store);
+            let revision = projection_synthesis_revision(
+                card,
+                index,
+                current_body,
+                state_store,
+                author_context,
+            );
             if let Some(entry) = synthesis_entry_from_revisions(
                 format!("{}:synthesis:{index}", card.id),
                 vec![revision],
@@ -5524,9 +5614,9 @@ fn kanban_mls_commit_event_from_store(
 }
 
 /// The MLS events an encrypted write must submit, in submit order: the
-/// one-time `ck.mls.genesis` (if not yet emitted) MUST precede the
+/// one-time `ck.mls.genesis` (if not yet emitted) MUST precede any forced
 /// `ck.mls.commit` so the server has the group at epoch 0 before the commit
-/// bumps it to 1.
+/// bumps it.
 #[derive(Default, Debug)]
 struct EncryptedWriteMlsEvents {
     genesis: Option<crate::operation::EventEnvelope>,
@@ -5534,8 +5624,8 @@ struct EncryptedWriteMlsEvents {
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
     /// races ahead of the server's accepted epoch (the root cause of
-    /// permanent `mls_epoch_skew`). `None` when this write produced no
-    /// encrypted values (no commit).
+    /// permanent `mls_epoch_skew`). `None` when the encrypted write rides the
+    /// current epoch without forcing a commit.
     snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 }
 
@@ -5603,13 +5693,16 @@ fn encrypt_private_card_detail_patch_values_with_store(
             &plaintext_values,
         )
         .map_err(|err| err.user_message())?;
-    let commit_event = kanban_mls_commit_event_from_store(
-        state_store,
-        realm_id,
-        actor_did,
-        &schedule_hash,
-        &commit_envelope,
-    )?;
+    let commit_event = match commit_envelope.as_ref() {
+        Some(commit_envelope) => Some(kanban_mls_commit_event_from_store(
+            state_store,
+            realm_id,
+            actor_did,
+            &schedule_hash,
+            commit_envelope,
+        )?),
+        None => None,
+    };
     // X5.1 — encryption succeeded. Persist the author's own plaintext into
     // the local-only sidecar so a later re-projection (refresh / board
     // switch / live poll) can render the author's own content, which can
@@ -5631,10 +5724,12 @@ fn encrypt_private_card_detail_patch_values_with_store(
         encrypted_patch,
         EncryptedWriteMlsEvents {
             genesis: genesis_event,
-            commit: Some(commit_event),
-            // X14 — persisted by `dispatch_card_detail_update` ONLY after the
-            // server accepts the commit (see the commit Ok arm).
-            snapshot: Some(new_snapshot),
+            commit: commit_event,
+            // X14 — forced-commit snapshots are persisted by
+            // `dispatch_card_detail_update` ONLY after the server accepts the
+            // commit (see the commit Ok arm). Ordinary application writes
+            // already persisted the same-epoch ratchet snapshot in-place.
+            snapshot: new_snapshot,
         },
     ))
 }
@@ -5764,12 +5859,6 @@ fn dispatch_card_detail_update(
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
         .map(|op| op.local_operation_id().to_owned());
-    let should_upload_mls_backup = mls_commit_operation_id.is_some();
-    let actor_for_backup = actor_did.clone();
-    let device_for_backup = device_id.clone();
-    // X5.3 — clones for the private-plaintext sidecar re-upload (trigger c).
-    let actor_for_sidecar = actor_did.clone();
-    let device_for_sidecar = device_id.clone();
     // X11.2 — first-write trigger. Read the context-provided
     // `needs_mls_backup` signal HERE (inside the Dioxus scope), so the
     // encrypted-write success arm can flip the backup prompt on directly,
@@ -5778,6 +5867,7 @@ fn dispatch_card_detail_update(
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_did.clone();
+    let device_for_sidecar_backup = device_id.clone();
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
@@ -5897,88 +5987,26 @@ fn dispatch_card_detail_update(
                     "{kind} operation accepted by server (event_id={})",
                     short_protocol_id(&resp.event_id)
                 ));
-                if should_upload_mls_backup {
-                    let snapshot = state_store.read().mls_snapshot_for(&realm_id);
-                    if let Some(snapshot) = snapshot {
-                        match with_authed_api(&base_url, api_token.clone(), |api| async move {
-                            crate::mls::runtime::upload_mls_snapshot_backup(
-                                &api,
-                                &snapshot,
-                                &actor_for_backup,
-                                &device_for_backup,
-                            )
-                            .await
-                            .map_err(|err| anyhow::anyhow!(err.user_message()))
-                        })
-                        .await
-                        {
-                            Ok(backup_id) => board_status.set(format!(
-                                "{kind} operation accepted; MLS history backup {} uploaded",
-                                short_protocol_id(&backup_id)
-                            )),
-                            Err(err) => board_status.set(format!(
-                                "{kind} operation accepted; MLS history backup failed: {}",
-                                err.display()
-                            )),
-                        }
-                        // X11.2 — first-write trigger. After this encrypted
-                        // write landed, if the server holds no
-                        // `mls_account_secret` backup yet, flip
-                        // `needs_mls_backup` on directly so the prompt surfaces
-                        // promptly (not gated on the boot detection effect).
-                        // Best-effort + non-blocking.
-                        if let Some(signal) = backup_trigger_signal {
-                            crate::components::maybe_flag_mls_backup_after_encrypted_write(
-                                base_for_backup_trigger.clone(),
-                                api_token.clone(),
-                                actor_for_backup_trigger.clone(),
-                                signal,
-                            )
-                            .await;
-                        }
-                    }
-                    // X5.3 (trigger c) — re-upload the encrypted local-plaintext
-                    // sidecar so the content just written is recoverable on a new
-                    // browser. GATE: only when recovery is already configured
-                    // (the server holds an `mls_account_secret` backup); first-time
-                    // users have no account-secret backup yet and the X3
-                    // `MlsBackupPrompt` handles their initial upload (incl. the
-                    // sidecar). DECISION: always re-upload on each encrypted write
-                    // (series_seq++) rather than tracking a dirty hash — every
-                    // encrypted write mutated the sidecar via `save_private_plaintext`
-                    // just above, so the content is materially new each time. This
-                    // is the simplest correct version (the plan explicitly permits
-                    // always-upload for v1). Best-effort + non-blocking: errors are
-                    // swallowed and never disturb the accepted-write status.
-                    let sidecar_json = if state_store.read().private_plaintext_is_empty() {
-                        None
-                    } else {
-                        Some(state_store.read().private_plaintext_snapshot_json())
-                    };
-                    if let Some(sidecar_json) = sidecar_json {
-                        let recovery_configured =
-                            with_authed_api(&base_url, api_token.clone(), |api| async move {
-                                crate::mls::account_recovery::fetch_mls_account_secret_backup(&api)
-                                    .await
-                            })
-                            .await
-                            .ok()
-                            .flatten()
-                            .is_some();
-                        if recovery_configured {
-                            let _ = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                                let secure = crate::secure_key_store::default_secure_key_store("yougen");
-                                crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                    &api,
-                                    secure.as_ref(),
-                                    &actor_for_sidecar,
-                                    &device_for_sidecar,
-                                    &sidecar_json,
-                                )
-                                .await
-                            })
-                            .await;
-                        }
+                if effective_security_encrypted {
+                    crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                        base_for_backup_trigger.clone(),
+                        api_token.clone(),
+                        actor_for_backup_trigger.clone(),
+                        device_for_sidecar_backup.clone(),
+                        state_store,
+                    );
+                    // X11.2 — first-write trigger. After this encrypted write
+                    // landed, prompt if no account-secret recovery backup exists.
+                    // The helper dedupes its server probe per account/session, so
+                    // ordinary writes do not list backups repeatedly.
+                    if let Some(signal) = backup_trigger_signal {
+                        crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                            base_for_backup_trigger.clone(),
+                            api_token.clone(),
+                            actor_for_backup_trigger.clone(),
+                            signal,
+                        )
+                        .await;
                     }
                 }
             }
@@ -8043,9 +8071,11 @@ mod tests {
             patched["body"]["value"]["content_type"],
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE
         );
-        assert!(mls_events.commit.is_some());
-        // A freshly-created creator group must also produce a one-time
-        // ck.mls.genesis event (submitted before the commit).
+        assert!(mls_events.commit.is_none());
+        assert!(mls_events.snapshot.is_none());
+        // A freshly-created creator group must still produce a one-time
+        // ck.mls.genesis event; ordinary application writes ride epoch 0
+        // without a per-write commit.
         let genesis = mls_events
             .genesis
             .expect("freshly-created creator group should emit genesis");
@@ -8079,7 +8109,7 @@ mod tests {
         .unwrap();
         let group = identity.create_group(realm.as_bytes()).unwrap();
         let record = group.export_state_record().unwrap();
-        let envelope = crate::mls::persistence::encrypt_state(
+        let mut envelope = crate::mls::persistence::encrypt_state(
             realm,
             &record.group_id,
             record.epoch,
@@ -8087,6 +8117,11 @@ mod tests {
             &secret,
             b"deterministic-salt",
         );
+        state.save_realm_tree_projection(
+            realm,
+            json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        );
+        envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
         state.save_mls_snapshot(realm, envelope);
         let patch = json!({
             "body": {"$op": "set", "value": "private body"},
@@ -8120,9 +8155,10 @@ mod tests {
         // The snapshot already existed (not freshly created here), so there is
         // no fresh epoch-0 material and genesis is not emitted on this path.
         assert!(mls_events.genesis.is_none());
+        assert!(mls_events.snapshot.is_some());
         let commit = mls_events
             .commit
-            .expect("ready MLS snapshot should emit commit event");
+            .expect("overdue minimal metadata MLS snapshot should emit commit event");
         assert_eq!(commit.kind, "ck.mls.commit");
         assert_registered_payload_valid(&commit);
         assert!(commit.payload.get("group_id").is_none());
@@ -8399,6 +8435,51 @@ mod tests {
         assert_eq!(entries[0].revisions[0].body, "first synthesis");
         assert_eq!(entries[0].revisions[0].author_label, "alice:acme.example");
         assert_eq!(entries[0].revisions[1].body, "second synthesis");
+    }
+
+    #[test]
+    fn card_synthesis_author_prefers_cached_member_primary_handle() {
+        let actor = "did:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
+        let subject = "did:web:auth.local.host:principals:alice";
+        let digest = "sha256:abababababababababababababababababababababababababababababababab";
+        let mut card = test_card("ck:flow:edit-me", "U");
+        card.synthesis = "wqefqqwf".to_owned();
+        card.created_by = actor.to_owned();
+
+        let projection = json!({
+            "realm_id": TEST_REALM_ID,
+            "members": [{
+                "actor_id": actor,
+                "membership": "join",
+                "subject_id": subject,
+                "member_display_state_digest": digest
+            }]
+        });
+        let rows = realm_member_roster(Some(&projection));
+        let mut store = temp_state_store("synthesis-primary-handle");
+        store.save_member_handle_lookup(
+            subject,
+            Some(TEST_REALM_ID.to_owned()),
+            Some(digest.to_owned()),
+            Some("abbc:auth.local.host".to_owned()),
+            1,
+            None,
+            None,
+        );
+        let context = CardAuthorDisplayContext {
+            realm_id: TEST_REALM_ID,
+            member_rows: &rows,
+        };
+
+        let entries =
+            card_synthesis_track_entries_with_author_context(&card, &[], &store, Some(context));
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].author_label, "abbc:auth.local.host");
+        assert_ne!(
+            entries[0].author_label,
+            "01kth8q1w1f9c9pt3a0zfvf6gb:auth.local.host"
+        );
     }
 
     #[test]

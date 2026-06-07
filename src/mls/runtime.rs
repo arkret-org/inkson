@@ -845,8 +845,8 @@ pub fn encrypt_values_with_device_snapshot(
         cokret_sdk::Hash,
         Vec<cokret_sdk::Did>,
         Vec<serde_json::Value>,
-        cokret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        Option<cokret_sdk::MlsCommitEnvelope>,
+        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     ),
     MlsRuntimeError,
 > {
@@ -860,9 +860,20 @@ pub fn encrypt_values_with_device_snapshot(
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
-    let commit_envelope = group
-        .self_update_commit()
-        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let should_commit = should_force_epoch_advance(
+        state_store.realm_projection_is_minimal_metadata(realm_id),
+        snapshot.epoch_started_at,
+        crate::clock::now_utc(),
+    );
+    let commit_envelope = if should_commit {
+        Some(
+            group
+                .self_update_commit()
+                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
+        )
+    } else {
+        None
+    };
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
     for plaintext in plaintext_values {
         let encrypted = group
@@ -882,17 +893,7 @@ pub fn encrypt_values_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    // X14 — persist-on-accept: do NOT save the post-commit snapshot here.
-    // The caller MUST call `state_store.save_mls_snapshot(realm_id,
-    // new_envelope)` ONLY after the server ACCEPTS the corresponding
-    // `ck.mls.commit` event. Persisting before acceptance let the local
-    // snapshot epoch race ahead of the server's accepted epoch whenever a
-    // commit POST failed/was cancelled, so every later write computed
-    // `expected_prev_epoch = local_epoch - 1 > server_epoch` and the server
-    // rejected it with `mls_epoch_skew` forever. Returning the envelope and
-    // letting the caller persist on accept keeps `snapshot.epoch ==
-    // server.epoch` in lockstep by construction.
-    let new_envelope = crate::mls::persistence::encrypt_state(
+    let mut new_envelope = crate::mls::persistence::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,
@@ -900,13 +901,20 @@ pub fn encrypt_values_with_device_snapshot(
         &secret,
         &salt,
     );
-    Ok((
-        schedule_hash,
-        member_dids,
-        encrypted_values,
-        commit_envelope,
-        new_envelope,
-    ))
+    if commit_envelope.is_some() {
+        // Persist-on-accept: forced epoch advances must only be saved after the
+        // server accepts the matching `ck.mls.commit`.
+        return Ok((
+            schedule_hash,
+            member_dids,
+            encrypted_values,
+            commit_envelope,
+            Some(new_envelope),
+        ));
+    }
+    new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+    state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
+    Ok((schedule_hash, member_dids, encrypted_values, None, None))
 }
 
 /// Encrypt a single message plaintext under the Realm MLS group, binding
@@ -915,9 +923,10 @@ pub fn encrypt_values_with_device_snapshot(
 ///
 /// The caller assembles the spec-canonical `ck.schema.encrypted_envelope.v1`
 /// wire shape via [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it
-/// knows the `ck.mls.commit` event id that bounds this epoch (used as the
-/// envelope `key_ref.group_state_ref`). `aad` MUST be the canonical
-/// `EncryptedEnvelopeAadV1` value, so the digest verification round-trips.
+/// knows the accepted group-state reference for this epoch (genesis, latest
+/// winning commit, or a forced commit returned by this helper). `aad` MUST be
+/// the canonical `EncryptedEnvelopeAadV1` value, so the digest verification
+/// round-trips.
 pub fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -932,8 +941,8 @@ pub fn encrypt_message_with_device_snapshot(
         cokret_sdk::Hash,
         Vec<cokret_sdk::Did>,
         cokret_sdk::EncryptedPayload,
-        cokret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        Option<cokret_sdk::MlsCommitEnvelope>,
+        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     ),
     MlsRuntimeError,
 > {
@@ -941,20 +950,28 @@ pub fn encrypt_message_with_device_snapshot(
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
-    // `aad_visibility=hidden`. Enforce before any commit/encrypt so a non-hidden
-    // AAD never advances the epoch nor produces ciphertext (mirrors soland's
-    // server-side reject). The 1h epoch cap needs no separate force here: every
-    // message self-update-commits below, so each message already opens a fresh
-    // epoch — the within-epoch frequency window for messages is one message.
+    // `aad_visibility=hidden`. Enforce before any optional commit/encrypt so a
+    // non-hidden AAD never advances the epoch nor produces ciphertext.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
-    let commit_envelope = group
-        .self_update_commit()
-        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let should_commit = should_force_epoch_advance(
+        is_minimal_metadata,
+        snapshot.epoch_started_at,
+        crate::clock::now_utc(),
+    );
+    let commit_envelope = if should_commit {
+        Some(
+            group
+                .self_update_commit()
+                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
+        )
+    } else {
+        None
+    };
     let encrypted = group
         .encrypt_payload_with_aad(content_type, Some(aad), plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
@@ -967,12 +984,7 @@ pub fn encrypt_message_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    // X14 — persist-on-accept: see `encrypt_values_with_device_snapshot`.
-    // The caller persists `new_envelope` ONLY after the server accepts the
-    // `ck.mls.commit`, keeping `snapshot.epoch == server.epoch` in lockstep
-    // and preventing the permanent `mls_epoch_skew` that optimistic
-    // pre-accept persistence caused.
-    let new_envelope = crate::mls::persistence::encrypt_state(
+    let mut new_envelope = crate::mls::persistence::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,
@@ -980,13 +992,20 @@ pub fn encrypt_message_with_device_snapshot(
         &secret,
         &salt,
     );
-    Ok((
-        schedule_hash,
-        member_dids,
-        encrypted,
-        commit_envelope,
-        new_envelope,
-    ))
+    if commit_envelope.is_some() {
+        // Persist-on-accept: forced epoch advances must only be saved after the
+        // server accepts the matching `ck.mls.commit`.
+        return Ok((
+            schedule_hash,
+            member_dids,
+            encrypted,
+            commit_envelope,
+            Some(new_envelope),
+        ));
+    }
+    new_envelope = new_envelope.carry_epoch_started_at(&snapshot);
+    state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
+    Ok((schedule_hash, member_dids, encrypted, None, None))
 }
 
 /// SEC-08 (`encryption-and-audit.md` §2.9) — pure committer decision: should a
@@ -1572,8 +1591,8 @@ mod tests {
         assert_eq!(summary.realm_id, realm);
         assert_eq!(summary.epoch, 0);
         assert!(state.mls_snapshot_for(realm).is_some());
-        // X14: encrypt no longer persists internally — the caller saves the
-        // returned envelope on server-accept. Mirror that contract here.
+        // Ordinary application messages ride epoch 0; no commit event or
+        // post-commit snapshot is returned.
         let encrypted = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
@@ -1585,8 +1604,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted.2.len(), 1);
-        state.save_mls_snapshot(realm, encrypted.4.clone());
-        assert!(state.mls_snapshot_for(realm).unwrap().epoch >= 1);
+        assert!(encrypted.3.is_none());
+        assert!(encrypted.4.is_none());
+        assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
         let encrypted_again = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
@@ -1598,8 +1618,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encrypted_again.2.len(), 1);
-        state.save_mls_snapshot(realm, encrypted_again.4.clone());
-        assert!(state.mls_snapshot_for(realm).unwrap().epoch >= 2);
+        assert!(encrypted_again.3.is_none());
+        assert!(encrypted_again.4.is_none());
+        assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1955,12 +1976,12 @@ mod tests {
         assert!(state.mls_snapshot_for(realm).is_some());
     }
 
-    /// X14 — persist-on-accept contract: `encrypt_values_with_device_snapshot`
-    /// MUST NOT advance the persisted snapshot. The stored snapshot epoch only
-    /// moves when the caller saves the returned envelope (which it does ONLY
-    /// after the server accepts the `ck.mls.commit`). This is the invariant
-    /// that keeps `snapshot.epoch == server.epoch` in lockstep and prevents the
-    /// permanent `mls_epoch_skew` that optimistic pre-accept persistence caused.
+    /// X14 — persist-on-accept contract for forced commits: the stored snapshot
+    /// epoch only moves when the caller saves the returned envelope (which it
+    /// does ONLY after the server accepts the `ck.mls.commit`). This is the
+    /// invariant that keeps `snapshot.epoch == server.epoch` in lockstep and
+    /// prevents the permanent `mls_epoch_skew` that optimistic pre-accept
+    /// persistence caused.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
@@ -1971,14 +1992,23 @@ mod tests {
         let mut state = temp_state_store("persist-on-accept");
         let realm = "ck:realm:01904100-0000-7000-8000-000000000099";
 
+        state.save_realm_tree_projection(
+            realm,
+            json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        );
+        assert!(state.realm_projection_is_minimal_metadata(realm));
+
         // Genesis installs the epoch-0 snapshot.
         ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
             .unwrap()
             .expect("creator snapshot created");
         let epoch_before = state.mls_snapshot_for(realm).unwrap().epoch;
+        let mut overdue = state.mls_snapshot_for(realm).unwrap();
+        overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        state.save_mls_snapshot(realm, overdue);
 
-        // Encrypting produces a post-commit envelope at epoch+1 WITHOUT
-        // touching the persisted snapshot.
+        // An overdue minimal-metadata epoch forces a post-commit envelope at
+        // epoch+1 WITHOUT touching the persisted snapshot.
         let result = encrypt_values_with_device_snapshot(
             &mut state,
             &secure,
@@ -1989,7 +2019,8 @@ mod tests {
             &[br#""private""#.to_vec()],
         )
         .unwrap();
-        let post_commit_envelope = result.4;
+        assert!(result.3.is_some());
+        let post_commit_envelope = result.4.expect("forced commit returns snapshot");
         assert_eq!(
             state.mls_snapshot_for(realm).unwrap().epoch,
             epoch_before,

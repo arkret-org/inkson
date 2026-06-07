@@ -731,6 +731,73 @@
   }
 }
 
+.pinned-bar {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 82%, var(--accent-soft));
+}
+
+.pinned-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pinned-bar-head svg,
+.pinned-bar-item svg,
+.message-pin-indicator svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pinned-bar-list {
+  display: grid;
+  gap: 6px;
+}
+
+.pinned-bar-item {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  justify-content: initial;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--text);
+  text-align: left;
+  box-shadow: none;
+}
+
+.pinned-bar-item:hover,
+.pinned-bar-item:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.pinned-bar-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-bar-empty {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 .discussion-chat-feed {
   flex: 1;
   min-height: 0;
@@ -753,12 +820,17 @@
 
 .discussion-message .msg-body {
   max-width: 100%;
+  position: relative;
   display: grid;
   gap: 7px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.discussion-message.is-pinned .msg-body {
+  padding-right: 42px;
 }
 
 .discussion-message.is-own .msg-body {
@@ -781,6 +853,29 @@
 
 .discussion-message .msg-content {
   overflow-wrap: anywhere;
+}
+
+.message-pin-indicator {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-soft));
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+
+.message-pin-indicator:hover,
+.message-pin-indicator:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
 }
 
 /* CKP-0007 P3B.2.4 — Circle-scope accent rail on Circle-scoped messages. */
