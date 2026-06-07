@@ -1222,24 +1222,25 @@ pub mod cx_ops {
         invite_id: &str,
         invitee: &str,
         role: Option<&str>,
-        invite_delivery_target: Value,
+        invite_delivery_target: cokret_sdk::InviteDeliveryTarget,
         introduction_evidence_digest: &str,
     ) -> OperationBuilder {
         let mut body = serde_json::Map::new();
         body.insert("invite_id".to_owned(), json!(invite_id));
         body.insert("invitee".to_owned(), json!(invitee));
-        body.insert("invite_delivery_target".to_owned(), invite_delivery_target);
+        body.insert(
+            "invite_delivery_target".to_owned(),
+            serde_json::to_value(invite_delivery_target)
+                .unwrap_or_else(|err| panic!("invite_delivery_target serialize: {err}")),
+        );
         body.insert(
             "introduction_evidence_digest".to_owned(),
             json!(introduction_evidence_digest),
         );
-        body.insert(
-            "expires_at".to_owned(),
-            json!(
-                (chrono::Utc::now() + chrono::Duration::days(7))
-                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-            ),
+        let expires_at = cokret_sdk::canonical::format_timestamp_canonical(
+            chrono::Utc::now() + chrono::Duration::days(7),
         );
+        body.insert("expires_at".to_owned(), json!(expires_at));
         if let Some(role) = role {
             body.insert("x_role".to_owned(), json!(role));
         }
@@ -2698,10 +2699,10 @@ mod tests {
     #[test]
     fn invite_helpers_emit_canonical_kinds() {
         let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
-        let invite_delivery_target = json!({
-            "recipient_service_did": "did:web:server.example",
-            "recipient_service_type": "principal_server",
-        });
+        let invite_delivery_target = cokret_sdk::InviteDeliveryTarget {
+            recipient_service_did: cokret_sdk::Did::new("did:web:server.example").unwrap(),
+            recipient_service_type: Some("principal_server".to_owned()),
+        };
         let introduction_evidence_digest =
             crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
         let create = cx_ops::invite_create_structured(
@@ -2719,11 +2720,17 @@ mod tests {
         assert_eq!(create.payload["invitee"], "did:web:bob.example");
         assert_eq!(
             create.payload["invite_delivery_target"],
-            invite_delivery_target
+            serde_json::to_value(invite_delivery_target).unwrap()
         );
         assert_eq!(
             create.payload["introduction_evidence_digest"],
             introduction_evidence_digest
+        );
+        assert!(
+            cokret_sdk::canonical::validate_timestamp_canonical(
+                create.payload["expires_at"].as_str().unwrap()
+            )
+            .is_ok()
         );
         assert_eq!(create.payload["x_role"], "member");
         assert!(

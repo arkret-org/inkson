@@ -779,14 +779,20 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         schema: "ck.schema.principal_locator.v1",
         subject_id: "did:web:carol.example",
         recipient_service_did: "did:web:server.local",
-        service_type: "principal_server",
         issued_at: "2026-06-07T00:00:00Z",
         expires_at: "2026-06-07T00:15:00Z",
-        locator_ref_digest: "sha256:e2e-invite-locator",
+        locator_ref_digest: `sha256:${"1".repeat(64)}`,
         proofs: [
           {
-            type: "principal_locator_dev",
-            issuer: "did:web:server.local",
+            proof_purpose: "recipient_service_acceptance",
+            proof: {
+              kind: "detached_jws",
+              verification_method: "did:web:server.local#server-key-1",
+              alg: "EdDSA",
+              payload_digest: `sha256:${"2".repeat(64)}`,
+              created_at: "2026-06-07T00:00:00Z",
+              jws: "header..sig",
+            },
           },
         ],
       });

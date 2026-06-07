@@ -1443,7 +1443,6 @@ test("realm admin page handles metadata invites members and dangerous lifecycle"
   expect(inviteBody.payload.invitee).toBe("did:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual({
     recipient_service_did: "did:web:server.local",
-    recipient_service_type: "principal_server",
   });
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
   expect(inviteBody.payload.x_member_delivery_binding).toBeUndefined();
