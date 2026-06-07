@@ -1286,13 +1286,14 @@ pub fn RealmAdminPanel(
                                                 } else {
                                                     format!("{target} -> {}", invitee.did)
                                                 };
-                                                let op = cx_ops::invite_create_structured_with_member_delivery_binding(
+                                                let op = cx_ops::invite_create_structured(
                                                     &realm,
                                                     &actor,
                                                     &invite_id,
                                                     &invitee.did,
                                                     None,
-                                                    invitee.member_delivery_binding.clone(),
+                                                    invitee.invite_delivery_target.clone(),
+                                                    &invitee.introduction_evidence_digest,
                                                 )
                                                 .build("yougen");
                                                 let op_id = op.local_operation_id().to_owned();

@@ -95,26 +95,26 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::{ParsedUserHandle, parse_user_handle};
 use crate::models::{
-    AccountDataSetOutcome, AccountRegisterOutcome, AgentGrantAttachReqBody, AgentGrantDetachResBody,
-    AgentGrantResBody, AgentKeyPairReqBody, AgentKeyPairResBody, AgentLifecycleReqBody,
-    AgentLifecycleResBody, AgentListResBody, AgentProvisionReqBody, AgentResBody,
-    AgentRotateKeyReqBody, AgentRotateKeyResBody, AgentSidecarThreadEnsureReqBody,
-    AgentSidecarThreadEnsureResBody, AuthzCheckOutcome, BackfillOutcome, BlobUploadOutcome,
-    CallRecordingStartResponse, ClientSyncResponse, ConsentCellResponse, ConsentCellsResponse,
-    ContactResponse, ContactsResponse, CreateWebrtcSessionResponse, DevLoginResponse,
-    DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, DeviceTrustResponse,
-    GrantList, EphemeralSubmitOutcome, HealthResponse, IceConfigRequest,
-    IceConfigResponse, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchResponse,
-    InvitesResponse, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutResponse,
-    MimiRequestConsentOutcome, MimiGroupInfoOutcome, MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome,
-    MimiNotifyOutcome, MimiProviderDirectory, MimiProxyDownloadOutcome,
-    MimiReportAbuseOutcome, MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, MlsRotateResponse,
-    ModerationReportOutcome, OkOutcome, PolicyCheckOutcome, PushRegisterResponse,
-    RealmCreateResponse, RealmJoinCandidate, RealmPolicyResponse, ReceiptResponse,
-    ResolveHandleResponse, ResolveRealmResponse, SearchActorsResponse, SearchOrganizationsResponse,
-    SearchRealmsResponse, ServerDescription, SnapshotHeadState, SolandDirectoryDescribeResBody,
-    SolandEventsDescribeResBody, SpaceCreateResponse, DidOperationSubmitOutcome,
-    SubmitEventResponse, SyncDescribeResBody, TypingResponse, AccountUpdateProfileOutcome,
+    AccountDataSetOutcome, AccountRegisterOutcome, AccountUpdateProfileOutcome,
+    AgentGrantAttachReqBody, AgentGrantDetachResBody, AgentGrantResBody, AgentKeyPairReqBody,
+    AgentKeyPairResBody, AgentLifecycleReqBody, AgentLifecycleResBody, AgentListResBody,
+    AgentProvisionReqBody, AgentResBody, AgentRotateKeyReqBody, AgentRotateKeyResBody,
+    AgentSidecarThreadEnsureReqBody, AgentSidecarThreadEnsureResBody, AuthzCheckOutcome,
+    BackfillOutcome, BlobUploadOutcome, CallRecordingStartResponse, ClientSyncResponse,
+    ConsentCellResponse, ConsentCellsResponse, ContactResponse, ContactsResponse,
+    CreateWebrtcSessionResponse, DevLoginResponse, DeviceMessagesGetOutcome,
+    DeviceMessagesPutOutcome, DeviceTrustResponse, DidOperationSubmitOutcome,
+    EphemeralSubmitOutcome, GrantList, HealthResponse, IceConfigRequest, IceConfigResponse,
+    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchResponse, InvitesResponse,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutResponse, MimiGroupInfoOutcome,
+    MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
+    MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
+    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, MlsRotateResponse, ModerationReportOutcome,
+    OkOutcome, PolicyCheckOutcome, PushRegisterResponse, RealmCreateResponse, RealmJoinCandidate,
+    RealmPolicyResponse, ReceiptResponse, ResolveHandleResponse, ResolveRealmResponse,
+    SearchActorsResponse, SearchOrganizationsResponse, SearchRealmsResponse, ServerDescription,
+    SnapshotHeadState, SolandDirectoryDescribeResBody, SolandEventsDescribeResBody,
+    SpaceCreateResponse, SubmitEventResponse, SyncDescribeResBody, TypingResponse,
     VerifyDeviceResponse, WebrtcSignalResponse,
 };
 use crate::operation::{
@@ -594,27 +594,6 @@ fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
         .ok_or_else(|| {
             anyhow::anyhow!("invitee must be a DID or canonical handle `<localpart>:<domain>`")
         })
-}
-
-fn validate_invite_handle_resolution(
-    resolved: &ResolveHandleResponse,
-    expected_audience: &str,
-) -> anyhow::Result<()> {
-    match resolved.claim_audience() {
-        Some(audience) if audience == expected_audience => {}
-        Some(audience) => anyhow::bail!(
-            "directory handle claim audience mismatch: expected `{expected_audience}`, got `{audience}`"
-        ),
-        None => anyhow::bail!(
-            "directory resolve_handle(intent=invite) response did not include audience"
-        ),
-    }
-    if !resolved.has_member_delivery_binding() {
-        anyhow::bail!(
-            "directory resolve_handle(intent=invite) response did not include member_delivery_binding"
-        );
-    }
-    Ok(())
 }
 
 /// Typed error class for the `post_audit_user_action` path.
@@ -3002,11 +2981,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_handle_request_body_carries_invite_context() {
+    fn resolve_handle_request_body_carries_lookup_context() {
         let body = resolve_handle_request_body(
             "bob:local.host",
             ResolveHandleContext {
-                intent: Some("invite"),
+                intent: Some("lookup"),
                 requester: Some("did:web:alice.example"),
                 audience: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
                 realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
@@ -3017,7 +2996,7 @@ mod tests {
         );
 
         assert_eq!(body["handle"], "bob:local.host");
-        assert_eq!(body["intent"], "invite");
+        assert_eq!(body["intent"], "lookup");
         assert_eq!(body["requester"], "did:web:alice.example");
         assert_eq!(
             body["audience"],
@@ -3041,7 +3020,7 @@ mod tests {
     }
 
     #[test]
-    fn invite_handle_resolution_requires_bound_candidate_material() {
+    fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
         let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
         let resolved: ResolveHandleResponse = serde_json::from_value(json!({
             "subject": "did:web:bob.example",
@@ -3064,7 +3043,6 @@ mod tests {
             resolved.member_delivery_binding_value().unwrap()["recipient_service_did"],
             "did:web:local.host"
         );
-        validate_invite_handle_resolution(&resolved, realm_id).unwrap();
 
         let missing_binding: ResolveHandleResponse = serde_json::from_value(json!({
             "did": "did:web:bob.example",
@@ -3072,9 +3050,8 @@ mod tests {
             "audience": realm_id
         }))
         .unwrap();
-        let error = validate_invite_handle_resolution(&missing_binding, realm_id)
-            .expect_err("invite resolution must carry delivery binding material");
-        assert!(error.to_string().contains("member_delivery_binding"));
+        assert_eq!(missing_binding.subject_did(), Some("did:web:bob.example"));
+        assert!(missing_binding.member_delivery_binding_value().is_none());
     }
 
     #[test]

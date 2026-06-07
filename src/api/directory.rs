@@ -4,7 +4,34 @@ use super::*;
 pub struct InviteeResolution {
     pub did: String,
     pub handle: Option<String>,
-    pub member_delivery_binding: Option<Value>,
+    pub invite_delivery_target: Value,
+    pub introduction_evidence: Value,
+    pub introduction_evidence_digest: String,
+}
+
+fn invitee_resolution(
+    did: String,
+    handle: Option<String>,
+    recipient_service_did: &str,
+    introduction_evidence: Value,
+) -> anyhow::Result<InviteeResolution> {
+    cokret_sdk::Did::new(recipient_service_did.trim().to_owned()).map_err(|err| {
+        anyhow::anyhow!(
+            "server describe returned invalid service DID `{recipient_service_did}`: {err}"
+        )
+    })?;
+    let invite_delivery_target = json!({
+        "recipient_service_did": recipient_service_did.trim(),
+        "recipient_service_type": "principal_server",
+    });
+    let introduction_evidence_digest = crate::canonical::canonical_sha256(&introduction_evidence)?;
+    Ok(InviteeResolution {
+        did,
+        handle,
+        invite_delivery_target,
+        introduction_evidence,
+        introduction_evidence_digest,
+    })
 }
 
 impl CokretApi {
@@ -194,49 +221,38 @@ impl CokretApi {
     pub async fn resolve_invitee_for_invite(
         &self,
         target: &str,
-        realm_id: &str,
-        actor_id: &str,
+        _realm_id: &str,
+        _actor_id: &str,
     ) -> anyhow::Result<InviteeResolution> {
         let target = target.trim();
         if target.is_empty() {
             anyhow::bail!("invitee is required");
         }
+        let service_did = self.describe_cached().await?.service_did.to_string();
         if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-            return Ok(InviteeResolution {
-                did: target.to_owned(),
-                handle: None,
-                member_delivery_binding: None,
-            });
+            return invitee_resolution(
+                target.to_owned(),
+                None,
+                &service_did,
+                json!({"kind": "explicit_address"}),
+            );
         }
 
         let handle = canonical_invitee_handle(target)?;
-        let realm_id = trim_realm_id(realm_id);
-        let resolved = self
-            .resolve_handle_with_context(
-                &handle,
-                ResolveHandleContext {
-                    intent: Some("invite"),
-                    requester: Some(actor_id),
-                    audience: Some(&realm_id),
-                    realm_id: Some(&realm_id),
-                    ..ResolveHandleContext::default()
-                },
-            )
-            .await?;
-        validate_invite_handle_resolution(&resolved, &realm_id)?;
+        let resolved = self.resolve_handle(&handle).await?;
         let invitee = resolved.subject_did().ok_or_else(|| {
             anyhow::anyhow!("directory resolve_handle response did not include subject DID")
         })?;
         cokret_sdk::Did::new(invitee.to_owned())
             .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{invitee}`: {err}"))?;
         let invitee = invitee.to_owned();
-        let member_delivery_binding = resolved.member_delivery_binding_value();
         let handle = resolved.handle;
-        Ok(InviteeResolution {
-            did: invitee,
-            handle: Some(handle),
-            member_delivery_binding,
-        })
+        invitee_resolution(
+            invitee,
+            Some(handle),
+            &service_did,
+            json!({"kind": "same_principal_server"}),
+        )
     }
 
     /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
