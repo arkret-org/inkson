@@ -800,6 +800,7 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
         cokret_sdk::ACCOUNT_DATA_TYPE_SNOOZE,
         cokret_sdk::ACCOUNT_DATA_TYPE_SAVED,
         cokret_sdk::ACCOUNT_DATA_TYPE_DRAFT,
+        cokret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER,
         cokret_sdk::ACCOUNT_DATA_TYPE_SEARCH_INDEX_MANIFEST,
     ]
     .into_iter()
@@ -857,6 +858,14 @@ pub fn search_index_manifest_account_data_key(
     let realm_id = cokret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     cokret_sdk::search_index_manifest_account_data_key(namespace_key, &realm_id)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn file_transfer_account_data_key(
+    namespace_key: &[u8],
+    transfer_id: &str,
+) -> anyhow::Result<String> {
+    cokret_sdk::file_transfer_account_data_key(namespace_key, transfer_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -1436,8 +1445,9 @@ mod tests {
             "ck:realm:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
+        let transfer = file_transfer_account_data_key(ns, "0123456789abcdefghijkl").unwrap();
 
-        for key in [&snooze, &saved, &draft, &manifest] {
+        for key in [&snooze, &saved, &draft, &manifest, &transfer] {
             assert!(validate_private_account_data_key(key).is_ok());
             assert!(!key.contains("ck:flow:"));
             assert!(!key.contains("Focus"));

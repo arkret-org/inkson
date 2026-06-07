@@ -1994,6 +1994,7 @@ pub fn RouterView() -> Element {
                     }
                 }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
+                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), "Files" }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_realm_tree_nodes.is_empty() {
@@ -2181,6 +2182,10 @@ pub fn RouterView() -> Element {
                     Link { class: "sidebar-nav-item", to: Route::Dashboard,
                         span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
                         span { class: "grow", "Home" }
+                    }
+                    Link { class: "sidebar-nav-item", to: Route::FileTransfer,
+                        span { class: "sidebar-nav-icon", UiIcon { name: "file" } }
+                        span { class: "grow", "Files" }
                     }
                 }
 
@@ -3279,6 +3284,14 @@ pub fn RouterView() -> Element {
                             sync_cursor: sync_cursor(),
                         }
                     },
+                    Route::FileTransfer => rsx! {
+                        crate::views::file_transfer::FileTransferPanel {
+                            base_url: base_url(),
+                            token,
+                            account_did: account_did(),
+                            device_id: device_id(),
+                        }
+                    },
                     Route::Realm { .. } => {
                         match resolved_realm_surface.unwrap_or(RealmSurface::Timeline) {
                             RealmSurface::Timeline => {
@@ -3946,6 +3959,7 @@ fn RealmContextBar(
 fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "dashboard, recent activity", Route::Dashboard),
+        ("Files", "private file transfer", Route::FileTransfer),
         (
             "Notifications",
             "inbox, mentions, approvals",
@@ -4340,6 +4354,7 @@ fn route_label(route: &Route) -> &'static str {
         Route::Chat { .. } => "Discussion",
         Route::DirectConversation { .. } => "Direct",
         Route::Contacts | Route::ContactsNew => "Contacts",
+        Route::FileTransfer => "Files",
         Route::Directory => "Search",
         Route::Setup => "New Realm",
         Route::SetupSection { section } => match section.as_str() {

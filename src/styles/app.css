@@ -83,6 +83,93 @@ a.primary, a.secondary { line-height: 1.5; }
   border: 0;
 }
 .settings, .workflow-form { display: grid; gap: 10px; align-content: start; }
+.file-transfer-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+.file-transfer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.file-transfer-header h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+.file-transfer-input {
+  display: none;
+}
+.file-transfer-status {
+  min-height: 24px;
+}
+.file-transfer-list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow: auto;
+}
+.file-transfer-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr) auto;
+  align-items: center;
+}
+.file-transfer-row-main {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.file-transfer-file-icon,
+.file-transfer-empty-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: #e7edf3;
+  color: #1f5a41;
+}
+.file-transfer-file-copy {
+  min-width: 0;
+}
+.file-transfer-file-copy strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-transfer-meta {
+  display: grid;
+  gap: 3px;
+  color: #607086;
+  font-size: 12px;
+  min-width: 0;
+}
+.file-transfer-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.file-transfer-actions .btn,
+.file-transfer-header .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.file-transfer-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .settings-inline-form {
   display: grid;
   grid-template-columns: minmax(180px, 1.1fr) minmax(160px, 0.9fr) auto;

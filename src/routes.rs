@@ -46,6 +46,9 @@ pub enum Route {
     #[route("/contacts/new", crate::app::RouterView)]
     ContactsNew,
 
+    #[route("/files", crate::app::RouterView)]
+    FileTransfer,
+
     #[route("/setup", crate::app::RouterView)]
     Setup,
 
@@ -290,6 +293,7 @@ impl Route {
             }
             Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
             Route::Contacts | Route::ContactsNew => View::Contacts,
+            Route::FileTransfer => View::FileTransfer,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,
             Route::Settings
@@ -388,6 +392,7 @@ impl From<View> for Route {
                 realm_id: String::new(),
             },
             View::Contacts => Route::Contacts,
+            View::FileTransfer => Route::FileTransfer,
             View::Directory => Route::Directory,
             View::Setup => Route::Setup,
             View::Settings => Route::Settings,
@@ -431,6 +436,7 @@ mod tests {
             },
             Route::Timeline,
             Route::Directory,
+            Route::FileTransfer,
             Route::Setup,
             Route::SetupSection {
                 // Canonical Realm bootstrap slug.

@@ -47,6 +47,7 @@ pub mod discovery;
 pub mod dpop;
 pub mod event_signer;
 pub mod federation;
+pub mod file_transfer;
 pub mod hlc;
 pub mod hpke_backup;
 pub mod i18n;

@@ -113,10 +113,36 @@ impl CokretApi {
             .await
     }
 
+    pub async fn upload_file_transfer_ciphertext(
+        &self,
+        ciphertext: Vec<u8>,
+        content_digest: &str,
+    ) -> anyhow::Result<BlobUploadOutcome> {
+        let request = self
+            .http
+            .post(self.endpoint("_cokret/self/blob/upload")?)
+            .header("content-type", crate::blob::CIPHERTEXT_MEDIA_TYPE)
+            .header("x-cokret-blob-encrypted", "true")
+            .header("x-cokret-blob-purpose", "file_transfer")
+            .header("x-cokret-content-digest", content_digest)
+            .body(ciphertext);
+        self.send_json(self.prepare_request(request), Method::POST)
+            .await
+    }
+
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         let blob_ref = query_component(canonical_blob_ref(blob_ref));
         let request = self.http.get(self.endpoint(&format!(
             "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
+        ))?);
+        self.send_bytes(self.prepare_request(request), Method::GET)
+            .await
+    }
+
+    pub async fn get_file_transfer_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
+        let blob_ref = query_component(canonical_blob_ref(blob_ref));
+        let request = self.http.get(self.endpoint(&format!(
+            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=file_transfer"
         ))?);
         self.send_bytes(self.prepare_request(request), Method::GET)
             .await

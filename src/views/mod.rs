@@ -58,6 +58,7 @@ pub mod dashboard;
 pub mod developer;
 pub mod directory;
 pub mod document;
+pub mod file_transfer;
 /// A6.1 — global cross-Realm message search panel. Backed by soland's
 /// `POST /_soland/self/index/search` (substring scan over the in-memory
 /// projection); cross-Realm coverage will improve once the durable
@@ -111,6 +112,7 @@ pub enum View {
     /// approval requests. Writes here MUST land on those canonical kinds, not
     /// on a synthetic `ck.notification.*` event.
     Notifications,
+    FileTransfer,
     Document,
     /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
     /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret
