@@ -320,6 +320,23 @@ impl CokretApi {
         .await
     }
 
+    pub async fn authz_check_raw(
+        &self,
+        actor: &str,
+        action: &str,
+        realm_id: &str,
+    ) -> anyhow::Result<Value> {
+        self.post_json(
+            "_cokret/self/authz/check",
+            json!({
+                "actor": actor,
+                "action": action,
+                "resource": {"kind": "realm", "realm_id": realm_id}
+            }),
+        )
+        .await
+    }
+
     pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<GrantList> {
         self.get_json(&format!(
             "_cokret/self/authz/effective-grants?subject={subject}"

@@ -22,16 +22,6 @@ pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 // ck.self.events.submit via the cx_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
-#[derive(Clone, Debug, PartialEq)]
-struct InviteRecord {
-    invite_id: String,
-    target: String,
-    role: Option<String>,
-    state: String,
-    operation_id: Option<String>,
-    event_id: Option<String>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RealmAdminSection {
     Overview,
@@ -226,6 +216,523 @@ fn projected_members_for_realm(store: &LocalStateStore, realm_id: &str) -> Vec<S
         .unwrap_or_default()
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RealmMemberPermissions {
+    loaded: bool,
+    can_invite: bool,
+    can_remove: bool,
+}
+
+fn authz_json_allowed(value: &Value) -> bool {
+    value
+        .get("allowed")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            value
+                .get("decision")
+                .and_then(Value::as_str)
+                .map(|decision| matches!(decision, "allow" | "allowed"))
+                .unwrap_or(false)
+        })
+}
+
+#[component]
+pub fn RealmMembersPanel(
+    base_url: String,
+    account_did: String,
+    token: Signal<String>,
+    selected_realm_id: String,
+    sync_cursor: Signal<String>,
+    frontier_state: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+) -> Element {
+    let mut invite_target = use_signal(String::new);
+    let mut status_msg = use_signal(String::new);
+    let mut members = use_signal(Vec::<String>::new);
+    let mut block_confirm_did = use_signal(|| Option::<String>::None);
+    let mut permissions = use_signal(RealmMemberPermissions::default);
+
+    {
+        let selected_realm_for_hydration = selected_realm_id.clone();
+        use_effect(move || {
+            let next =
+                projected_members_for_realm(&state_store.read(), &selected_realm_for_hydration);
+            if members() != next {
+                members.set(next);
+            }
+        });
+    }
+
+    {
+        let base = base_url.clone();
+        let actor = account_did.clone();
+        let realm = selected_realm_id.clone();
+        use_effect(move || {
+            let api_token = token();
+            if api_token.trim().is_empty() || actor.trim().is_empty() || realm.trim().is_empty() {
+                permissions.set(RealmMemberPermissions {
+                    loaded: true,
+                    ..RealmMemberPermissions::default()
+                });
+                return;
+            }
+            permissions.set(RealmMemberPermissions::default());
+            let base = base.clone();
+            let actor = actor.clone();
+            let realm = realm.clone();
+            spawn(async move {
+                match authed_api_with_sync(&base, api_token, None) {
+                    Ok(api) => {
+                        let invite = api
+                            .authz_check_raw(&actor, "ck.invite.create", &realm)
+                            .await;
+                        let remove = api
+                            .authz_check_raw(&actor, "ck.member.remove", &realm)
+                            .await;
+                        let can_invite = invite.as_ref().map(authz_json_allowed).unwrap_or(false);
+                        let can_remove = remove.as_ref().map(authz_json_allowed).unwrap_or(false);
+                        if invite.is_err() && remove.is_err() {
+                            status_msg.set(
+                                "member action permission check failed; write controls hidden"
+                                    .to_owned(),
+                            );
+                        }
+                        permissions.set(RealmMemberPermissions {
+                            loaded: true,
+                            can_invite,
+                            can_remove,
+                        });
+                    }
+                    Err(error) => {
+                        permissions.set(RealmMemberPermissions {
+                            loaded: true,
+                            ..RealmMemberPermissions::default()
+                        });
+                        status_msg.set(format!("member action permission check failed: {error}"));
+                    }
+                }
+            });
+        });
+    }
+
+    let member_permissions = permissions();
+    let can_invite = member_permissions.can_invite;
+    let can_remove = member_permissions.can_remove;
+
+    rsx! {
+        div { class: "timeline", "data-testid": "realm-members-panel",
+            div { class: "event", "data-testid": "realm-members-summary",
+                div { class: "event-head",
+                    span { "Members" }
+                    span { "{members().len()}" }
+                }
+                div { class: "muted", title: "{selected_realm_id}", "{selected_realm_id}" }
+                if !status_msg().is_empty() {
+                    div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
+                }
+                if member_permissions.loaded && !can_invite && !can_remove {
+                    div {
+                        class: "muted",
+                        "data-testid": "realm-member-actions-hidden",
+                        "Member-management actions are not available for this account."
+                    }
+                }
+            }
+
+            if can_invite {
+                div { class: "event", "data-testid": "invite-member",
+                    div { class: "event-head", span { "Invite Member" } span { "" } }
+                    div { class: "workflow-form",
+                        input {
+                            "data-testid": "invite-target-input",
+                            value: "{invite_target}",
+                            placeholder: "Invite locator URL or invite_address JSON",
+                            oninput: move |evt| invite_target.set(evt.value()),
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "primary",
+                                "data-testid": "send-invite-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let actor = account_did.clone();
+                                    let realm = selected_realm_id.clone();
+                                    move |_| {
+                                        let base = base.clone();
+                                        let actor = actor.clone();
+                                        let realm = realm.clone();
+                                        let api_token = token();
+                                        let target = invite_target().trim().to_owned();
+                                        if target.is_empty() {
+                                            status_msg.set("invite locator is required".to_owned());
+                                            return;
+                                        }
+                                        let wait_for = active_sync_token(sync_cursor());
+                                        let invite_id = format!(
+                                            "ck:invite:{}",
+                                            crate::operation::uuid_v7()
+                                        );
+                                        spawn(async move {
+                                            match authed_api_with_sync(&base, api_token, wait_for) {
+                                                Ok(api) => {
+                                                    let invitee = match api
+                                                        .resolve_invitee_for_invite(
+                                                            &target,
+                                                            &realm,
+                                                            &actor,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(did) => did,
+                                                        Err(error) => {
+                                                            status_msg.set(format!("invite locator resolve failed: {error}"));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let invitee_label = invitee
+                                                        .handle
+                                                        .clone()
+                                                        .unwrap_or_else(|| invitee.did.clone());
+                                                    let op = cx_ops::invite_create_structured(
+                                                        &realm,
+                                                        &actor,
+                                                        &invite_id,
+                                                        &invitee.did,
+                                                        None,
+                                                        invitee.invite_delivery_target.clone(),
+                                                        &invitee.introduction_evidence_digest,
+                                                    )
+                                                    .build("yougen");
+                                                    let op_id = op.local_operation_id().to_owned();
+                                                    status_msg.set(format!(
+                                                        "submitting invite for {}",
+                                                        invitee_label
+                                                    ));
+                                                    match api.submit_event_envelope(&op).await {
+                                                        Ok(submitted) => {
+                                                            frontier_state.set(submitted.event_id.clone());
+                                                            sync_cursor.set(submitted.sync_token.clone());
+                                                            {
+                                                                let mut store = state_store.write();
+                                                                store.append_raw_operation(
+                                                                    op_id.clone(),
+                                                                    Some(realm.clone()),
+                                                                    json!({
+                                                                        "kind": "ck.invite.create",
+                                                                        "invite_id": invite_id,
+                                                                        "invitee": invitee.did,
+                                                                        "state": "pending",
+                                                                        "event_id": submitted.event_id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                            invite_target.set(String::new());
+                                                            status_msg.set(format!(
+                                                                "invited {} (pending) fact {}",
+                                                                invitee_label,
+                                                                short_protocol_id(&op_id)
+                                                            ));
+                                                        }
+                                                        Err(error) => status_msg.set(format!("invite failed: {error}")),
+                                                    }
+                                                }
+                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
+                                            }
+                                        });
+                                    }
+                                },
+                                "Send Invite"
+                            }
+                        }
+                    }
+                }
+            }
+
+            div { class: "event", "data-testid": "member-table",
+                div { class: "event-head", span { "Members" } span { "{members().len()}" } }
+                div { class: "actions",
+                    button {
+                        class: "secondary",
+                        "data-testid": "refresh-members-button",
+                        onclick: {
+                            let realm = selected_realm_id.clone();
+                            move |_| {
+                                let store = state_store.read();
+                                let next = projected_members_for_realm(&store, &realm);
+                                let count = next.len();
+                                members.set(next);
+                                status_msg.set(format!(
+                                    "members refreshed ({count}) from local sync state"
+                                ));
+                            }
+                        },
+                        {crate::i18n::tr("realm_admin.refresh_members")}
+                    }
+                }
+                for member in members() {
+                    {
+                        let member_label = short_protocol_id(&member);
+                        rsx! {
+                            div { class: "event", "data-testid": "member-row", "data-member-did": "{member}",
+                                div { class: "event-head",
+                                    {
+                                        let initial = member
+                                            .trim_start_matches("did:web:")
+                                            .chars()
+                                            .next()
+                                            .map(|c| c.to_ascii_uppercase().to_string())
+                                            .unwrap_or_else(|| "?".to_owned());
+                                        rsx! {
+                                            div {
+                                                "data-testid": "member-avatar",
+                                                "aria-hidden": "true",
+                                                style: "display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--bg-elevated, #2a2d33); color: var(--text-strong, #fff); font-size: 0.8rem; margin-right: 8px;",
+                                                "{initial}"
+                                            }
+                                        }
+                                    }
+                                    span { title: "{member}", "{member_label}" }
+                                    {
+                                        let is_agent = state_store
+                                            .read()
+                                            .load()
+                                            .raw_operations
+                                            .iter()
+                                            .any(|r| {
+                                                r.payload
+                                                    .get("kind")
+                                                    .and_then(|k| k.as_str())
+                                                    == Some("ck.agent.endpoint")
+                                                    && r.realm_id
+                                                        .as_deref()
+                                                        .map(|s| s == selected_realm_id)
+                                                        .unwrap_or(true)
+                                                    && r.payload
+                                                        .get("body")
+                                                        .and_then(|b| b.get("agent_id"))
+                                                        .and_then(|d| d.as_str())
+                                                        == Some(member.as_str())
+                                            });
+                                        rsx! {
+                                            if is_agent {
+                                                span {
+                                                    class: "badge member-badge member-badge-agent",
+                                                    "data-testid": "member-badge-agent",
+                                                    title: "Automated member (bot)",
+                                                    "\u{1f916} "
+                                                    {crate::i18n::tr("member.badge.agent")}
+                                                }
+                                            }
+                                        }
+                                    }
+                                    span { "member" }
+                                }
+                                div { class: "actions",
+                                    if can_remove {
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "kick-member-button",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let realm = selected_realm_id.clone();
+                                                let m = member.clone();
+                                                let actor_account_did = account_did.clone();
+                                                move |_| {
+                                                    let base = base.clone();
+                                                    let realm = realm.clone();
+                                                    let m = m.clone();
+                                                    let api_token = token();
+                                                    let actor_did = actor_account_did.clone();
+                                                    spawn(async move {
+                                                        let m_for_msg = m.clone();
+                                                        let realm_for_api = realm.clone();
+                                                        match crate::views::helpers::with_authed_api(
+                                                            &base,
+                                                            api_token,
+                                                            |api| async move {
+                                                                api.transition_member_state(
+                                                                    &realm_for_api,
+                                                                    &actor_did,
+                                                                    &m,
+                                                                    Some("join"),
+                                                                    "leave",
+                                                                    "admin_kick",
+                                                                )
+                                                                .await
+                                                            },
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(resp) => {
+                                                                let mls_encrypted = state_store
+                                                                    .read()
+                                                                    .realm_projection_is_mls_encrypted(&realm);
+                                                                if mls_encrypted {
+                                                                    state_store.write().record_move_submission_with_event_id(
+                                                                        resp.event_id.clone(),
+                                                                        Some(resp.event_id.clone()),
+                                                                        realm.clone(),
+                                                                        "mls_member_remove",
+                                                                        MoveSubmissionState::PendingMlsBinding,
+                                                                        Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
+                                                                        None,
+                                                                    );
+                                                                }
+                                                                let suffix = if mls_encrypted {
+                                                                    "; epoch_update_required"
+                                                                } else {
+                                                                    ""
+                                                                };
+                                                                status_msg.set(format!(
+                                                                    "kicked {}{}",
+                                                                    short_protocol_id(&m_for_msg),
+                                                                    suffix
+                                                                ));
+                                                            }
+                                                            Err(err) => status_msg.set(format!(
+                                                                "kick failed: {}", err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            {crate::i18n::tr("realm_admin.kick_member")}
+                                        }
+                                        button {
+                                            class: "secondary",
+                                            "data-testid": "ban-member-button",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let realm = selected_realm_id.clone();
+                                                let m = member.clone();
+                                                let actor_account_did = account_did.clone();
+                                                move |_| {
+                                                    let base = base.clone();
+                                                    let realm = realm.clone();
+                                                    let m = m.clone();
+                                                    let api_token = token();
+                                                    let actor_did = actor_account_did.clone();
+                                                    spawn(async move {
+                                                        let m_for_msg = m.clone();
+                                                        let realm_for_api = realm.clone();
+                                                        match crate::views::helpers::with_authed_api(
+                                                            &base,
+                                                            api_token,
+                                                            |api| async move {
+                                                                api.ban_member(&realm_for_api, &actor_did, &m).await
+                                                            },
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(resp) => {
+                                                                let mls_encrypted = state_store
+                                                                    .read()
+                                                                    .realm_projection_is_mls_encrypted(&realm);
+                                                                if mls_encrypted {
+                                                                    state_store.write().record_move_submission_with_event_id(
+                                                                        resp.event_id.clone(),
+                                                                        Some(resp.event_id.clone()),
+                                                                        realm.clone(),
+                                                                        "mls_member_remove",
+                                                                        MoveSubmissionState::PendingMlsBinding,
+                                                                        Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
+                                                                        None,
+                                                                    );
+                                                                }
+                                                                let suffix = if mls_encrypted {
+                                                                    "; epoch_update_required"
+                                                                } else {
+                                                                    ""
+                                                                };
+                                                                status_msg.set(format!(
+                                                                    "banned {}{}",
+                                                                    short_protocol_id(&m_for_msg),
+                                                                    suffix
+                                                                ));
+                                                            }
+                                                            Err(err) => status_msg.set(format!(
+                                                                "ban failed: {}", err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            {crate::i18n::tr("realm_admin.ban_member")}
+                                        }
+                                    }
+                                    button {
+                                        class: "secondary",
+                                        "data-testid": "member-row-block-button",
+                                        onclick: {
+                                            let m = member.clone();
+                                            move |_| block_confirm_did.set(Some(m.clone()))
+                                        },
+                                        {crate::i18n::tr("member.block")}
+                                    }
+                                }
+                                if block_confirm_did().as_deref() == Some(member.as_str()) {
+                                    div {
+                                        class: "event",
+                                        "data-testid": "block-user-confirm-modal",
+                                        div { class: "entity-title", {crate::i18n::tr("member.block_confirm.title")} }
+                                        div { class: "muted", title: "{member}", "{member_label}" }
+                                        div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
+                                        div { class: "actions",
+                                            button {
+                                                class: "primary",
+                                                "data-testid": "block-user-confirm-button",
+                                                onclick: {
+                                                    let m = member.clone();
+                                                    let base = base_url.clone();
+                                                    move |_| {
+                                                        let changed = state_store
+                                                            .write()
+                                                            .block_user(&m, None);
+                                                        block_confirm_did.set(None);
+                                                        if changed {
+                                                            status_msg.set(format!(
+                                                                "Blocked {}",
+                                                                short_protocol_id(&m)
+                                                            ));
+                                                            let entries = state_store
+                                                                .read()
+                                                                .client_blocklist();
+                                                            crate::views::settings::push_blocklist_account_data(
+                                                                base.clone(),
+                                                                token(),
+                                                                entries,
+                                                            );
+                                                        } else {
+                                                            status_msg.set(format!(
+                                                                "{} is already blocked",
+                                                                short_protocol_id(&m)
+                                                            ));
+                                                        }
+                                                    }
+                                                },
+                                                {crate::i18n::tr("member.block_confirm.confirm")}
+                                            }
+                                            button {
+                                                class: "secondary",
+                                                "data-testid": "block-user-cancel-button",
+                                                onclick: move |_| block_confirm_did.set(None),
+                                                {crate::i18n::tr("timeline.cancel")}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if members().is_empty() {
+                    div { class: "muted", {crate::i18n::tr("realm_admin.no_members_loaded")} }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn RealmAdminPanel(
     base_url: String,
@@ -243,14 +750,7 @@ pub fn RealmAdminPanel(
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut history_visibility = use_signal(|| "shared".to_owned());
-    let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
-    let mut members = use_signal(Vec::<String>::new);
-    // A5 — personal blocklist confirm state. `Some(did)` while a
-    // block-this-user confirmation modal is open for that DID; resets
-    // to `None` on cancel or confirm.
-    let mut block_confirm_did = use_signal(|| Option::<String>::None);
-    let mut realm_invites = use_signal(Vec::<InviteRecord>::new);
     let mut discovery_enabled = use_signal(|| true);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
@@ -363,20 +863,6 @@ pub fn RealmAdminPanel(
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
-    {
-        let selected_realm_for_hydration = selected_realm_id.clone();
-        let should_hydrate_members = active_section == RealmAdminSection::Members;
-        use_effect(move || {
-            if !should_hydrate_members {
-                return;
-            }
-            let next =
-                projected_members_for_realm(&state_store.read(), &selected_realm_for_hydration);
-            if members() != next {
-                members.set(next);
-            }
-        });
-    }
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
     if metadata_loaded_for() != selected_realm_id {
         metadata_title.set(metadata_subject.title.clone());
@@ -395,6 +881,8 @@ pub fn RealmAdminPanel(
         + usize::from(realm_pending_mls_binding)
         + usize::from(!bottom_cells.is_empty())
         + usize::from(covered_frontier_alert);
+    let projected_member_count =
+        projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
 
     rsx! {
         div { class: "timeline", "data-testid": "realm-admin-panel",
@@ -434,8 +922,8 @@ pub fn RealmAdminPanel(
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { {crate::i18n::tr("realm_admin.members")} }
-                            span { "{members().len()} known" }
-                            div { class: "muted", "Invites, membership state machine, and leave flow." }
+                            span { "{projected_member_count} known" }
+                            div { class: "muted", "Membership policy, state machine, and invite lifecycle settings." }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
@@ -1198,7 +1686,8 @@ pub fn RealmAdminPanel(
             }
             } // closes `if active_section == RealmAdminSection::Access`
 
-            // Invite member
+            if active_section == RealmAdminSection::Members {
+            // Member admission policy
             div { class: "event", "data-testid": "admin-discussion-admission",
                 div { class: "event-head", span { "Discussion-scoped external admission" } span { "policy proposal" } }
                 div { class: "muted",
@@ -1222,130 +1711,6 @@ pub fn RealmAdminPanel(
                                 "data-testid": "deny-discussion-admission",
                         onclick: move |_| status_msg.set("denied without leaking locked Discussion membership".to_owned()),
                         "Deny"
-                    }
-                }
-            }
-
-            if active_section == RealmAdminSection::Members {
-            div { class: "muted", "data-testid": "dbg-members-block-entered", "members section entered" }
-            // Invite member
-            div { class: "event", "data-testid": "invite-member",
-                div { class: "event-head", span { "Invite Member" } span { "" } }
-                div { class: "workflow-form",
-                    input {
-                        "data-testid": "invite-target-input",
-                        value: "{invite_target}",
-                        placeholder: "Invite locator URL or invite_address JSON",
-                        oninput: move |evt| invite_target.set(evt.value()),
-                    }
-                    div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "send-invite-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                let actor = account_did.clone();
-                                let realm = selected_realm_id.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let actor = actor.clone();
-                                    let realm = realm.clone();
-                                    let api_token = token();
-                                    let target = invite_target().trim().to_owned();
-                                    if target.is_empty() {
-                                        status_msg.set("invite locator is required".to_owned());
-                                        return;
-                                    }
-                                    let wait_for = active_sync_token(sync_cursor());
-                                    // Client-generated invite_id — spec-canonical (no
-                                    // two-phase server lookup needed; ck.invite.create
-                                    // event is the source of truth).
-                                    let invite_id = format!(
-                                        "ck:invite:{}",
-                                        crate::operation::uuid_v7()
-                                    );
-                                    spawn(async move {
-                                        match authed_api_with_sync(&base, api_token, wait_for) {
-                                            Ok(api) => {
-                                                let invitee = match api
-                                                    .resolve_invitee_for_invite(
-                                                        &target,
-                                                        &realm,
-                                                        &actor,
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(did) => did,
-                                                    Err(error) => {
-                                                        status_msg.set(format!("invite locator resolve failed: {error}"));
-                                                        return;
-                                                    }
-                                                };
-                                                let invitee_label = invitee
-                                                    .handle
-                                                    .clone()
-                                                    .unwrap_or_else(|| invitee.did.clone());
-                                                let op = cx_ops::invite_create_structured(
-                                                    &realm,
-                                                    &actor,
-                                                    &invite_id,
-                                                    &invitee.did,
-                                                    None,
-                                                    invitee.invite_delivery_target.clone(),
-                                                    &invitee.introduction_evidence_digest,
-                                                )
-                                                .build("yougen");
-                                                let op_id = op.local_operation_id().to_owned();
-                                                status_msg.set(format!(
-                                                    "submitting invite for {}",
-                                                    invitee_label
-                                                ));
-                                                match api.submit_event_envelope(&op).await {
-                                                    Ok(submitted) => {
-                                                        realm_invites.write().push(InviteRecord {
-                                                            invite_id: invite_id.clone(),
-                                                            target: invitee.did.clone(),
-                                                            role: None,
-                                                            state: "pending".to_owned(),
-                                                            operation_id: Some(op_id.clone()),
-                                                            event_id: Some(submitted.event_id.clone()),
-                                                        });
-                                                        frontier_state.set(submitted.event_id.clone());
-                                                        sync_cursor.set(submitted.sync_token.clone());
-                                                        {
-                                                            let mut store = state_store.write();
-                                                            // POST /events returns a write barrier, not an
-                                                            // account-subscribe resume cursor. Persisting it
-                                                            // poisons the next /account/subscribe after= call.
-                                                            store.append_raw_operation(
-                                                                op_id.clone(),
-                                                                Some(realm.clone()),
-                                                                json!({
-                                                                    "kind": "ck.invite.create",
-                                                                    "invite_id": invite_id,
-                                                                    "invitee": invitee.did,
-                                                                    "state": "pending",
-                                                                    "event_id": submitted.event_id,
-                                                                }),
-                                                            );
-                                                        }
-                                                        invite_target.set(String::new());
-                                                        status_msg.set(format!(
-                                                            "invited {} (pending) fact {}",
-                                                            invitee_label,
-                                                            short_protocol_id(&op_id)
-                                                        ));
-                                                    }
-                                                    Err(error) => status_msg.set(format!("invite failed: {error}")),
-                                                }
-                                            }
-                                            Err(error) => status_msg.set(format!("invalid server URL: {error}")),
-                                        }
-                                    });
-                                }
-                            },
-                            "Send Invite"
-                        }
                     }
                 }
             }
@@ -1374,314 +1739,6 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Member table
-            div { class: "event", "data-testid": "member-table",
-                div { class: "event-head", span { "Members" } span { "{members().len()}" } }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "refresh-members-button",
-                        onclick: {
-                            let realm = selected_realm_id.clone();
-                            move |_| {
-                                // Spec-canonical read path is the local sync
-                                // projection (driven by ck.self.events.subscribe).
-                                // Members appear as the local store applies
-                                // ck.member.state events.
-                                let store = state_store.read();
-                                let next = projected_members_for_realm(&store, &realm);
-                                let count = next.len();
-                                members.set(next);
-                                status_msg.set(format!(
-                                    "members refreshed ({count}) from local sync state"
-                                ));
-                            }
-                        },
-                        {crate::i18n::tr("realm_admin.refresh_members")}
-                    }
-                }
-                for member in members() {
-                    {
-                        let member_label = short_protocol_id(&member);
-                        rsx! {
-                            div { class: "event", "data-testid": "member-row", "data-member-did": "{member}",
-                        div { class: "event-head",
-                            // A4b — member avatar slot. Avatars are
-                            // public via `ck.self.account.update_profile`
-                            // (mirrored on this row via the
-                            // `member-avatar` testid). v1 renders an
-                            // initials-only placeholder; a follow-up
-                            // task wires a directory lookup cache so
-                            // the slot can carry the actual `<img>`
-                            // for actors that have published one.
-                            {
-                                let initial = member
-                                    .trim_start_matches("did:web:")
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_ascii_uppercase().to_string())
-                                    .unwrap_or_else(|| "?".to_owned());
-                                rsx! {
-                                    div {
-                                        "data-testid": "member-avatar",
-                                        "aria-hidden": "true",
-                                        style: "display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--bg-elevated, #2a2d33); color: var(--text-strong, #fff); font-size: 0.8rem; margin-right: 8px;",
-                                        "{initial}"
-                                    }
-                                }
-                            }
-                            span { title: "{member}", "{member_label}" }
-                            {
-                                // Mark agent-endpoint DIDs (registered via
-                                // `ck.agent.endpoint`) so admins can tell bots
-                                // apart from real members at a glance. Sourced
-                                // from the same local raw_operations cache the
-                                // Agents panel uses.
-                                let is_agent = state_store
-                                    .read()
-                                    .load()
-                                    .raw_operations
-                                    .iter()
-                                    .any(|r| {
-                                        r.payload
-                                            .get("kind")
-                                            .and_then(|k| k.as_str())
-                                            == Some("ck.agent.endpoint")
-                                            && r.realm_id
-                                                .as_deref()
-                                                .map(|s| s == selected_realm_id)
-                                                .unwrap_or(true)
-                                            && r.payload
-                                                .get("body")
-                                                .and_then(|b| b.get("agent_id"))
-                                                .and_then(|d| d.as_str())
-                                                == Some(member.as_str())
-                                    });
-                                rsx! {
-                                    if is_agent {
-                                        span {
-                                            class: "badge member-badge member-badge-agent",
-                                            "data-testid": "member-badge-agent",
-                                            title: "Automated member (bot)",
-                                            "\u{1f916} "
-                                            {crate::i18n::tr("member.badge.agent")}
-                                        }
-                                    }
-                                }
-                            }
-                            span { "member" }
-                        }
-                        div { class: "actions",
-                            button {
-                                class: "secondary",
-                                "data-testid": "kick-member-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let m = member.clone();
-                                    let actor_account_did = account_did.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let realm = realm.clone();
-                                        let m = m.clone();
-                                        let api_token = token();
-                                        let actor_did = actor_account_did.clone();
-                                        spawn(async move {
-                                            let m_for_msg = m.clone();
-                                            let realm_for_api = realm.clone();
-                                            // Spec-canonical "kick" = `join → leave` member-state
-                                            // transition (no separate kick FSM verb).
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.transition_member_state(
-                                                        &realm_for_api,
-                                                        &actor_did,
-                                                        &m,
-                                                        Some("join"),
-                                                        "leave",
-                                                        "admin_kick",
-                                                    )
-                                                    .await
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(resp) => {
-                                                    let mls_encrypted = state_store
-                                                        .read()
-                                                        .realm_projection_is_mls_encrypted(&realm);
-                                                    if mls_encrypted {
-                                                        state_store.write().record_move_submission_with_event_id(
-                                                            resp.event_id.clone(),
-                                                            Some(resp.event_id.clone()),
-                                                            realm.clone(),
-                                                            "mls_member_remove",
-                                                            MoveSubmissionState::PendingMlsBinding,
-                                                            Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
-                                                            None,
-                                                        );
-                                                    }
-                                                    let suffix = if mls_encrypted {
-                                                        "; epoch_update_required"
-                                                    } else {
-                                                        ""
-                                                    };
-                                                    status_msg.set(format!(
-                                                        "kicked {}{}",
-                                                        short_protocol_id(&m_for_msg),
-                                                        suffix
-                                                    ));
-                                                }
-                                                Err(err) => status_msg.set(format!(
-                                                    "kick failed: {}", err.display()
-                                                )),
-                                            }
-                                        });
-                                    }
-                                },
-                                {crate::i18n::tr("realm_admin.kick_member")}
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "ban-member-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let m = member.clone();
-                                    let actor_account_did = account_did.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let realm = realm.clone();
-                                        let m = m.clone();
-                                        let api_token = token();
-                                        let actor_did = actor_account_did.clone();
-                                        spawn(async move {
-                                            let m_for_msg = m.clone();
-                                            let realm_for_api = realm.clone();
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.ban_member(&realm_for_api, &actor_did, &m).await
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(resp) => {
-                                                    let mls_encrypted = state_store
-                                                        .read()
-                                                        .realm_projection_is_mls_encrypted(&realm);
-                                                    if mls_encrypted {
-                                                        state_store.write().record_move_submission_with_event_id(
-                                                            resp.event_id.clone(),
-                                                            Some(resp.event_id.clone()),
-                                                            realm.clone(),
-                                                            "mls_member_remove",
-                                                            MoveSubmissionState::PendingMlsBinding,
-                                                            Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
-                                                            None,
-                                                        );
-                                                    }
-                                                    let suffix = if mls_encrypted {
-                                                        "; epoch_update_required"
-                                                    } else {
-                                                        ""
-                                                    };
-                                                    status_msg.set(format!(
-                                                        "banned {}{}",
-                                                        short_protocol_id(&m_for_msg),
-                                                        suffix
-                                                    ));
-                                                }
-                                                Err(err) => status_msg.set(format!(
-                                                    "ban failed: {}", err.display()
-                                                )),
-                                            }
-                                        });
-                                    }
-                                },
-                                {crate::i18n::tr("realm_admin.ban_member")}
-                            }
-                            // (Legacy Move-flow kick/ban buttons removed — the
-                            // direct-event kick/ban above now submits the same
-                            // ck.member.state event via ck.events.submit.)
-                            // A5 — personal blocklist entry-point. Block is
-                            // a purely actor-private action (writes
-                            // `ck.account_data.set("ck.account.blocklist", …)`)
-                            // and does NOT touch the Space's member-state
-                            // FSM. Confirm modal renders below the row.
-                            button {
-                                class: "secondary",
-                                "data-testid": "member-row-block-button",
-                                onclick: {
-                                    let m = member.clone();
-                                    move |_| block_confirm_did.set(Some(m.clone()))
-                                },
-                                {crate::i18n::tr("member.block")}
-                            }
-                        }
-                        if block_confirm_did().as_deref() == Some(member.as_str()) {
-                            div {
-                                class: "event",
-                                "data-testid": "block-user-confirm-modal",
-                                div { class: "entity-title", {crate::i18n::tr("member.block_confirm.title")} }
-                                div { class: "muted", title: "{member}", "{member_label}" }
-                                div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
-                                div { class: "actions",
-                                    button {
-                                        class: "primary",
-                                        "data-testid": "block-user-confirm-button",
-                                        onclick: {
-                                            let m = member.clone();
-                                            let base = base_url.clone();
-                                            move |_| {
-                                                let changed = state_store
-                                                    .write()
-                                                    .block_user(&m, None);
-                                                block_confirm_did.set(None);
-                                                if changed {
-                                                    status_msg.set(format!(
-                                                        "Blocked {}",
-                                                        short_protocol_id(&m)
-                                                    ));
-                                                    let entries = state_store
-                                                        .read()
-                                                        .client_blocklist();
-                                                    crate::views::settings::push_blocklist_account_data(
-                                                        base.clone(),
-                                                        token(),
-                                                        entries,
-                                                    );
-                                                } else {
-                                                    status_msg.set(format!(
-                                                        "{} is already blocked",
-                                                        short_protocol_id(&m)
-                                                    ));
-                                                }
-                                            }
-                                        },
-                                        {crate::i18n::tr("member.block_confirm.confirm")}
-                                    }
-                                    button {
-                                        class: "secondary",
-                                        "data-testid": "block-user-cancel-button",
-                                        onclick: move |_| block_confirm_did.set(None),
-                                        {crate::i18n::tr("timeline.cancel")}
-                                    }
-                                }
-                            }
-                        }
-                            }
-                        }
-                    }
-                }
-                if members().is_empty() {
-                    div { class: "muted", {crate::i18n::tr("realm_admin.no_members_loaded")} }
-                }
-            }
-
             // Realm invites — sync/third-party-invites.md + invite event family
             // 6 canonical events drive the invite lifecycle:
             //   ck.invite.create        — create an invite (proactively invite a known DID)
@@ -1705,175 +1762,6 @@ pub fn RealmAdminPanel(
                     span { class: "badge green", title: "ck.invite.accept", "Accept" }
                     span { class: "badge amber", title: "ck.invite.cancel", "Cancel" }
                     span { class: "badge red", title: "ck.invite.revoke", "Revoke" }
-                }
-            }
-
-            // Realm invites
-            div { class: "event", "data-testid": "realm-invites",
-                div { class: "event-head", span { "Invites" } span { "lifecycle" } }
-                for invite in realm_invites() {
-                    {
-                        let invite_target_label = short_protocol_id(&invite.target);
-                        let invite_id_label = short_protocol_id(&invite.invite_id);
-                        rsx! {
-                            div { class: "event", "data-testid": "invite-row",
-                                div { class: "event-head",
-                                    span { title: "{invite.target}", "{invite_target_label}" }
-                                    span { "{invite.state}" }
-                                }
-                                div { class: "muted", "data-testid": "invite-target", title: "{invite.target}", "{invite.target}" }
-                                div { class: "muted", "data-testid": "invite-id", title: "{invite.invite_id}", "{invite_id_label}" }
-                                if let Some(role) = &invite.role {
-                                    div { class: "muted", "role {role}" }
-                                }
-                                if let Some(operation_id) = &invite.operation_id {
-                                    {
-                                        let operation_id_label = short_protocol_id(operation_id);
-                                        rsx! {
-                                            div { class: "muted", title: "{operation_id}", "fact {operation_id_label}" }
-                                        }
-                                    }
-                                }
-                                if let Some(event_id) = &invite.event_id {
-                                    {
-                                        let event_id_label = short_protocol_id(event_id);
-                                        rsx! {
-                                            div { class: "muted", title: "{event_id}", "event {event_id_label}" }
-                                        }
-                                    }
-                                }
-                                div { class: "actions",
-                            button {
-                                class: "primary",
-                                "data-testid": "accept-invite-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let actor = account_did.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let invite_id = invite.invite_id.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let actor = actor.clone();
-                                        let realm = realm.clone();
-                                        let invite_id = invite_id.clone();
-                                        let api_token = token();
-                                        let wait_for = active_sync_token(sync_cursor());
-                                        spawn(async move {
-                                            match authed_api_with_sync(&base, api_token, wait_for) {
-                                                Ok(api) => {
-                                                    let op = cx_ops::invite_accept(&realm, &actor, &invite_id).build("yougen");
-                                                    let op_id = op.local_operation_id().to_owned();
-                                                    match api.submit_event_envelope(&op).await {
-                                                        Ok(submitted) => {
-                                                            for row in realm_invites.write().iter_mut() {
-                                                                if row.invite_id == invite_id {
-                                                                    row.state = "accepted".to_owned();
-                                                                    row.operation_id = Some(op_id.clone());
-                                                                    row.event_id = Some(submitted.event_id.clone());
-                                                                }
-                                                            }
-                                                            frontier_state.set(submitted.event_id.clone());
-                                                            sync_cursor.set(submitted.sync_token.clone());
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                store.append_raw_operation(
-                                                                    op_id.clone(),
-                                                                    Some(realm.clone()),
-                                                                    json!({
-                                                                        "kind": "ck.invite.accept",
-                                                                        "invite_id": invite_id,
-                                                                        "state": "accepted",
-                                                                        "event_id": submitted.event_id,
-                                                                    }),
-                                                                );
-                                                            }
-                                                            status_msg.set(format!(
-                                                                "accepted invite fact {}",
-                                                                short_protocol_id(&op_id)
-                                                            ));
-                                                        }
-                                                        Err(error) => status_msg.set(format!("accept failed: {error}")),
-                                                    }
-                                                }
-                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
-                                            }
-                                        });
-                                    }
-                                },
-                                "Accept"
-                            }
-                            button {
-                                class: "secondary",
-                                "data-testid": "cancel-invite-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let actor = account_did.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let invite_id = invite.invite_id.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let actor = actor.clone();
-                                        let realm = realm.clone();
-                                        let invite_id = invite_id.clone();
-                                        let api_token = token();
-                                        let wait_for = active_sync_token(sync_cursor());
-                                        spawn(async move {
-                                            match authed_api_with_sync(&base, api_token, wait_for) {
-                                                Ok(api) => {
-                                                    let op = cx_ops::invite_cancel(
-                                                        &realm,
-                                                        &actor,
-                                                        &invite_id,
-                                                        Some("declined"),
-                                                    )
-                                                    .build("yougen");
-                                                    let op_id = op.local_operation_id().to_owned();
-                                                    match api.submit_event_envelope(&op).await {
-                                                        Ok(submitted) => {
-                                                            for row in realm_invites.write().iter_mut() {
-                                                                if row.invite_id == invite_id {
-                                                                    row.state = "canceled".to_owned();
-                                                                    row.operation_id = Some(op_id.clone());
-                                                                    row.event_id = Some(submitted.event_id.clone());
-                                                                }
-                                                            }
-                                                            frontier_state.set(submitted.event_id.clone());
-                                                            sync_cursor.set(submitted.sync_token.clone());
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                store.append_raw_operation(
-                                                                    op_id.clone(),
-                                                                    Some(realm.clone()),
-                                                                    json!({
-                                                                        "kind": "ck.invite.cancel",
-                                                                        "invite_id": invite_id,
-                                                                        "state": "canceled",
-                                                                        "event_id": submitted.event_id,
-                                                                    }),
-                                                                );
-                                                            }
-                                                            status_msg.set(format!(
-                                                                "canceled invite fact {}",
-                                                                short_protocol_id(&op_id)
-                                                            ));
-                                                        }
-                                                        Err(error) => status_msg.set(format!("cancel failed: {error}")),
-                                                    }
-                                                }
-                                                Err(error) => status_msg.set(format!("invalid server URL: {error}")),
-                                            }
-                                        });
-                                    }
-                                },
-                                "Cancel"
-                            }
-                        }
-                            }
-                        }
-                    }
-                }
-                if realm_invites().is_empty() {
-                    div { class: "muted", "No pending invites." }
                 }
             }
 

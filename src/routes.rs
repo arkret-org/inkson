@@ -93,6 +93,9 @@ pub enum Route {
     #[route("/devices/verify", crate::app::RouterView)]
     VerifyDevice,
 
+    #[route("/realms/:realm_id/members", RealmMembersPage)]
+    RealmMembers { realm_id: String },
+
     #[route("/realms/:realm_id/admin", RealmAdminPage)]
     RealmAdmin { realm_id: String },
 
@@ -211,6 +214,12 @@ fn RealmPage(realm_id: String) -> Element {
 }
 
 #[component]
+fn RealmMembersPage(realm_id: String) -> Element {
+    let _ = realm_id;
+    rsx! { crate::app::RouterView {} }
+}
+
+#[component]
 fn SettingsSectionPage(section: String) -> Element {
     let _ = section;
     rsx! { crate::app::RouterView {} }
@@ -295,7 +304,9 @@ impl Route {
             Route::SettingsSecurity => View::SettingsSecurity,
             Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
-            Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => View::RealmAdmin,
+            Route::RealmMembers { .. }
+            | Route::RealmAdmin { .. }
+            | Route::RealmAdminSection { .. } => View::RealmAdmin,
             // Audit / Call / Applets routes still render their own panels
             // (see `Route::Audit`/`Route::Call`/`Route::Applets` arms in
             // `app.rs`) but no longer have dedicated `View` enum variants —
@@ -329,6 +340,7 @@ impl Route {
             | Route::KanbanBoard { realm_id, .. }
             | Route::KanbanBoardTask { realm_id, .. }
             | Route::KanbanTask { realm_id, .. }
+            | Route::RealmMembers { realm_id }
             | Route::RealmAdmin { realm_id }
             | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
             Route::DocumentRealm { realm_id } if !realm_id.starts_with("ck:morph:") => {
@@ -430,6 +442,9 @@ mod tests {
                 realm_id: "ck:realm:roundtrip".to_owned(),
                 section: "members".to_owned(),
             },
+            Route::RealmMembers {
+                realm_id: "ck:realm:roundtrip".to_owned(),
+            },
             // NOTE: Route::Audit / Route::Call / Route::Applets are
             // intentionally omitted — their `View` enum variants were
             // removed (zombie-variant cleanup A6.7), so they map to
@@ -484,6 +499,13 @@ mod tests {
             }
             .realm_id(),
             Some("ck:realm:admin")
+        );
+        assert_eq!(
+            Route::RealmMembers {
+                realm_id: "ck:realm:members".to_owned()
+            }
+            .realm_id(),
+            Some("ck:realm:members")
         );
     }
 

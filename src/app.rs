@@ -1435,6 +1435,7 @@ pub fn RouterView() -> Element {
         &account_did(),
         context_realm_id.as_deref(),
     );
+    let realm_members_active = matches!(&route, Route::RealmMembers { .. });
     if let (Some(realm_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
             &route,
@@ -2645,6 +2646,7 @@ pub fn RouterView() -> Element {
                                 {
                                     let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
                                         Some(surface) => (surface.short_label(), surface.icon_name()),
+                                        None if realm_members_active => ("Members", "users"),
                                         None => ("Settings", "settings"),
                                     };
                                     rsx! {
@@ -2674,6 +2676,7 @@ pub fn RouterView() -> Element {
                             current_surface: resolved_realm_surface,
                             account_did: account_did(),
                             state_store,
+                            members_active: realm_members_active,
                             minimal_ready,
                             kanban_ready,
                             full_ready,
@@ -3480,6 +3483,28 @@ pub fn RouterView() -> Element {
                             rsx! { ProfileGateNotice { profile: "e2ee_client" } }
                         }
                     },
+                    Route::RealmMembers { .. } => {
+                        if let Some(sid) = route.realm_id()
+                            && selected_realm_id() != sid
+                        {
+                            selected_realm_id.set(sid.to_owned());
+                        }
+                        if full_ready {
+                            rsx! {
+                                crate::views::realm_admin::RealmMembersPanel {
+                                    base_url: base_url(),
+                                    account_did: account_did(),
+                                    token,
+                                    selected_realm_id: active_realm_id.clone(),
+                                    sync_cursor,
+                                    frontier_state,
+                                    state_store,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
+                        }
+                    },
                     Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
                         if let Some(sid) = route.realm_id()
                             && selected_realm_id() != sid
@@ -3727,6 +3752,7 @@ fn RealmContextBar(
     current_surface: Option<RealmSurface>,
     account_did: String,
     state_store: Signal<LocalStateStore>,
+    members_active: bool,
     minimal_ready: bool,
     kanban_ready: bool,
     full_ready: bool,
@@ -3735,6 +3761,7 @@ fn RealmContextBar(
     let mut menu_open = use_signal(|| false);
     let (current_nav_label, current_nav_icon) = match current_surface {
         Some(surface) => (surface.short_label(), surface.icon_name()),
+        None if members_active => ("Members", "users"),
         None => ("Settings", "settings"),
     };
     rsx! {
@@ -3770,7 +3797,13 @@ fn RealmContextBar(
                     }
                 }
                 Link {
-                    class: if current_surface.is_none() { "primary" } else { "secondary" },
+                    class: if members_active { "primary" } else { "secondary" },
+                    to: Route::RealmMembers { realm_id: realm_id.clone() },
+                    UiIcon { name: "users" }
+                    "Members"
+                }
+                Link {
+                    class: if current_surface.is_none() && !members_active { "primary" } else { "secondary" },
                     to: Route::RealmAdmin { realm_id: realm_id.clone() },
                     UiIcon { name: "settings" }
                     "Settings"
@@ -3831,7 +3864,15 @@ fn RealmContextBar(
                             }
                         }
                         Link {
-                            class: if current_surface.is_none() { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
+                            class: if members_active { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
+                            role: "menuitem",
+                            to: Route::RealmMembers { realm_id: realm_id.clone() },
+                            onclick: move |_| menu_open.set(false),
+                            UiIcon { name: "users" }
+                            "Members"
+                        }
+                        Link {
+                            class: if current_surface.is_none() && !members_active { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
                             role: "menuitem",
                             to: Route::RealmAdmin { realm_id: realm_id.clone() },
                             onclick: move |_| menu_open.set(false),
@@ -4204,7 +4245,9 @@ fn resolve_realm_surface(
         Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => {
             Some(RealmSurface::Document)
         }
-        Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => None,
+        Route::RealmMembers { .. } | Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
+            None
+        }
         _ => None,
     }
 }
@@ -4226,6 +4269,7 @@ fn route_uses_realm_context(route: &Route) -> bool {
             | Route::Document
             | Route::DocumentNew
             | Route::DocumentRealm { .. }
+            | Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. }
     )
@@ -4253,6 +4297,7 @@ fn route_label(route: &Route) -> &'static str {
             "Settings"
         }
         Route::VerifyDevice => "Verify Device",
+        Route::RealmMembers { .. } => "Members",
         Route::RealmAdmin { .. } => "Realm Settings",
         Route::RealmAdminSection { section, .. } => match section.as_str() {
             "members" => "Members Settings",
