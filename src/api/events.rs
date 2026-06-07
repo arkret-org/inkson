@@ -135,12 +135,12 @@ impl CokretApi {
         &self,
     ) -> anyhow::Result<cokret_sdk::EventsFrontierAccountClientState> {
         let body: Value = self.get_json("_cokret/self/events/frontier").await?;
-        let frontier: cokret_sdk::EventsFrontierAccountClientState =
-            serde_json::from_value(body).map_err(|err| {
-                anyhow::anyhow!(
-                    "events/frontier account_client decode failed (round 4 wire shape): {err}"
-                )
-            })?;
+        let frontier: cokret_sdk::EventsFrontierAccountClientState = serde_json::from_value(body)
+            .map_err(|err| {
+            anyhow::anyhow!(
+                "events/frontier account_client decode failed (round 4 wire shape): {err}"
+            )
+        })?;
         if !matches!(
             frontier.peer_role,
             cokret_sdk::FrontierPeerRole::AccountClient

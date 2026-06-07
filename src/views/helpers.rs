@@ -773,9 +773,7 @@ mod tests {
     #[test]
     fn handle_claim_rows_flags_primary_and_projects_fields() {
         use cokret_sdk::Handle;
-        use cokret_sdk::model::{
-            DirectorySubjectHandleList, HandleBindingState, HandleClaim,
-        };
+        use cokret_sdk::model::{DirectorySubjectHandleList, HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let subject =
             cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();

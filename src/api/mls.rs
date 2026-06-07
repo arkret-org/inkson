@@ -144,12 +144,18 @@ impl CokretApi {
             .await
     }
 
-    pub async fn mimi_request_consent(&self, request: Value) -> anyhow::Result<MimiRequestConsentOutcome> {
+    pub async fn mimi_request_consent(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiRequestConsentOutcome> {
         self.post_json("_cokret/open/mimi/consent/request", request)
             .await
     }
 
-    pub async fn mimi_update_consent(&self, request: Value) -> anyhow::Result<MimiRequestConsentOutcome> {
+    pub async fn mimi_update_consent(
+        &self,
+        request: Value,
+    ) -> anyhow::Result<MimiRequestConsentOutcome> {
         self.post_json("_cokret/open/mimi/consent/update", request)
             .await
     }

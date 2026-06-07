@@ -62,6 +62,32 @@ struct PendingAvatarCrop {
     dimensions: (u32, u32),
 }
 
+fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
+    handles
+        .iter()
+        .map(|handle| handle.trim().trim_start_matches('@'))
+        .chain(std::iter::once(
+            account_did.rsplit(':').next().unwrap_or(account_did),
+        ))
+        .find_map(|value| value.chars().find(|ch| ch.is_alphanumeric()))
+        .map(|ch| ch.to_uppercase().collect::<String>())
+        .unwrap_or_else(|| "?".to_owned())
+}
+
+fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in handles
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(account_did))
+        .flat_map(str::bytes)
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash as usize % 6) + 1
+}
+
 fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
     if handles.is_empty() {
         fallback.to_owned()
@@ -831,11 +857,13 @@ pub fn SettingsPanel(
         .unwrap_or_default();
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
+    let mut avatar_uploading = use_signal(|| false);
     let mut avatar_cache_status = use_signal(String::new);
     let mut pending_avatar_crop = use_signal(|| None::<PendingAvatarCrop>);
     let mut avatar_crop_zoom = use_signal(|| 125_i32);
     let mut avatar_crop_x = use_signal(|| 0_i32);
     let mut avatar_crop_y = use_signal(|| 0_i32);
+    let mut avatar_refresh_nonce = use_signal(|| 0_u64);
     let mut blocklist_snapshot = use_signal(|| state_store.read().client_blocklist());
     let mut blocklist_did_input = use_signal(String::new);
     let mut blocklist_reason_input = use_signal(String::new);
@@ -896,6 +924,10 @@ pub fn SettingsPanel(
     } else {
         personal_handles.join(", ")
     };
+    let account_default_avatar_initial = default_avatar_initial(&personal_handles, &account_did());
+    let account_default_avatar_tone = default_avatar_tone(&personal_handles, &account_did());
+    let account_default_avatar_class =
+        format!("avatar-img lg default-avatar tone-{account_default_avatar_tone}");
     let principal_short_label = short_protocol_id(&principal_label);
     let device_short_label = short_protocol_id(&device_label);
     {
@@ -907,6 +939,7 @@ pub fn SettingsPanel(
                 .unwrap_or_default();
             if hydrated != profile_avatar_blob_ref() {
                 profile_avatar_blob_ref.set(hydrated.clone());
+                avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                 avatar_cache_status.set(if hydrated.trim().is_empty() {
                     "Avatar cleared from synced preferences".to_owned()
                 } else {
@@ -977,40 +1010,38 @@ pub fn SettingsPanel(
                                 div { class: "event-head",
                                     span { "Account identity" }
                                 }
-                                div { class: "actions", style: "align-items: center; gap: 16px;",
+                                div { class: "actions settings-avatar-actions",
                                     {
                                         let blob_ref = profile_avatar_blob_ref();
                                         rsx! {
                                             if !blob_ref.trim().is_empty() {
                                                 div {
                                                     class: "avatar-img lg",
+                                                    key: "{blob_ref}:{avatar_refresh_nonce()}",
                                                     "data-testid": "settings-avatar-preview",
                                                     crate::content::renderer::AuthenticatedBlobImage {
+                                                        key: "{blob_ref}:{avatar_refresh_nonce()}",
                                                         blob_ref: blob_ref.trim().to_owned(),
                                                         alt_text: "Avatar".to_owned(),
                                                     }
                                                 }
                                             } else {
                                                 div {
-                                                    class: "avatar-img lg placeholder",
+                                                    class: "{account_default_avatar_class}",
                                                     "data-testid": "settings-avatar-preview",
-                                                    "—"
+                                                    "aria-label": "Default avatar",
+                                                    span { "{account_default_avatar_initial}" }
                                                 }
                                             }
                                         }
                                     }
-                                    div { style: "display: flex; flex-direction: column; gap: 8px;",
-                                        label {
-                                            class: "secondary",
-                                            "data-testid": "settings-avatar-upload-label",
-                                            r#for: "settings-avatar-input",
-                                            {crate::i18n::tr("settings.avatar.upload")}
-                                        }
+                                    div { class: "settings-avatar-controls",
                                         input {
                                             id: "settings-avatar-input",
                                             "data-testid": "settings-avatar-input",
                                             r#type: "file",
                                             accept: "image/*",
+                                            style: "display: none;",
                                             // A4b — Dioxus 0.7 `HasFileData::files()`
                                             // surfaces the dropped / picked file
                                             // list. Read bytes async then upload
@@ -1020,6 +1051,8 @@ pub fn SettingsPanel(
                                                 move |evt: Event<FormData>| {
                                                     let files = evt.files();
                                                     if files.is_empty() {
+                                                        pending_avatar_crop.set(None);
+                                                        avatar_uploading.set(false);
                                                         avatar_upload_status.set(
                                                             crate::i18n::tr("settings.avatar.error"),
                                                         );
@@ -1032,10 +1065,13 @@ pub fn SettingsPanel(
                                                     avatar_upload_status.set(
                                                         crate::i18n::tr("settings.avatar.processing"),
                                                     );
+                                                    avatar_uploading.set(false);
                                                     spawn(async move {
                                                         let bytes = match file.read_bytes().await {
                                                             Ok(b) => b.to_vec(),
                                                             Err(err) => {
+                                                                pending_avatar_crop.set(None);
+                                                                avatar_uploading.set(false);
                                                                 avatar_upload_status.set(format!(
                                                                     "{}: {err}",
                                                                     crate::i18n::tr("settings.avatar.error"),
@@ -1044,6 +1080,8 @@ pub fn SettingsPanel(
                                                             }
                                                         };
                                                         if !content_type.starts_with("image/") {
+                                                            pending_avatar_crop.set(None);
+                                                            avatar_uploading.set(false);
                                                             avatar_upload_status.set(format!(
                                                                 "{}: {}",
                                                                 crate::i18n::tr("settings.avatar.error"),
@@ -1054,6 +1092,8 @@ pub fn SettingsPanel(
                                                         let dimensions = match crate::avatar_crop::image_dimensions(&bytes) {
                                                             Ok(dimensions) => dimensions,
                                                             Err(err) => {
+                                                                pending_avatar_crop.set(None);
+                                                                avatar_uploading.set(false);
                                                                 avatar_upload_status.set(format!(
                                                                     "{}: {err}",
                                                                     crate::i18n::tr("settings.avatar.error"),
@@ -1078,13 +1118,32 @@ pub fn SettingsPanel(
                                                 }
                                             },
                                         }
+                                        if avatar_uploading() {
+                                            button {
+                                                class: "secondary",
+                                                r#type: "button",
+                                                disabled: true,
+                                                span { class: "spinner-inline", "aria-hidden": "true" }
+                                                {crate::i18n::tr("settings.avatar.uploading")}
+                                            }
+                                        } else {
+                                            label {
+                                                class: "secondary",
+                                                "data-testid": "settings-avatar-upload-label",
+                                                r#for: "settings-avatar-input",
+                                                {crate::i18n::tr("settings.avatar.upload")}
+                                            }
+                                        }
                                         if let Some(selection) = pending_avatar_crop.read().clone() {
                                             div {
                                                 "data-testid": "settings-avatar-crop-editor",
-                                                style: "display: grid; grid-template-columns: minmax(128px, 180px) minmax(220px, 1fr); gap: 16px; align-items: center; max-width: 560px;",
+                                                role: "dialog",
+                                                "aria-modal": "true",
+                                                "aria-label": "Edit avatar",
+                                                style: "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--layer-modal, 300); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: center; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border: 1px solid var(--border, #333); border-radius: var(--radius-lg, 12px); background: var(--surface-solid, var(--surface, #1a1d22)); box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));",
                                                 div {
                                                     "data-testid": "settings-avatar-crop-stage",
-                                                    style: "position: relative; width: min(180px, 40vw); aspect-ratio: 1; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);",
+                                                    style: "position: relative; width: min(180px, 70vw); aspect-ratio: 1; justify-self: center; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);",
                                                     img {
                                                         src: "{selection.preview_data_url}",
                                                         alt: "Selected avatar",
@@ -1109,6 +1168,7 @@ pub fn SettingsPanel(
                                                             max: "300",
                                                             step: "5",
                                                             value: "{avatar_crop_zoom()}",
+                                                            disabled: avatar_uploading(),
                                                             oninput: move |event| {
                                                                 if let Ok(value) = event.value().parse::<i32>() {
                                                                     avatar_crop_zoom.set(value.clamp(100, 300));
@@ -1125,6 +1185,7 @@ pub fn SettingsPanel(
                                                             max: "100",
                                                             step: "5",
                                                             value: "{avatar_crop_x()}",
+                                                            disabled: avatar_uploading(),
                                                             oninput: move |event| {
                                                                 if let Ok(value) = event.value().parse::<i32>() {
                                                                     avatar_crop_x.set(value.clamp(-100, 100));
@@ -1141,6 +1202,7 @@ pub fn SettingsPanel(
                                                             max: "100",
                                                             step: "5",
                                                             value: "{avatar_crop_y()}",
+                                                            disabled: avatar_uploading(),
                                                             oninput: move |event| {
                                                                 if let Ok(value) = event.value().parse::<i32>() {
                                                                     avatar_crop_y.set(value.clamp(-100, 100));
@@ -1152,10 +1214,14 @@ pub fn SettingsPanel(
                                                         button {
                                                             class: "secondary",
                                                             "data-testid": "settings-avatar-upload-cropped",
+                                                            disabled: avatar_uploading(),
                                                             onclick: {
                                                                 let base = base_url();
                                                                 let api_token = token();
                                                                 move |_| {
+                                                                    if avatar_uploading() {
+                                                                        return;
+                                                                    }
                                                                     let Some(selection) = pending_avatar_crop.read().clone() else {
                                                                         avatar_upload_status.set(crate::i18n::tr("settings.avatar.error"));
                                                                         return;
@@ -1167,11 +1233,13 @@ pub fn SettingsPanel(
                                                                     };
                                                                     let base = base.clone();
                                                                     let api_token = api_token.clone();
+                                                                    avatar_uploading.set(true);
                                                                     avatar_upload_status.set(crate::i18n::tr("settings.avatar.uploading"));
                                                                     spawn(async move {
                                                                         let bytes = match crate::avatar_crop::crop_avatar_jpeg(&selection.bytes, crop) {
                                                                             Ok(bytes) => bytes,
                                                                             Err(err) => {
+                                                                                avatar_uploading.set(false);
                                                                                 avatar_upload_status.set(format!(
                                                                                     "{}: {err}",
                                                                                     crate::i18n::tr("settings.avatar.error"),
@@ -1182,6 +1250,7 @@ pub fn SettingsPanel(
                                                                         let api = match crate::views::helpers::authed_api(&base, api_token.clone()) {
                                                                             Ok(api) => api,
                                                                             Err(err) => {
+                                                                                avatar_uploading.set(false);
                                                                                 avatar_upload_status.set(format!(
                                                                                     "{}: {err}",
                                                                                     crate::i18n::tr("settings.avatar.error"),
@@ -1193,37 +1262,41 @@ pub fn SettingsPanel(
                                                                             Ok(resp) => {
                                                                                 let blob_ref = resp.blob_ref.to_string();
                                                                                 let avatar_url = api.blob_download_url(&blob_ref);
-                                                                                // 1) Mirror locally + push actor-private
-                                                                                //    `client.ui.avatar_blob_ref` so other
-                                                                                //    devices pick up the same upload.
-                                                                                profile_avatar_blob_ref.set(blob_ref.clone());
-                                                                                state_store.write().save_private_data(
-                                                                                    &account_did(),
-                                                                                    "avatar_blob_ref",
-                                                                                    blob_ref.clone(),
-                                                                                );
-                                                                                push_client_ui_account_data_with_avatar(
-                                                                                    base.clone(),
-                                                                                    api_token.clone(),
-                                                                                    theme(),
-                                                                                    Some(blob_ref.clone()),
-                                                                                );
-                                                                                // 2) Publish publicly via
-                                                                                //    `ck.self.account.update_profile`.
-                                                                                //    Best-effort: log on failure but
-                                                                                //    keep the local cache intact.
+                                                                                // Publish publicly first; only then refresh the
+                                                                                // local mirror so a failed profile update does not
+                                                                                // display an avatar that never became active.
                                                                                 match api
                                                                                     .update_profile(None, None, Some(&avatar_url))
                                                                                     .await
                                                                                 {
                                                                                     Ok(_) => {
+                                                                                        state_store.write().save_private_data(
+                                                                                            &account_did(),
+                                                                                            "avatar_blob_ref",
+                                                                                            blob_ref.clone(),
+                                                                                        );
+                                                                                        push_client_ui_account_data_with_avatar(
+                                                                                            base.clone(),
+                                                                                            api_token.clone(),
+                                                                                            theme(),
+                                                                                            Some(blob_ref.clone()),
+                                                                                        );
+                                                                                        let refreshed = state_store
+                                                                                            .read()
+                                                                                            .load_private_data(&account_did(), "avatar_blob_ref")
+                                                                                            .filter(|value| !value.trim().is_empty())
+                                                                                            .unwrap_or_else(|| blob_ref.clone());
+                                                                                        profile_avatar_blob_ref.set(refreshed.clone());
+                                                                                        avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
+                                                                                        avatar_uploading.set(false);
                                                                                         pending_avatar_crop.set(None);
                                                                                         avatar_upload_status.set(String::new());
                                                                                         status.set(format!(
-                                                                                            "Avatar updated ({blob_ref})"
+                                                                                            "Avatar updated ({refreshed})"
                                                                                         ));
                                                                                     }
                                                                                     Err(err) => {
+                                                                                        avatar_uploading.set(false);
                                                                                         avatar_upload_status.set(format!(
                                                                                             "{}: {}",
                                                                                             crate::i18n::tr("settings.avatar.error"),
@@ -1233,6 +1306,7 @@ pub fn SettingsPanel(
                                                                                 }
                                                                             }
                                                                             Err(err) => {
+                                                                                avatar_uploading.set(false);
                                                                                 avatar_upload_status.set(format!(
                                                                                     "{}: {err}",
                                                                                     crate::i18n::tr("settings.avatar.error"),
@@ -1242,12 +1316,21 @@ pub fn SettingsPanel(
                                                                     });
                                                                 }
                                                             },
-                                                            {crate::i18n::tr("settings.avatar.upload_cropped")}
+                                                            if avatar_uploading() {
+                                                                span { class: "spinner-inline", "aria-hidden": "true" }
+                                                                {crate::i18n::tr("settings.avatar.uploading")}
+                                                            } else {
+                                                                {crate::i18n::tr("settings.avatar.upload_cropped")}
+                                                            }
                                                         }
                                                         button {
                                                             class: "secondary",
                                                             "data-testid": "settings-avatar-crop-cancel",
+                                                            disabled: avatar_uploading(),
                                                             onclick: move |_| {
+                                                                if avatar_uploading() {
+                                                                    return;
+                                                                }
                                                                 pending_avatar_crop.set(None);
                                                                 avatar_upload_status.set(String::new());
                                                             },
@@ -1261,14 +1344,20 @@ pub fn SettingsPanel(
                                             button {
                                                 class: "secondary",
                                                 "data-testid": "settings-avatar-clear",
+                                                disabled: avatar_uploading(),
                                                 onclick: {
                                                     let base = base_url();
                                                     let api_token = token();
                                                     move |_| {
                                                         let base = base.clone();
                                                         let api_token = api_token.clone();
+                                                        if avatar_uploading() {
+                                                            return;
+                                                        }
                                                         profile_avatar_blob_ref.set(String::new());
+                                                        avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                                                         pending_avatar_crop.set(None);
+                                                        avatar_uploading.set(false);
                                                         state_store.write().save_private_data(
                                                             &account_did(),
                                                             "avatar_blob_ref",
@@ -3240,5 +3329,23 @@ mod tests {
     #[test]
     fn blocklist_account_data_key_matches_spec() {
         assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ck.account.blocklist");
+    }
+
+    #[test]
+    fn default_avatar_initial_prefers_handle_then_did() {
+        assert_eq!(
+            default_avatar_initial(&["alice".to_owned()], "did:web:example.test"),
+            "A"
+        );
+        assert_eq!(default_avatar_initial(&[], "did:web:bob.example"), "B");
+    }
+
+    #[test]
+    fn default_avatar_tone_is_stable_and_bounded() {
+        let handles = vec!["alice".to_owned()];
+        let first = default_avatar_tone(&handles, "did:web:example.test");
+        let second = default_avatar_tone(&handles, "did:web:example.test");
+        assert_eq!(first, second);
+        assert!((1..=6).contains(&first));
     }
 }

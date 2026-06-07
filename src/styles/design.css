@@ -1068,6 +1068,35 @@ button:disabled:hover,
 }
 .avatar-img.sm { width: 36px; height: 36px; }
 .avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border-default, #333); }
+.avatar-img.default-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: #fffaf6;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+.avatar-img.default-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: inherit;
+}
+.avatar-img.default-avatar span {
+  position: relative;
+  z-index: 1;
+}
+.avatar-img.default-avatar.tone-1 { background: linear-gradient(135deg, #b45309, #c65b72); }
+.avatar-img.default-avatar.tone-2 { background: linear-gradient(135deg, #1f6b4f, #586fcb); }
+.avatar-img.default-avatar.tone-3 { background: linear-gradient(135deg, #7c3aed, #0f766e); }
+.avatar-img.default-avatar.tone-4 { background: linear-gradient(135deg, #b91c1c, #b97824); }
+.avatar-img.default-avatar.tone-5 { background: linear-gradient(135deg, #334155, #2b6b4f); }
+.avatar-img.default-avatar.tone-6 { background: linear-gradient(135deg, #0f5f78, #a33a50); }
 .avatar-img.placeholder {
   border: 1px dashed var(--border-default, #333);
   background: var(--bg-elevated, #1a1d22);
@@ -1081,6 +1110,31 @@ button:disabled:hover,
 .avatar-stack { display: inline-flex; }
 .avatar-stack > * { margin-left: -6px; border: 2px solid var(--surface); }
 .avatar-stack > *:first-child { margin-left: 0; }
+
+.settings-avatar-actions {
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-avatar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(100%, 220px);
+}
+
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ----- 7.5 Surface containers ----- */
 

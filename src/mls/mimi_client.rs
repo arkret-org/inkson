@@ -306,7 +306,9 @@ pub fn parse_provider_directory_summary(
     })
 }
 
-pub fn parse_identifier_query(value: &Value) -> Result<MimiIdentifierQueryOutcome, MimiClientError> {
+pub fn parse_identifier_query(
+    value: &Value,
+) -> Result<MimiIdentifierQueryOutcome, MimiClientError> {
     let query = value
         .get("query")
         .and_then(Value::as_str)
