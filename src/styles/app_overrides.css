@@ -3036,6 +3036,7 @@
 
 .account-menu__head .grow {
   display: grid;
+  flex: 1 1 auto;
   gap: 4px;
   min-width: 0;
 }
@@ -3051,6 +3052,14 @@
   color: var(--text-3);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.account-menu__qr {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
 }
 
 .account-menu__rows {

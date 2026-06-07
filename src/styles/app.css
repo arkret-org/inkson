@@ -1803,27 +1803,47 @@ body {
   position: relative;
   min-width: 0;
 }
-.assignee-trigger {
+.assignee-chip-row {
   width: 100%;
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--border, var(--ck-line));
-  border-radius: 8px;
-  background: var(--surface-2, var(--ck-panel));
-  color: var(--text, var(--ck-ink));
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.assignee-add {
+  min-width: 30px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px dashed var(--border, var(--ck-line));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2, var(--ck-muted));
   font: inherit;
-  font-weight: 750;
-  text-align: left;
+  font-size: 12px;
+  font-weight: 800;
   cursor: pointer;
 }
-.assignee-trigger:hover,
-.assignee-trigger:focus-visible {
+.assignee-add:hover,
+.assignee-add:focus-visible {
   border-color: var(--accent);
+  color: var(--text, var(--ck-ink));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   outline: none;
+}
+.assignee-add-empty {
+  border-style: solid;
+  border-color: var(--border, var(--ck-line));
+  background: var(--surface-2, var(--ck-panel));
+}
+.assignee-clear {
+  width: 30px;
+  padding: 0;
+  border-style: solid;
 }
 .assignee-chip-list {
   min-width: 0;
@@ -1831,6 +1851,7 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 5px;
+  flex: 1 1 auto;
 }
 .assignee-chip {
   max-width: 100%;
@@ -1861,10 +1882,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.assignee-empty {
-  color: var(--text-3, var(--ck-muted));
-  font-weight: 750;
 }
 .assignee-popover {
   position: absolute;
@@ -1961,6 +1978,183 @@ body {
   min-height: 30px;
   padding: 0 10px;
 }
+.due-editor {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.due-pill {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 999px;
+  background: var(--surface, var(--ck-surface));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.due-edit-button,
+.due-add-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 999px;
+  background: var(--surface-2, var(--ck-panel));
+  color: var(--text-2, var(--ck-muted));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.due-edit-button {
+  width: 30px;
+  padding: 0;
+}
+.due-clear-button {
+  color: var(--text-3, var(--ck-muted));
+}
+.due-edit-button:hover,
+.due-edit-button:focus-visible,
+.due-add-button:hover,
+.due-add-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text, var(--ck-ink));
+  outline: none;
+}
+.due-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--layer-local-popover);
+  width: min(300px, calc(100vw - 32px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 8px;
+  background: var(--surface, var(--ck-surface));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+.due-popover-field {
+  display: grid;
+  gap: 5px;
+}
+.due-popover-field label {
+  color: var(--text-3, var(--ck-muted));
+  font-size: 12px;
+  font-weight: 800;
+}
+.due-calendar {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border, var(--ck-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2, var(--ck-panel)) 58%, transparent);
+}
+.due-calendar-header {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+}
+.due-calendar-title {
+  min-width: 0;
+  color: var(--text, var(--ck-ink));
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.due-calendar-nav {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2, var(--ck-muted));
+  cursor: pointer;
+}
+.due-calendar-nav:hover,
+.due-calendar-nav:focus-visible {
+  border-color: var(--accent, var(--ck-brand));
+  color: var(--text, var(--ck-ink));
+  outline: none;
+}
+.due-calendar-weekdays,
+.due-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.due-calendar-weekdays span {
+  min-width: 0;
+  color: var(--text-3, var(--ck-muted));
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+.due-calendar-day {
+  width: 100%;
+  aspect-ratio: 1;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text, var(--ck-ink));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+}
+.due-calendar-day.outside {
+  color: color-mix(in srgb, var(--text-3, var(--ck-muted)) 62%, transparent);
+}
+.due-calendar-day.today {
+  border-color: color-mix(in srgb, var(--accent, var(--ck-brand)) 54%, transparent);
+}
+.due-calendar-day:hover,
+.due-calendar-day:focus-visible {
+  border-color: var(--accent, var(--ck-brand));
+  background: color-mix(in srgb, var(--accent, var(--ck-brand)) 12%, transparent);
+  outline: none;
+}
+.due-calendar-day.selected {
+  border-color: var(--accent, var(--ck-brand));
+  background: var(--accent, var(--ck-brand));
+  color: var(--surface, #fff);
+}
+.due-edit-status {
+  color: var(--text-3, var(--ck-muted));
+  font-size: 12px;
+}
+.due-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.due-popover-actions .primary,
+.due-popover-actions .secondary {
+  min-height: 30px;
+  padding: 0 10px;
+}
 .card-detail-field-code {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1984,6 +2178,34 @@ body {
   margin-top: 5px;
   border-radius: 999px;
   background: var(--accent);
+}
+.card-detail-activity-item.pending .card-detail-activity-dot {
+  background: var(--warning, #f59e0b);
+}
+.card-detail-activity-item.accepted .card-detail-activity-dot {
+  background: var(--success, #22c55e);
+}
+.card-detail-activity-item.failed .card-detail-activity-dot {
+  background: var(--danger, #ef4444);
+}
+.card-detail-activity-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.card-detail-activity-body strong {
+  min-width: 0;
+  color: var(--text, var(--ck-ink));
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.card-detail-activity-body span {
+  min-width: 0;
+  color: var(--text-3, var(--ck-muted));
+  font-size: 12px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
 }
 .card-detail-edit-form {
   width: 100%;

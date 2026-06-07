@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{Datelike, Duration, NaiveDate};
 use dioxus::prelude::*;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
@@ -440,6 +441,10 @@ pub fn KanbanPanel(
     let mut assignee_filter = use_signal(String::new);
     let mut assignee_selected_actor_ids = use_signal(BTreeSet::<String>::new);
     let mut assignee_edit_status = use_signal(String::new);
+    let mut due_picker_open = use_signal(|| false);
+    let mut due_edit_value = use_signal(String::new);
+    let mut due_calendar_month = use_signal(default_due_calendar_month);
+    let mut due_edit_status = use_signal(String::new);
     let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
     let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
     let mut card_edit_labels = use_signal(String::new);
@@ -501,6 +506,10 @@ pub fn KanbanPanel(
                 assignee_selected_actor_ids
                     .set(card_assigned_actor_ids(&card).into_iter().collect());
                 assignee_edit_status.set(String::new());
+                due_picker_open.set(false);
+                due_edit_value.set(editor_value_for_optional_card_field(&card.due));
+                due_calendar_month.set(due_calendar_month_for_value(&card.due));
+                due_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
                 let routed_tab = card_detail_tab_from_current_url();
                 if routed_tab == CardDetailContentTab::Discussion {
@@ -759,13 +768,18 @@ pub fn KanbanPanel(
         }
     });
 
-    // F-KANBAN-LIVE-1: poll the projection endpoints every
-    // KANBAN_LIVE_POLL_SECONDS so another device's `ck.flow.create` /
-    // `ck.flow.move` / `ck.flow.reorder` / `ck.flow.update` lands in this
-    // client without a manual browser refresh. Account subscribe wakes on
-    // durable events, but it does not yet carry the full lifecycle Flow
-    // projection that the Kanban board renders, so the board refreshes the
-    // same read model it uses on page load.
+    // F-KANBAN-LIVE-1: refresh the board projection only when account
+    // subscribe advances. The global SyncEngine owns the liveness channel;
+    // this panel must not poll `spaces` / `flows` / `events` on a timer while
+    // no durable event has arrived.
+    let mut live_refresh_key_seen = use_signal({
+        let initial_realm_id = local_realm_id.clone();
+        move || {
+            let initial_view = board_view_id.peek().clone();
+            let initial_cursor = sync_cursor.peek().clone();
+            kanban_projection_refresh_key(&initial_realm_id, &initial_view, &initial_cursor)
+        }
+    });
     let live_base = base_url.clone();
     let live_token = token;
     let live_board_view_id = board_view_id;
@@ -774,109 +788,48 @@ pub fn KanbanPanel(
     let live_decrypt_realm_id = selected_realm_id.clone();
     let live_decrypt_actor = account_did.clone();
     let live_decrypt_device = device_id.clone();
-    use_future(move || {
+    use_effect(move || {
         let base = live_base.clone();
         let lifecycle_realm_id = live_lifecycle_realm_id.clone();
         let lifecycle_local_realm_id = live_lifecycle_local_realm_id.clone();
         let decrypt_realm_id = live_decrypt_realm_id.clone();
         let decrypt_actor = live_decrypt_actor.clone();
         let decrypt_device = live_decrypt_device.clone();
-        async move {
-            // Defer the first poll so the bootstrap fetch finishes
-            // first and we don't double-fire on mount.
-            crate::api::sleep_for(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS)).await;
-            loop {
-                let api_token = live_token();
-                let view = live_board_view_id();
-                if !view.trim().is_empty() {
-                    let view_for_call = view.clone();
-                    let events_res = if lifecycle_realm_id.trim().is_empty() {
-                        None
-                    } else {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.backfill(&realm_id).await
-                        })
-                        .await
-                        .ok()
-                    };
-                    let remote_update_operations = events_res
-                        .as_ref()
-                        .map(|resp| flow_update_operations_from_events(&resp.events))
-                        .unwrap_or_default();
-                    if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
-                        api.collection_projection(&view_for_call).await
+        let api_token = live_token();
+        let view = live_board_view_id();
+        let cursor = sync_cursor();
+        let Some(refresh_key) = next_kanban_projection_refresh_key(
+            live_refresh_key_seen.peek().as_str(),
+            &lifecycle_realm_id,
+            &view,
+            &cursor,
+        ) else {
+            return;
+        };
+        live_refresh_key_seen.set(refresh_key);
+        spawn(async move {
+            if !view.trim().is_empty() {
+                let view_for_call = view.clone();
+                let events_res = if lifecycle_realm_id.trim().is_empty() {
+                    None
+                } else {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.backfill(&realm_id).await
                     })
                     .await
-                    {
-                        let cols = {
-                            let decrypt_store = state_store.read();
-                            let decrypt_ctx = MlsDecryptCtx {
-                                state_store: &decrypt_store,
-                                realm_id: &decrypt_realm_id,
-                                actor_did: &decrypt_actor,
-                                device_id: &decrypt_device,
-                            };
-                            overlay_collection_projection_with_operations(
-                                &projection,
-                                &decrypt_store,
-                                &selected_board_space_id(),
-                                &remote_update_operations,
-                                Some(&decrypt_ctx),
-                            )
-                        };
-                        // Only overwrite when the server actually
-                        // returned a non-empty projection — an empty
-                        // response shouldn't wipe a locally-queued
-                        // optimistic move.
-                        if !cols.is_empty() && cols != columns() {
-                            columns.set(cols);
-                            projection_source.set(BoardProjectionSource::ApiDerived);
-                        }
-                    }
-                } else if !lifecycle_realm_id.is_empty() {
-                    let containers_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.list_space_container_projections(&realm_id).await
-                        })
-                        .await
-                    };
-                    let flows_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.list_flow_projections(&realm_id).await
-                        })
-                        .await
-                    };
-                    let events_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token, |api| async move {
-                            api.backfill(&realm_id).await
-                        })
-                        .await
-                    };
-                    if containers_res.is_ok() || flows_res.is_ok() {
-                        let container_items = containers_res
-                            .ok()
-                            .map(|resp| resp.items)
-                            .unwrap_or_default();
-                        let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
-                        let event_items =
-                            events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                        let remote_update_operations =
-                            flow_update_operations_from_events(&event_items);
-                        let remote_space_create_operations =
-                            space_create_operations_from_events(&event_items);
-                        let container_items = containers_with_local_space_creates(
-                            &container_items,
-                            &remote_space_create_operations,
-                            &lifecycle_local_realm_id,
-                        );
-                        lifecycle_container_projection.set(container_items.clone());
-                        lifecycle_flow_projection.set(flow_items.clone());
-                        let current_board = selected_board_space_id();
-                        let raw_operations = state_store.read().load().raw_operations;
+                    .ok()
+                };
+                let remote_update_operations = events_res
+                    .as_ref()
+                    .map(|resp| flow_update_operations_from_events(&resp.events))
+                    .unwrap_or_default();
+                if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
+                    api.collection_projection(&view_for_call).await
+                })
+                .await
+                {
+                    let cols = {
                         let decrypt_store = state_store.read();
                         let decrypt_ctx = MlsDecryptCtx {
                             state_store: &decrypt_store,
@@ -884,51 +837,111 @@ pub fn KanbanPanel(
                             actor_did: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
-                        let (projected_columns, options, projected_board_id) =
-                            columns_from_lifecycle_projection_with_local(
-                                &container_items,
-                                &flow_items,
-                                &current_board,
-                                &raw_operations,
-                                &lifecycle_local_realm_id,
-                                Some(&decrypt_ctx),
-                            );
-                        if let Some(board_id) = projected_board_id {
-                            if !options.is_empty() && board_space_options() != options {
-                                board_space_options.set(options);
-                            }
-                            if current_board.trim().is_empty() {
-                                selected_board_space_id.set(board_id.clone());
-                            }
-                            let projected_columns =
-                                overlay_card_projection_with_operations_and_decrypt(
-                                    projected_columns,
-                                    &decrypt_store,
-                                    &board_id,
-                                    &remote_update_operations,
-                                    Some(&decrypt_ctx),
-                                );
-                            drop(decrypt_store);
-                            if columns() != projected_columns {
-                                let list_count = projected_columns.len();
-                                let card_count = projected_columns
-                                    .iter()
-                                    .map(|column| column.cards.len())
-                                    .sum::<usize>();
-                                columns.set(projected_columns.clone());
-                                sync_selected_card_from_columns(selected_card, &projected_columns);
-                                projection_source.set(BoardProjectionSource::ApiDerived);
-                                board_status.set(format!(
-                                    "Board refreshed: {list_count} list(s), {card_count} card(s)"
-                                ));
-                            }
+                        overlay_collection_projection_with_operations(
+                            &projection,
+                            &decrypt_store,
+                            &selected_board_space_id(),
+                            &remote_update_operations,
+                            Some(&decrypt_ctx),
+                        )
+                    };
+                    // Only overwrite when the server actually returned a
+                    // non-empty projection — an empty response shouldn't wipe
+                    // a locally-queued optimistic move.
+                    if !cols.is_empty() && cols != columns() {
+                        columns.set(cols);
+                        projection_source.set(BoardProjectionSource::ApiDerived);
+                    }
+                }
+            } else {
+                let containers_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.list_space_container_projections(&realm_id).await
+                    })
+                    .await
+                };
+                let flows_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.list_flow_projections(&realm_id).await
+                    })
+                    .await
+                };
+                let events_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token, |api| async move {
+                        api.backfill(&realm_id).await
+                    })
+                    .await
+                };
+                if containers_res.is_ok() || flows_res.is_ok() {
+                    let container_items = containers_res
+                        .ok()
+                        .map(|resp| resp.items)
+                        .unwrap_or_default();
+                    let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
+                    let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
+                    let remote_update_operations = flow_update_operations_from_events(&event_items);
+                    let remote_space_create_operations =
+                        space_create_operations_from_events(&event_items);
+                    let container_items = containers_with_local_space_creates(
+                        &container_items,
+                        &remote_space_create_operations,
+                        &lifecycle_local_realm_id,
+                    );
+                    lifecycle_container_projection.set(container_items.clone());
+                    lifecycle_flow_projection.set(flow_items.clone());
+                    let current_board = selected_board_space_id();
+                    let raw_operations = state_store.read().load().raw_operations;
+                    let decrypt_store = state_store.read();
+                    let decrypt_ctx = MlsDecryptCtx {
+                        state_store: &decrypt_store,
+                        realm_id: &decrypt_realm_id,
+                        actor_did: &decrypt_actor,
+                        device_id: &decrypt_device,
+                    };
+                    let (projected_columns, options, projected_board_id) =
+                        columns_from_lifecycle_projection_with_local(
+                            &container_items,
+                            &flow_items,
+                            &current_board,
+                            &raw_operations,
+                            &lifecycle_local_realm_id,
+                            Some(&decrypt_ctx),
+                        );
+                    if let Some(board_id) = projected_board_id {
+                        if !options.is_empty() && board_space_options() != options {
+                            board_space_options.set(options);
+                        }
+                        if current_board.trim().is_empty() {
+                            selected_board_space_id.set(board_id.clone());
+                        }
+                        let projected_columns = overlay_card_projection_with_operations_and_decrypt(
+                            projected_columns,
+                            &decrypt_store,
+                            &board_id,
+                            &remote_update_operations,
+                            Some(&decrypt_ctx),
+                        );
+                        drop(decrypt_store);
+                        if columns() != projected_columns {
+                            let list_count = projected_columns.len();
+                            let card_count = projected_columns
+                                .iter()
+                                .map(|column| column.cards.len())
+                                .sum::<usize>();
+                            columns.set(projected_columns.clone());
+                            sync_selected_card_from_columns(selected_card, &projected_columns);
+                            projection_source.set(BoardProjectionSource::ApiDerived);
+                            board_status.set(format!(
+                                "Board refreshed: {list_count} list(s), {card_count} card(s)"
+                            ));
                         }
                     }
                 }
-                crate::api::sleep_for(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
-                    .await;
             }
-        }
+        });
     });
 
     // Hydrate Space-container / Flow lifecycle state from the soland
@@ -2144,6 +2157,10 @@ pub fn KanbanPanel(
                                         assignee_filter.set(String::new());
                                         assignee_selected_actor_ids.set(card_assigned_actor_ids(&c).into_iter().collect());
                                         assignee_edit_status.set(String::new());
+                                        due_picker_open.set(false);
+                                        due_edit_value.set(editor_value_for_optional_card_field(&c.due));
+                                        due_calendar_month.set(due_calendar_month_for_value(&c.due));
+                                        due_edit_status.set(String::new());
                                         card_detail_actions_open.set(false);
                                         card_detail_tab.set(CardDetailContentTab::Description);
                                         card_synthesis_history_open_id.set(None);
@@ -2762,6 +2779,10 @@ pub fn KanbanPanel(
                                     assignee_filter.set(String::new());
                                     assignee_selected_actor_ids.set(BTreeSet::new());
                                     assignee_edit_status.set(String::new());
+                                    due_picker_open.set(false);
+                                    due_edit_value.set(String::new());
+                                    due_calendar_month.set(default_due_calendar_month());
+                                    due_edit_status.set(String::new());
                                     card_detail_actions_open.set(false);
                                     if route_is_card_detail {
                                         let _ = overlay_navigator.push(overlay_board_route.clone());
@@ -3009,6 +3030,10 @@ pub fn KanbanPanel(
                                                 assignee_filter.set(String::new());
                                                 assignee_selected_actor_ids.set(BTreeSet::new());
                                                 assignee_edit_status.set(String::new());
+                                                due_picker_open.set(false);
+                                                due_edit_value.set(String::new());
+                                                due_calendar_month.set(default_due_calendar_month());
+                                                due_edit_status.set(String::new());
                                                 card_detail_actions_open.set(false);
                                                 if route_is_card_detail {
                                                     let _ = close_navigator.push(close_board_route.clone());
@@ -3876,6 +3901,8 @@ pub fn KanbanPanel(
                                                             };
                                                             let picker_open = assignee_picker_open();
                                                             let edit_status = assignee_edit_status();
+                                                            let activity_items =
+                                                                card_activity_items(&card, &store.raw_operations);
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -3889,26 +3916,29 @@ pub fn KanbanPanel(
                                                                         div {
                                                                             class: "assignee-editor",
                                                                             "data-testid": "card-detail-assignees",
-                                                                            button {
-                                                                                r#type: "button",
-                                                                                class: "assignee-trigger",
-                                                                                title: "{assignee_title}",
-                                                                                "aria-haspopup": "listbox",
-                                                                                "aria-expanded": "{picker_open}",
-                                                                                onclick: {
-                                                                                    let current_selection = assigned_actor_ids
-                                                                                        .iter()
-                                                                                        .cloned()
-                                                                                        .collect::<BTreeSet<_>>();
-                                                                                    move |_| {
-                                                                                        assignee_selected_actor_ids.set(current_selection.clone());
-                                                                                        assignee_filter.set(String::new());
-                                                                                        assignee_edit_status.set(String::new());
-                                                                                        assignee_picker_open.set(!assignee_picker_open());
-                                                                                    }
-                                                                                },
+                                                                            div { class: "assignee-chip-row", title: "{assignee_title}",
                                                                                 if assigned_people.is_empty() {
-                                                                                    span { class: "assignee-empty", "unassigned" }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add assignee-add-empty",
+                                                                                        "aria-haspopup": "listbox",
+                                                                                        "aria-expanded": "{picker_open}",
+                                                                                        title: "Add assignees",
+                                                                                        onclick: {
+                                                                                            let current_selection = assigned_actor_ids
+                                                                                                .iter()
+                                                                                                .cloned()
+                                                                                                .collect::<BTreeSet<_>>();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
+                                                                                                assignee_filter.set(String::new());
+                                                                                                assignee_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(!assignee_picker_open());
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "plus" }
+                                                                                        span { "Add assignees" }
+                                                                                    }
                                                                                 } else {
                                                                                     span { class: "assignee-chip-list",
                                                                                         for (actor_id, label, initial) in assigned_people.iter() {
@@ -3921,8 +3951,60 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                         }
                                                                                     }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add",
+                                                                                        "aria-label": "Add or remove assignees",
+                                                                                        "aria-haspopup": "listbox",
+                                                                                        "aria-expanded": "{picker_open}",
+                                                                                        title: "Add or remove assignees",
+                                                                                        onclick: {
+                                                                                            let current_selection = assigned_actor_ids
+                                                                                                .iter()
+                                                                                                .cloned()
+                                                                                                .collect::<BTreeSet<_>>();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
+                                                                                                assignee_filter.set(String::new());
+                                                                                                assignee_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(!assignee_picker_open());
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "plus" }
+                                                                                    }
+                                                                                    button {
+                                                                                        r#type: "button",
+                                                                                        class: "assignee-add assignee-clear",
+                                                                                        "aria-label": "Clear assignees",
+                                                                                        title: "Clear assignees",
+                                                                                        onclick: {
+                                                                                            let base = base_url.clone();
+                                                                                            let realm = selected_realm_id.clone();
+                                                                                            let actor = account_did.clone();
+                                                                                            let current_card = card.clone();
+                                                                                            move |_| {
+                                                                                                assignee_selected_actor_ids.set(BTreeSet::new());
+                                                                                                if dispatch_card_assignees_update(
+                                                                                                    base.clone(),
+                                                                                                    token,
+                                                                                                    realm.clone(),
+                                                                                                    actor.clone(),
+                                                                                                    current_card.clone(),
+                                                                                                    BTreeSet::new(),
+                                                                                                    columns,
+                                                                                                    selected_card,
+                                                                                                    state_store,
+                                                                                                    board_status,
+                                                                                                    assignee_edit_status,
+                                                                                                ) {
+                                                                                                    assignee_picker_open.set(false);
+                                                                                                    assignee_filter.set(String::new());
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        UiIcon { name: "x" }
+                                                                                    }
                                                                                 }
-                                                                                UiIcon { name: "chevron-down" }
                                                                             }
                                                                             if picker_open {
                                                                                 div {
@@ -4048,7 +4130,261 @@ pub fn KanbanPanel(
                                                                 }
                                                                 div {
                                                                     dt { "Due" }
-                                                                    dd { "{card.due}" }
+                                                                    dd {
+                                                                        {
+                                                                            let due_editor_value = editor_value_for_optional_card_field(&card.due);
+                                                                            let due_has_value = !due_editor_value.is_empty();
+                                                                            let due_open = due_picker_open();
+                                                                            let due_status = due_edit_status();
+                                                                            let selected_date = parse_due_calendar_date(&due_edit_value());
+                                                                            let today_date = due_calendar_today();
+                                                                            let month = due_calendar_month();
+                                                                            let month_label = due_calendar_month_label(month);
+                                                                            let calendar_cells = due_calendar_cells(month);
+                                                                            rsx! {
+                                                                                div {
+                                                                                    class: "due-editor",
+                                                                                    "data-testid": "card-detail-due",
+                                                                                    if due_has_value {
+                                                                                        span {
+                                                                                            class: "due-pill",
+                                                                                            title: "{due_editor_value}",
+                                                                                            "{due_editor_value}"
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-edit-button",
+                                                                                            "aria-label": "Edit due date",
+                                                                                            "aria-haspopup": "dialog",
+                                                                                            "aria-expanded": "{due_open}",
+                                                                                            title: "Edit due date",
+                                                                                            onclick: {
+                                                                                                let current_due = due_editor_value.clone();
+                                                                                                move |_| {
+                                                                                                    due_edit_value.set(current_due.clone());
+                                                                                                    due_calendar_month.set(due_calendar_month_for_value(&current_due));
+                                                                                                    due_edit_status.set(String::new());
+                                                                                                    assignee_picker_open.set(false);
+                                                                                                    due_picker_open.set(!due_picker_open());
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: "calendar" }
+                                                                                        }
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-edit-button due-clear-button",
+                                                                                            "aria-label": "Clear due date",
+                                                                                            title: "Clear due date",
+                                                                                            onclick: {
+                                                                                                let base = base_url.clone();
+                                                                                                let realm = selected_realm_id.clone();
+                                                                                                let actor = account_did.clone();
+                                                                                                let device = device_id.clone();
+                                                                                                let current_card = card.clone();
+                                                                                                move |_| {
+                                                                                                    due_edit_value.set(String::new());
+                                                                                                    due_calendar_month.set(default_due_calendar_month());
+                                                                                                    due_picker_open.set(true);
+                                                                                                    save_card_due_edit(
+                                                                                                        base.clone(),
+                                                                                                        token,
+                                                                                                        realm.clone(),
+                                                                                                        actor.clone(),
+                                                                                                        device.clone(),
+                                                                                                        current_card.clone(),
+                                                                                                        String::new(),
+                                                                                                        selected_scope_security_encrypted,
+                                                                                                        due_picker_open,
+                                                                                                        due_edit_status,
+                                                                                                        columns,
+                                                                                                        selected_card,
+                                                                                                        state_store,
+                                                                                                        board_status,
+                                                                                                    );
+                                                                                                }
+                                                                                            },
+                                                                                            UiIcon { name: "x" }
+                                                                                        }
+                                                                                    } else {
+                                                                                        button {
+                                                                                            r#type: "button",
+                                                                                            class: "due-add-button",
+                                                                                            "aria-haspopup": "dialog",
+                                                                                            "aria-expanded": "{due_open}",
+                                                                                            title: "Add due date",
+                                                                                            onclick: move |_| {
+                                                                                                due_edit_value.set(String::new());
+                                                                                                due_calendar_month.set(default_due_calendar_month());
+                                                                                                due_edit_status.set(String::new());
+                                                                                                assignee_picker_open.set(false);
+                                                                                                due_picker_open.set(!due_picker_open());
+                                                                                            },
+                                                                                            UiIcon { name: "plus" }
+                                                                                            span { "Add due date" }
+                                                                                        }
+                                                                                    }
+                                                                                    if due_open {
+                                                                                        div {
+                                                                                            class: "due-popover",
+                                                                                            "data-testid": "card-detail-due-picker",
+                                                                                            div { class: "due-popover-field",
+                                                                                                label { "Due date" }
+                                                                                                input {
+                                                                                                    class: "input",
+                                                                                                    "data-testid": "card-detail-due-inline-input",
+                                                                                                    value: "{due_edit_value}",
+                                                                                                    placeholder: "YYYY-MM-DD",
+                                                                                                    oninput: move |evt| {
+                                                                                                        let next = evt.value();
+                                                                                                        if let Some(date) = parse_due_calendar_date(&next) {
+                                                                                                            due_calendar_month.set(start_of_due_calendar_month(date));
+                                                                                                        }
+                                                                                                        due_edit_value.set(next);
+                                                                                                    },
+                                                                                                }
+                                                                                            }
+                                                                                            div { class: "due-calendar",
+                                                                                                div { class: "due-calendar-header",
+                                                                                                    button {
+                                                                                                        r#type: "button",
+                                                                                                        class: "due-calendar-nav",
+                                                                                                        "aria-label": "Previous month",
+                                                                                                        title: "Previous month",
+                                                                                                        onclick: move |_| {
+                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), -1));
+                                                                                                        },
+                                                                                                        UiIcon { name: "chevron-left" }
+                                                                                                    }
+                                                                                                    strong { class: "due-calendar-title", "{month_label}" }
+                                                                                                    button {
+                                                                                                        r#type: "button",
+                                                                                                        class: "due-calendar-nav",
+                                                                                                        "aria-label": "Next month",
+                                                                                                        title: "Next month",
+                                                                                                        onclick: move |_| {
+                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), 1));
+                                                                                                        },
+                                                                                                        UiIcon { name: "chevron-right" }
+                                                                                                    }
+                                                                                                }
+                                                                                                div {
+                                                                                                    class: "due-calendar-weekdays",
+                                                                                                    span { "Sun" }
+                                                                                                    span { "Mon" }
+                                                                                                    span { "Tue" }
+                                                                                                    span { "Wed" }
+                                                                                                    span { "Thu" }
+                                                                                                    span { "Fri" }
+                                                                                                    span { "Sat" }
+                                                                                                }
+                                                                                                div {
+                                                                                                    class: "due-calendar-grid",
+                                                                                                    role: "grid",
+                                                                                                    "aria-label": "Due date calendar",
+                                                                                                    for cell in calendar_cells.iter() {
+                                                                                                        {
+                                                                                                            let selected = selected_date.is_some_and(|date| date == cell.date);
+                                                                                                            let is_today = today_date == cell.date;
+                                                                                                            let mut day_class = String::from("due-calendar-day");
+                                                                                                            if !cell.in_current_month {
+                                                                                                                day_class.push_str(" outside");
+                                                                                                            }
+                                                                                                            if is_today {
+                                                                                                                day_class.push_str(" today");
+                                                                                                            }
+                                                                                                            if selected {
+                                                                                                                day_class.push_str(" selected");
+                                                                                                            }
+                                                                                                            let iso_date = cell.iso_date.clone();
+                                                                                                            let cell_label = format!("Select {iso_date}");
+                                                                                                            rsx! {
+                                                                                                                button {
+                                                                                                                    key: "{cell.iso_date}",
+                                                                                                                    r#type: "button",
+                                                                                                                    class: "{day_class}",
+                                                                                                                    role: "gridcell",
+                                                                                                                    "aria-label": "{cell_label}",
+                                                                                                                    "aria-pressed": "{selected}",
+                                                                                                                    onclick: move |_| {
+                                                                                                                        due_edit_value.set(iso_date.clone());
+                                                                                                                        due_calendar_month.set(due_calendar_month_for_value(&iso_date));
+                                                                                                                    },
+                                                                                                                    "{cell.day}"
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            if !due_status.trim().is_empty() {
+                                                                                                div {
+                                                                                                    class: "due-edit-status",
+                                                                                                    role: "status",
+                                                                                                    "aria-live": "polite",
+                                                                                                    "{due_status}"
+                                                                                                }
+                                                                                            }
+                                                                                            div { class: "due-popover-actions",
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "secondary",
+                                                                                                    onclick: move |_| {
+                                                                                                        due_edit_value.set(String::new());
+                                                                                                        due_calendar_month.set(default_due_calendar_month());
+                                                                                                    },
+                                                                                                    "Clear"
+                                                                                                }
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "secondary",
+                                                                                                    onclick: {
+                                                                                                        let cancel_due = due_editor_value.clone();
+                                                                                                        move |_| {
+                                                                                                            due_picker_open.set(false);
+                                                                                                            due_edit_value.set(cancel_due.clone());
+                                                                                                            due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
+                                                                                                            due_edit_status.set(String::new());
+                                                                                                        }
+                                                                                                    },
+                                                                                                    {crate::i18n::tr("common.cancel")}
+                                                                                                }
+                                                                                                button {
+                                                                                                    r#type: "button",
+                                                                                                    class: "primary",
+                                                                                                    onclick: {
+                                                                                                        let base = base_url.clone();
+                                                                                                        let realm = selected_realm_id.clone();
+                                                                                                        let actor = account_did.clone();
+                                                                                                        let device = device_id.clone();
+                                                                                                        let current_card = card.clone();
+                                                                                                        move |_| {
+                                                                                                            save_card_due_edit(
+                                                                                                                base.clone(),
+                                                                                                                token,
+                                                                                                                realm.clone(),
+                                                                                                                actor.clone(),
+                                                                                                                device.clone(),
+                                                                                                                current_card.clone(),
+                                                                                                                due_edit_value(),
+                                                                                                                selected_scope_security_encrypted,
+                                                                                                                due_picker_open,
+                                                                                                                due_edit_status,
+                                                                                                                columns,
+                                                                                                                selected_card,
+                                                                                                                state_store,
+                                                                                                                board_status,
+                                                                                                            );
+                                                                                                        }
+                                                                                                    },
+                                                                                                    {crate::i18n::tr("common.save")}
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                        }
+                                                                    }
                                                                 }
                                                                 div {
                                                                     dt { "Visibility" }
@@ -4056,19 +4392,29 @@ pub fn KanbanPanel(
                                                                 }
                                                             }
                                                         }
-                                                            }
-                                                        }
                                                         div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
                                                             h3 { "Activity" }
-                                                            div { class: "card-detail-activity-item",
-                                                                span { class: "card-detail-activity-dot" }
-                                                                div { "{card.activity_hint}" }
-                                                            }
-                                                            div { class: "card-detail-activity-item muted",
-                                                                span { class: "card-detail-activity-dot" }
-                                                                div { "{card.audit_hint}" }
+                                                            for item in activity_items.iter() {
+                                                                {
+                                                                    let item_class = item.class_name();
+                                                                    rsx! {
+                                                                        div {
+                                                                            key: "{item.key}",
+                                                                            class: "{item_class}",
+                                                                            span { class: "card-detail-activity-dot" }
+                                                                            div { class: "card-detail-activity-body",
+                                                                                strong { "{item.title}" }
+                                                                                if let Some(detail) = item.detail.as_deref() {
+                                                                                    span { "{detail}" }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
+                                                    }
+                                                }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Members {
                                                         if realm_member_rows.is_empty() {
@@ -4615,6 +4961,251 @@ fn flow_participant_dids(raw_operations: &[RawOperationRecord], flow_id: &str) -
     out
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CardActivityStatus {
+    Info,
+    Pending,
+    Accepted,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CardActivityItem {
+    key: String,
+    title: String,
+    detail: Option<String>,
+    status: CardActivityStatus,
+}
+
+impl CardActivityItem {
+    fn class_name(&self) -> &'static str {
+        match self.status {
+            CardActivityStatus::Info => "card-detail-activity-item",
+            CardActivityStatus::Pending => "card-detail-activity-item pending",
+            CardActivityStatus::Accepted => "card-detail-activity-item accepted",
+            CardActivityStatus::Failed => "card-detail-activity-item failed",
+        }
+    }
+}
+
+fn card_activity_items(
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+) -> Vec<CardActivityItem> {
+    let mut records = raw_operations
+        .iter()
+        .filter(|record| raw_operation_targets_card(&record.payload, card))
+        .collect::<Vec<_>>();
+    records.sort_by_key(|record| std::cmp::Reverse(record.received_at));
+    let mut items = records
+        .into_iter()
+        .filter_map(|record| card_activity_item_from_raw_operation(record, card))
+        .take(5)
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        items = projection_card_activity_items(card);
+    }
+    if items.is_empty() {
+        items.push(CardActivityItem {
+            key: "empty".to_owned(),
+            title: "No visible activity yet".to_owned(),
+            detail: Some("Recent server events are not loaded in this view.".to_owned()),
+            status: CardActivityStatus::Info,
+        });
+    }
+    items
+}
+
+fn projection_card_activity_items(card: &KanbanCard) -> Vec<CardActivityItem> {
+    let mut items = Vec::new();
+    if !card.updated_at.trim().is_empty() {
+        items.push(CardActivityItem {
+            key: "projection-updated".to_owned(),
+            title: "Last updated".to_owned(),
+            detail: Some(compact_timestamp_label(&card.updated_at)),
+            status: CardActivityStatus::Info,
+        });
+    }
+    if !card.created_at.trim().is_empty() {
+        let mut detail = compact_timestamp_label(&card.created_at);
+        if !card.created_by.trim().is_empty() {
+            detail.push_str(" · ");
+            detail.push_str(&short_protocol_id(&card.created_by));
+        }
+        items.push(CardActivityItem {
+            key: "projection-created".to_owned(),
+            title: "Created".to_owned(),
+            detail: Some(detail),
+            status: CardActivityStatus::Info,
+        });
+    }
+    items
+}
+
+fn raw_operation_targets_card(payload: &Value, card: &KanbanCard) -> bool {
+    let ids = [card.id.trim(), card.primary_flow_id.trim()];
+    for path in [
+        &["assignment_flow_id"][..],
+        &["flow_id"][..],
+        &["target_ref"][..],
+        &["body", "flow_id"][..],
+        &["body", "target_ref"][..],
+        &["body", "from_ref"][..],
+        &["body", "object", "id"][..],
+        &["payload", "flow_id"][..],
+        &["payload", "target_ref"][..],
+        &["payload", "from_ref"][..],
+        &["payload", "object", "id"][..],
+    ] {
+        if let Some(value) = json_path_string(Some(payload), path)
+            && ids.iter().any(|id| !id.is_empty() && *id == value)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn card_activity_item_from_raw_operation(
+    record: &RawOperationRecord,
+    card: &KanbanCard,
+) -> Option<CardActivityItem> {
+    let payload = &record.payload;
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    let status = activity_status_from_payload(payload);
+    let title = json_path_string(Some(payload), &["activity_summary"])
+        .unwrap_or_else(|| activity_title_from_operation(&kind, payload, card));
+    let detail = raw_operation_activity_detail(&kind, payload, record);
+    Some(CardActivityItem {
+        key: json_path_string(Some(payload), &["operation_id"])
+            .unwrap_or_else(|| record.operation_id.clone()),
+        title,
+        detail: Some(detail),
+        status,
+    })
+}
+
+fn activity_status_from_payload(payload: &Value) -> CardActivityStatus {
+    match json_path_string(Some(payload), &["write_state"])
+        .unwrap_or_else(|| "queued".to_owned())
+        .as_str()
+    {
+        "queued" | "submitted" | "optimistic" => CardActivityStatus::Pending,
+        "accepted" => CardActivityStatus::Accepted,
+        "failed" | "soft_failed" | "quarantined" | "conflict" => CardActivityStatus::Failed,
+        _ => CardActivityStatus::Info,
+    }
+}
+
+fn activity_status_label(payload: &Value) -> &'static str {
+    match json_path_string(Some(payload), &["write_state"])
+        .unwrap_or_else(|| "queued".to_owned())
+        .as_str()
+    {
+        "queued" => "queued",
+        "submitted" => "submitted",
+        "accepted" => "accepted",
+        "failed" => "failed",
+        "soft_failed" => "soft failed",
+        "quarantined" => "quarantined",
+        "conflict" => "conflict",
+        _ => "local",
+    }
+}
+
+fn raw_operation_activity_detail(
+    kind: &str,
+    payload: &Value,
+    record: &RawOperationRecord,
+) -> String {
+    let timestamp = json_path_string(Some(payload), &["created_at"])
+        .unwrap_or_else(|| record.received_at.to_rfc3339());
+    let mut parts = vec![
+        kind.to_owned(),
+        activity_status_label(payload).to_owned(),
+        compact_timestamp_label(&timestamp),
+    ];
+    if let Some(actor) = json_path_string(Some(payload), &["actor_id"])
+        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
+    {
+        parts.push(short_protocol_id(&actor));
+    }
+    if let Some(event_id) = json_path_string(Some(payload), &["event_id"]) {
+        parts.push(short_protocol_id(&event_id));
+    }
+    parts.join(" · ")
+}
+
+fn activity_title_from_operation(kind: &str, payload: &Value, _card: &KanbanCard) -> String {
+    match kind {
+        "ck.relation.create" => {
+            let relation_kind = json_path_string(Some(payload), &["body", "kind"])
+                .or_else(|| json_path_string(Some(payload), &["body", "relation_kind"]));
+            if relation_kind.as_deref() == Some("assigned_to") {
+                let actor = json_path_string(Some(payload), &["assignment_actor_id"])
+                    .or_else(|| json_path_string(Some(payload), &["body", "to_ref"]))
+                    .map(|actor| short_protocol_id(&actor))
+                    .unwrap_or_else(|| "actor".to_owned());
+                format!("Assignee added: {actor}")
+            } else {
+                "Relation added".to_owned()
+            }
+        }
+        "ck.relation.tombstone" => {
+            if let Some(actor) = json_path_string(Some(payload), &["assignment_actor_id"]) {
+                format!("Assignee removed: {}", short_protocol_id(&actor))
+            } else {
+                "Relation removed".to_owned()
+            }
+        }
+        "ck.flow.update" => flow_update_activity_title(payload),
+        "ck.flow.move" => "Card moved".to_owned(),
+        "ck.flow.reorder" => "Card reordered".to_owned(),
+        "ck.flow.create" => "Card created".to_owned(),
+        _ => kind.to_owned(),
+    }
+}
+
+fn flow_update_activity_title(payload: &Value) -> String {
+    let patch = payload
+        .get("body")
+        .and_then(|body| body.get("patch"))
+        .or_else(|| payload.get("payload").and_then(|body| body.get("patch")));
+    if let Some(patch) = patch.and_then(Value::as_object) {
+        let fields = patch
+            .get("metadata.fields")
+            .or_else(|| patch.get("fields"))
+            .and_then(|op| {
+                (op.get("$op").and_then(Value::as_str) == Some("set"))
+                    .then(|| op.get("value"))
+                    .flatten()
+            })
+            .and_then(Value::as_object);
+        if let Some(fields) = fields {
+            if let Some(due) = fields
+                .get("due_at")
+                .or_else(|| fields.get("due"))
+                .and_then(Value::as_str)
+                .filter(|due| !due.trim().is_empty())
+            {
+                return format!("Due date set to {due}");
+            }
+            return "Card fields updated".to_owned();
+        }
+        if patch.contains_key("metadata.title") || patch.contains_key("title") {
+            return "Title updated".to_owned();
+        }
+        if patch.contains_key("metadata.summary") || patch.contains_key("summary") {
+            return "Summary updated".to_owned();
+        }
+        if patch.contains_key("body") || patch.contains_key("synthesis") {
+            return "Card content updated".to_owned();
+        }
+    }
+    "Card updated".to_owned()
+}
+
 fn card_author_display_label(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
@@ -4908,6 +5499,56 @@ fn save_card_detail_edit(
         } else {
             status
         });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn save_card_due_edit(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_did: String,
+    device_id: String,
+    current: KanbanCard,
+    due_value: String,
+    scope_security_encrypted: Option<bool>,
+    mut due_picker_open: Signal<bool>,
+    mut due_edit_status: Signal<String>,
+    columns: Signal<Vec<KanbanColumn>>,
+    selected_card: Signal<Option<KanbanCard>>,
+    state_store: Signal<LocalStateStore>,
+    board_status: Signal<String>,
+) -> bool {
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.due = due_value.trim().to_owned();
+    due_edit_status.set("Saving...".to_owned());
+    if dispatch_card_detail_update(
+        base_url,
+        token,
+        realm_id,
+        actor_did,
+        device_id,
+        current,
+        draft,
+        scope_security_encrypted,
+        None,
+        None,
+        columns,
+        selected_card,
+        state_store,
+        board_status,
+    ) {
+        due_edit_status.set(String::new());
+        due_picker_open.set(false);
+        true
+    } else {
+        let status = board_status();
+        due_edit_status.set(if status.trim().is_empty() {
+            "Unable to save due date.".to_owned()
+        } else {
+            status
+        });
+        false
     }
 }
 
@@ -5228,6 +5869,75 @@ fn share_kanban_flow_link(path: &str) {
     let _ = document::eval(&script);
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DueCalendarCell {
+    date: NaiveDate,
+    day: u32,
+    in_current_month: bool,
+    iso_date: String,
+}
+
+fn default_due_calendar_month() -> NaiveDate {
+    start_of_due_calendar_month(due_calendar_today())
+}
+
+fn due_calendar_today() -> NaiveDate {
+    chrono::Utc::now().date_naive()
+}
+
+fn start_of_due_calendar_month(date: NaiveDate) -> NaiveDate {
+    date.with_day(1).expect("every month has day one")
+}
+
+fn due_calendar_month_for_value(value: &str) -> NaiveDate {
+    parse_due_calendar_date(value)
+        .map(start_of_due_calendar_month)
+        .unwrap_or_else(default_due_calendar_month)
+}
+
+fn parse_due_calendar_date(value: &str) -> Option<NaiveDate> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+        .ok()
+        .or_else(|| {
+            chrono::DateTime::parse_from_rfc3339(trimmed)
+                .ok()
+                .map(|timestamp| timestamp.date_naive())
+        })
+}
+
+fn due_calendar_month_label(month: NaiveDate) -> String {
+    month.format("%B %Y").to_string()
+}
+
+fn add_due_calendar_months(month: NaiveDate, delta: i32) -> NaiveDate {
+    let month = start_of_due_calendar_month(month);
+    let index = month.year() * 12 + month.month0() as i32 + delta;
+    let year = index.div_euclid(12);
+    let month0 = index.rem_euclid(12);
+    NaiveDate::from_ymd_opt(year, month0 as u32 + 1, 1).unwrap_or(month)
+}
+
+fn due_calendar_cells(month: NaiveDate) -> Vec<DueCalendarCell> {
+    let month = start_of_due_calendar_month(month);
+    let first_weekday_offset = month.weekday().num_days_from_sunday() as i64;
+    let first_cell = month - Duration::days(first_weekday_offset);
+    (0..42)
+        .map(|offset| {
+            let date = first_cell + Duration::days(offset);
+            DueCalendarCell {
+                date,
+                day: date.day(),
+                in_current_month: date.year() == month.year() && date.month() == month.month(),
+                iso_date: date.format("%Y-%m-%d").to_string(),
+            }
+        })
+        .collect()
+}
+
 fn card_summary_text(summary: &str) -> String {
     summary.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -5263,7 +5973,7 @@ fn parse_card_labels(raw: &str) -> Vec<String> {
 
 fn editor_value_for_optional_card_field(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed == "—" {
+    if trimmed.is_empty() || trimmed == "—" || trimmed.eq_ignore_ascii_case("unscheduled") {
         String::new()
     } else {
         trimmed.to_owned()
@@ -5527,6 +6237,29 @@ fn card_detail_update_patch(
     Ok(Value::Object(patch))
 }
 
+fn card_detail_activity_summary(current: &KanbanCard, draft: &CardDetailDraft) -> String {
+    let current_due = editor_value_for_optional_card_field(&current.due);
+    let next_due = draft.due.trim();
+    if current_due != next_due {
+        return if next_due.is_empty() || next_due == "—" {
+            "Due date cleared".to_owned()
+        } else {
+            format!("Due date set to {next_due}")
+        };
+    }
+    if current.labels != draft.labels {
+        return "Labels updated".to_owned();
+    }
+    if current.title.trim() != draft.title.trim()
+        || current.description.trim() != draft.description.trim()
+        || current.body.trim() != draft.body.trim()
+        || current.synthesis.trim() != draft.synthesis.trim()
+    {
+        return "Card details updated".to_owned();
+    }
+    "Card updated".to_owned()
+}
+
 fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
@@ -5535,8 +6268,6 @@ fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.labels = draft.labels.clone();
     card.due = display_optional_card_field(&draft.due);
     card.state = CardState::Queued;
-    card.activity_hint = "Local card update pending server sync.".to_owned();
-    card.audit_hint = "Card detail edit submitted as ck.flow.update payload.patch.".to_owned();
 }
 
 fn kanban_private_patch_path(path: &str) -> bool {
@@ -6100,6 +6831,7 @@ fn dispatch_card_detail_update(
             "created_at": op.created_at.clone(),
             "write_state": "queued",
             "body": op.payload.clone(),
+            "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
             "encrypted_payload_local": effective_security_encrypted,
@@ -6320,6 +7052,14 @@ impl CardAssignmentMutation {
         match self {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }
+    }
+}
+
+fn assignment_activity_summary(mutation: &CardAssignmentMutation) -> String {
+    let actor = short_protocol_id(mutation.actor_id());
+    match mutation {
+        CardAssignmentMutation::Create { .. } => format!("Assignee added: {actor}"),
+        CardAssignmentMutation::Tombstone { .. } => format!("Assignee removed: {actor}"),
     }
 }
 
@@ -6556,8 +7296,10 @@ fn dispatch_card_assignees_update(
                 "created_at": operation.created_at.clone(),
                 "write_state": "queued",
                 "body": operation.payload.clone(),
+                "assignment_flow_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),
+                "activity_summary": assignment_activity_summary(mutation),
             }),
         );
     }
@@ -6822,8 +7564,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 }),
                 external_visibility: "External counsel discussion only".to_owned(),
                 history_visibility: "joined history".to_owned(),
-                activity_hint: "Activity shows discussion mentions, card moves, and message references.".to_owned(),
-                audit_hint: "Audit records ck.flow.track.member and ck.message.create without granting discussion access.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: FlowLifecycleState::Active,
@@ -6854,8 +7594,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 locked_flow: None,
                 external_visibility: "No external discussions linked".to_owned(),
                 history_visibility: "shared history".to_owned(),
-                activity_hint: "Pending move is visible until the reducer accepts the board event.".to_owned(),
-                audit_hint: "Audit preview will include local pending event and final reducer receipt.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Queued,
                 lifecycle: FlowLifecycleState::Active,
@@ -6889,8 +7627,6 @@ fn seed_columns() -> Vec<KanbanColumn> {
                 }),
                 external_visibility: "Internal discussions only".to_owned(),
                 history_visibility: "restricted history".to_owned(),
-                activity_hint: "Conflict banner links to the reducer result and competing event.".to_owned(),
-                audit_hint: "Audit trail preserves rejected ck.flow.move with cas_conflict.".to_owned(),
                 security_encrypted: None,
                 state: CardState::Conflict,
                 lifecycle: FlowLifecycleState::Active,
@@ -8465,6 +9201,103 @@ mod tests {
     }
 
     #[test]
+    fn due_calendar_parses_date_and_rfc3339_values() {
+        assert_eq!(
+            parse_due_calendar_date("2026-06-09"),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
+        );
+        assert_eq!(
+            parse_due_calendar_date("2026-06-09T18:30:00Z"),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
+        );
+        assert_eq!(parse_due_calendar_date("unscheduled"), None);
+    }
+
+    #[test]
+    fn due_calendar_month_navigation_crosses_years() {
+        let jan_2026 = NaiveDate::from_ymd_opt(2026, 1, 17).unwrap();
+        assert_eq!(
+            add_due_calendar_months(jan_2026, -1),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap()
+        );
+        let dec_2026 = NaiveDate::from_ymd_opt(2026, 12, 9).unwrap();
+        assert_eq!(
+            add_due_calendar_months(dec_2026, 1),
+            NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn due_calendar_cells_cover_sunday_first_six_week_grid() {
+        let month = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let cells = due_calendar_cells(month);
+        assert_eq!(cells.len(), 42);
+        assert_eq!(cells.first().unwrap().iso_date, "2026-05-31");
+        assert_eq!(cells[1].iso_date, "2026-06-01");
+        assert_eq!(cells.last().unwrap().iso_date, "2026-07-11");
+        assert!(!cells[0].in_current_month);
+        assert!(cells[1].in_current_month);
+        assert!(!cells.last().unwrap().in_current_month);
+    }
+
+    #[test]
+    fn card_activity_items_show_local_flow_and_assignment_writes() {
+        let mut card = test_card("ck:flow:activity", "U");
+        card.primary_flow_id = card.id.clone();
+        let received_at = |value: &str| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let raw_operations = vec![
+            RawOperationRecord {
+                operation_id: "op-assignee".to_owned(),
+                realm_id: Some(TEST_REALM_ID.to_owned()),
+                received_at: received_at("2026-06-10T10:00:00Z"),
+                payload: json!({
+                    "kind": "ck.relation.tombstone",
+                    "operation_id": "op-assignee",
+                    "write_state": "accepted",
+                    "assignment_flow_id": card.id.clone(),
+                    "assignment_actor_id": "did:web:alice.example",
+                    "assignment_relation_id": "ck:relation:activity",
+                    "activity_summary": "Assignee removed: alice",
+                    "body": {
+                        "relation_id": "ck:relation:activity"
+                    }
+                }),
+            },
+            RawOperationRecord {
+                operation_id: "op-due".to_owned(),
+                realm_id: Some(TEST_REALM_ID.to_owned()),
+                received_at: received_at("2026-06-10T11:00:00Z"),
+                payload: json!({
+                    "kind": "ck.flow.update",
+                    "operation_id": "op-due",
+                    "write_state": "queued",
+                    "activity_summary": "Due date cleared",
+                    "body": {
+                        "flow_id": card.id.clone(),
+                        "patch": {
+                            "metadata.fields": {
+                                "$op": "set",
+                                "value": { "labels": [] }
+                            }
+                        }
+                    }
+                }),
+            },
+        ];
+
+        let items = card_activity_items(&card, &raw_operations);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Due date cleared");
+        assert_eq!(items[0].status, CardActivityStatus::Pending);
+        assert_eq!(items[1].title, "Assignee removed: alice");
+        assert_eq!(items[1].status, CardActivityStatus::Accepted);
+    }
+
+    #[test]
     fn card_detail_update_patch_uses_flow_update_patch_paths() {
         let mut current = test_card("ck:flow:f1", "U");
         current.title = "Old".to_owned();
@@ -8551,6 +9384,38 @@ mod tests {
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].actor_id, "did:web:alice.example");
         assert!(after[0].relation_id.starts_with("ck:relation:"));
+    }
+
+    #[test]
+    fn card_assignment_mutations_clear_all_assignees() {
+        let mut current = test_card("ck:flow:0196419b-0000-7000-8000-000000000101", "U");
+        current.assigned_to_relations = vec![
+            CardAssignedToRelation {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000aa".to_owned(),
+                actor_id: "did:web:alice.example".to_owned(),
+            },
+            CardAssignedToRelation {
+                relation_id: "ck:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+                actor_id: "did:web:bob.example".to_owned(),
+            },
+        ];
+
+        let selected = BTreeSet::new();
+        let mutations = card_assignment_mutations(
+            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "did:web:owner.example",
+            &current,
+            &selected,
+        )
+        .unwrap();
+
+        assert_eq!(mutations.len(), 2);
+        assert!(
+            mutations
+                .iter()
+                .all(|mutation| matches!(mutation, CardAssignmentMutation::Tombstone { .. }))
+        );
+        assert!(assignment_relations_after_mutations(&current, &selected, &mutations).is_empty());
     }
 
     #[test]
@@ -9039,6 +9904,40 @@ mod tests {
     }
 
     #[test]
+    fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
+        let mut card = test_card("ck:flow:edit-me", "U");
+        card.due = "2026-06-11".to_owned();
+        let columns = vec![KanbanColumn {
+            id: "ck:space:list-a".to_owned(),
+            title: "A".to_owned(),
+            rank: "U".to_owned(),
+            cards: vec![card],
+            state: SpaceContainerLifecycleState::Active,
+        }];
+        let queued = RawOperationRecord {
+            operation_id: "op-clear-due".to_owned(),
+            realm_id: Some("ck:realm:r1".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ck.flow.update",
+                "operation_id": "op-clear-due",
+                "write_state": "queued",
+                "body": {
+                    "flow_id": "ck:flow:edit-me",
+                    "patch": {
+                        "metadata.fields": {
+                            "$op": "set",
+                            "value": { "labels": [] }
+                        },
+                    },
+                },
+            }),
+        };
+        let overlaid = overlay_local_card_update_records(columns, &[queued], None);
+        assert_eq!(overlaid[0].cards[0].due, "—");
+    }
+
+    #[test]
     fn card_synthesis_track_entries_preserve_append_history() {
         let mut card = test_card("ck:flow:edit-me", "U");
         card.synthesis = "second synthesis".to_owned();
@@ -9454,8 +10353,6 @@ mod tests {
             locked_flow: None,
             external_visibility: String::new(),
             history_visibility: String::new(),
-            activity_hint: String::new(),
-            audit_hint: String::new(),
             security_encrypted: None,
             state: CardState::Synced,
             lifecycle: FlowLifecycleState::Active,

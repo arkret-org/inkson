@@ -167,6 +167,9 @@ pub fn UiIcon(name: String) -> Element {
         }
         "bell" => "M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9m4 13a2 2 0 0 0 4 0",
         "board" => "M3 3h18v18H3V3Zm6 0v18m6-18v18M3 9h18",
+        "calendar" => {
+            "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
+        }
         "check" => "M20 6 9 17l-5-5",
         "chevron-down" => "m6 9 6 6 6-6",
         "chevron-left" => "m15 18-6-6 6-6",
@@ -201,6 +204,9 @@ pub fn UiIcon(name: String) -> Element {
             "M12 17v5M5 17h14v-2.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 9.76V5h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 14.24Z"
         }
         "plus" => "M12 5v14M5 12h14",
+        "qr-code" => {
+            "M3 3h6v6H3V3Zm12 0h6v6h-6V3ZM3 15h6v6H3v-6Zm12 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-4 4h2v2h-2v-2Zm4 0h2v2h-2v-2Z"
+        }
         "panel-left-close" => {
             "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6-2v18m6-6-3-3 3-3"
         }

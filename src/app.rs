@@ -2973,6 +2973,15 @@ pub fn RouterView() -> Element {
                                             span { class: "who", "{account_label}" }
                                             span { class: "handle", "{account_detail}" }
                                         }
+                                        Link {
+                                            class: "btn icon sm ghost account-menu__qr",
+                                            "data-testid": "account-menu-settings-qr",
+                                            title: "Settings",
+                                            "aria-label": "Open settings",
+                                            to: Route::Settings,
+                                            onclick: move |_| account_menu_open.set(false),
+                                            UiIcon { name: "qr-code" }
+                                        }
                                     }
                                     div { class: "account-menu__rows",
                                         div { class: "account-menu__row",
@@ -4876,6 +4885,16 @@ async fn refresh_oidc_bearer_for_server(
     ))
 }
 
+fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("invalid_grant")
+        || (message.contains("refresh endpoint returned 400")
+            && (message.contains("expired")
+                || message.contains("revoked")
+                || message.contains("provided access grant is invalid")
+                || (message.contains("refresh") && message.contains("invalid"))))
+}
+
 async fn reissue_development_session(
     principal_server_url: &str,
     actor_did: &str,
@@ -4924,29 +4943,54 @@ async fn remint_principal_bearer(
     };
     if let Some(bundle) = oidc_bundle
         && crate::oidc::lifecycle::has_refresh_token(&bundle)
-        && let Ok(next) = refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await
     {
-        // Abandon if the user switched servers while the refresh was in
-        // flight — committing here would resurrect the old server's
-        // credentials over the freshly selected session.
-        if !same_server_url(&base, &base_url()) {
-            return None;
+        match refresh_oidc_bearer_for_server(&base, &actor, &device, &bundle).await {
+            Ok(next) => {
+                // Abandon if the user switched servers while the refresh was in
+                // flight — committing here would resurrect the old server's
+                // credentials over the freshly selected session.
+                if !same_server_url(&base, &base_url()) {
+                    return None;
+                }
+                let access_token = next.access_token.clone();
+                state_store.write().set_oidc_tokens_with_secure_store(
+                    Some(next),
+                    &actor,
+                    secure_store.as_ref(),
+                );
+                token.set(access_token.clone());
+                persist_config(
+                    config_store,
+                    base.clone(),
+                    actor.clone(),
+                    device.clone(),
+                    access_token.clone(),
+                );
+                return Some(access_token);
+            }
+            Err(error) if oidc_refresh_error_invalidates_grant(&error) => {
+                if !same_server_url(&base, &base_url()) {
+                    return None;
+                }
+                tracing::warn!(
+                    ?error,
+                    actor = %actor,
+                    "OIDC refresh_token was rejected permanently; clearing persisted OIDC bundle before fallback",
+                );
+                state_store.write().set_oidc_tokens_with_secure_store(
+                    None,
+                    &actor,
+                    secure_store.as_ref(),
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    actor = %actor,
+                    "OIDC refresh attempt failed without invalidating the stored refresh_token",
+                );
+            }
         }
-        let access_token = next.access_token.clone();
-        state_store.write().set_oidc_tokens_with_secure_store(
-            Some(next),
-            &actor,
-            secure_store.as_ref(),
-        );
-        token.set(access_token.clone());
-        persist_config(
-            config_store,
-            base.clone(),
-            actor.clone(),
-            device.clone(),
-            access_token.clone(),
-        );
-        return Some(access_token);
     }
 
     let prepared = {
@@ -5370,6 +5414,27 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                 };
                 match sync_result {
                     Ok(sync) => {
+                        let invite_notifications = match authed.invites().await {
+                            Ok(response) => Some(response.invites),
+                            Err(error) if is_auth_expired_error(&error) => {
+                                if let Some(refreshed) =
+                                    crate::session::refresh_current_bearer().await
+                                {
+                                    session_token = refreshed;
+                                    authed = api.clone().with_bearer(session_token.clone());
+                                    authed.invites().await.ok().map(|response| response.invites)
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(error) => {
+                                tracing::debug!(
+                                    ?error,
+                                    "background sync could not refresh invite notifications"
+                                );
+                                None
+                            }
+                        };
                         {
                             let mut store = state_store.write();
                             store.save_sync_cursor(sync.cursor.clone());
@@ -5413,34 +5478,44 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                 store.set_realm_anchor_view(id.clone(), view);
                                 store.ingest_move_event_states(id, body);
                             }
-                            // Hydrate Realm remarks from the actor-private
-                            // account_data projection (spec
-                            // client-preferences.md §3.7). soland keys these
-                            // entries by `ck.contacts.realm.<realm_id>` and
-                            // returns the canonical RealmRemark JSON in
-                            // `content`. Entries for other namespaces are
-                            // ignored here.
-                            if let Some(notification_projection) =
+                            // Keep notification projection current even when
+                            // invites live on `authz/invites` rather than the
+                            // normal account subscribe notification stream.
+                            let projection_from_sync =
                                 crate::views::notifications::notification_items_from_value(
                                     &sync.notifications,
-                                )
-                            {
-                                store.save_notification_projection(notification_projection);
-                            } else {
-                                let notification_projection = sync
-                                    .account_data
-                                    .iter()
-                                    .filter(|entry| {
-                                        crate::views::notifications::is_notification_account_data(
-                                            entry,
-                                        )
-                                    })
-                                    .cloned()
-                                    .collect::<Vec<_>>();
-                                if !notification_projection.is_empty() {
-                                    store.save_notification_projection(notification_projection);
-                                }
+                                );
+                            let account_notification_projection = sync
+                                .account_data
+                                .iter()
+                                .filter(|entry| {
+                                    crate::views::notifications::is_notification_account_data(entry)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            let should_save_notification_projection = projection_from_sync
+                                .is_some()
+                                || !account_notification_projection.is_empty()
+                                || invite_notifications.is_some();
+                            let mut notification_projection =
+                                projection_from_sync.unwrap_or_else(|| {
+                                    if account_notification_projection.is_empty() {
+                                        store.notification_projection()
+                                    } else {
+                                        account_notification_projection
+                                    }
+                                });
+                            if let Some(invites) = invite_notifications {
+                                crate::views::notifications::merge_invite_notifications(
+                                    &mut notification_projection,
+                                    invites,
+                                    &server_set,
+                                );
                             }
+                            if should_save_notification_projection {
+                                store.save_notification_projection(notification_projection);
+                            }
+                            store.save_presence_projection(sync.presence.clone());
                             for entry in &sync.account_data {
                                 let Some(data_type) =
                                     entry.get("data_type").and_then(serde_json::Value::as_str)
@@ -5963,6 +6038,25 @@ mod tests {
             actor,
             "dev_yougen"
         ));
+    }
+
+    #[test]
+    fn oidc_refresh_error_invalidates_grant_for_invalid_grant_response() {
+        let error = anyhow::anyhow!(
+            "refresh endpoint returned 400 Bad Request: {{\"error\":\"invalid_grant\",\"error_description\":\"The provided access grant is invalid, expired, or revoked.\"}}"
+        );
+
+        assert!(oidc_refresh_error_invalidates_grant(&error));
+    }
+
+    #[test]
+    fn oidc_refresh_error_keeps_bundle_for_transient_failures() {
+        let network_error = anyhow::anyhow!("refresh token endpoint POST failed");
+        let server_error =
+            anyhow::anyhow!("refresh endpoint returned 503 Service Unavailable: retry later");
+
+        assert!(!oidc_refresh_error_invalidates_grant(&network_error));
+        assert!(!oidc_refresh_error_invalidates_grant(&server_error));
     }
 
     #[test]

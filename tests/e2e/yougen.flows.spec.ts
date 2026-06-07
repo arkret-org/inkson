@@ -233,6 +233,7 @@ test("dashboard summarizes unread notifications from sync projection", async ({ 
 
 test("topbar account menu shows identity and sync state", async ({ page }) => {
   await refreshServer(page);
+  await dismissBlockingRecoveryModal(page);
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
   await expect(page.getByTestId("account-menu")).toContainText("ck:device:");
@@ -241,17 +242,26 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await page.getByTestId("account-menu-copy-did").click();
   await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
+  await expect(page.getByTestId("account-menu-settings-qr")).toBeVisible();
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
+  const menuBox = await page.getByTestId("account-menu").boundingBox();
+  const qrBox = await page.getByTestId("account-menu-settings-qr").boundingBox();
   const refreshBox = await page.getByTestId("account-menu-session-refresh").boundingBox();
   const logoutBox = await page.getByTestId("account-menu-session-logout").boundingBox();
   const settingsBox = await page.getByTestId("account-menu-settings").boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(qrBox).not.toBeNull();
   expect(refreshBox).not.toBeNull();
   expect(logoutBox).not.toBeNull();
   expect(settingsBox).not.toBeNull();
+  expect(qrBox!.x + qrBox!.width).toBeGreaterThan(menuBox!.x + menuBox!.width - 48);
   expect(Math.abs(refreshBox!.y - settingsBox!.y)).toBeLessThan(2);
   expect(Math.abs(logoutBox!.y - settingsBox!.y)).toBeLessThan(2);
   expect(refreshBox!.x).toBeLessThan(logoutBox!.x);
   expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
+  await page.getByTestId("account-menu-settings-qr").click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
 });
 
 test("account menu falls back to account localpart when handle directory lookup is not advertised", async ({

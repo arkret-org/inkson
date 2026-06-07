@@ -1934,27 +1934,6 @@ pub(super) fn typing_actors_from_sync_realms(
     actors.into_iter().collect()
 }
 
-pub(super) fn profile_presence_status(profile: &Value) -> String {
-    profile
-        .get("presence")
-        .and_then(|presence| presence.get("status"))
-        .and_then(Value::as_str)
-        .filter(|status| !status.trim().is_empty())
-        .unwrap_or("offline")
-        .to_owned()
-}
-
-// Perf (P0): the chat presence/typing poll used to do a *full*
-// `account_subscribe_snapshot(None)` every 400ms (~2.5 full syncs/sec) which
-// duplicates the global `SyncEngine` and floods the network panel. Typing
-// indicators only need ~2s freshness (the sender throttles `typing=true` to one
-// emit / 3s), so a 2s cadence keeps the indicator responsive at 1/5th the load.
-pub(super) const CHAT_SYNC_POLL_INTERVAL_MS: u64 = 2_000;
-// At the 2s cadence above, `profile_presence` fallback every 4 ticks (~8s) and a
-// 2-tick warmup (~4s) keep presence fresh without a per-member request storm.
-pub(super) const CHAT_PROFILE_PRESENCE_FALLBACK_EVERY_TICKS: usize = 4;
-pub(super) const CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS: usize = 2;
-
 pub(super) fn sync_presence_actor(event: &Value) -> Option<String> {
     value_string_at(event, &["user_id", "actor_id", "actor"])
         .map(str::trim)
@@ -2026,14 +2005,6 @@ pub(super) fn presence_maps_from_sync_events(
         );
     }
     matched_remote.then_some((states, labels))
-}
-
-pub(super) fn profile_display_label(profile: &Value, did: &str) -> String {
-    profile
-        .get("display_name")
-        .and_then(Value::as_str)
-        .and_then(|label| clean_participant_display_name(label, Some(did)))
-        .unwrap_or_else(|| did.to_owned())
 }
 
 pub(super) fn chat_messages_from_local_state_with_sidecar(

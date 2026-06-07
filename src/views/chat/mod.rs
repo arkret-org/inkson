@@ -212,11 +212,11 @@ pub fn ChatPanel(
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
     // G3.Y2 — presence. Maps `actor_did -> "online"|"away"|"offline"`.
-    // Refreshed from soland's profile presence surface while the chat
-    // panel is mounted.
+    // Refreshed from the global SyncEngine's account-subscribe projection
+    // when `sync_cursor` advances.
     let presence_states = use_signal(std::collections::BTreeMap::<String, String>::new);
     let presence_labels = use_signal(std::collections::BTreeMap::<String, String>::new);
-    let mut presence_poll_key = use_signal(String::new);
+    let mut presence_sync_key_seen = use_signal(String::new);
     // G3.Y2 — discussion promote modal. Holds the source message id
     // (or Flow id) + the desired private discussion title.
     let mut promote_discussion_draft =
@@ -410,103 +410,68 @@ pub fn ChatPanel(
     let has_remote_presence = participant_dids_for_presence
         .iter()
         .any(|did| did != &account_did);
-    let poll_key = format!(
+    let presence_sync_key = format!(
         "{}|{}",
         selected_realm_id,
         participant_dids_for_presence.join(",")
     );
-    if !token().trim().is_empty()
-        && !selected_realm_id.trim().is_empty()
-        && has_remote_presence
-        && presence_poll_key() != poll_key
     {
-        presence_poll_key.set(poll_key.clone());
-        let base = base_url.clone();
-        let api_token = token();
         let realm = selected_realm_id.clone();
         let actor = account_did.clone();
-        let participants_for_poll = participant_dids_for_presence.clone();
-        let mut typing_actors_for_poll = typing_actors;
-        let mut presence_states_for_poll = presence_states;
-        let mut presence_labels_for_poll = presence_labels;
-        let self_label_for_poll = account_display_label.clone();
-        let poll_key_for_task = poll_key.clone();
-        let poll_key_signal = presence_poll_key;
-        spawn(async move {
-            for tick in 0..240 {
-                if poll_key_signal.read().as_str() != poll_key_for_task.as_str() {
-                    break;
-                }
-                if let Ok(api) = authed_api_with_sync(&base, api_token.clone(), None) {
-                    let mut got_sync_presence = false;
-                    if let Ok(sync) = api.account_subscribe_snapshot(None).await {
-                        let active_typers =
-                            typing_actors_from_sync_realms(&sync.realms, &realm, &actor);
-                        // Only write the signal when the value actually changed —
-                        // an unchanged set would needlessly re-render the chat.
-                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str()
-                            && *typing_actors_for_poll.read() != active_typers
-                        {
-                            typing_actors_for_poll.set(active_typers);
-                        }
-                        if let Some((next_presence, next_labels)) = presence_maps_from_sync_events(
-                            &sync.presence,
-                            &participants_for_poll,
-                            &actor,
-                            &self_label_for_poll,
-                        ) {
-                            got_sync_presence = true;
-                            if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
-                                if *presence_states_for_poll.read() != next_presence {
-                                    presence_states_for_poll.set(next_presence);
-                                }
-                                if *presence_labels_for_poll.read() != next_labels {
-                                    presence_labels_for_poll.set(next_labels);
-                                }
-                            }
-                        }
-                    }
+        let participants_for_sync = participant_dids_for_presence.clone();
+        let mut typing_actors_for_sync = typing_actors;
+        let mut presence_states_for_sync = presence_states;
+        let mut presence_labels_for_sync = presence_labels;
+        let self_label_for_sync = account_display_label.clone();
+        use_effect(move || {
+            if token().trim().is_empty() || realm.trim().is_empty() || !has_remote_presence {
+                return;
+            }
+            let cursor = sync_cursor();
+            if cursor.trim().is_empty() || cursor == "-" {
+                return;
+            }
+            let next_sync_key = format!("{presence_sync_key}|{cursor}");
+            if presence_sync_key_seen.peek().as_str() == next_sync_key {
+                return;
+            }
+            presence_sync_key_seen.set(next_sync_key);
 
-                    if !got_sync_presence
-                        && (tick < CHAT_PROFILE_PRESENCE_FALLBACK_WARMUP_TICKS
-                            || tick % CHAT_PROFILE_PRESENCE_FALLBACK_EVERY_TICKS == 0)
-                    {
-                        let mut next_presence = std::collections::BTreeMap::<String, String>::new();
-                        let mut next_labels = std::collections::BTreeMap::<String, String>::new();
-                        for did in &participants_for_poll {
-                            if did == &actor {
-                                next_presence.insert(did.clone(), "online".to_owned());
-                                if let Some(label) =
-                                    clean_participant_display_name(&self_label_for_poll, Some(did))
-                                {
-                                    next_labels.insert(did.clone(), label);
-                                }
-                                continue;
-                            }
-                            match api.profile_presence(did).await {
-                                Ok(profile) => {
-                                    next_presence
-                                        .insert(did.clone(), profile_presence_status(&profile));
-                                    next_labels
-                                        .insert(did.clone(), profile_display_label(&profile, did));
-                                }
-                                Err(_) => {
-                                    next_presence.insert(did.clone(), "offline".to_owned());
-                                }
-                            }
+            let snapshot = state_store.read().load();
+            let active_typers =
+                typing_actors_from_sync_realms(&snapshot.realm_tree_projections, &realm, &actor);
+            if *typing_actors_for_sync.peek() != active_typers {
+                typing_actors_for_sync.set(active_typers);
+            }
+
+            let (next_presence, next_labels) = presence_maps_from_sync_events(
+                &snapshot.presence_projection,
+                &participants_for_sync,
+                &actor,
+                &self_label_for_sync,
+            )
+            .unwrap_or_else(|| {
+                let mut next_presence = std::collections::BTreeMap::<String, String>::new();
+                let mut next_labels = std::collections::BTreeMap::<String, String>::new();
+                for did in &participants_for_sync {
+                    if did == &actor {
+                        next_presence.insert(did.clone(), "online".to_owned());
+                        if let Some(label) =
+                            clean_participant_display_name(&self_label_for_sync, Some(did))
+                        {
+                            next_labels.insert(did.clone(), label);
                         }
-                        if poll_key_signal.read().as_str() == poll_key_for_task.as_str() {
-                            if *presence_states_for_poll.read() != next_presence {
-                                presence_states_for_poll.set(next_presence);
-                            }
-                            if *presence_labels_for_poll.read() != next_labels {
-                                presence_labels_for_poll.set(next_labels);
-                            }
-                        }
+                    } else {
+                        next_presence.insert(did.clone(), "offline".to_owned());
                     }
                 }
-                crate::api::sleep_for(std::time::Duration::from_millis(CHAT_SYNC_POLL_INTERVAL_MS))
-                    .await;
+                (next_presence, next_labels)
+            });
+            if *presence_states_for_sync.peek() != next_presence {
+                presence_states_for_sync.set(next_presence);
+            }
+            if *presence_labels_for_sync.peek() != next_labels {
+                presence_labels_for_sync.set(next_labels);
             }
         });
     }
@@ -584,6 +549,7 @@ pub fn ChatPanel(
                 {
                     let mut store = state_store.write();
                     store.save_sync_cursor(sync.cursor.clone());
+                    store.save_presence_projection(sync.presence.clone());
                     for (realm_id, projection) in &sync.realms {
                         store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                     }
