@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use super::UiIcon;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
@@ -28,9 +29,33 @@ pub fn MlsUnlockPrompt(
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut dismissed = use_signal(|| false);
+
+    {
+        let mut dismissed = dismissed;
+        use_effect(move || {
+            if !needs_mls_unlock() {
+                dismissed.set(false);
+            }
+        });
+    }
 
     if !needs_mls_unlock() {
         return rsx! {};
+    }
+
+    if dismissed() {
+        return rsx! {
+            button {
+                r#type: "button",
+                class: "btn icon sm primary mls-unlock-reopen-button",
+                "data-testid": "mls-unlock-reopen",
+                title: crate::i18n::tr("mls_unlock.reopen"),
+                "aria-label": crate::i18n::tr("mls_unlock.reopen"),
+                onclick: move |_| dismissed.set(false),
+                UiIcon { name: "unlock" }
+            }
+        };
     }
 
     let on_unlock = move |_| {
@@ -143,6 +168,16 @@ pub fn MlsUnlockPrompt(
                 div { class: "modal-head event-head",
                     h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
+                    button {
+                        r#type: "button",
+                        class: "btn icon sm ghost close",
+                        "data-testid": "mls-unlock-dismiss",
+                        title: crate::i18n::tr("mls_unlock.dismiss"),
+                        "aria-label": crate::i18n::tr("mls_unlock.dismiss"),
+                        disabled: busy(),
+                        onclick: move |_| dismissed.set(true),
+                        UiIcon { name: "x" }
+                    }
                 }
                 div { class: "modal-body mls-recovery-modal-body",
                     div { class: "muted",

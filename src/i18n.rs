@@ -651,6 +651,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.placeholder", "24-word recovery key");
     dict.set("mls_unlock.button_idle", "Unlock history");
     dict.set("mls_unlock.button_busy", "Unlocking...");
+    dict.set("mls_unlock.dismiss", "Enter recovery key later");
+    dict.set("mls_unlock.reopen", "Unlock encrypted history");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "Enter your 24-word recovery key to unlock encrypted history.",
@@ -1676,6 +1678,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.placeholder", "24 词恢复密钥");
     dict.set("mls_unlock.button_idle", "解锁历史");
     dict.set("mls_unlock.button_busy", "正在解锁…");
+    dict.set("mls_unlock.dismiss", "稍后输入恢复密钥");
+    dict.set("mls_unlock.reopen", "解锁加密历史");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "输入 24 词恢复密钥以解锁加密历史。",
