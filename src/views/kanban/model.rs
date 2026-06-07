@@ -8,13 +8,38 @@ pub(super) const DEMO_BOARD_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-0
 /// two-actor races without spinning indefinitely if the cell is hot.
 pub(super) const MAX_CONFLICT_REBASE_ATTEMPTS: u8 = 3;
 
-/// F-KANBAN-LIVE-1: how often the board polls
-/// `/views/:id/projection` so another device's `ck.flow.move` /
-/// `ck.flow.reorder` / `ck.flow.update` shows up without a manual
-/// refresh. 5s matches soland's ephemeral fanout cadence — short
-/// enough to feel "live", long enough that a single user's tab
-/// doesn't hammer the server.
-pub(super) const KANBAN_LIVE_POLL_SECONDS: u64 = 5;
+pub(super) fn kanban_projection_refresh_key(
+    realm_id: &str,
+    view_id: &str,
+    sync_cursor: &str,
+) -> String {
+    format!(
+        "{}|{}|{}",
+        realm_id.trim(),
+        view_id.trim(),
+        sync_cursor.trim()
+    )
+}
+
+pub(super) fn next_kanban_projection_refresh_key(
+    last_seen_key: &str,
+    realm_id: &str,
+    view_id: &str,
+    sync_cursor: &str,
+) -> Option<String> {
+    let key = kanban_projection_refresh_key(realm_id, view_id, sync_cursor);
+    if last_seen_key == key {
+        return None;
+    }
+    let cursor = sync_cursor.trim();
+    if cursor.is_empty()
+        || cursor == "-"
+        || (realm_id.trim().is_empty() && view_id.trim().is_empty())
+    {
+        return None;
+    }
+    Some(key)
+}
 
 pub(super) const LOCAL_PENDING_CARD_DESCRIPTION: &str =
     "New local card waiting for reducer receipt.";
@@ -63,6 +88,41 @@ pub(super) const CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY: &str = "yougen.card-detail.
 pub(super) const CARD_DETAIL_DOCK_WIDTH_DEFAULT: f64 = 720.0;
 pub(super) const CARD_DETAIL_DOCK_WIDTH_MIN: f64 = 380.0;
 pub(super) const CARD_DETAIL_DOCK_WIDTH_MAX: f64 = 1100.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kanban_projection_refresh_waits_for_cursor_advance() {
+        let first_key = kanban_projection_refresh_key(" ck:realm:r1 ", "", " ck:cursor:1 ");
+
+        assert_eq!(
+            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:1"),
+            None
+        );
+        assert_eq!(
+            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:2"),
+            Some("ck:realm:r1||ck:cursor:2".to_owned())
+        );
+    }
+
+    #[test]
+    fn kanban_projection_refresh_ignores_empty_or_bootstrap_cursor() {
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "ck:realm:r1", "", ""),
+            None
+        );
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-"),
+            None
+        );
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "", "", "ck:cursor:1"),
+            None
+        );
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 pub(super) fn local_storage_get(key: &str) -> Option<String> {

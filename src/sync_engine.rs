@@ -390,6 +390,7 @@ pub fn apply_response(response: &ClientSyncResponse, is_full_sync: bool, ctx: &S
 
             apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
             apply_notification_projection(store, response);
+            store.save_presence_projection(response.presence.clone());
         }); // store.batch — single coalesced flush happens here
     }
 

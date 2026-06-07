@@ -768,13 +768,18 @@ pub fn KanbanPanel(
         }
     });
 
-    // F-KANBAN-LIVE-1: poll the projection endpoints every
-    // KANBAN_LIVE_POLL_SECONDS so another device's `ck.flow.create` /
-    // `ck.flow.move` / `ck.flow.reorder` / `ck.flow.update` lands in this
-    // client without a manual browser refresh. Account subscribe wakes on
-    // durable events, but it does not yet carry the full lifecycle Flow
-    // projection that the Kanban board renders, so the board refreshes the
-    // same read model it uses on page load.
+    // F-KANBAN-LIVE-1: refresh the board projection only when account
+    // subscribe advances. The global SyncEngine owns the liveness channel;
+    // this panel must not poll `spaces` / `flows` / `events` on a timer while
+    // no durable event has arrived.
+    let mut live_refresh_key_seen = use_signal({
+        let initial_realm_id = local_realm_id.clone();
+        move || {
+            let initial_view = board_view_id.peek().clone();
+            let initial_cursor = sync_cursor.peek().clone();
+            kanban_projection_refresh_key(&initial_realm_id, &initial_view, &initial_cursor)
+        }
+    });
     let live_base = base_url.clone();
     let live_token = token;
     let live_board_view_id = board_view_id;
@@ -783,109 +788,48 @@ pub fn KanbanPanel(
     let live_decrypt_realm_id = selected_realm_id.clone();
     let live_decrypt_actor = account_did.clone();
     let live_decrypt_device = device_id.clone();
-    use_future(move || {
+    use_effect(move || {
         let base = live_base.clone();
         let lifecycle_realm_id = live_lifecycle_realm_id.clone();
         let lifecycle_local_realm_id = live_lifecycle_local_realm_id.clone();
         let decrypt_realm_id = live_decrypt_realm_id.clone();
         let decrypt_actor = live_decrypt_actor.clone();
         let decrypt_device = live_decrypt_device.clone();
-        async move {
-            // Defer the first poll so the bootstrap fetch finishes
-            // first and we don't double-fire on mount.
-            crate::api::sleep_for(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS)).await;
-            loop {
-                let api_token = live_token();
-                let view = live_board_view_id();
-                if !view.trim().is_empty() {
-                    let view_for_call = view.clone();
-                    let events_res = if lifecycle_realm_id.trim().is_empty() {
-                        None
-                    } else {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.backfill(&realm_id).await
-                        })
-                        .await
-                        .ok()
-                    };
-                    let remote_update_operations = events_res
-                        .as_ref()
-                        .map(|resp| flow_update_operations_from_events(&resp.events))
-                        .unwrap_or_default();
-                    if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
-                        api.collection_projection(&view_for_call).await
+        let api_token = live_token();
+        let view = live_board_view_id();
+        let cursor = sync_cursor();
+        let Some(refresh_key) = next_kanban_projection_refresh_key(
+            live_refresh_key_seen.peek().as_str(),
+            &lifecycle_realm_id,
+            &view,
+            &cursor,
+        ) else {
+            return;
+        };
+        live_refresh_key_seen.set(refresh_key);
+        spawn(async move {
+            if !view.trim().is_empty() {
+                let view_for_call = view.clone();
+                let events_res = if lifecycle_realm_id.trim().is_empty() {
+                    None
+                } else {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.backfill(&realm_id).await
                     })
                     .await
-                    {
-                        let cols = {
-                            let decrypt_store = state_store.read();
-                            let decrypt_ctx = MlsDecryptCtx {
-                                state_store: &decrypt_store,
-                                realm_id: &decrypt_realm_id,
-                                actor_did: &decrypt_actor,
-                                device_id: &decrypt_device,
-                            };
-                            overlay_collection_projection_with_operations(
-                                &projection,
-                                &decrypt_store,
-                                &selected_board_space_id(),
-                                &remote_update_operations,
-                                Some(&decrypt_ctx),
-                            )
-                        };
-                        // Only overwrite when the server actually
-                        // returned a non-empty projection — an empty
-                        // response shouldn't wipe a locally-queued
-                        // optimistic move.
-                        if !cols.is_empty() && cols != columns() {
-                            columns.set(cols);
-                            projection_source.set(BoardProjectionSource::ApiDerived);
-                        }
-                    }
-                } else if !lifecycle_realm_id.is_empty() {
-                    let containers_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.list_space_container_projections(&realm_id).await
-                        })
-                        .await
-                    };
-                    let flows_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token.clone(), |api| async move {
-                            api.list_flow_projections(&realm_id).await
-                        })
-                        .await
-                    };
-                    let events_res = {
-                        let realm_id = lifecycle_realm_id.clone();
-                        with_authed_api(&base, api_token, |api| async move {
-                            api.backfill(&realm_id).await
-                        })
-                        .await
-                    };
-                    if containers_res.is_ok() || flows_res.is_ok() {
-                        let container_items = containers_res
-                            .ok()
-                            .map(|resp| resp.items)
-                            .unwrap_or_default();
-                        let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
-                        let event_items =
-                            events_res.ok().map(|resp| resp.events).unwrap_or_default();
-                        let remote_update_operations =
-                            flow_update_operations_from_events(&event_items);
-                        let remote_space_create_operations =
-                            space_create_operations_from_events(&event_items);
-                        let container_items = containers_with_local_space_creates(
-                            &container_items,
-                            &remote_space_create_operations,
-                            &lifecycle_local_realm_id,
-                        );
-                        lifecycle_container_projection.set(container_items.clone());
-                        lifecycle_flow_projection.set(flow_items.clone());
-                        let current_board = selected_board_space_id();
-                        let raw_operations = state_store.read().load().raw_operations;
+                    .ok()
+                };
+                let remote_update_operations = events_res
+                    .as_ref()
+                    .map(|resp| flow_update_operations_from_events(&resp.events))
+                    .unwrap_or_default();
+                if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
+                    api.collection_projection(&view_for_call).await
+                })
+                .await
+                {
+                    let cols = {
                         let decrypt_store = state_store.read();
                         let decrypt_ctx = MlsDecryptCtx {
                             state_store: &decrypt_store,
@@ -893,51 +837,111 @@ pub fn KanbanPanel(
                             actor_did: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
-                        let (projected_columns, options, projected_board_id) =
-                            columns_from_lifecycle_projection_with_local(
-                                &container_items,
-                                &flow_items,
-                                &current_board,
-                                &raw_operations,
-                                &lifecycle_local_realm_id,
-                                Some(&decrypt_ctx),
-                            );
-                        if let Some(board_id) = projected_board_id {
-                            if !options.is_empty() && board_space_options() != options {
-                                board_space_options.set(options);
-                            }
-                            if current_board.trim().is_empty() {
-                                selected_board_space_id.set(board_id.clone());
-                            }
-                            let projected_columns =
-                                overlay_card_projection_with_operations_and_decrypt(
-                                    projected_columns,
-                                    &decrypt_store,
-                                    &board_id,
-                                    &remote_update_operations,
-                                    Some(&decrypt_ctx),
-                                );
-                            drop(decrypt_store);
-                            if columns() != projected_columns {
-                                let list_count = projected_columns.len();
-                                let card_count = projected_columns
-                                    .iter()
-                                    .map(|column| column.cards.len())
-                                    .sum::<usize>();
-                                columns.set(projected_columns.clone());
-                                sync_selected_card_from_columns(selected_card, &projected_columns);
-                                projection_source.set(BoardProjectionSource::ApiDerived);
-                                board_status.set(format!(
-                                    "Board refreshed: {list_count} list(s), {card_count} card(s)"
-                                ));
-                            }
+                        overlay_collection_projection_with_operations(
+                            &projection,
+                            &decrypt_store,
+                            &selected_board_space_id(),
+                            &remote_update_operations,
+                            Some(&decrypt_ctx),
+                        )
+                    };
+                    // Only overwrite when the server actually returned a
+                    // non-empty projection — an empty response shouldn't wipe
+                    // a locally-queued optimistic move.
+                    if !cols.is_empty() && cols != columns() {
+                        columns.set(cols);
+                        projection_source.set(BoardProjectionSource::ApiDerived);
+                    }
+                }
+            } else {
+                let containers_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.list_space_container_projections(&realm_id).await
+                    })
+                    .await
+                };
+                let flows_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token.clone(), |api| async move {
+                        api.list_flow_projections(&realm_id).await
+                    })
+                    .await
+                };
+                let events_res = {
+                    let realm_id = lifecycle_realm_id.clone();
+                    with_authed_api(&base, api_token, |api| async move {
+                        api.backfill(&realm_id).await
+                    })
+                    .await
+                };
+                if containers_res.is_ok() || flows_res.is_ok() {
+                    let container_items = containers_res
+                        .ok()
+                        .map(|resp| resp.items)
+                        .unwrap_or_default();
+                    let flow_items = flows_res.ok().map(|resp| resp.items).unwrap_or_default();
+                    let event_items = events_res.ok().map(|resp| resp.events).unwrap_or_default();
+                    let remote_update_operations = flow_update_operations_from_events(&event_items);
+                    let remote_space_create_operations =
+                        space_create_operations_from_events(&event_items);
+                    let container_items = containers_with_local_space_creates(
+                        &container_items,
+                        &remote_space_create_operations,
+                        &lifecycle_local_realm_id,
+                    );
+                    lifecycle_container_projection.set(container_items.clone());
+                    lifecycle_flow_projection.set(flow_items.clone());
+                    let current_board = selected_board_space_id();
+                    let raw_operations = state_store.read().load().raw_operations;
+                    let decrypt_store = state_store.read();
+                    let decrypt_ctx = MlsDecryptCtx {
+                        state_store: &decrypt_store,
+                        realm_id: &decrypt_realm_id,
+                        actor_did: &decrypt_actor,
+                        device_id: &decrypt_device,
+                    };
+                    let (projected_columns, options, projected_board_id) =
+                        columns_from_lifecycle_projection_with_local(
+                            &container_items,
+                            &flow_items,
+                            &current_board,
+                            &raw_operations,
+                            &lifecycle_local_realm_id,
+                            Some(&decrypt_ctx),
+                        );
+                    if let Some(board_id) = projected_board_id {
+                        if !options.is_empty() && board_space_options() != options {
+                            board_space_options.set(options);
+                        }
+                        if current_board.trim().is_empty() {
+                            selected_board_space_id.set(board_id.clone());
+                        }
+                        let projected_columns = overlay_card_projection_with_operations_and_decrypt(
+                            projected_columns,
+                            &decrypt_store,
+                            &board_id,
+                            &remote_update_operations,
+                            Some(&decrypt_ctx),
+                        );
+                        drop(decrypt_store);
+                        if columns() != projected_columns {
+                            let list_count = projected_columns.len();
+                            let card_count = projected_columns
+                                .iter()
+                                .map(|column| column.cards.len())
+                                .sum::<usize>();
+                            columns.set(projected_columns.clone());
+                            sync_selected_card_from_columns(selected_card, &projected_columns);
+                            projection_source.set(BoardProjectionSource::ApiDerived);
+                            board_status.set(format!(
+                                "Board refreshed: {list_count} list(s), {card_count} card(s)"
+                            ));
                         }
                     }
                 }
-                crate::api::sleep_for(std::time::Duration::from_secs(KANBAN_LIVE_POLL_SECONDS))
-                    .await;
             }
-        }
+        });
     });
 
     // Hydrate Space-container / Flow lifecycle state from the soland

@@ -930,6 +930,8 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub notification_projection: Vec<Value>,
     #[serde(default)]
+    pub presence_projection: Vec<Value>,
+    #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
     #[serde(default)]
     pub muted_realms: BTreeMap<String, bool>,
@@ -1266,6 +1268,7 @@ impl Default for ClientLocalState {
             drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
+            presence_projection: Vec::new(),
             notification_client_state: BTreeMap::new(),
             muted_realms: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
@@ -1480,6 +1483,15 @@ impl LocalStateStore {
             return; // cursor unchanged — skip flush
         }
         self.cached.sync_cursor = Some(cursor);
+        let _ = self.flush();
+    }
+
+    pub fn save_presence_projection(&mut self, events: Vec<Value>) {
+        self.ensure_cached_loaded();
+        if self.cached.presence_projection == events {
+            return;
+        }
+        self.cached.presence_projection = events;
         let _ = self.flush();
     }
 

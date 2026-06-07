@@ -5441,6 +5441,7 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     store.save_notification_projection(notification_projection);
                                 }
                             }
+                            store.save_presence_projection(sync.presence.clone());
                             for entry in &sync.account_data {
                                 let Some(data_type) =
                                     entry.get("data_type").and_then(serde_json::Value::as_str)
