@@ -628,8 +628,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/mls/rotate") {
-      const body = await route.request().postDataJSON();
-      return json(route, { ok: true, epoch: 2, group_id: body.group_id });
+      return json(route, { ok: true, epoch: 2, mls_group_ref: DEMO_REALM });
     }
 
     if (url.pathname === "/_cokret/self/account/subscribe") {

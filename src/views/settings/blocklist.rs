@@ -18,7 +18,7 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::short_protocol_id;
 
@@ -40,10 +40,9 @@ pub fn BlocklistSettingsCard(
         div { class: "event", "data-testid": "blocked-users-panel",
             div { class: "event-head",
                 span { "Personal blocklist" }
-                HelpTip { text: "Actor-private list of DIDs whose new content you don't want to see. Spec governance/content-moderation.md §4 — block is client-side filter; quarantine is server-side." }
             }
             div { class: "muted",
-                "Block hides new content from the listed actors in your timeline + notifications. The list syncs across your devices via ck.account.blocklist account_data."
+                "Blocked actors are hidden from your timeline and notifications on your devices."
             }
 
             div { class: "settings-list", "data-testid": "blocked-users-list",

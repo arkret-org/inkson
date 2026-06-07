@@ -502,7 +502,19 @@ pub fn english_translations() -> TranslationDict {
         "settings.muted_realms_empty",
         "No realms muted. Use the Notifications view to mute a noisy realm.",
     );
-    dict.set("realm_admin.no_members_loaded", "No members loaded.");
+    dict.set("realm_admin.no_members_loaded", "No members yet.");
+    dict.set(
+        "realm_admin.members_empty_hint",
+        "Invite your first member with the + button above.",
+    );
+    dict.set(
+        "realm_admin.members_no_match",
+        "No members match your search.",
+    );
+    dict.set(
+        "realm_admin.invite_hint",
+        "Accepts an invite locator URL (…/_cokret/open/invite-locators/resolve#token=…) or a raw invite_address JSON object.",
+    );
 
     dict.set("notifications.archived", "Show archived");
     dict.set("notifications.mark_all_read", "Mark all read");
@@ -1518,7 +1530,16 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.muted_realms_empty",
         "未静音任何 Realm。在通知视图中静音吵闹 Realm。",
     );
-    dict.set("realm_admin.no_members_loaded", "暂无成员。");
+    dict.set("realm_admin.no_members_loaded", "还没有成员。");
+    dict.set(
+        "realm_admin.members_empty_hint",
+        "用上方的 + 按钮邀请第一位成员。",
+    );
+    dict.set("realm_admin.members_no_match", "没有匹配的成员。");
+    dict.set(
+        "realm_admin.invite_hint",
+        "支持邀请 locator 链接(…/_cokret/open/invite-locators/resolve#token=…),或原始 invite_address JSON 对象。",
+    );
 
     dict.set("notifications.archived", "显示已归档");
     dict.set("notifications.mark_all_read", "全部标记已读");

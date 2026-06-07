@@ -17,6 +17,18 @@ use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_proto
 /// signal in [`RealmAdminPanel`].
 pub(crate) const DEFAULT_COVERED_FRONTIER_LAG_THRESHOLD: u64 = 5;
 
+/// Number of member rows the list renders per page. The member list is
+/// hydrated from the full local sync projection (which can hold tens of
+/// thousands of entries for a large Realm), so we never mount every row
+/// at once — we render this many and reveal more on demand. Keeps the DOM
+/// node count bounded regardless of Realm size, mirroring how Telegram
+/// pages its participant list rather than materializing the whole roster.
+const MEMBER_PAGE_SIZE: usize = 50;
+
+/// Once a Realm has more than this many members the inline search box is
+/// shown. Below it, scanning the list by eye is faster than typing.
+const MEMBER_SEARCH_THRESHOLD: usize = 8;
+
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
 // ck.self.events.submit via the cx_ops::* event builders. The original
@@ -70,11 +82,12 @@ impl RealmAdminSection {
         }
     }
 
-    fn all() -> [Self; 7] {
+    fn primary_sections() -> [Self; 3] {
+        [Self::Overview, Self::Members, Self::Access]
+    }
+
+    fn advanced_sections() -> [Self; 4] {
         [
-            Self::Overview,
-            Self::Members,
-            Self::Access,
             Self::Security,
             Self::Governance,
             Self::Federation,
@@ -251,6 +264,13 @@ pub fn RealmMembersPanel(
     let mut members = use_signal(Vec::<String>::new);
     let mut block_confirm_did = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberPermissions::default);
+    // Invite is now a modal launched from the list header "+" button.
+    let mut invite_modal_open = use_signal(|| false);
+    // Client-side member search + incremental paging. `member_filter`
+    // narrows the projected roster; `member_visible` caps how many rows we
+    // actually mount so a 10k-member Realm doesn't render 10k DOM nodes.
+    let mut member_filter = use_signal(String::new);
+    let mut member_visible = use_signal(|| MEMBER_PAGE_SIZE);
 
     {
         let selected_realm_for_hydration = selected_realm_id.clone();
@@ -319,37 +339,71 @@ pub fn RealmMembersPanel(
     let can_invite = member_permissions.can_invite;
     let can_remove = member_permissions.can_remove;
 
+    // Roster → filtered → paged window. Filtering a Vec<String> by
+    // substring is cheap even at tens of thousands of entries; the cost we
+    // actually avoid is mounting every matching row, so only the first
+    // `member_visible` of the filtered set is handed to the render loop.
+    let all_members = members();
+    let total_members = all_members.len();
+    let filter_query = member_filter().trim().to_lowercase();
+    let filtered_members: Vec<String> = if filter_query.is_empty() {
+        all_members
+    } else {
+        all_members
+            .into_iter()
+            .filter(|m| m.to_lowercase().contains(&filter_query))
+            .collect()
+    };
+    let filtered_count = filtered_members.len();
+    let visible = member_visible().min(filtered_count);
+    let visible_members: Vec<String> = filtered_members[..visible].to_vec();
+    let has_more = visible < filtered_count;
+    let show_search = total_members > MEMBER_SEARCH_THRESHOLD;
+    // Icon buttons carry their label via title/aria-label instead of text.
+    let refresh_label = crate::i18n::tr("realm_admin.refresh_members");
+
     rsx! {
         div { class: "timeline", "data-testid": "realm-members-panel",
-            div { class: "event", "data-testid": "realm-members-summary",
-                div { class: "event-head",
-                    span { "Members" }
-                    span { "{members().len()}" }
-                }
-                div { class: "muted", title: "{selected_realm_id}", "{selected_realm_id}" }
-                if !status_msg().is_empty() {
-                    div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
-                }
-                if member_permissions.loaded && !can_invite && !can_remove {
+            if can_invite && invite_modal_open() {
+                div {
+                    class: "modal-backdrop",
+                    "data-testid": "invite-member-modal",
+                    onclick: move |_| invite_modal_open.set(false),
                     div {
-                        class: "muted",
-                        "data-testid": "realm-member-actions-hidden",
-                        "Member-management actions are not available for this account."
-                    }
-                }
-            }
-
-            if can_invite {
-                div { class: "event", "data-testid": "invite-member",
-                    div { class: "event-head", span { "Invite Member" } span { "" } }
-                    div { class: "workflow-form",
-                        input {
-                            "data-testid": "invite-target-input",
-                            value: "{invite_target}",
-                            placeholder: "Invite locator URL or invite_address JSON",
-                            oninput: move |evt| invite_target.set(evt.value()),
+                        class: "modal invite-modal",
+                        role: "dialog",
+                        "aria-modal": "true",
+                        "aria-label": "Invite member",
+                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                        div { class: "modal-head",
+                            h3 { "Invite member" }
+                            button {
+                                class: "secondary icon-button close",
+                                "aria-label": "Close",
+                                "data-testid": "invite-modal-close",
+                                onclick: move |_| invite_modal_open.set(false),
+                                "\u{2715}"
+                            }
                         }
-                        div { class: "actions",
+                        div { class: "modal-body workflow-form",
+                            label { "Invite locator" }
+                            input {
+                                "data-testid": "invite-target-input",
+                                value: "{invite_target}",
+                                placeholder: "Paste an invite link or invite_address JSON",
+                                oninput: move |evt| invite_target.set(evt.value()),
+                            }
+                            div { class: "muted members-invite-hint",
+                                {crate::i18n::tr("realm_admin.invite_hint")}
+                            }
+                        }
+                        div { class: "modal-foot",
+                            button {
+                                class: "secondary",
+                                "data-testid": "invite-modal-cancel",
+                                onclick: move |_| invite_modal_open.set(false),
+                                "Cancel"
+                            }
                             button {
                                 class: "primary",
                                 "data-testid": "send-invite-button",
@@ -427,6 +481,7 @@ pub fn RealmMembersPanel(
                                                                 );
                                                             }
                                                             invite_target.set(String::new());
+                                                            invite_modal_open.set(false);
                                                             status_msg.set(format!(
                                                                 "invited {} (pending) fact {}",
                                                                 invitee_label,
@@ -448,28 +503,70 @@ pub fn RealmMembersPanel(
                 }
             }
 
-            div { class: "event", "data-testid": "member-table",
-                div { class: "event-head", span { "Members" } span { "{members().len()}" } }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                        "data-testid": "refresh-members-button",
-                        onclick: {
-                            let realm = selected_realm_id.clone();
-                            move |_| {
-                                let store = state_store.read();
-                                let next = projected_members_for_realm(&store, &realm);
-                                let count = next.len();
-                                members.set(next);
-                                status_msg.set(format!(
-                                    "members refreshed ({count}) from local sync state"
-                                ));
+            div { class: "event member-list-card", "data-testid": "member-table",
+                div { class: "event-head",
+                    span { "Members" }
+                    div { class: "member-head-actions",
+                        span {
+                            class: "badge member-count-badge",
+                            "data-testid": "realm-members-count",
+                            "{total_members}"
+                        }
+                        if can_invite {
+                            button {
+                                class: "member-head-icon-btn member-head-icon-btn-accent",
+                                "data-testid": "open-invite-modal-button",
+                                title: "Invite member",
+                                "aria-label": "Invite member",
+                                onclick: move |_| invite_modal_open.set(true),
+                                crate::components::UiIcon { name: "plus" }
                             }
-                        },
-                        {crate::i18n::tr("realm_admin.refresh_members")}
+                        }
+                        button {
+                            class: "member-head-icon-btn",
+                            "data-testid": "refresh-members-button",
+                            title: "{refresh_label}",
+                            "aria-label": "{refresh_label}",
+                            onclick: {
+                                let realm = selected_realm_id.clone();
+                                move |_| {
+                                    let store = state_store.read();
+                                    let next = projected_members_for_realm(&store, &realm);
+                                    let count = next.len();
+                                    members.set(next);
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                    status_msg.set(format!(
+                                        "members refreshed ({count}) from local sync state"
+                                    ));
+                                }
+                            },
+                            crate::components::UiIcon { name: "refresh" }
+                        }
                     }
                 }
-                for member in members() {
+                if !status_msg().is_empty() {
+                    div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
+                }
+                if member_permissions.loaded && !can_invite && !can_remove {
+                    div {
+                        class: "muted",
+                        "data-testid": "realm-member-actions-hidden",
+                        "Member-management actions are not available for this account."
+                    }
+                }
+                if show_search {
+                    input {
+                        class: "member-search-input",
+                        "data-testid": "member-search-input",
+                        value: "{member_filter}",
+                        placeholder: "Search members…",
+                        oninput: move |evt| {
+                            member_filter.set(evt.value());
+                            member_visible.set(MEMBER_PAGE_SIZE);
+                        },
+                    }
+                }
+                for member in visible_members {
                     {
                         let member_label = short_protocol_id(&member);
                         rsx! {
@@ -725,8 +822,34 @@ pub fn RealmMembersPanel(
                         }
                     }
                 }
-                if members().is_empty() {
-                    div { class: "muted", {crate::i18n::tr("realm_admin.no_members_loaded")} }
+                if filtered_count == 0 {
+                    div { class: "members-empty", "data-testid": "members-empty-state",
+                        if total_members == 0 {
+                            div { class: "members-empty-icon", crate::components::UiIcon { name: "users" } }
+                            div { class: "members-empty-title", {crate::i18n::tr("realm_admin.no_members_loaded")} }
+                            if can_invite {
+                                div { class: "muted members-empty-hint",
+                                    {crate::i18n::tr("realm_admin.members_empty_hint")}
+                                }
+                            }
+                        } else {
+                            div { class: "members-empty-icon", crate::components::UiIcon { name: "search" } }
+                            div { class: "members-empty-title", {crate::i18n::tr("realm_admin.members_no_match")} }
+                        }
+                    }
+                }
+                if has_more {
+                    div { class: "member-load-more",
+                        button {
+                            class: "secondary",
+                            "data-testid": "load-more-members-button",
+                            onclick: move |_| {
+                                let next = member_visible() + MEMBER_PAGE_SIZE;
+                                member_visible.set(next);
+                            },
+                            "Load more — showing {visible} of {filtered_count}"
+                        }
+                    }
                 }
             }
         }
@@ -751,7 +874,6 @@ pub fn RealmAdminPanel(
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut status_msg = use_signal(String::new);
-    let mut discovery_enabled = use_signal(|| true);
     // Capability grant/revoke Move-flow inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
@@ -886,13 +1008,8 @@ pub fn RealmAdminPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "realm-admin-panel",
-            // E2E debug: surface active_section value so tests can assert what
-            // the component actually saw, not what the URL claims.
-            div { class: "muted", "data-testid": "realm-admin-active-section",
-                "{active_section.label()}"
-            }
             div { class: "actions", "data-testid": "realm-admin-sections",
-                for section in RealmAdminSection::all() {
+                for section in RealmAdminSection::primary_sections() {
                     if let Some(slug) = section.slug() {
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
@@ -912,18 +1029,34 @@ pub fn RealmAdminPanel(
                         }
                     }
                 }
+                details { class: "realm-admin-advanced-nav", "data-testid": "realm-admin-advanced-sections",
+                    summary { "Advanced" }
+                    div { class: "actions",
+                        for section in RealmAdminSection::advanced_sections() {
+                            if let Some(slug) = section.slug() {
+                                Link {
+                                    class: if active_section == section { "primary" } else { "secondary" },
+                                    to: Route::RealmAdminSection {
+                                        realm_id: selected_realm_id.clone(),
+                                        section: slug.to_owned(),
+                                    },
+                                    "{section.label()}"
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if active_section == RealmAdminSection::Overview {
                 div { class: "event", "data-testid": "realm-admin-overview",
                     div { class: "event-head",
-                        span { "Admin Map" }
-                        span { "{selected_realm_id}" }
+                        span { "Realm settings" }
+                        span { title: "{selected_realm_id}", "{short_protocol_id(&selected_realm_id)}" }
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
                             strong { {crate::i18n::tr("realm_admin.members")} }
                             span { "{projected_member_count} known" }
-                            div { class: "muted", "Membership policy, state machine, and invite lifecycle settings." }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
@@ -936,7 +1069,6 @@ pub fn RealmAdminPanel(
                         div { class: "metric",
                             strong { {crate::i18n::tr("realm_admin.access")} }
                             span { "{join_rule()} / {history_visibility()}" }
-                            div { class: "muted", "Metadata, join rule, history visibility, and discovery live together." }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
@@ -947,55 +1079,15 @@ pub fn RealmAdminPanel(
                             }
                         }
                         div { class: "metric",
-                            strong { {crate::i18n::tr("realm_admin.security_mls")} }
-                            span { "epoch {mls_epoch_label}" }
-                            div { class: "muted", "Capability grants, MLS health, anchor visibility, and audit-bound E2EE controls." }
+                            strong { "Advanced" }
+                            span { "{alert_count} alerts · epoch {mls_epoch_label}" }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
                                     realm_id: selected_realm_id.clone(),
                                     section: "security".to_owned(),
                                 },
-                                "Open Security"
-                            }
-                        }
-                        div { class: "metric",
-                            strong { {crate::i18n::tr("realm_admin.governance")} }
-                            span { "policy / moderation" }
-                            div { class: "muted", "Organization-level governance and moderation policy stay out of the daily admin path." }
-                            Link {
-                                class: "secondary",
-                                to: Route::RealmAdminSection {
-                                    realm_id: selected_realm_id.clone(),
-                                    section: "governance".to_owned(),
-                                },
-                                "Open Governance"
-                            }
-                        }
-                        div { class: "metric",
-                            strong { "Federation" }
-                            span { "trust_bundle" }
-                            div { class: "muted", "Partner trust and service DID boundaries are isolated from Space-local settings." }
-                            Link {
-                                class: "secondary",
-                                to: Route::RealmAdminSection {
-                                    realm_id: selected_realm_id.clone(),
-                                    section: "federation".to_owned(),
-                                },
-                                "Open Federation"
-                            }
-                        }
-                        div { class: "metric",
-                            strong { "Repair & Danger" }
-                            span { "{alert_count} active alerts" }
-                            div { class: "muted", "Conflict repair, stalled Move diagnostics, and destructive actions are intentionally separated." }
-                            Link {
-                                class: "secondary",
-                                to: Route::RealmAdminSection {
-                                    realm_id: selected_realm_id.clone(),
-                                    section: "repair".to_owned(),
-                                },
-                                "Open Repair"
+                                "Open Advanced"
                             }
                         }
                     }
@@ -1687,145 +1779,18 @@ pub fn RealmAdminPanel(
             } // closes `if active_section == RealmAdminSection::Access`
 
             if active_section == RealmAdminSection::Members {
-            // Member admission policy
-            div { class: "event", "data-testid": "admin-discussion-admission",
-                div { class: "event-head", span { "Discussion-scoped external admission" } span { "policy proposal" } }
-                div { class: "muted",
-                    "External access is granted to a Discussion, not to the whole Space or linked Card. History visibility and capability grants remain separate."
+                RealmMembersPanel {
+                    base_url: base_url.clone(),
+                    account_did: account_did.clone(),
+                    token,
+                    selected_realm_id: selected_realm_id.clone(),
+                    sync_cursor,
+                    frontier_state,
+                    state_store,
                 }
-                div { class: "metric-grid",
-                    div { class: "metric", strong { "Discussion" } span { "ck:flow:external-counsel" } div { class: "muted", "history: joined" } }
-                    div { class: "metric", strong { "Capability" } span { "discussion.message.create" } div { class: "muted", "expires in 7 days" } }
-                    div { class: "metric", strong { "Discussion Coupling" } span { "none" } div { class: "muted", "linked Discussion remains separately authorized" } }
-                    div { class: "metric", strong { "Review" } span { "requires admin approval" } div { class: "muted", "danger actions require reason" } }
-                }
-                div { class: "actions",
-                    button {
-                        class: "secondary",
-                                "data-testid": "queue-discussion-admission",
-                        onclick: move |_| status_msg.set("queued Discussion-scoped external admission proposal".to_owned()),
-                        "Queue admission proposal"
-                    }
-                    button {
-                        class: "secondary",
-                                "data-testid": "deny-discussion-admission",
-                        onclick: move |_| status_msg.set("denied without leaking locked Discussion membership".to_owned()),
-                        "Deny"
-                    }
-                }
-            }
-
-            // Member state — authz/event-auth-state-resolution.md §5
-            // 5 MembershipState variants: Invited / Joined / Left / Banned / Knocked
-            // Legal transitions form a state machine; reducer rejects illegal moves
-            // with state_mismatch.
-            div { class: "event", "data-testid": "member-state-banner",
-                div { class: "event-head",
-                    span { "Member state machine" }
-                    span { "ck.member.state · 5 variants" }
-                }
-                div { class: "muted",
-                    "Membership state is driven by ck.member.state events. In a `knock` Space, an uninvited actor can request access; an admin transitions them to invited, then to joined."
-                }
-                div { class: "actions",
-                    span { class: "badge blue", "Invited" }
-                    span { class: "badge green", "Joined" }
-                    span { class: "badge", "Left" }
-                    span { class: "badge red", "Banned" }
-                    span { class: "badge amber", "Knocked" }
-                }
-                div { class: "muted",
-                    "Allowed transitions: none → {{join, invite, knock}} | invite → {{join, leave}} | knock → {{invite, leave}} | join → {{leave, ban}} | leave → {{invite, knock}} | ban → leave (via unban)."
-                }
-            }
-
-            // Realm invites — sync/third-party-invites.md + invite event family
-            // 6 canonical events drive the invite lifecycle:
-            //   ck.invite.create        — create an invite (proactively invite a known DID)
-            //   ck.invite.third_party   — invite a 3PID (email / phone) when the DID is unknown
-            //   ck.invite.claim         — invitee receives the invite proof (bound to their DID)
-            //   ck.invite.accept        — invitee formally accepts (writes membership)
-            //   ck.invite.cancel        — inviter cancels (before the receiver has claimed)
-            //   ck.invite.revoke        — inviter revokes (receiver claimed but has not accepted)
-            div { class: "event", "data-testid": "invite-lifecycle-banner",
-                div { class: "event-head",
-                    span { "Invite lifecycle" }
-                    span { "6 canonical events" }
-                }
-                div { class: "muted",
-                    "Invites do not grant capabilities directly — the recipient must accept first. MUST carry expires_at; default 7 days, 24 hours for high-security Spaces."
-                }
-                div { class: "actions",
-                    span { class: "badge blue", title: "ck.invite.create", "Create" }
-                    span { class: "badge blue", title: "ck.invite.third_party", "Third-party" }
-                    span { class: "badge", title: "ck.invite.claim", "Claim" }
-                    span { class: "badge green", title: "ck.invite.accept", "Accept" }
-                    span { class: "badge amber", title: "ck.invite.cancel", "Cancel" }
-                    span { class: "badge red", title: "ck.invite.revoke", "Revoke" }
-                }
-            }
-
-            // Realm discovery toggle
-            div { class: "event", "data-testid": "discovery-toggle",
-                div { class: "event-head", span { "Discovery" } span { "visibility" } }
-                label {
-                    input {
-                        r#type: "checkbox",
-                        checked: discovery_enabled(),
-                        onchange: move |evt| discovery_enabled.set(evt.value() == "true"),
-                    }
-                    " Listed in directory"
-                }
-            }
             }
 
             if active_section == RealmAdminSection::Security {
-            // Audited E2EE assurance — crypto-media/audited-e2ee.md
-            // Two profiles: ck.profile.attested_audit.e2ee.v1 (HW attestation forced)
-            // and ck.profile.disclosed_audit.e2ee.v1 (procedural disclosure only).
-            // UI MUST surface the policy choice + canonical join warning copy +
-            // forbidden marketing terms (see audited-e2ee §3.1.1 / §3.5).
-            div { class: "event", "data-testid": "audited-e2ee-assurance",
-                div { class: "event-head",
-                    span { "Audited E2EE assurance" }
-                    span { "audit_disclosure policy" }
-                }
-                div { class: "muted",
-                    "v1 core splits audited E2EE into two hardening profiles: attested and disclosed. Realm policy is declared with an audit_disclosure object plus an audit_assurance enum; join warnings and external materials follow the normative classification and forbidden-marketing wording in audited-e2ee.md §3.1.1 and §3.5."
-                }
-                div { class: "metric-grid", "data-testid": "audited-e2ee-tiers",
-                    div { class: "metric",
-                        strong { "none" }
-                        span { class: "badge", "default" }
-                        div { class: "muted", "Standard MLS E2EE with no audit profile" }
-                    }
-                    div { class: "metric",
-                        strong { "disclosed_audit" }
-                        span { class: "badge amber", "disclosed_audit.e2ee.v1" }
-                        div { class: "muted", "Audit agent receives procedural disclosure; ck.audit.accessed is mandatory; no cryptographic attestation" }
-                    }
-                    div { class: "metric",
-                        strong { "attested_audit" }
-                        span { class: "badge red", "attested_audit.e2ee.v1" }
-                        div { class: "muted", "Hardware attestation required; the RYW receipt schema enforces ck.audit.ryw_receipt" }
-                    }
-                }
-                div { class: "muted",
-                    "Forbidden marketing wording: do not claim plain \"end-to-end encrypted\" — use \"E2EE with disclosed/attested audit\". See audited-e2ee.md §3.5."
-                }
-                div { class: "actions",
-                    span { class: "muted", "Audit-bound key share events:" }
-                    span { class: "badge blue", title: "ck.space_key.share", "Key share" }
-                    span { class: "badge", title: "ck.space_key.share_audit", "Audit entry" }
-                    span { class: "badge red", title: "ck.space_key.withheld", "Withheld" }
-                }
-                div { class: "actions",
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-none", "No audit profile" }
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-disclosed", "Enable disclosed_audit" }
-                    button { class: "secondary", "data-testid": "audited-e2ee-set-attested", "Enable attested_audit" }
-                }
-            }
-
             // MLS epoch rotation
             div { class: "event", "data-testid": "mls-rotation",
                 div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
@@ -1919,81 +1884,11 @@ pub fn RealmAdminPanel(
             }
             }
 
-            // Capability grant explanation — claude-design desktop/realm-admin.html
-            // authz/capabilities.md (delegation, revocation, claim conditions)
-            //
-            // Constraint type model: 8 family + subtype discriminator per
-            // `authz/constraint-schema.md` §2.2:
-            //   temporal (subtype: edit_window / redact_window / session_lifetime / ...)
-            //   field_access (subtype: field_write_allow / field_write_deny)
-            //   type_restriction (subtype: object_type / morph_type / facet)
-            //   scope_limitation (subtype: container_move / view_kind / track / ...)
-            //   delegation_control (subtype: max_depth / subset_only)
-            //   quota (subtype: rate / resource)
-            //   claim_based (subtype: approval / accountability / ...)
-            //   confidentiality (subtype: encryption / visibility / sensitive_handling)
-            // The grant-explanation rows below treat constraint as a description hint;
-            // any future write UI MUST emit `(family, subtype)` pairs.
-            div { class: "event", "data-testid": "grant-explanation",
-                div { class: "event-head",
-                    span { "Capability Grants" }
-                    span { "approval_constraint trail" }
-                }
-                div { class: "muted",
-                    "Grants are the input reducers use to accept or reject writes. Every decision is traceable to a signed grant; high-risk actions add an approval_constraint on top. Handles and email addresses are display-only — the permission subject is the DID."
-                }
-                div { class: "metric-grid", "data-testid": "grant-explanation-rows",
-                    div { class: "metric",
-                        strong { "Mei (admin)" }
-                        span { "read · write · moderate · grant" }
-                        div { class: "muted", "did:plc:8djrfj4… · permanent · auto-renew" }
-                    }
-                    div { class: "metric",
-                        strong { "Build-bot (applet)" }
-                        span { "write_message · reaction" }
-                        div { class: "muted", "did:web:bot.acme.example · 30d · approval=auto" }
-                    }
-                    div { class: "metric",
-                        strong { "Researcher Agent" }
-                        span { "read_flow (pending)" }
-                        div { class: "muted", "approval_constraint = 2 of 3 admin · 1/3 approved" }
-                    }
-                    div { class: "metric",
-                        strong { "Compliance Auditor (partner)" }
-                        span { "read_flow + write_morph(audit_report)" }
-                        div { class: "muted", "did:web:partner.example · weekly job · revocable" }
-                    }
-                }
-                div { class: "metric-grid", "data-testid": "grant-decision-actions",
-                    div { class: "metric", "data-testid": "grant-approval-status",
-                        strong { "Researcher Agent" }
-                        span { "pending approval" }
-                        div { class: "muted", "No local approval action is available from this snapshot." }
-                    }
-                    div { class: "metric", "data-testid": "grant-trail-status",
-                        strong { "Audit trail" }
-                        span { "available from audit views" }
-                        div { class: "muted", "Use the signed capability grant / revoke card below for live changes." }
-                    }
-                }
-                div { class: "muted",
-                    "Reducer decision inputs: ck.capability.grant / ck.capability.revoke / resolved approval_constraint. Full trail in /audit."
-                }
-            }
-
-            // Capability grant / revoke anchored-cell card (P0 M-capability).
-            // Mirrors the consent grant/revoke PoC but targets
-            // ck.component.capability.grant.v1 (OrSet add/remove). Signed
-            // with the demo session key (TODO real-key-management) and
-            // submitted through ck.events.submit. Anchor frontier is threaded
-            // from the local sync view.
+            if active_section == RealmAdminSection::Security {
             div { class: "event", "data-testid": "capability-grant-card",
                 div { class: "event-head",
-                    span { "Capability grant / revoke (Move PoC)" }
-                    span { "ck.component.capability.grant.v1 · OrSet" }
-                }
-                div { class: "muted",
-                    "Submits a ck.capability.grant or ck.capability.revoke event via ck.self.events.submit; soland's reducer applies the OrSet add/remove to the capability cell."
+                    span { "Capability grant / revoke" }
+                    span { "Advanced" }
                 }
                 label { "Grant ID (cell subject)" }
                 input {
@@ -2234,125 +2129,30 @@ pub fn RealmAdminPanel(
                     }
                 }
             }
+            }
 
             if active_section == RealmAdminSection::Governance {
-            // Organization governance — identity/identity-did.md §6 + content-moderation
-            // An Organization is a Principal (not a Realm). A single Realm can be
-            // jointly governed by multiple organizations; the Realm's organization
-            // relationships are maintained via the ck.realm.organization event.
-            div { class: "event", "data-testid": "organization-governance",
-                div { class: "event-head",
-                    span { "Organization governance" }
-                    span { "Realm ≠ Organization" }
-                }
-                div { class: "muted",
-                    "An Organization is a Principal (a DID), not a Realm. Multi-org governance is expressed via ck.realm.organization relations; organization directory and moderation policy live independently of any single Realm."
-                }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { "Owning organizations" }
-                        span { title: "ck.realm.organization", "Organization link" }
-                        div { class: "muted", "Declares the organization(s) this Realm belongs to" }
+                div { class: "event", "data-testid": "organization-governance",
+                    div { class: "event-head",
+                        span { "Governance" }
+                        span { "Admin tooling" }
                     }
-                    div { class: "metric",
-                        strong { "Org directory listing" }
-                        span { title: "ck.organization.discovery", "Directory listing" }
-                        div { class: "muted", "Organization-level discoverability, independent of any Space" }
-                    }
-                    div { class: "metric",
-                        strong { "Org moderation policy" }
-                        span { title: "ck.organization.moderation_policy", "Moderation policy" }
-                        div { class: "muted", "Organization-level moderation; Spaces can inherit or override" }
-                    }
-                    div { class: "metric",
-                        strong { "Sovereign DID policy" }
-                        span { title: "ck.sovereign.did_policy", "Identity policy" }
-                        div { class: "muted", "High-security deployments: restrict acceptable identity methods / resolver trust" }
+                    div { class: "muted",
+                        "Organization policy and moderation rules are not editable from yougen. Use the organization admin console for policy changes; use Members and Access here for Realm-local changes."
                     }
                 }
-            }
-
-            // Policy events — authz/policy-server.md
-            // The three ck.policy.{rule,action,set} events feed the reducer's decision:
-            //   ck.policy.rule    — a single rule (match condition + effect + scope)
-            //   ck.policy.action  — a single action template (referenced by rules)
-            //   ck.policy.set     — bundles rules + actions into one published policy version
-            div { class: "event", "data-testid": "policy-event-family",
-                div { class: "event-head",
-                    span { "Policy authoring" }
-                    span { "ck.policy.{{rule,action,set}}" }
-                }
-                div { class: "muted",
-                    "Policy is the input the reducer and service node use to decide whether a request is acceptable. A policy is published as a set composed of rules + actions; one policy_version is written atomically."
-                }
-                div { class: "actions",
-                    span { class: "badge blue", title: "ck.policy.rule", "Rule" }
-                    span { class: "badge", title: "ck.policy.action", "Action" }
-                    span { class: "badge green", title: "ck.policy.set", "Published set" }
-                    span { class: "muted", "— three events combine to publish one policy version" }
-                }
-            }
-
-            // Moderation events — governance/content-moderation.md
-            // Two canonical events drive content-level moderation:
-            //   ck.self.moderation.report — an actor files a report (against a message / flow / morph / actor)
-            //   ck.moderation.franking_proof  — E2EE franking proof (so encrypted content remains reviewable)
-            // Outcomes like quarantine / require_review are reducer decisions, not separate events.
-            div { class: "event", "data-testid": "moderation-events",
-                div { class: "event-head",
-                    span { "Moderation events" }
-                    span { "governance/content-moderation.md" }
-                }
-                div { class: "muted",
-                    "Reports and moderation evidence are carried by two events; the reducer's decisions (deny / quarantine / require_review) materialize as ck.policy.action. Franking lets reviewers verify the sender of E2EE content without breaking the ciphertext."
-                }
-                div { class: "actions",
-                    span { class: "badge blue", title: "ck.self.moderation.report", "Report" }
-                    span { class: "badge accent", title: "ck.moderation.franking_proof", "Franking proof" }
-                    span { class: "muted", "→ reducer decides deny / quarantine / require_review" }
-                }
-            }
             }
 
             if active_section == RealmAdminSection::Federation {
-            // Trust bundle import — claude-design desktop/realm-admin.html
-            // sync/federation.md + sync/sovereign-deployment.md
-            div { class: "event", "data-testid": "trust-bundle-panel",
-                div { class: "event-head",
-                    span { "Trust Bundle (Federation)" }
-                    span { "Trusted organization / service DIDs" }
-                }
-                div { class: "muted",
-                    "Federation, cross-organization, and External Collaboration Realms must publish an explicit trust_bundle that enumerates eligible organization DIDs, service DIDs, and trusted issuers. Validate method evidence, the trust root, and service delegation before importing."
-                }
-                div { class: "metric-grid", "data-testid": "trust-bundle-rows",
-                    div { class: "metric",
-                        strong { "did:web:partner.example" }
-                        span { "trust_bundle v3" }
-                        div { class: "muted", "active · federation_in" }
+                div { class: "event", "data-testid": "trust-bundle-panel",
+                    div { class: "event-head",
+                        span { "Federation trust" }
+                        span { "Admin tooling" }
                     }
-                    div { class: "metric",
-                        strong { "did:web:beta.example" }
-                        span { "trust_bundle v2 · pending" }
-                        div { class: "muted", "Missing attestation issuer; trust root not confirmed" }
-                    }
-                    div { class: "metric",
-                        strong { "did:web:github-mirror.acme.example" }
-                        span { "portal scope only" }
-                        div { class: "muted", "applet · plaintext_visible(portal)" }
-                    }
-                    div { class: "metric",
-                        strong { "did:web:hsm.cokret.social" }
-                        span { "service · backup HSM" }
-                        div { class: "muted", "1 use per year quota; recovery only" }
+                    div { class: "muted",
+                        "Trust bundle import, validation, and revocation are not wired in yougen. Use the deployment's admin tooling for federation trust changes."
                     }
                 }
-                div { class: "actions", "data-testid": "trust-bundle-actions",
-                    button { class: "primary", "data-testid": "trust-bundle-import-button", "Import trust_bundle" }
-                    button { class: "secondary", "data-testid": "trust-bundle-validate-button", "Validate signature + method evidence" }
-                    button { class: "secondary", "data-testid": "trust-bundle-revoke-button", "Revoke federation_in (partner)" }
-                }
-            }
             }
 
             // Danger zone

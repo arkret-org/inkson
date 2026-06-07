@@ -714,11 +714,8 @@ impl SettingsSection {
 }
 
 const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
-    SettingsSection::Encryption,
-    SettingsSection::Recovery,
-    SettingsSection::Capabilities,
-];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
+    &[SettingsSection::Encryption, SettingsSection::Recovery];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
@@ -728,10 +725,13 @@ const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Consent,
     SettingsSection::Blocklist,
 ];
-const SETTINGS_CLIENT_GROUP: &[SettingsSection] =
-    &[SettingsSection::Theme, SettingsSection::Storage];
-const SETTINGS_INTEGRATIONS_GROUP: &[SettingsSection] = &[SettingsSection::Mimi];
-const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[SettingsSection::Release];
+const SETTINGS_CLIENT_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
+const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
+    SettingsSection::Capabilities,
+    SettingsSection::Storage,
+    SettingsSection::Mimi,
+    SettingsSection::Release,
+];
 const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (
         "Account",
@@ -748,19 +748,10 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         "Notification delivery behavior, actor-private disclosure controls, and consent/blocklist.",
         SETTINGS_DELIVERY_GROUP,
     ),
-    (
-        "Client",
-        "Appearance, locale, storage, and sync surfaces.",
-        SETTINGS_CLIENT_GROUP,
-    ),
-    (
-        "Integrations",
-        "Applets, agents, and interop-specific controls.",
-        SETTINGS_INTEGRATIONS_GROUP,
-    ),
+    ("Client", "Appearance and locale.", SETTINGS_CLIENT_GROUP),
     (
         "Advanced",
-        "Diagnostics, release blockers, and protocol health checks.",
+        "Capabilities, storage, integrations, diagnostics, and protocol health checks.",
         SETTINGS_ADVANCED_GROUP,
     ),
 ];
@@ -971,35 +962,6 @@ pub fn SettingsPanel(
                                     div { class: "metric",
                                         strong { "Push" }
                                         span { "{push_label}" }
-                                    }
-                                    // T1.3 — show the active proof mode so
-                                    // the user can spot at a glance whether
-                                    // a real signer is wired before any
-                                    // event leaves the device.
-                                    div { class: "metric", "data-testid": "settings-proof-mode",
-                                        strong { {crate::i18n::tr("settings.proof_mode.label")} }
-                                        span { {crate::operation::current_proof_mode().label_en()} }
-                                    }
-                                    // T5.2 — show the active signer DID.
-                                    {
-                                        let status = crate::event_signer::signer_status();
-                                        let signer_did = status
-                                            .as_ref()
-                                            .map(|s| s.signer_did.clone())
-                                            .unwrap_or_else(|| "—".to_owned());
-                                        let signer_did_label = short_protocol_id(&signer_did);
-                                        rsx! {
-                                            div {
-                                                class: "metric",
-                                                "data-testid": "settings-signer-info",
-                                                strong { {crate::i18n::tr("settings.signer.label")} }
-                                                span {
-                                                    "data-testid": "settings-signer-did",
-                                                    title: "{signer_did}",
-                                                    "{signer_did_label}"
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -1498,9 +1460,8 @@ pub fn SettingsPanel(
                     }
                 }
 
-                            // Storage risk indicators
-                            div { class: "event", "data-testid": "storage-risks",
-                    div { class: "event-head", span { "Storage Risks" } span { "warnings" } }
+                            details { class: "event", "data-testid": "storage-risks",
+                    summary { class: "event-head", span { "Storage diagnostics" } span { "Advanced" } }
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
                             strong {
@@ -1612,14 +1573,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Mimi {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "mimi-interop-panel",
-                    div { class: "event-head", span { "MIMI Provider Facade" } span { "interop projection" } }
-                    div { class: "muted", "Profile: ck.profile.mimi_interop.v1" }
-                    div { class: "metric-grid", "data-testid": "mimi-draft-pinning",
-                        div { class: "metric", strong { "Protocol" } span { "draft-ietf-mimi-protocol-06" } }
-                        div { class: "metric", strong { "Content" } span { "draft-ietf-mimi-content-08" } }
-                        div { class: "metric", strong { "Discussion Policy" } span { "draft-ietf-mimi-room-policy-03" } }
-                        div { class: "metric", strong { "Identifiers" } span { "draft-kohbrok-mimi-identifiers-01" } }
-                    }
+                    div { class: "event-head", span { "MIMI interop checks" } span { "Advanced" } }
                     div { class: "actions",
                         button {
                             class: "secondary",
@@ -2080,7 +2034,7 @@ pub fn SettingsPanel(
                     }
                     div { class: "event-head",
                         span { "Read receipts" }
-                        span { title: "ck.read_receipt.preferences", "Preferences" }
+                        span { "Default" }
                     }
                     label {
                         input {
@@ -2122,13 +2076,11 @@ pub fn SettingsPanel(
                                 });
                             },
                         }
-                        " Send read receipts (ck.receipt.read) by default "
-                        HelpTip { text: "Resolution order is (flow → realm → default). When a Realm declares a read-receipt policy with disclosure=required or disabled, the server policy overrides this preference." }
+                        " Send read receipts by default"
                     }
                     div { class: "event-head",
-                        span { "per-Realm overrides" }
+                        span { "Realm exceptions" }
                         span { "{read_receipt_realm_overrides().len()} configured" }
-                        HelpTip { text: "Add a Realm ID below to opt this Realm out of (or into) read receipts independently of the global default. Server-declared policy lock is wired: when soland's Anchor view (P0 M3) surfaces a ck.realm.read_receipt_policy with disclosure=required or disabled, the matching per-Realm toggle shows a `locked by Realm policy` badge and the controls become disabled — see LocalStateStore::read_receipt_should_send." }
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
                             // Policy lock — when soland publishes a
@@ -2314,8 +2266,7 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "realm-remarks-editor",
                     div { class: "event-head",
                         span { "Realm remarks" }
-                        span { "ck.contacts.realm.<realm_id>" }
-                        HelpTip { text: "Private to this account. The remark replaces the public Realm title in the sidebar / dashboard. Other Realm members never see it." }
+                        span { "Private" }
                     }
                     {
                         let remarks = realm_remarks_snapshot();
@@ -2550,8 +2501,7 @@ pub fn SettingsPanel(
                 div { class: "event", "data-testid": "contact-remarks-editor",
                     div { class: "event-head",
                         span { "Contact remarks" }
-                        span { "ck.contacts.actor.<did>" }
-                        HelpTip { text: "Private to this account. The local name is shown only on this device/account and is synced through actor-private account_data." }
+                        span { "Private" }
                     }
                     {
                         let remarks = contact_remarks_snapshot();
@@ -2739,51 +2689,6 @@ pub fn SettingsPanel(
                     }
                 }
 
-                // Progressive disclosure — identity-handles.md §16
-                // Four canonical events drive selective claim sharing:
-                //   ck.identity.disclosure_policy   — actor sets which fields are
-                //                                     released to which audience.
-                //   ck.identity.disclosure_receipt  — receiver acknowledges what
-                //                                     they observed (audit trail).
-                //   ck.identity.presentation_request  — relying party asks for a
-                //                                       claim presentation.
-                //   ck.identity.presentation_response — actor satisfies the request
-                //                                       with a verifiable presentation.
-                            div { class: "event", "data-testid": "progressive-disclosure",
-                    div { class: "event-head",
-                        span { "Progressive disclosure" }
-                        span { "identity-handles §16" }
-                        HelpTip { text: "Your DID Document is not your identity profile. Sensitive attributes (claims, handle, email) are disclosed selectively per audience: you set a disclosure policy, counterparties send a presentation_request, you reply with a presentation_response, and every disclosure is logged in a disclosure_receipt." }
-                    }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "Disclosure policy" }
-                            span { title: "ck.identity.disclosure_policy", "Policy" }
-                            div { class: "muted", "Declares which fields are visible to which audience" }
-                        }
-                        div { class: "metric",
-                            strong { "Presentation request" }
-                            span { title: "ck.identity.presentation_request", "Request" }
-                            div { class: "muted", "Counterparty-initiated claim request (carries purpose + minimum field set)" }
-                        }
-                        div { class: "metric",
-                            strong { "Presentation response" }
-                            span { title: "ck.identity.presentation_response", "Response" }
-                            div { class: "muted", "Your verifiable presentation; only authorized fields are revealed" }
-                        }
-                        div { class: "metric",
-                            strong { "Disclosure receipt" }
-                            span { title: "ck.identity.disclosure_receipt", "Receipt" }
-                            div { class: "muted", "Audit trail; redactable but the hash chain is preserved" }
-                        }
-                    }
-                    div { class: "actions",
-                        button { class: "secondary", "data-testid": "disclosure-policy-edit", "Edit disclosure policy" }
-                        button { class: "secondary", "data-testid": "disclosure-history-view", "View disclosure history" }
-                        button { class: "secondary", "data-testid": "presentation-pending", "Handle pending request (0)" }
-                    }
-                }
-
                 // ── YG-HC-1 — Handle management (issuer-managed) ─────
                 // Per spec §3.2.3 / §3.4 yougen MUST NOT set or override
                 // handles via ck.profile.update / ck.member.identity.update.
@@ -2794,8 +2699,7 @@ pub fn SettingsPanel(
                             div { class: "event", "data-testid": "handle-managed-by-org",
                     div { class: "event-head",
                         span { "Handle" }
-                        span { title: "ck.schema.handle_claim.v1", "managed by your organization" }
-                        HelpTip { text: "Handles are issued and revoked by your organization's handle issuer (coauth), not from this client. yougen never writes a handle via profile or member-identity events — it only displays signed handle claims. To request or change a handle, use your organization's issuer flow." }
+                        span { "Managed by your organization" }
                     }
                     div { class: "muted",
                         "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer."
@@ -2836,7 +2740,6 @@ pub fn SettingsPanel(
                     div { class: "event-head",
                         span { {crate::i18n::tr("settings.privacy.blocked_users.title")} }
                         span { class: "badge", "{blocklist_snapshot.read().len()}" }
-                        HelpTip { text: "Local actor-private filter. Realm-wide blocking belongs in moderation policy; account-data writes use ck.account.blocklist." }
                     }
                     div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
                         {
@@ -3034,46 +2937,6 @@ pub fn SettingsPanel(
                             }
                         }
 
-                        // ── Account Data (actor-private View preferences) ─────
-                        // models/views.md §2.6 + identity/account-lifecycle.md
-                        // Edits to a shared View's filter / sort / columns are written via
-                        // ck.view.update (visible to everyone). Personal View preferences
-                        // (collapsed state, ad-hoc filter, column widths) are written via
-                        // ck.account_data.set to the actor-private channel and never
-                        // broadcast to the Space.
-                        div { class: "event", "data-testid": "account-data-prefs",
-                    div { class: "event-head",
-                        span { "Personal preferences" }
-                        span { title: "ck.account_data.set", "Actor-private" }
-                        HelpTip { text: "The preferences below write to your account's actor-private channel and never sync to other Space members. To change a shared View's settings, use that View's Edit button." }
-                    }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "View column widths" }
-                            span { "actor-private" }
-                            div { class: "muted", "key=ui.view.<view_id>.column_widths" }
-                        }
-                        div { class: "metric",
-                            strong { "Folded panels" }
-                            span { "actor-private" }
-                            div { class: "muted", "key=ui.layout.folds" }
-                        }
-                        div { class: "metric",
-                            strong { "Mute rules" }
-                            span { "actor-private" }
-                            div { class: "muted", "key=notifications.mute" }
-                        }
-                        div { class: "metric",
-                            strong { "Profile space override" }
-                            span { title: "ck.profile.realm_override", "Per-realm profile" }
-                            div { class: "muted", "Show a different profile or handle inside a specific Space" }
-                        }
-                    }
-                    div { class: "actions",
-                        button { class: "secondary", "data-testid": "account-data-export", "Export account_data" }
-                        button { class: "secondary", "data-testid": "account-data-clear", "Clear actor-private preferences" }
-                    }
-                }
                         }
                     }
 
@@ -3160,9 +3023,6 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "muted", "Current: {theme}" }
-                    div { class: "muted",
-                        "Theme is actor-private account data. Shared board filters/layout still require an explicit shared View save."
-                    }
                     // P5 — radiogroup-flavoured three-mode switcher
                     // alongside the existing icon-button trio. Same
                     // persistence path; adds ARIA semantics + a label
@@ -3234,6 +3094,38 @@ pub fn SettingsPanel(
                                 div { class: "actions",
                                     span { class: "badge amber", "{blocked_count} blockers" }
                                     span { class: "badge blue", "advanced diagnostics" }
+                                }
+                            }
+                            div { class: "event", "data-testid": "settings-session-diagnostics",
+                                div { class: "event-head",
+                                    span { "Session diagnostics" }
+                                    span { "Advanced" }
+                                }
+                                div { class: "metric-grid",
+                                    div { class: "metric", "data-testid": "settings-proof-mode",
+                                        strong { {crate::i18n::tr("settings.proof_mode.label")} }
+                                        span { {crate::operation::current_proof_mode().label_en()} }
+                                    }
+                                    {
+                                        let status = crate::event_signer::signer_status();
+                                        let signer_did = status
+                                            .as_ref()
+                                            .map(|s| s.signer_did.clone())
+                                            .unwrap_or_else(|| "—".to_owned());
+                                        let signer_did_label = short_protocol_id(&signer_did);
+                                        rsx! {
+                                            div {
+                                                class: "metric",
+                                                "data-testid": "settings-signer-info",
+                                                strong { {crate::i18n::tr("settings.signer.label")} }
+                                                span {
+                                                    "data-testid": "settings-signer-did",
+                                                    title: "{signer_did}",
+                                                    "{signer_did_label}"
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             // T7.1 — entry point into the Developer Tools /

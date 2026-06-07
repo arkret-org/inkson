@@ -3,9 +3,8 @@
 //! Read-only-ish UI for inspecting `ck.capability.*` rows attached to
 //! the current actor: capabilities held (subject), capabilities granted
 //! out (issuer), and the full delegation chain for each row. The cotest
-//! `authz/capability-chain` scenario is already 7 live; this view adds
-//! the UI surfaces so future UI-driven assertions (`capability-row`,
-//! `capability-chain-step`, `capability-revoke-button`) can hook in.
+//! `authz/capability-chain` scenario is already live; this view focuses
+//! on inspection until revoke/delegation endpoints are available.
 //!
 //! Spec anchors:
 //! - `authz/capabilities.md` §3 — capability schema.
@@ -17,7 +16,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api::CokretApi;
-use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -181,7 +180,6 @@ pub fn CapabilitiesSettingsCard(
         div { class: "event", "data-testid": "capability-list-panel",
             div { class: "event-head",
                 span { "Capabilities" }
-                HelpTip { text: "Capability grants held by this actor or issued by this actor. Spec authz/capabilities.md §3 — grant/delegate/revoke." }
             }
             if !status.read().is_empty() {
                 div { class: "muted", "{status}" }
@@ -232,34 +230,6 @@ pub fn CapabilitiesSettingsCard(
                                                 move |_| detail_for.set(Some(id.clone()))
                                             },
                                             "Detail"
-                                        }
-                                        // Revoke is only meaningful when the current
-                                        // actor is the issuer (per §3.3); render the
-                                        // button regardless but disable it when the
-                                        // viewer is not the issuer. Soland still
-                                        // validates server-side, so a stray click
-                                        // returns capability_denied via the global
-                                        // policy-deny banner — defence in depth.
-                                        button {
-                                            class: "secondary",
-                                            "data-testid": "capability-revoke-button",
-                                            "data-capability-id": "{row.capability_id}",
-                                            disabled: row.issuer_did != account_did(),
-                                            onclick: {
-                                                let id = row.capability_id.clone();
-                                                move |_| {
-                                                    // TODO(G3.Y3-followup): wire to
-                                                    // `POST /_cokret/self/authz/capabilities/{id}/revoke`
-                                                    // once soland ships the revoke endpoint
-                                                    // (spec §3.3). Until then the click is a
-                                                    // no-op so the testid is hookable.
-                                                    status.set(format!(
-                                                        "TODO: revoke capability {} via soland (G3.Y3-followup)",
-                                                        short_protocol_id(&id)
-                                                    ));
-                                                }
-                                            },
-                                            "Revoke"
                                         }
                                     }
                                 }

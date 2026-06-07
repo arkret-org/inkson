@@ -354,19 +354,15 @@ test.describe("feature coverage placeholders", () => {
   // ---- Capability approval workflow ----
   // claude-design: desktop/realm-admin.html
   // spec: authz/capabilities.md
-  test("realm-admin: capability approval pending until 2 of 3 admins sign", async ({ page }) => {
-    // the capability-grant approval workflow
-    // requires the `grant-explanation` rows to render so an admin can
-    // see (a) what's being granted, and (b) the current pending /
-    // accepted state. The 2-of-3 quorum logic is server-side (soland
-    // policy engine); this e2e pins the UI surface so the explanation
-    // panel exists for admins to inspect.
-    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", {
+  test("realm-admin: capability grant and revoke live under advanced security", async ({ page }) => {
+    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/security", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await expect(page.getByTestId("grant-explanation")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId("grant-explanation-rows")).toBeVisible();
+    await expect(page.getByTestId("grant-explanation")).toHaveCount(0);
+    await expect(page.getByTestId("capability-grant-card")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("cap-grant-submit-button")).toBeVisible();
+    await expect(page.getByTestId("cap-revoke-submit-button")).toBeVisible();
   });
 
   // ---- Audit — projection origin / conflict trail ----

@@ -676,11 +676,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-mimi").click();
   await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
-  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-protocol-06");
-  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-content-08");
-  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("Discussion Policy");
-  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-ietf-mimi-room-policy-03");
-  await expect(page.getByTestId("mimi-draft-pinning")).toContainText("draft-kohbrok-mimi-identifiers-01");
+  await expect(page.getByTestId("mimi-draft-pinning")).toHaveCount(0);
 
   await page.getByTestId("mimi-refresh-directory").click();
   await expect(page.getByTestId("mimi-directory-result")).toContainText("mimi://mimi.example.com");
@@ -1419,53 +1415,48 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
   expect(deviceMessageRequest.headers()["idempotency-key"]).toBe("yougen-txn-1");
 });
 
-test("realm admin page handles metadata invites members and dangerous lifecycle", async ({ page }) => {
+test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
   await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
-  await expect(page.getByTestId("admin-discussion-admission")).toContainText("Discussion-scoped external admission");
-  await page.getByTestId("queue-discussion-admission").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("Discussion-scoped external admission");
+  await expect(page.getByTestId("realm-admin-overview")).toContainText("Realm settings");
+  await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
 
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/access", { waitUntil: "domcontentloaded" });
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("updated");
 
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/members", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("member-table")).toBeVisible();
+  await page.getByTestId("open-invite-modal-button").click();
+  await expect(page.getByTestId("invite-member-modal")).toBeVisible();
   await page
     .getByTestId("invite-target-input")
     .fill(
-      "http://127.0.0.1:8787/_cokret/open/invite-locators/resolve#token=e2e-invite-locator",
+      "http://127.0.0.1:8787/_cokret/open/invite-locators/resolve#token=e2e-invite-locator-token-00000001",
     );
   const inviteCommit = page.waitForRequest("**/_cokret/self/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
   expect(inviteBody.kind).toBe("ck.invite.create");
-  expect(inviteBody.payload.invite_id).toBe("ck:invite:e2e");
+  expect(inviteBody.payload.invite_id).toMatch(/^ck:invite:/);
   expect(inviteBody.payload.invitee).toBe("did:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual({
     recipient_service_did: "did:web:server.local",
   });
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
   expect(inviteBody.payload.x_member_delivery_binding).toBeUndefined();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("invited did:web:carol.example");
-  await expect(page.getByTestId("invite-row")).toContainText("pending");
+  await expect(page.getByTestId("realm-members-status")).toContainText("invited did:web:carol.example");
+  // The invite modal closes itself once the create event is accepted.
+  await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
 
-  const acceptCommit = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("accept-invite-button").click();
-  const acceptBody = await acceptCommit.then((request) => request.postDataJSON());
-  expect(acceptBody.kind).toBe("ck.invite.accept");
-  await expect(page.getByTestId("invite-row")).toContainText("accepted");
-
-  const cancelCommit = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("cancel-invite-button").click();
-  const cancelBody = await cancelCommit.then((request) => request.postDataJSON());
-  expect(cancelBody.kind).toBe("ck.invite.cancel");
-  await expect(page.getByTestId("invite-row")).toContainText("canceled");
-
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/security", { waitUntil: "domcontentloaded" });
   await page.getByTestId("rotate-realm-epoch").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
 
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/repair", { waitUntil: "domcontentloaded" });
   await page.getByTestId("archive-realm-button").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("archived");
+  await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");
 });
 
 test("server switcher hides custom endpoint controls", async ({ page }) => {

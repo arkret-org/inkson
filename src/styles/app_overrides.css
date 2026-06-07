@@ -3090,6 +3090,167 @@
   color: var(--text-3);
 }
 
+/* Members admin panel ------------------------------------------------- */
+.member-count-badge {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+  min-width: 22px;
+  text-align: center;
+}
+
+.members-invite-hint {
+  margin-top: -2px;
+  font-size: 12px;
+}
+
+.member-list-card .event-head {
+  align-items: center;
+}
+
+/* Right-aligned cluster in the list header: count badge, +invite, refresh. */
+.member-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Self-contained circular icon button for the list header. Deliberately
+   does NOT extend .primary/.secondary — their inline-block + 10px padding
+   stretched the square into an ellipse. */
+.member-head-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, filter 0.12s ease;
+}
+
+.member-head-icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.member-head-icon-btn .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Accent variant = the primary "invite" action. */
+.member-head-icon-btn-accent {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+}
+
+.member-head-icon-btn-accent:hover {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  filter: brightness(1.06);
+}
+
+/* Inline member search. Full-width, sits between header and rows. */
+.member-search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.member-load-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.member-load-more button {
+  width: 100%;
+  font-size: 12px;
+}
+
+/* Invite modal reuses the shared .modal system; just a touch narrower. */
+.invite-modal {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.invite-modal .modal-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.members-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.members-empty-icon {
+  line-height: 1;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.members-empty-icon .ui-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.members-empty-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.members-empty-hint {
+  max-width: 320px;
+  font-size: 12px;
+}
+
+.realm-admin-advanced-nav {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.realm-admin-advanced-nav summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.realm-admin-advanced-nav summary::-webkit-details-marker {
+  display: none;
+}
+
+.realm-admin-advanced-nav[open] summary {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.realm-admin-advanced-nav > .actions {
+  margin-left: 8px;
+}
+
 .dashboard-two-col {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
