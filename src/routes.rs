@@ -440,7 +440,7 @@ mod tests {
             Route::VerifyDevice,
             Route::RealmAdminSection {
                 realm_id: "ck:realm:roundtrip".to_owned(),
-                section: "members".to_owned(),
+                section: "access".to_owned(),
             },
             Route::RealmMembers {
                 realm_id: "ck:realm:roundtrip".to_owned(),
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(
             Route::RealmAdminSection {
                 realm_id: "ck:realm:admin".to_owned(),
-                section: "members".to_owned(),
+                section: "access".to_owned(),
             }
             .realm_id(),
             Some("ck:realm:admin")

@@ -464,6 +464,22 @@ pub fn RouterView() -> Element {
 
     let navigator = use_navigator();
     let route = use_route::<Route>();
+    {
+        let legacy_members_route = match &route {
+            Route::RealmAdminSection { realm_id, section } if section == "members" => {
+                Some(Route::RealmMembers {
+                    realm_id: realm_id.clone(),
+                })
+            }
+            _ => None,
+        };
+        let redirect_navigator = navigator.clone();
+        use_effect(move || {
+            if let Some(route) = legacy_members_route.clone() {
+                let _ = redirect_navigator.replace(route);
+            }
+        });
+    }
     let mut view = use_signal(|| route.to_view());
     let mut status = use_signal(|| ConnectionState::Offline.label().to_owned());
     let initial_sync_cursor = initial_local_state
@@ -1497,6 +1513,7 @@ pub fn RouterView() -> Element {
             active_navigation_scope_count
         )
     };
+    let direct_contact_count = direct_contact_rows.read().len();
     let pinned_realm_ids = {
         let store = state_store.read();
         pinned_realm_ids_from_store(&store)
@@ -2170,23 +2187,32 @@ pub fn RouterView() -> Element {
                 div { class: "sidebar-nav-group", "data-testid": "realm-tree-list",
                     h4 { class: "sidebar-nav-group-title",
                         span {
-                            title: "Collaboration Realms/Spaces and 1:1 direct conversations.",
+                            title: "Collaboration Realms/Spaces and contact-based direct conversations.",
                             "Workspace"
                         }
-                        // Header "+" creates a new Realm (no scope
-                        // needed). For new Spaces use the per-row
-                        // "+" hover action on a Realm or Space —
-                        // that surfaces the parent context inline
-                        // instead of dumping the user on a form with
-                        // no idea where the Space will land.
                         if realm_sidebar_tab() == "collaboration" {
+                            // Header action creates a top-level Realm
+                            // security boundary. Child Space creation
+                            // stays on each tree row so the parent
+                            // context is explicit.
                             Link {
-                                class: "add-realm-cta",
+                                class: "sidebar-header-action add-realm-cta",
                                 "data-testid": "sidebar-new-realm-cta",
                                 title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click the + on that row.",
                                 "aria-label": "Create a new Realm",
                                 to: Route::SetupSection { section: "realms".to_owned() },
                                 UiIcon { name: "plus" }
+                                span { class: "sidebar-header-action-label", {crate::i18n::tr("nav.new_realm_short")} }
+                            }
+                        } else {
+                            Link {
+                                class: "sidebar-header-action add-contact-cta",
+                                "data-testid": "sidebar-new-contact-cta",
+                                title: "Add a contact. Accepted contacts with direct-message consent can open a private chat.",
+                                "aria-label": "Add a contact",
+                                to: Route::ContactsNew,
+                                UiIcon { name: "user-plus" }
+                                span { class: "sidebar-header-action-label", {crate::i18n::tr("nav.add_contact_short")} }
                             }
                         }
                     }
@@ -2232,42 +2258,56 @@ pub fn RouterView() -> Element {
                                         });
                                     }
                                 },
-                                {crate::i18n::tr("nav.direct_messages")}
+                                {crate::i18n::tr("nav.contacts")}
                             }
                         }
                     }
                     if realm_sidebar_tab() == "collaboration" && !collaboration_realm_tree_nodes.is_empty() && !sidebar_is_collapsed {
-                        div { class: "sidebar-scope-toggle", "data-testid": "navigation-scope-toggle", role: "group", "aria-label": "Navigation selection scope",
-                            button {
-                                class: if active_scope_mode == NavigationScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
-                                "data-testid": "navigation-scope-exact",
-                                title: "Select only the current item",
-                                "aria-pressed": if active_scope_mode == NavigationScopeMode::Exact { "true" } else { "false" },
-                                onclick: move |_| {
-                                    navigation_scope_mode.set(NavigationScopeMode::Exact);
-                                    save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::Exact);
-                                },
-                                {crate::i18n::tr("nav.scope_current")}
-                            }
-                            button {
-                                class: if active_scope_mode == NavigationScopeMode::IncludeDescendants { "scope-chip active" } else { "scope-chip" },
-                                "data-testid": "navigation-scope-descendants",
-                                title: "Select the current item and all descendants",
-                                "aria-pressed": if active_scope_mode == NavigationScopeMode::IncludeDescendants { "true" } else { "false" },
-                                onclick: move |_| {
-                                    navigation_scope_mode.set(NavigationScopeMode::IncludeDescendants);
-                                    save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::IncludeDescendants);
-                                },
-                                {crate::i18n::tr("nav.scope_descendants")}
+                        div { class: "sidebar-scope-filter", "data-testid": "navigation-scope-filter",
+                            div { class: "sidebar-scope-filter-label", {crate::i18n::tr("nav.filter")} }
+                            div { class: "sidebar-scope-toggle sidebar-scope-toggle--child", "data-testid": "navigation-scope-toggle", role: "group", "aria-label": "Navigation selection scope",
+                                button {
+                                    class: if active_scope_mode == NavigationScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
+                                    "data-testid": "navigation-scope-exact",
+                                    title: "Select only the current item",
+                                    "aria-pressed": if active_scope_mode == NavigationScopeMode::Exact { "true" } else { "false" },
+                                    onclick: move |_| {
+                                        navigation_scope_mode.set(NavigationScopeMode::Exact);
+                                        save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::Exact);
+                                    },
+                                    {crate::i18n::tr("nav.scope_current")}
+                                }
+                                button {
+                                    class: if active_scope_mode == NavigationScopeMode::IncludeDescendants { "scope-chip active" } else { "scope-chip" },
+                                    "data-testid": "navigation-scope-descendants",
+                                    title: "Select the current item and all descendants",
+                                    "aria-pressed": if active_scope_mode == NavigationScopeMode::IncludeDescendants { "true" } else { "false" },
+                                    onclick: move |_| {
+                                        navigation_scope_mode.set(NavigationScopeMode::IncludeDescendants);
+                                        save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::IncludeDescendants);
+                                    },
+                                    {crate::i18n::tr("nav.scope_descendants")}
+                                }
                             }
                         }
                     }
                     if realm_sidebar_tab() == "direct" {
+                        if !sidebar_is_collapsed {
+                            Link {
+                                class: "sidebar-nav-item contact-sidebar-summary",
+                                "data-testid": "contacts-sidebar-summary",
+                                title: "Open the full Contacts list",
+                                to: Route::Contacts,
+                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
+                                span { class: "grow truncate", {crate::i18n::tr("nav.contacts")} }
+                                span { class: "pill muted xs", "{direct_contact_count}" }
+                            }
+                        }
                         if direct_contact_rows.read().is_empty() {
                             div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
-                                span { class: "sidebar-nav-icon", UiIcon { name: "message-circle" } }
+                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
                                 span { class: "grow truncate",
-                                    {if has_session { crate::i18n::tr("direct.empty") } else { crate::i18n::tr("direct.sign_in") }}
+                                    {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
                                 }
                             }
                         } else {
@@ -2277,7 +2317,21 @@ pub fn RouterView() -> Element {
                                     let state_label = contact.state.clone();
                                     let scopes_label = contact.bidirectional_scopes.join(", ");
                                     let direct = contact.direct_conversation.clone();
-                                    let can_resolve = contact.state == "accepted";
+                                    let has_direct_scope = contact
+                                        .bidirectional_scopes
+                                        .iter()
+                                        .chain(contact.effective_scopes.iter())
+                                        .any(|scope| scope == "direct_message");
+                                    let has_active_direct = direct
+                                        .as_ref()
+                                        .is_some_and(|summary| summary.state == "active");
+                                    let can_resolve =
+                                        contact.state == "accepted" && (has_direct_scope || has_active_direct);
+                                    let icon_name = if has_active_direct {
+                                        "message"
+                                    } else {
+                                        "user"
+                                    };
                                     let row_title = if can_resolve {
                                         crate::i18n::tr("direct.open")
                                     } else {
@@ -2285,7 +2339,7 @@ pub fn RouterView() -> Element {
                                     };
                                     rsx! {
                                         button {
-                                            class: if can_resolve { "sidebar-nav-item direct-conversation-row" } else { "sidebar-nav-item direct-conversation-row is-dim" },
+                                            class: if can_resolve { "sidebar-nav-item contact-sidebar-row" } else { "sidebar-nav-item contact-sidebar-row is-dim" },
                                             r#type: "button",
                                             "data-testid": "direct-conversation-row",
                                             "data-peer": "{peer}",
@@ -2336,10 +2390,10 @@ pub fn RouterView() -> Element {
                                                     });
                                                 }
                                             },
-                                            span { class: "sidebar-nav-icon", UiIcon { name: "message-circle" } }
+                                            span { class: "sidebar-nav-icon", UiIcon { name: icon_name.to_owned() } }
                                             span { class: "grow truncate", "{short_protocol_id(&peer)}" }
                                             span { class: "pill muted xs", "{state_label}" }
-                                            if !scopes_label.is_empty() {
+                                            if has_direct_scope {
                                                 span { class: "pill muted xs", title: "{scopes_label}", "DM" }
                                             }
                                         }
@@ -4300,10 +4354,9 @@ fn route_label(route: &Route) -> &'static str {
         Route::RealmMembers { .. } => "Members",
         Route::RealmAdmin { .. } => "Realm Settings",
         Route::RealmAdminSection { section, .. } => match section.as_str() {
-            "members" => "Members Settings",
+            "profile" => "Profile",
             "access" => "Access Policy",
             "security" => "Security & MLS",
-            "governance" => "Governance",
             "federation" => "Federation Trust",
             "repair" => "Repair & Danger",
             _ => "Realm Settings",

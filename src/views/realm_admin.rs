@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use crate::device_revoke::{ChainMoveState, MlsRevokeMoveChain};
 use crate::hlc::Hlc;
 use crate::local_state::{LocalStateStore, MoveSubmissionState};
 use crate::models::RealmTreeNodeKind;
@@ -37,10 +36,9 @@ const MEMBER_SEARCH_THRESHOLD: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RealmAdminSection {
     Overview,
-    Members,
+    Profile,
     Access,
     Security,
-    Governance,
     Federation,
     Repair,
 }
@@ -48,10 +46,9 @@ pub(crate) enum RealmAdminSection {
 impl RealmAdminSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or_default() {
-            "members" => Self::Members,
+            "profile" => Self::Profile,
             "access" => Self::Access,
             "security" => Self::Security,
-            "governance" => Self::Governance,
             "federation" => Self::Federation,
             "repair" => Self::Repair,
             _ => Self::Overview,
@@ -61,10 +58,9 @@ impl RealmAdminSection {
     fn slug(self) -> Option<&'static str> {
         match self {
             Self::Overview => None,
-            Self::Members => Some("members"),
+            Self::Profile => Some("profile"),
             Self::Access => Some("access"),
             Self::Security => Some("security"),
-            Self::Governance => Some("governance"),
             Self::Federation => Some("federation"),
             Self::Repair => Some("repair"),
         }
@@ -73,23 +69,20 @@ impl RealmAdminSection {
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
-            Self::Members => "Members",
+            Self::Profile => "Profile",
             Self::Access => "Access",
             Self::Security => "Security & MLS",
-            Self::Governance => "Governance",
             Self::Federation => "Federation",
             Self::Repair => "Repair & Danger",
         }
     }
 
-    fn primary_sections() -> [Self; 3] {
-        [Self::Overview, Self::Members, Self::Access]
-    }
-
-    fn advanced_sections() -> [Self; 4] {
+    fn sections() -> [Self; 6] {
         [
+            Self::Overview,
+            Self::Profile,
+            Self::Access,
             Self::Security,
-            Self::Governance,
             Self::Federation,
             Self::Repair,
         ]
@@ -102,6 +95,7 @@ struct MetadataSubject {
     home_realm_id: String,
     title: String,
     summary: String,
+    avatar_blob_ref: String,
 }
 
 fn projection_string(body: &Value, paths: &[&[&str]]) -> Option<String> {
@@ -193,11 +187,24 @@ fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) -> MetadataSu
             )
         })
         .unwrap_or_default();
+    let avatar_blob_ref = body
+        .and_then(|body| {
+            projection_string(
+                body,
+                &[
+                    &["summary", "avatar_blob_ref"],
+                    &["avatar_blob_ref"],
+                    &["object", "avatar_blob_ref"],
+                ],
+            )
+        })
+        .unwrap_or_default();
     MetadataSubject {
         kind,
         home_realm_id: projection_home_realm_for_admin(subject_id, kind, body),
         title,
         summary,
+        avatar_blob_ref,
     }
 }
 
@@ -365,16 +372,12 @@ pub fn RealmMembersPanel(
     rsx! {
         div { class: "timeline", "data-testid": "realm-members-panel",
             if can_invite && invite_modal_open() {
-                div {
-                    class: "modal-backdrop",
-                    "data-testid": "invite-member-modal",
-                    onclick: move |_| invite_modal_open.set(false),
-                    div {
-                        class: "modal invite-modal",
-                        role: "dialog",
-                        "aria-modal": "true",
-                        "aria-label": "Invite member",
-                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                crate::components::DismissiblePopup {
+                    overlay_class: "modal-backdrop",
+                    surface_class: "modal invite-modal",
+                    overlay_test_id: Some("invite-member-modal".to_owned()),
+                    aria_label: "Invite member",
+                    on_dismiss: move |_| invite_modal_open.set(false),
                         div { class: "modal-head",
                             h3 { "Invite member" }
                             button {
@@ -390,7 +393,7 @@ pub fn RealmMembersPanel(
                             input {
                                 "data-testid": "invite-target-input",
                                 value: "{invite_target}",
-                                placeholder: "Paste an invite link or invite_address JSON",
+                                placeholder: "Paste an invite locator link",
                                 oninput: move |evt| invite_target.set(evt.value()),
                             }
                             div { class: "muted members-invite-hint",
@@ -499,7 +502,6 @@ pub fn RealmMembersPanel(
                                 "Send Invite"
                             }
                         }
-                    }
                 }
             }
 
@@ -949,6 +951,7 @@ pub fn RealmAdminPanel(
 ) -> Element {
     let mut metadata_title = use_signal(String::new);
     let mut metadata_summary = use_signal(String::new);
+    let mut metadata_avatar_blob_ref = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
     let mut join_rule = use_signal(|| "open".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
@@ -993,15 +996,6 @@ pub fn RealmAdminPanel(
     let mut repair_state_witness_ref = use_signal(String::new);
     let mut repair_inclusion_proof_ref = use_signal(String::new);
     let mut repair_winner_json = use_signal(String::new);
-    // Device-revoke MLS Remove builder. The full round-trip is: load
-    // encrypted snapshot from `state_store`, decrypt with this device's
-    // snapshot secret, run SDK `remove_member_by_principal`, sign the
-    // canonical `mls_commit` Operation, submit via /_cokret/self/events, then
-    // re-encrypt + persist the post-commit group state so a crash between
-    // submit and persist doesn't leave the local cache an epoch behind.
-    let mut device_revoke_target = use_signal(String::new);
-    let device_revoke_status = use_signal(String::new);
-
     // Read the local anchor view for this realm once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
@@ -1072,6 +1066,7 @@ pub fn RealmAdminPanel(
     if metadata_loaded_for() != selected_realm_id {
         metadata_title.set(metadata_subject.title.clone());
         metadata_summary.set(metadata_subject.summary.clone());
+        metadata_avatar_blob_ref.set(metadata_subject.avatar_blob_ref.clone());
         metadata_loaded_for.set(selected_realm_id.clone());
     }
     let metadata_subject_label = match metadata_subject.kind {
@@ -1080,7 +1075,7 @@ pub fn RealmAdminPanel(
     };
     let metadata_event_kind = match metadata_subject.kind {
         RealmTreeNodeKind::Realm => "ck.realm.update",
-        RealmTreeNodeKind::Space => "ck.realm.update",
+        RealmTreeNodeKind::Space => "ck.space.update",
     };
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
@@ -1092,7 +1087,7 @@ pub fn RealmAdminPanel(
     rsx! {
         div { class: "timeline", "data-testid": "realm-admin-panel",
             div { class: "actions", "data-testid": "realm-admin-sections",
-                for section in RealmAdminSection::primary_sections() {
+                for section in RealmAdminSection::sections() {
                     if let Some(slug) = section.slug() {
                         Link {
                             class: if active_section == section { "primary" } else { "secondary" },
@@ -1112,23 +1107,6 @@ pub fn RealmAdminPanel(
                         }
                     }
                 }
-                details { class: "realm-admin-advanced-nav", "data-testid": "realm-admin-advanced-sections",
-                    summary { "Advanced" }
-                    div { class: "actions",
-                        for section in RealmAdminSection::advanced_sections() {
-                            if let Some(slug) = section.slug() {
-                                Link {
-                                    class: if active_section == section { "primary" } else { "secondary" },
-                                    to: Route::RealmAdminSection {
-                                        realm_id: selected_realm_id.clone(),
-                                        section: slug.to_owned(),
-                                    },
-                                    "{section.label()}"
-                                }
-                            }
-                        }
-                    }
-                }
             }
             if active_section == RealmAdminSection::Overview {
                 div { class: "event", "data-testid": "realm-admin-overview",
@@ -1142,11 +1120,22 @@ pub fn RealmAdminPanel(
                             span { "{projected_member_count} known" }
                             Link {
                                 class: "secondary",
-                                to: Route::RealmAdminSection {
+                                to: Route::RealmMembers {
                                     realm_id: selected_realm_id.clone(),
-                                    section: "members".to_owned(),
                                 },
                                 "Open Members"
+                            }
+                        }
+                        div { class: "metric",
+                            strong { "Profile" }
+                            span { "{metadata_subject_label} title, summary, avatar" }
+                            Link {
+                                class: "secondary",
+                                to: Route::RealmAdminSection {
+                                    realm_id: selected_realm_id.clone(),
+                                    section: "profile".to_owned(),
+                                },
+                                "Open Profile"
                             }
                         }
                         div { class: "metric",
@@ -1162,7 +1151,7 @@ pub fn RealmAdminPanel(
                             }
                         }
                         div { class: "metric",
-                            strong { "Advanced" }
+                            strong { "Security & repair" }
                             span { "{alert_count} alerts · epoch {mls_epoch_label}" }
                             Link {
                                 class: "secondary",
@@ -1170,7 +1159,7 @@ pub fn RealmAdminPanel(
                                     realm_id: selected_realm_id.clone(),
                                     section: "security".to_owned(),
                                 },
-                                "Open Advanced"
+                                "Open Security"
                             }
                         }
                     }
@@ -1662,110 +1651,150 @@ pub fn RealmAdminPanel(
                     }
                 }
             }
-            if active_section == RealmAdminSection::Access {
-            // Realm / Space metadata editor. Spec fields are `title` and
-            // optional `summary`; access policy is handled by the facet
-            // controls below rather than by generic metadata fields.
-            div { class: "event", "data-testid": "realm-metadata",
-                div { class: "event-head",
-                    span { "{metadata_subject_label} Metadata" }
-                    span { "{metadata_event_kind}" }
-                }
-                div { class: "muted",
-                    span { class: "mono", title: "{selected_realm_id}", "{short_protocol_id(&selected_realm_id)}" }
-                    if metadata_subject.kind == RealmTreeNodeKind::Space {
-                        span { " · home Realm " }
-                        span {
-                            class: "mono",
-                            title: "{metadata_subject.home_realm_id}",
-                            "{short_protocol_id(&metadata_subject.home_realm_id)}"
+            if active_section == RealmAdminSection::Profile {
+                // Realm / Space profile editor. Spec fields are `title`,
+                // optional `summary`, and optional `avatar_blob_ref`.
+                // Access policy lives in the Access tab.
+                div { class: "event", "data-testid": "realm-profile",
+                    div { class: "event-head",
+                        span { "{metadata_subject_label} Profile" }
+                        span { "{metadata_event_kind}" }
+                    }
+                    div { class: "muted",
+                        span { class: "mono", title: "{selected_realm_id}", "{short_protocol_id(&selected_realm_id)}" }
+                        if metadata_subject.kind == RealmTreeNodeKind::Space {
+                            span { " · home Realm " }
+                            span {
+                                class: "mono",
+                                title: "{metadata_subject.home_realm_id}",
+                                "{short_protocol_id(&metadata_subject.home_realm_id)}"
+                            }
                         }
                     }
-                }
-                div { class: "workflow-form",
-                    label { "Title" }
-                    input {
-                        "data-testid": "realm-name-input",
-                        value: "{metadata_title}",
-                        placeholder: "{metadata_subject_label} title",
-                        oninput: move |evt| metadata_title.set(evt.value()),
-                    }
-                    label { "Summary" }
-                    textarea {
-                        "data-testid": "realm-description-input",
-                        value: "{metadata_summary}",
-                        placeholder: "Optional summary",
-                        oninput: move |evt| metadata_summary.set(evt.value()),
-                    }
-                    div { class: "actions",
-                        button {
-                            class: "primary",
-                            "data-testid": "update-metadata-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                let subject_id = selected_realm_id.clone();
-                                let subject_kind = metadata_subject.kind;
-                                let home_realm_id = metadata_subject.home_realm_id.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let subject_id = subject_id.clone();
-                                    let home_realm_id = home_realm_id.clone();
-                                    let api_token = token();
-                                    let title = metadata_title().trim().to_owned();
-                                    let summary = metadata_summary().trim().to_owned();
-                                    if title.is_empty() {
-                                        status_msg.set("metadata update failed: title is required by spec".to_owned());
-                                        return;
-                                    }
-                                    let actor_did = match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id.device_did.as_str().to_owned(),
-                                        Err(err) => {
-                                            status_msg.set(format!("identity unavailable: {err}"));
+                    div { class: "workflow-form",
+                        label { "Title" }
+                        input {
+                            "data-testid": "realm-name-input",
+                            value: "{metadata_title}",
+                            placeholder: "{metadata_subject_label} title",
+                            oninput: move |evt| metadata_title.set(evt.value()),
+                        }
+                        label { "Summary" }
+                        textarea {
+                            "data-testid": "realm-summary-input",
+                            value: "{metadata_summary}",
+                            placeholder: "Optional summary",
+                            oninput: move |evt| metadata_summary.set(evt.value()),
+                        }
+                        label { "Avatar" }
+                        crate::components::AvatarUploader {
+                            current_blob_ref: metadata_avatar_blob_ref(),
+                            alt_text: format!("{metadata_subject_label} avatar"),
+                            base_url: base_url.clone(),
+                            api_token: token(),
+                            upload_realm_id: Some(metadata_subject.home_realm_id.clone()),
+                            test_id_prefix: "realm-avatar".to_owned(),
+                            on_uploaded: move |blob_ref: String| {
+                                metadata_avatar_blob_ref.set(blob_ref);
+                                status_msg.set("avatar uploaded; Save Profile publishes it".to_owned());
+                            },
+                            on_clear: move |_| {
+                                metadata_avatar_blob_ref.set(String::new());
+                                status_msg.set("avatar cleared; Save Profile publishes it".to_owned());
+                            },
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "primary",
+                                "data-testid": "update-metadata-button",
+                                onclick: {
+                                    let base = base_url.clone();
+                                    let subject_id = selected_realm_id.clone();
+                                    let subject_kind = metadata_subject.kind;
+                                    let home_realm_id = metadata_subject.home_realm_id.clone();
+                                    move |_| {
+                                        let base = base.clone();
+                                        let subject_id = subject_id.clone();
+                                        let home_realm_id = home_realm_id.clone();
+                                        let api_token = token();
+                                        let title = metadata_title().trim().to_owned();
+                                        let summary = metadata_summary().trim().to_owned();
+                                        let avatar_blob_ref = metadata_avatar_blob_ref().trim().to_owned();
+                                        if title.is_empty() {
+                                            status_msg.set(
+                                                "profile update failed: title is required by spec".to_owned(),
+                                            );
                                             return;
                                         }
-                                    };
-                                    let patch = if summary.is_empty() {
-                                        json!({
-                                            "title": title,
-                                            "summary": { "$op": "unset" },
-                                        })
-                                    } else {
-                                        json!({
-                                            "title": title,
-                                            "summary": summary,
-                                        })
-                                    };
-                                    spawn(async move {
-                                        match crate::views::helpers::with_authed_api(
-                                            &base,
-                                            api_token,
-                                            |api| async move {
-                                                match subject_kind {
-                                                    RealmTreeNodeKind::Realm => {
-                                                        api.update_realm_metadata(&home_realm_id, &actor_did, patch).await
-                                                    }
-                                                    RealmTreeNodeKind::Space => {
-                                                        api.update_space_metadata(&home_realm_id, &subject_id, &actor_did, patch).await
-                                                    }
-                                                }
-                                            },
-                                        )
-                                        .await
+                                        if !avatar_blob_ref.is_empty()
+                                            && !avatar_blob_ref.starts_with("ck:blob:")
                                         {
-                                            Ok(_) => status_msg.set(format!(
-                                                "{metadata_event_kind} metadata updated"
-                                            )),
-                                            Err(err) => status_msg.set(format!("update failed: {}", err.display())),
+                                            status_msg.set(
+                                                "profile update failed: avatar_blob_ref must be a ck:blob:* reference".to_owned(),
+                                            );
+                                            return;
                                         }
-                                    });
-                                }
-                            },
-                            {crate::i18n::tr("realm_admin.save_metadata")}
+                                        let actor_did = match state_store.write().ensure_local_identity() {
+                                            Ok(id) => id.device_did.as_str().to_owned(),
+                                            Err(err) => {
+                                                status_msg.set(format!("identity unavailable: {err}"));
+                                                return;
+                                            }
+                                        };
+                                        let mut patch = serde_json::Map::new();
+                                        patch.insert("title".to_owned(), json!(title));
+                                        patch.insert(
+                                            "summary".to_owned(),
+                                            if summary.is_empty() {
+                                                json!({ "$op": "unset" })
+                                            } else {
+                                                json!(summary)
+                                            },
+                                        );
+                                        patch.insert(
+                                            "avatar_blob_ref".to_owned(),
+                                            if avatar_blob_ref.is_empty() {
+                                                json!({ "$op": "unset" })
+                                            } else {
+                                                json!(avatar_blob_ref)
+                                            },
+                                        );
+                                        let patch = Value::Object(patch);
+                                        spawn(async move {
+                                            match crate::views::helpers::with_authed_api(
+                                                &base,
+                                                api_token,
+                                                |api| async move {
+                                                    match subject_kind {
+                                                        RealmTreeNodeKind::Realm => {
+                                                            api.update_realm_metadata(&home_realm_id, &actor_did, patch).await
+                                                        }
+                                                        RealmTreeNodeKind::Space => {
+                                                            api.update_space_metadata(&home_realm_id, &subject_id, &actor_did, patch).await
+                                                        }
+                                                    }
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                Ok(_) => status_msg.set(format!(
+                                                    "{metadata_event_kind} profile updated"
+                                                )),
+                                                Err(err) => status_msg.set(format!(
+                                                    "profile update failed: {}", err.display()
+                                                )),
+                                            }
+                                        });
+                                    }
+                                },
+                                {crate::i18n::tr("realm_admin.save_profile")}
+                            }
                         }
                     }
                 }
             }
 
+            if active_section == RealmAdminSection::Access {
             // Join policy selector
             div { class: "event", "data-testid": "join-policy",
                 div { class: "event-head", span { "Join Policy" } span { "access control" } }
@@ -1916,18 +1945,6 @@ pub fn RealmAdminPanel(
                 }
             }
             } // closes `if active_section == RealmAdminSection::Access`
-
-            if active_section == RealmAdminSection::Members {
-                RealmMembersPanel {
-                    base_url: base_url.clone(),
-                    account_did: account_did.clone(),
-                    token,
-                    selected_realm_id: selected_realm_id.clone(),
-                    sync_cursor,
-                    frontier_state,
-                    state_store,
-                }
-            }
 
             if active_section == RealmAdminSection::Security {
             // MLS epoch rotation
@@ -2270,18 +2287,6 @@ pub fn RealmAdminPanel(
             }
             }
 
-            if active_section == RealmAdminSection::Governance {
-                div { class: "event", "data-testid": "organization-governance",
-                    div { class: "event-head",
-                        span { "Governance" }
-                        span { "Admin tooling" }
-                    }
-                    div { class: "muted",
-                        "Organization policy and moderation rules are not editable from yougen. Use the organization admin console for policy changes; use Members and Access here for Realm-local changes."
-                    }
-                }
-            }
-
             if active_section == RealmAdminSection::Federation {
                 div { class: "event", "data-testid": "trust-bundle-panel",
                     div { class: "event-head",
@@ -2381,219 +2386,6 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // Device-revoke MLS Remove builder.
-            // Lets an operator turn the persisted MLS snapshot for this
-            // Space into a canonical `mls_commit` Operation that removes
-            // a target device's leaf, submits it, and re-persists the
-            // post-commit group state. On wasm builds (no OpenMLS
-            // runtime) we surface a desktop-only notice instead — the
-            // SDK group can't be hydrated from inside the browser yet.
-            div { class: "event", "data-testid": "mls-remove-builder",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("realm_admin.mls_remove_header")} }
-                    span { "B5c · ck.mls.commit" }
-                }
-                div { class: "muted",
-                    {crate::i18n::tr("realm_admin.mls_remove_hint")}
-                }
-                {
-                    let has_snapshot = state_store
-                        .read()
-                        .mls_snapshot_for(&selected_realm_id)
-                        .is_some();
-                    let cfg_native = cfg!(not(target_arch = "wasm32"));
-                    let snapshot_banner = if !cfg_native {
-                        "Web build cannot decrypt MLS snapshots — switch to the desktop client to revoke a device."
-                    } else if !has_snapshot {
-                        "No MLS snapshot persisted for this Realm yet. Send at least one Secure message (chat.rs) to seed one before revoking a device."
-                    } else {
-                        "Snapshot found; enter the target device DID and click Build & submit."
-                    };
-                    let disable_button = !(cfg_native && has_snapshot);
-                    rsx! {
-                        div { class: "muted", "data-testid": "mls-remove-snapshot-status", "{snapshot_banner}" }
-                        div { class: "workflow-form",
-                            input {
-                                "data-testid": "mls-remove-target-did",
-                                value: "{device_revoke_target}",
-                                placeholder: crate::i18n::tr("realm_admin.mls_remove_target_placeholder"),
-                                oninput: move |evt| device_revoke_target.set(evt.value()),
-                            }
-                            div { class: "actions",
-                                button {
-                                    class: "danger",
-                                    "data-testid": "mls-remove-submit-button",
-                                    disabled: disable_button,
-                                    title: crate::i18n::tr("realm_admin.mls_remove_button"),
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let realm = selected_realm_id.clone();
-                                        let actor = account_did.clone();
-                                        let device = device_id.clone();
-                                        move |_| {
-                                            let base = base.clone();
-                                            let realm = realm.clone();
-                                            let actor = actor.clone();
-                                            let device = device.clone();
-                                            let api_token = token();
-                                            let target = device_revoke_target().trim().to_owned();
-                                            spawn(async move {
-                                                run_device_revoke_from_snapshot(
-                                                    base,
-                                                    api_token,
-                                                    state_store,
-                                                    realm,
-                                                    actor,
-                                                    device,
-                                                    target,
-                                                    device_revoke_status,
-                                                )
-                                                .await;
-                                            });
-                                        }
-                                    },
-                                    {crate::i18n::tr("realm_admin.mls_remove_button")}
-                                }
-                            }
-                            if !device_revoke_status().is_empty() {
-                                div { class: "muted", "data-testid": "mls-remove-status", "{device_revoke_status}" }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Chained MLS Remove + epoch-advance Move tracker. Reads the
-            // local move_submissions store, filters for `mls_commit` +
-            // `mls_epoch_advance` kinds in the current Space, pairs them by
-            // submission timestamp, and surfaces each pair as a chain
-            // entry. Operators monitor here when a device-revocation chain
-            // has stalled (e.g. anchorer paused before the epoch-advance
-            // landed).
-            div { class: "event", "data-testid": "mls-revoke-chain-tracker",
-                div { class: "event-head",
-                    span { "MLS revoke Move chains" }
-                }
-                div { class: "muted",
-                    "Each row shows one chain of MLS Remove (commit) + epoch-advance Moves triggered by a device revocation. Both Moves must reach Effective before the device is fully unspooled from the group; failures are surfaced inline so operators can take corrective action."
-                }
-                {
-                    let submissions = state_store
-                        .read()
-                        .move_submissions_for_realm(&selected_realm_id);
-                    let commits: Vec<_> = submissions
-                        .iter()
-                        .filter(|r| r.kind == "mls_commit")
-                        .cloned()
-                        .collect();
-                    let epoch_advances: Vec<_> = submissions
-                        .iter()
-                        .filter(|r| r.kind == "mls_epoch_advance")
-                        .cloned()
-                        .collect();
-                    let chains: Vec<MlsRevokeMoveChain> = commits
-                        .iter()
-                        .enumerate()
-                        .map(|(i, commit)| {
-                            let epoch = epoch_advances.get(i);
-                            let commit_state = match commit.state {
-                                MoveSubmissionState::Effective => ChainMoveState::Effective,
-                                MoveSubmissionState::PendingAnchor
-                                | MoveSubmissionState::PendingMlsBinding => ChainMoveState::Pending,
-                                _ => ChainMoveState::Failed {
-                                    reason: commit
-                                        .reason
-                                        .clone()
-                                        .unwrap_or_else(|| commit.state.label_zh().to_owned()),
-                                },
-                            };
-                            let epoch_state = match epoch.map(|e| e.state) {
-                                None => ChainMoveState::NotSubmitted,
-                                Some(MoveSubmissionState::Effective) => ChainMoveState::Effective,
-                                Some(MoveSubmissionState::PendingAnchor)
-                                | Some(MoveSubmissionState::PendingMlsBinding) => {
-                                    ChainMoveState::Pending
-                                }
-                                Some(_) => ChainMoveState::Failed {
-                                    reason: epoch
-                                        .and_then(|e| e.reason.clone())
-                                        .unwrap_or_else(|| "epoch advance failed".to_owned()),
-                                },
-                            };
-                            MlsRevokeMoveChain {
-                                group_id: selected_realm_id.clone(),
-                                commit_move_id: Some(commit.move_id.clone()),
-                                epoch_advance_move_id: epoch.map(|e| e.move_id.clone()),
-                                commit_state,
-                                epoch_advance_state: epoch_state,
-                                pre_revoke_epoch: None,
-                            }
-                        })
-                        .collect();
-                    rsx! {
-                        if chains.is_empty() {
-                            div { class: "muted", "data-testid": "mls-revoke-chain-empty",
-                                "No MLS revoke Move chains tracked for this Realm yet. They appear here when a device-revoke handler enqueues an MLS commit + epoch-advance pair."
-                            }
-                        }
-                        for chain in chains {
-                            {
-                                let group_id_label = short_protocol_id(&chain.group_id);
-                                rsx! {
-                                    div { class: "event", "data-testid": "mls-revoke-chain-row",
-                                        div { class: "event-head",
-                                            span { title: "{chain.group_id}", "{group_id_label}" }
-                                            span { class: "badge", "{chain.status_summary()}" }
-                                        }
-                                        div { class: "metric-grid",
-                                            div { class: "metric",
-                                                strong { "MLS commit" }
-                                                span {
-                                                    class: "{chain.commit_state.badge_class()}",
-                                                    "{chain.commit_state.label()}"
-                                                }
-                                                if let Some(ref id) = chain.commit_move_id {
-                                                    {
-                                                        let id_label = short_protocol_id(id);
-                                                        rsx! {
-                                                            div { class: "muted", title: "{id}", "{id_label}" }
-                                                        }
-                                                    }
-                                                }
-                                                if let ChainMoveState::Failed { reason } =
-                                                    &chain.commit_state
-                                                {
-                                                    div { class: "muted", "reason: {reason}" }
-                                                }
-                                            }
-                                            div { class: "metric",
-                                                strong { "Epoch advance" }
-                                                span {
-                                                    class: "{chain.epoch_advance_state.badge_class()}",
-                                                    "{chain.epoch_advance_state.label()}"
-                                                }
-                                                if let Some(ref id) = chain.epoch_advance_move_id {
-                                                    {
-                                                        let id_label = short_protocol_id(id);
-                                                        rsx! {
-                                                            div { class: "muted", title: "{id}", "{id_label}" }
-                                                        }
-                                                    }
-                                                }
-                                                if let ChainMoveState::Failed { reason } =
-                                                    &chain.epoch_advance_state
-                                                {
-                                                    div { class: "muted", "reason: {reason}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             }
 
             if !status_msg().is_empty() {

@@ -88,6 +88,15 @@ fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
     (hash as usize % 6) + 1
 }
 
+fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
+    let media_type = if media_type.trim().is_empty() {
+        "application/octet-stream"
+    } else {
+        media_type
+    };
+    format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
+}
+
 fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
     if handles.is_empty() {
         fallback.to_owned()
@@ -98,15 +107,6 @@ fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     }
-}
-
-fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
-    let media_type = if media_type.trim().is_empty() {
-        "application/octet-stream"
-    } else {
-        media_type
-    };
-    format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
 }
 
 fn random_invite_locator_nonce() -> String {
@@ -661,6 +661,7 @@ fn render_notification_kind_toggle(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
     Server,
+    Devices,
     Storage,
     Encryption,
     Recovery,
@@ -680,6 +681,7 @@ enum SettingsSection {
 impl SettingsSection {
     fn from_slug(slug: Option<&str>) -> Self {
         match slug.unwrap_or("server") {
+            "devices" => Self::Devices,
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
             "recovery" => Self::Recovery,
@@ -698,6 +700,7 @@ impl SettingsSection {
     fn slug(self) -> &'static str {
         match self {
             Self::Server => "server",
+            Self::Devices => "devices",
             Self::Storage => "storage",
             Self::Encryption => "encryption",
             Self::Recovery => "recovery",
@@ -715,6 +718,7 @@ impl SettingsSection {
     fn label(self) -> &'static str {
         match self {
             Self::Server => "Account & server",
+            Self::Devices => "Devices",
             Self::Storage => "Data & sync",
             Self::Encryption => "Security",
             Self::Recovery => "Recovery",
@@ -731,6 +735,7 @@ impl SettingsSection {
 
     fn route(self) -> Route {
         match self {
+            Self::Devices => Route::SettingsDevices,
             Self::Recovery => Route::SettingsRecovery,
             _ => Route::SettingsSection {
                 section: self.slug().to_owned(),
@@ -740,8 +745,11 @@ impl SettingsSection {
 }
 
 const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
-    &[SettingsSection::Encryption, SettingsSection::Recovery];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
+    SettingsSection::Devices,
+    SettingsSection::Encryption,
+    SettingsSection::Recovery,
+];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
@@ -849,8 +857,7 @@ pub fn SettingsPanel(
     // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is
     // *also* published publicly to soland's
     // `POST /_soland/self/account/profile { avatar_url }` so the directory
-    // can index it. `avatar_upload_status` carries the inline
-    // progress / error message.
+    // can index it.
     let initial_avatar_blob_ref = state_store
         .read()
         .load_private_data(&account_did(), "avatar_blob_ref")
@@ -1822,7 +1829,7 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         match with_authed_api(&base, api_token, |api| async move {
                                             api.mimi_proxy_download(json!({
-                                                "blob_ref": "ck:blob:sha256:e2e",
+                                                "blob_ref": "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
                                                 "asset_privacy_policy": "provider_proxy"
                                             })).await
                                         })

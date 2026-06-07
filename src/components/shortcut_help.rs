@@ -8,6 +8,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::DismissiblePopup;
 use crate::i18n::tr;
 
 /// One entry in the shortcut help list. `keys` is the visible chord
@@ -75,57 +76,53 @@ pub fn ShortcutHelpOverlay(visible: Signal<bool>) -> Element {
         return rsx! { div { class: "shortcut-help-overlay-hidden" } };
     }
     let shortcuts = default_shortcuts();
+    let title = tr("shortcuts.title");
     rsx! {
-        div {
-            class: "shortcut-help-overlay",
-            "role": "dialog",
-            "aria-modal": "true",
-            "aria-label": tr("shortcuts.title"),
-            "data-testid": "shortcut-help-overlay",
-            style: "position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55);",
-            onclick: move |_| visible.set(false),
-            div {
-                class: "shortcut-help-card",
-                "data-testid": "shortcut-help-card",
-                style: "min-width: 320px; max-width: 480px; padding: 18px; border-radius: 10px; background: var(--bg-elevated, #1a1d22); color: var(--text-strong, #fff); border: 1px solid var(--border-default, #333); box-shadow: 0 12px 36px rgba(0,0,0,0.45);",
-                onclick: move |evt| evt.stop_propagation(),
-                header {
-                    class: "shortcut-help-card-head",
-                    style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;",
-                    h2 {
-                        style: "margin: 0; font-size: 1.05rem;",
-                        "{tr(\"shortcuts.title\")}"
-                    }
-                    button {
-                        class: "secondary",
-                        "data-testid": "shortcut-help-dismiss",
-                        onclick: move |_| visible.set(false),
-                        "{tr(\"shortcuts.dismiss\")}"
-                    }
+        DismissiblePopup {
+            overlay_class: "shortcut-help-overlay",
+            surface_class: "shortcut-help-card",
+            overlay_test_id: Some("shortcut-help-overlay".to_owned()),
+            surface_test_id: Some("shortcut-help-card".to_owned()),
+            overlay_style: Some("position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55);".to_owned()),
+            surface_style: Some("min-width: 320px; max-width: 480px; padding: 18px; border-radius: 10px; background: var(--bg-elevated, #1a1d22); color: var(--text-strong, #fff); border: 1px solid var(--border-default, #333); box-shadow: 0 12px 36px rgba(0,0,0,0.45);".to_owned()),
+            aria_label: title.clone(),
+            on_dismiss: move |_| visible.set(false),
+            header {
+                class: "shortcut-help-card-head",
+                style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;",
+                h2 {
+                    style: "margin: 0; font-size: 1.05rem;",
+                    "{title}"
                 }
-                ul {
-                    class: "shortcut-help-list",
-                    style: "list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px;",
-                    for entry in shortcuts.iter() {
-                        li {
-                            class: "shortcut-help-row",
-                            style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
-                            "data-testid": "shortcut-help-row",
-                            span {
-                                class: "shortcut-help-keys",
-                                style: "display: inline-flex; gap: 4px;",
-                                for (idx, key) in entry.keys.iter().enumerate() {
-                                    if idx > 0 {
-                                        span { style: "opacity: 0.6; align-self: center;", "+" }
-                                    }
-                                    kbd {
-                                        style: "padding: 2px 6px; border: 1px solid var(--border-default, #555); border-radius: 4px; background: var(--bg-default, #11141a); font-family: monospace;",
-                                        "{key}"
-                                    }
+                button {
+                    class: "secondary",
+                    "data-testid": "shortcut-help-dismiss",
+                    onclick: move |_| visible.set(false),
+                    "{tr(\"shortcuts.dismiss\")}"
+                }
+            }
+            ul {
+                class: "shortcut-help-list",
+                style: "list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px;",
+                for entry in shortcuts.iter() {
+                    li {
+                        class: "shortcut-help-row",
+                        style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
+                        "data-testid": "shortcut-help-row",
+                        span {
+                            class: "shortcut-help-keys",
+                            style: "display: inline-flex; gap: 4px;",
+                            for (idx, key) in entry.keys.iter().enumerate() {
+                                if idx > 0 {
+                                    span { style: "opacity: 0.6; align-self: center;", "+" }
+                                }
+                                kbd {
+                                    style: "padding: 2px 6px; border: 1px solid var(--border-default, #555); border-radius: 4px; background: var(--bg-default, #11141a); font-family: monospace;",
+                                    "{key}"
                                 }
                             }
-                            span { class: "shortcut-help-description", "{tr(entry.description_key)}" }
                         }
+                        span { class: "shortcut-help-description", "{tr(entry.description_key)}" }
                     }
                 }
             }

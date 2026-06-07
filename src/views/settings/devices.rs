@@ -2,8 +2,8 @@
 //! pairing (`/settings/devices/pair`).
 //!
 //! Surfaces:
-//! - `device-list` — wrapper element listing the principal's active devices (`GET
-//!   /_cokret/self/devices` via [`crate::api::CokretApi::list_devices`])
+//! - `device-list` — wrapper element listing the principal's active devices from `GET
+//!   /_cokret/self/account/viewer` via [`crate::api::CokretApi::list_devices`]
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
@@ -30,7 +30,7 @@
 //!
 //! ## Soland / coauth endpoints
 //!
-//! - `GET /_cokret/self/devices` — implemented (soland)
+//! - `GET /_cokret/self/account/viewer` — implemented (soland)
 //! - `POST /_cokret/self/devices/{device_id}/revoke` — implemented (soland)
 //! - `POST /_cokret/self/devices/pairing-challenge` — scaffold (soland)
 //! - `POST /_cokret/self/devices/authorize-pairing` — scaffold (soland)
@@ -58,11 +58,11 @@ struct DeviceRow {
 }
 
 fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
-    let current = value
+    let explicit_current = value
         .get("current_device_id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    let rows = value
+    let rows: Vec<DeviceRow> = value
         .get("devices")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -81,6 +81,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
                         .unwrap_or(false);
                     let verification_state = item
                         .get("verification_state")
+                        .or_else(|| item.get("status"))
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
                         .to_owned();
@@ -100,6 +101,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
                 .collect()
         })
         .unwrap_or_default();
+    let current = explicit_current.or_else(|| rows.first().map(|row| row.device_id.clone()));
     (current, rows)
 }
 
@@ -1080,6 +1082,28 @@ mod tests {
         // to the short device id).
         assert_eq!(rows[1].display_name, "");
         assert_eq!(rows[1].verification_state, "unverified");
+    }
+
+    #[test]
+    fn parse_devices_uses_first_device_when_current_missing() {
+        let payload = json!({
+            "principal_id": "did:web:alice.example",
+            "devices": [
+                {
+                    "device_id": "device-1",
+                    "display_name": "Laptop",
+                    "status": "active"
+                },
+                {
+                    "device_id": "device-2",
+                    "display_name": "Phone",
+                    "status": "active"
+                }
+            ]
+        });
+        let (cur, rows) = parse_devices(&payload);
+        assert_eq!(cur.as_deref(), Some("device-1"));
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]

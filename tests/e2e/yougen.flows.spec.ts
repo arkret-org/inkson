@@ -8,7 +8,17 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
 }
 
+async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
+  const modal = latestTestId(page, "mls-recovery-missing-modal");
+  await modal.waitFor({ state: "visible", timeout: 1_000 }).catch(() => undefined);
+  if (!(await modal.isVisible())) {
+    return;
+  }
+  await modal.getByRole("button", { name: "Dismiss" }).click();
+}
+
 async function openServerSwitcher(page: import("@playwright/test").Page) {
+  await dismissBlockingRecoveryModal(page);
   const menu = latestTestId(page, "server-switch-menu");
   if (await menu.isVisible()) {
     return;
@@ -152,12 +162,12 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   ).toHaveAttribute("title", "Encrypted Realm");
   await expect(
     page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Realm" }).locator(".sidebar-nav-icon"),
-  ).toHaveAttribute("title", "Realm");
+  ).toHaveAttribute("title", "Unencrypted Realm");
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
-  await page.getByTestId("account-menu-button").click();
+  await page.keyboard.press("Escape");
   await page.getByTestId("navigation-scope-descendants").click();
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms & Spaces");
@@ -175,6 +185,25 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
   await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Realm served by mocked server");
+});
+
+test("workspace sidebar separates filters and contact-based direct chats", async ({ page }) => {
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(page.getByTestId("sidebar-new-realm-cta")).toContainText("Realm");
+  await expect(page.getByTestId("navigation-scope-filter")).toContainText("Filter");
+  await expect(page.getByTestId("navigation-scope-filter")).toContainText("With children");
+
+  await dismissBlockingRecoveryModal(page);
+  await page.getByTestId("realm-sidebar-tab-direct").click();
+
+  await expect(page.getByTestId("sidebar-new-contact-cta")).toContainText("Contact");
+  await expect(page.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
+  await expect(page.getByTestId("direct-conversation-row").filter({ hasText: "did:web:bob.example" })).toContainText(
+    "DM",
+  );
+  await expect(page.getByTestId("direct-conversation-row").filter({ hasText: "did:web:carol.example" })).toContainText(
+    "pending",
+  );
 });
 
 test("authenticated login route returns to the workspace", async ({ page }) => {
@@ -482,6 +511,8 @@ test("settings language selector mirrors shell direction for RTL locales", async
 test("settings avatar upload crops local image before publishing profile URL", async ({ page }) => {
   await openSettings(page);
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
+  await expect(page.getByTestId("settings-avatar-upload-label")).toBeVisible();
+  await expect(page.getByTestId("settings-avatar-input")).toBeHidden();
 
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAYAAADN5B7xAAAAy0lEQVR4nBXLIRXEMBBAwRURHBwRK6I4OCJWRHFwRXwRxcH18u/d8IkIbIEjMAOvwBVYgXfgE0jgG/gFRnRsHUfH7Hh1XB2r493x6UjHt+PX/yGxJY7ETLwSV2Il3olPIolv4pf/MLFNHBNz4jVxTayJ98RnIhPfid/8h8JWOAqz8CpchVV4Fz6FFL6FX/3DxrZxbMyN18a1sTbeG5+NbHw3fvsfwAYOMMELXGCBN/iAgC/48Q8H28FxMA9eB9fBOngffA5y8D34HfwBl3vzwZTfUBgAAAAASUVORK5CYII=",
@@ -509,7 +540,9 @@ test("settings avatar upload crops local image before publishing profile URL", a
   expect(upload.postDataBuffer()?.length ?? 0).toBeGreaterThan(100);
 
   const profileBody = await profileRequest.then((request) => request.postDataJSON());
-  expect(profileBody.avatar_url).toContain("blob_ref=cx%3Ablob%3Asha256%3Ae2e");
+  expect(profileBody.avatar_url).toContain(
+    "blob_ref=ck%3Ablob%3Asha256%3A01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+  );
   expect(profileBody.avatar_url).toContain("purpose=profile_avatar");
   await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
 });
@@ -691,7 +724,9 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("identifier mimi://remote.example/alice reachable true");
 
   await page.getByTestId("mimi-proxy-download").click();
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText("proxy-download ck:blob:sha256:e2e");
+  await expect(page.getByTestId("mimi-action-receipt")).toContainText(
+    "proxy-download ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+  );
 
   const submit = page.waitForRequest("**/_cokret/open/mimi/flows/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
@@ -1368,7 +1403,9 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
   await expect(page.getByTestId("blob-status")).toContainText("upload hash ok");
   await expect(page.getByTestId("blob-status")).toContainText("no token in media URL");
   await expect(page.getByTestId("blob-policy-panel")).toContainText("unsafe or opaque type opens as attachment");
-  await expect(page.getByTestId("blob-policy-panel")).toContainText("Thumbnail: ck:blob:sha256:e2e-thumb");
+  await expect(page.getByTestId("blob-policy-panel")).toContainText(
+    "Ref: ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+  );
 
   const downloadRequest = page.waitForRequest("**/_cokret/self/blob/get?blob_ref=*");
   await page.getByTestId("verify-blob-download").click();
@@ -1420,14 +1457,54 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
   await expect(page.getByTestId("realm-admin-overview")).toContainText("Realm settings");
   await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
-
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/access", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
-  await page.getByTestId("update-metadata-button").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("updated");
+  await expect(page.getByTestId("realm-admin-advanced-sections")).toHaveCount(0);
+  const adminSections = page.getByTestId("realm-admin-sections");
+  await expect(adminSections.getByRole("link", { name: "Members" })).toHaveCount(0);
+  await expect(adminSections.getByRole("link", { name: "Profile" })).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Access" })).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Security & MLS" })).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Federation" })).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Repair & Danger" })).toBeVisible();
 
   await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/members", { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(/\/realms\/ck:realm:0196419b-0000-7000-8000-000000000000\/members$/);
+  await expect(page.getByTestId("realm-members-panel")).toBeVisible();
+  await expect(page.getByTestId("realm-admin-panel")).toHaveCount(0);
+
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/profile", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("realm-profile")).toBeVisible();
+  await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
+  await page.getByTestId("realm-summary-input").fill("Updated realm summary");
+  await expect(page.getByTestId("realm-avatar-blob-ref-input")).toHaveCount(0);
+  await expect(page.getByTestId("realm-avatar")).toBeVisible();
+  await expect(page.getByTestId("realm-avatar-upload-label")).toBeVisible();
+  await expect(page.getByTestId("realm-avatar-input")).toBeHidden();
+  await page.getByTestId("update-metadata-button").click();
+  await expect(page.getByTestId("realm-admin-status")).toContainText("profile updated");
+
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/access", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("realm-profile")).toHaveCount(0);
+  await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
+  await expect(page.getByTestId("join-policy")).toBeVisible();
+  await expect(page.getByTestId("history-visibility")).toBeVisible();
+
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/members", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("member-table")).toBeVisible();
+  await page.getByTestId("open-invite-modal-button").click();
+  await expect(page.getByTestId("invite-member-modal")).toBeVisible();
+  const inviteBackdrop = page.getByTestId("invite-member-modal");
+  const inviteDialog = page.getByRole("dialog", { name: "Invite member" });
+  const backdropBox = await inviteBackdrop.boundingBox();
+  const dialogBox = await inviteDialog.boundingBox();
+  expect(backdropBox).not.toBeNull();
+  expect(dialogBox).not.toBeNull();
+  await page.mouse.move(dialogBox!.x + 12, dialogBox!.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(backdropBox!.x + backdropBox!.width - 12, backdropBox!.y + backdropBox!.height - 12);
+  await page.mouse.up();
+  await expect(inviteBackdrop).toBeVisible();
+  await page.mouse.click(backdropBox!.x + backdropBox!.width - 12, backdropBox!.y + backdropBox!.height - 12);
+  await expect(inviteBackdrop).toHaveCount(0);
   await page.getByTestId("open-invite-modal-button").click();
   await expect(page.getByTestId("invite-member-modal")).toBeVisible();
   await page

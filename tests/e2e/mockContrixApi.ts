@@ -5,6 +5,8 @@ const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
 const SETUP_REALM = "ck:realm:01js0setupflow000000000000";
 const CHILD_REALM = "ck:realm:01launchchild0000000000000";
 const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
+const DIRECT_BOB_REALM = "ck:realm:01directbob000000000000000";
+const DIRECT_BOB_FLOW = "ck:flow:01directbob0000000000000000";
 const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
 const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
@@ -15,6 +17,8 @@ const DEMO_FLOW_LEGAL_REVIEW = "ck:flow:0196419b-0000-7000-8000-000000000101";
 const DEMO_FLOW_ONBOARDING_COPY = "ck:flow:0196419b-0000-7000-8000-000000000102";
 const DEMO_FLOW_SECURITY_SIGNOFF = "ck:flow:0196419b-0000-7000-8000-000000000103";
 const DEMO_FLOW_SECONDARY_CARD = "ck:flow:0196419b-0000-7000-8000-000000000104";
+const DEMO_BLOB_REF =
+  "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
 
 type SpaceContainerProjection = {
   container_space_id: string;
@@ -574,10 +578,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     if (url.pathname === "/_cokret/open/mimi/proxy-download") {
       return json(route, {
         ok: true,
-        blob_ref: "ck:blob:sha256:e2e",
+        blob_ref: DEMO_BLOB_REF,
         media_type: "application/octet-stream",
         size: 23,
-        proxy_url: "https://mimi.example.com/proxy/ck:blob:sha256:e2e",
+        proxy_url: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
         receipt: { kind: "ck.open.mimi.proxy_download", direct_object_store_url: null },
       });
     }
@@ -662,62 +666,58 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         kind: "delta",
         cursor: "ck:cursor:e2e-2",
         realms: {
-          join: {
-            ...Object.fromEntries(
-              createdRealms.map((realm) => [
-                realm.id,
-                {
-                  summary: {
-                    title: realm.title,
-                    summary: realm.summary,
-                    encryption_profile: realm.encryption_profile,
-                  },
-                  timeline: {
-                    events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
-                    limited: false,
-                  },
-                  state: { events: [] },
-                  ephemeral: { events: [] },
-                  unread: { notification_count: 0, highlight_count: 0 },
+          ...Object.fromEntries(
+            createdRealms.map((realm) => [
+              realm.id,
+              {
+                summary: {
+                  title: realm.title,
+                  summary: realm.summary,
+                  encryption_profile: realm.encryption_profile,
                 },
-              ]),
-            ),
-            [DEMO_REALM]: {
-              summary: {
-                title: "Cokret Demo Realm",
-                summary: "Shared demo Realm served by mocked server",
-                encryption_profile: "mls_rfc9420",
+                timeline: {
+                  events: timelineEvents.filter((event) => eventRealmId(event) === realm.id),
+                  limited: false,
+                },
+                state: { events: [] },
+                ephemeral: { events: [] },
+                unread: { notification_count: 0, highlight_count: 0 },
               },
-              timeline: { events: demoTimelineEvents, limited: false },
-              state: { events: [] },
-              ephemeral: { events: [] },
-              unread: { notification_count: 0, highlight_count: 0 },
+            ]),
+          ),
+          [DEMO_REALM]: {
+            summary: {
+              title: "Cokret Demo Realm",
+              summary: "Shared demo Realm served by mocked server",
+              encryption_profile: "mls_rfc9420",
             },
-            [CHILD_REALM]: {
-              summary: {
-                title: "Launch Realm",
-                summary: "Board and discussion scope",
-              },
-              timeline: { events: [], limited: false },
-              state: { events: [] },
-              ephemeral: { events: [] },
-              unread: { notification_count: 0, highlight_count: 0 },
-            },
-            [GRANDCHILD_REALM]: {
-              summary: {
-                title: "Launch Deep Realm",
-                summary: "Related scope fixture",
-              },
-              timeline: { events: [], limited: false },
-              state: { events: [] },
-              ephemeral: { events: [] },
-              unread: { notification_count: 0, highlight_count: 0 },
-            },
+            timeline: { events: demoTimelineEvents, limited: false },
+            state: { events: [] },
+            ephemeral: { events: [] },
+            unread: { notification_count: 0, highlight_count: 0 },
           },
-          invite: {},
-          knock: {},
-          leave: {},
+          [CHILD_REALM]: {
+            summary: {
+              title: "Launch Realm",
+              summary: "Board and discussion scope",
+            },
+            timeline: { events: [], limited: false },
+            state: { events: [] },
+            ephemeral: { events: [] },
+            unread: { notification_count: 0, highlight_count: 0 },
+          },
+          [GRANDCHILD_REALM]: {
+            summary: {
+              title: "Launch Deep Realm",
+              summary: "Related scope fixture",
+            },
+            timeline: { events: [], limited: false },
+            state: { events: [] },
+            ephemeral: { events: [] },
+            unread: { notification_count: 0, highlight_count: 0 },
+          },
         },
+        left_realms: [],
         to_device: { messages: [{ type: "ck.mls.welcome", content: { ciphertext: "opaque" } }] },
         account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
@@ -966,6 +966,50 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       return json(route, { invites: [], next_cursor: null });
     }
 
+    if (url.pathname === "/_cokret/self/contacts" && route.request().method() === "GET") {
+      return json(route, {
+        contacts: [
+          {
+            peer: "did:web:bob.example",
+            state: "accepted",
+            request_event_ref: "ck:event:contact-bob-request",
+            response_event_ref: "ck:event:contact-bob-response",
+            granted_by_me: ["direct_message"],
+            granted_to_me: ["direct_message"],
+            bidirectional_scopes: ["direct_message"],
+            effective_scopes: ["direct_message"],
+            direct_conversation: {
+              realm_id: DIRECT_BOB_REALM,
+              main_flow_id: DIRECT_BOB_FLOW,
+              binding_event_ref: "ck:event:direct-bob-binding",
+              state: "active",
+            },
+          },
+          {
+            peer: "did:web:carol.example",
+            state: "pending",
+            request_event_ref: "ck:event:contact-carol-request",
+            granted_by_me: ["invite"],
+            granted_to_me: [],
+            bidirectional_scopes: [],
+            effective_scopes: ["invite"],
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      });
+    }
+
+    if (url.pathname === "/_cokret/self/direct-conversations/resolve") {
+      return json(route, {
+        state: "found",
+        realm_id: DIRECT_BOB_REALM,
+        main_flow_id: DIRECT_BOB_FLOW,
+        binding_event_ref: "ck:event:direct-bob-binding",
+        created: false,
+      });
+    }
+
     if (url.pathname === "/_cokret/self/keys/upload") {
       return json(route, { one_time_key_counts: { signed_curve25519: 1 }, fallback_keys: {} });
     }
@@ -1012,11 +1056,10 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
 
     if (url.pathname === "/_cokret/self/blob/upload") {
       return json(route, {
-        blob_ref: "ck:blob:sha256:e2e",
+        blob_ref: DEMO_BLOB_REF,
         size_bytes: 22,
         media_type: "application/octet-stream",
         content_digest: "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
-        thumbnail_ref: "ck:blob:sha256:e2e-thumb",
         upload_receipt: { service_did: "did:web:server.local", content_digest_verified: true },
       });
     }

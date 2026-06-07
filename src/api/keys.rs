@@ -286,14 +286,13 @@ impl CokretApi {
         .await
     }
 
-    /// G3.Y1 — list the principal's active devices via soland's
-    /// `ck.devices.list` (`GET /_cokret/self/devices`). Returns the raw JSON
-    /// response shape `{ "actor": ..., "current_device_id": ..., "devices": [...] }`.
-    /// Each device record carries at minimum `device_id`,
-    /// `is_current_session_device`, and a `verification_state` per
-    /// `routing/identity/device.rs::device_list`.
+    /// List the principal's active devices from the spec account viewer
+    /// (`GET /_cokret/self/account/viewer`). Returns the raw JSON response
+    /// shape with `devices[]`; the settings UI derives "current device" from
+    /// the first device when the viewer projection has no explicit current
+    /// marker.
     pub async fn list_devices(&self) -> anyhow::Result<Value> {
-        self.get_json("_cokret/self/devices").await
+        self.get_json("_cokret/self/account/viewer").await
     }
 
     /// G3.Y1 — request a short-lived pairing challenge from soland.

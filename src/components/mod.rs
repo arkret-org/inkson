@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires `on_switch` / `on_add_account` handlers.
 pub mod account_switcher;
+pub mod avatar_uploader;
 /// CKP-0007 P3B.2 — Circle error toast surfaced from the app shell.
 /// Consumes [`crate::circle::CircleErrorKind`] and renders the
 /// localized user-facing string.
@@ -15,6 +16,7 @@ pub mod circle_scope_picker;
 /// CKP-0007 P3B.2 — Create-Circle modal surfaced from the Realm-detail
 /// page. Strict-subset validation runs client-side before submit.
 pub mod create_circle_modal;
+pub mod dismissible_popup;
 pub mod empty_state;
 /// P5 — recoverable error display + retry affordance. Pairs with the
 /// passive `ErrorBanner` below: this one carries a request_id and a
@@ -53,6 +55,7 @@ pub mod verify_badges;
 pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
+pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
 pub use circle_error_toast::{
     CircleErrorToast, CircleErrorToastProps, maybe_dispatch_circle_error, push_circle_error,
     take_circle_error,
@@ -61,6 +64,7 @@ pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
 pub use create_circle_modal::{CircleCreateForm, CreateCircleModal, validate_strict_subset};
+pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use mls_backup_prompt::{
@@ -176,6 +180,9 @@ pub fn UiIcon(name: String) -> Element {
         "home" => {
             "M3 10.5 9.5 4a3 3 0 0 1 5 0L21 10.5M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"
         }
+        "image" => {
+            "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm3 13 5-6 4 5 2-3 3 4M8 8.5h.01"
+        }
         "inbox" => "M22 12h-6l-2 3h-4l-2-3H2m20 0v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7l3-8h14Z",
         "key" => "M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-2.8-2.8L20 2h2v2l-8.4 8.4ZM7 17h.01",
         "lock" => "M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5V10Zm7 4v2",
@@ -220,6 +227,7 @@ pub fn UiIcon(name: String) -> Element {
         "timeline" => "M8 6h13M3 6h.01M8 12h13M3 12h.01M8 18h13M3 18h.01",
         "unlock" => "M7 10V8a5 5 0 0 1 9.58-2M5 10h14v10H5V10Zm7 4v2",
         "user" => "M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
+        "user-plus" => "M16 21a6 6 0 0 0-12 0M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm9-4v6m-3-3h6",
         "users" => {
             "M16 21a6 6 0 0 0-12 0M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm12 10a5 5 0 0 0-5-5M17 3.3a4 4 0 0 1 0 7.4"
         }

@@ -35,16 +35,6 @@ fn invitee_resolution(
     })
 }
 
-fn invitee_from_invite_address(
-    address: cokret_sdk::InviteAddress,
-) -> anyhow::Result<InviteeResolution> {
-    invitee_resolution(
-        address,
-        None,
-        cokret_sdk::IntroductionEvidence::ExplicitAddress,
-    )
-}
-
 fn invitee_from_principal_locator(
     locator: cokret_sdk::PrincipalLocator,
 ) -> anyhow::Result<InviteeResolution> {
@@ -70,11 +60,7 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         let locator: cokret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
-    if value.get("subject_id").is_some() && value.get("recipient_service_did").is_some() {
-        let address: cokret_sdk::InviteAddress = serde_json::from_value(value)?;
-        return invitee_from_invite_address(address).map(Some);
-    }
-    anyhow::bail!("invite target JSON must be a principal locator or invite_address")
+    anyhow::bail!("invite target JSON must be a principal locator")
 }
 
 fn locator_url_token(url: &Url) -> anyhow::Result<String> {
@@ -124,13 +110,11 @@ fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, Stri
 
 fn reject_legacy_invite_target(target: &str) -> anyhow::Result<()> {
     if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-        anyhow::bail!(
-            "raw DID is not an invite target; paste an invite locator URL or invite_address JSON"
-        );
+        anyhow::bail!("raw DID is not an invite target; paste an invite locator URL");
     }
     if canonical_invitee_handle(target).is_ok() {
         anyhow::bail!(
-            "handle lookup is not used for invites; paste the recipient's invite locator URL or invite_address JSON"
+            "handle lookup is not used for invites; paste the recipient's invite locator URL"
         );
     }
     Ok(())
@@ -348,7 +332,7 @@ impl CokretApi {
         }
 
         reject_legacy_invite_target(target)?;
-        anyhow::bail!("invite target must be an invite locator URL or invite_address JSON")
+        anyhow::bail!("invite target must be an invite locator URL or principal locator JSON")
     }
 
     /// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.list_handles_for_subject`.
@@ -467,6 +451,18 @@ mod invite_addressing_tests {
             "did:web:ps.bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "locator_ref");
+    }
+
+    #[test]
+    fn invite_target_json_rejects_raw_invite_address() {
+        let raw_invite_address = json!({
+            "subject_id": "did:web:bob.example",
+            "recipient_service_did": "did:web:ps.bob.example",
+        })
+        .to_string();
+        let err = invitee_from_target_json(&raw_invite_address)
+            .expect_err("raw invite_address JSON must be rejected");
+        assert!(err.to_string().contains("principal locator"));
     }
 
     #[test]

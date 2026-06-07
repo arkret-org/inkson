@@ -1105,6 +1105,59 @@ button:disabled:hover,
   justify-content: center;
   color: var(--muted, #888);
 }
+.avatar-uploader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.avatar-uploader-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.avatar-upload-button {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.avatar-uploader-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.avatar-crop-editor {
+  display: grid;
+  grid-template-columns: minmax(128px, 180px) minmax(220px, 1fr);
+  gap: 16px;
+  align-items: center;
+  max-width: 600px;
+}
+.avatar-crop-stage {
+  position: relative;
+  width: min(180px, 40vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--border-default, #333);
+  background: var(--bg-elevated, #1a1d22);
+}
+.avatar-crop-controls {
+  display: grid;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .avatar-uploader,
+  .avatar-crop-editor {
+    grid-template-columns: 1fr;
+  }
+}
 .avatar.applet{ background: linear-gradient(135deg, #f59e0b, #d946ef); border-radius: 6px; }
 
 .avatar-stack { display: inline-flex; }

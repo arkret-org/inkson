@@ -1656,39 +1656,60 @@
   color: var(--nav-text);
 }
 
-/* Prominent CTA for "create a new Realm" in the Realms & Spaces
- * sidebar header. The tiny 16px `.add` button blended into the
- * label and most users never noticed it; this variant matches the
- * brand-yellow primary button styling so it reads as the primary
- * call to action for the whole section. SVG icon (UiIcon "plus")
- * keeps the affordance crisp at all DPRs.
- */
-.sidebar-nav-group-title .add-realm-cta {
+/* Header actions are intentionally labeled because the same Workspace
+ * block can create either a top-level Realm or a Contact depending on
+ * the active tab. */
+.sidebar-nav-group-title .sidebar-header-action {
   margin-left: auto;
-  width: 28px;
+  min-width: 0;
   height: 28px;
+  padding: 0 8px;
   border-radius: 6px;
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: transform 80ms ease, box-shadow 80ms ease, filter 80ms ease;
+}
+.sidebar-nav-group-title .sidebar-header-action svg {
+  width: 16px;
+  height: 16px;
+}
+.sidebar-header-action-label {
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-nav-group-title .add-realm-cta {
   color: #1a1a1a;
   background: linear-gradient(135deg, #ffb547 0%, #ff8a3d 100%);
   border: 1px solid color-mix(in srgb, #ff8a3d 60%, transparent);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(255, 138, 61, 0.18);
-  text-decoration: none;
-  transition: transform 80ms ease, box-shadow 80ms ease, filter 80ms ease;
 }
-.sidebar-nav-group-title .add-realm-cta svg {
-  width: 16px;
-  height: 16px;
+.sidebar-nav-group-title .add-contact-cta {
+  color: #07130f;
+  background: linear-gradient(135deg, #9de7c8 0%, #63c2ff 100%);
+  border: 1px solid color-mix(in srgb, #63c2ff 62%, transparent);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(99, 194, 255, 0.16);
 }
-.sidebar-nav-group-title .add-realm-cta:hover,
-.sidebar-nav-group-title .add-realm-cta:focus-visible {
+.sidebar-nav-group-title .sidebar-header-action:hover,
+.sidebar-nav-group-title .sidebar-header-action:focus-visible {
   transform: translateY(-1px);
   filter: brightness(1.05);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2), 0 6px 14px rgba(255, 138, 61, 0.28);
   outline: none;
 }
-.sidebar-nav-group-title .add-realm-cta:active {
+.sidebar-nav-group-title .add-contact-cta:hover,
+.sidebar-nav-group-title .add-contact-cta:focus-visible {
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2), 0 6px 14px rgba(99, 194, 255, 0.26);
+}
+.sidebar-nav-group-title .sidebar-header-action:active {
   transform: translateY(0);
   filter: brightness(0.96);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
@@ -1753,12 +1774,61 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--nav-text);
 }
+.sidebar-scope-filter {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  margin: 0 8px 4px;
+  padding-left: 14px;
+}
+.sidebar-scope-filter::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  bottom: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--nav-border) 70%, transparent);
+}
+.sidebar-scope-filter::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 24px;
+  width: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--nav-border) 70%, transparent);
+}
+.sidebar-scope-filter-label {
+  color: var(--nav-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.sidebar-scope-toggle--child {
+  padding: 0;
+}
+.sidebar-scope-toggle--child .scope-chip {
+  min-height: 26px;
+  border-radius: 7px;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--nav-input-bg) 76%, transparent);
+}
+.sidebar-scope-toggle--child .scope-chip.active {
+  background: color-mix(in srgb, var(--accent) 13%, var(--nav-input-bg));
+}
 .realm-tree-item {
   min-height: 36px;
 }
 .realm-tree-item.is-scope-member:not(.is-active) {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--nav-border));
   background: color-mix(in srgb, var(--accent) 8%, var(--nav-soft));
+}
+.contact-sidebar-summary {
+  border-style: dashed;
+}
+.contact-sidebar-row {
+  min-height: 36px;
 }
 
 .sidebar-nav-item .grow {
@@ -3216,39 +3286,6 @@
 .members-empty-hint {
   max-width: 320px;
   font-size: 12px;
-}
-
-.realm-admin-advanced-nav {
-  display: inline-flex;
-  align-items: center;
-  position: relative;
-}
-
-.realm-admin-advanced-nav summary {
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.realm-admin-advanced-nav summary::-webkit-details-marker {
-  display: none;
-}
-
-.realm-admin-advanced-nav[open] summary {
-  color: var(--accent-ink);
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.realm-admin-advanced-nav > .actions {
-  margin-left: 8px;
 }
 
 .dashboard-two-col {
