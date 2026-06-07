@@ -781,9 +781,9 @@ pub struct MlsAccountSecretRotationUpload {
 /// carry these fields. The caller MUST give the successor envelope a *fresh*
 /// `backup_id` (not the predecessor's) so the predecessor stays persisted as a
 /// distinct chain link and `series_predecessor_not_found` is not triggered.
-fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
+fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> Result<u64> {
     let Some(prev) = previous else {
-        return body.get("series_seq").and_then(Value::as_u64).unwrap_or(0);
+        return Ok(body.get("series_seq").and_then(Value::as_u64).unwrap_or(0));
     };
     let next_seq = prev.get("series_seq").and_then(Value::as_u64).unwrap_or(0) + 1;
     if let Some(series_id) = prev.get("series_id").and_then(Value::as_str) {
@@ -793,8 +793,8 @@ fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
     if let Some(prev_backup_id) = prev.get("backup_id").and_then(Value::as_str) {
         body["supersedes"] = Value::String(prev_backup_id.to_owned());
     }
-    body["supersedes_digest"] = Value::String(series_supersedes_digest(prev));
-    next_seq
+    body["supersedes_digest"] = Value::String(series_supersedes_digest(prev)?);
+    Ok(next_seq)
 }
 
 /// `sha256:<hex>` over the canonical bytes of the predecessor backup envelope,
@@ -802,7 +802,7 @@ fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> u64 {
 /// `auth_data.signature` is stripped first so the digest stays stable across
 /// (re)signing (yougen bodies currently carry no `auth_data`, so this is a
 /// no-op today, but keeps the digest definition spec-aligned).
-fn series_supersedes_digest(previous: &Value) -> String {
+fn series_supersedes_digest(previous: &Value) -> Result<String> {
     let mut canonical = previous.clone();
     if let Some(auth_data) = canonical
         .get_mut("auth_data")
@@ -811,7 +811,7 @@ fn series_supersedes_digest(previous: &Value) -> String {
         auth_data.remove("signature");
     }
     crate::canonical::canonical_sha256(&canonical)
-        .unwrap_or_else(|_| format!("sha256:{}", "0".repeat(64)))
+        .map_err(|err| anyhow!("series supersedes digest canonicalization failed: {err}"))
 }
 
 /// Generate a fresh protocol `backup_id` for a new envelope in a series.
@@ -876,7 +876,7 @@ fn verify_series_chain(tail: &Value, all: &[Value]) -> Result<()> {
                 "series_chain_broken: series_seq {seq} `supersedes` does not point at its predecessor"
             ));
         }
-        let expected_digest = series_supersedes_digest(prev);
+        let expected_digest = series_supersedes_digest(prev)?;
         if body.get("supersedes_digest").and_then(Value::as_str) != Some(expected_digest.as_str()) {
             return Err(anyhow!(
                 "series_chain_broken: series_seq {seq} `supersedes_digest` mismatch"
@@ -1129,7 +1129,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         &stored.secret,
         stored.version,
     )?;
-    apply_next_series(previous_account_backup.as_ref(), &mut account_body);
+    apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
@@ -1221,7 +1221,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         &kek,
         sidecar_json,
     )?;
-    apply_next_series(previous_backup, &mut body);
+    apply_next_series(previous_backup, &mut body)?;
     api.put_key_backup(&backup_id, body.clone())
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
@@ -1515,7 +1515,8 @@ mod tests {
         let mut successor = wrap();
         successor["backup_id"] =
             serde_json::json!("ck:backup:01964137-0000-7000-8000-0000000000d2");
-        apply_next_series(Some(&genesis), &mut successor);
+        apply_next_series(Some(&genesis), &mut successor)
+            .expect("successor series metadata must build");
 
         verify_series_chain(&successor, &[genesis, successor.clone()])
             .expect("an apply_next_series-linked successor must verify");

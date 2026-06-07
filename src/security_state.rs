@@ -29,9 +29,9 @@ fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 
 pub fn encryption_profile_is_encrypted(profile: &str) -> bool {
     let normalized = profile.trim().to_ascii_lowercase().replace(['-', ' '], "_");
-    !matches!(
+    matches!(
         normalized.as_str(),
-        "" | "none" | "plain" | "plaintext" | "unencrypted" | "disabled" | "off" | "false"
+        "encrypted" | "e2ee" | "mls" | "mls_rfc9420"
     )
 }
 
@@ -58,12 +58,11 @@ fn plaintext_visibility_value(value: &Value) -> Option<String> {
         .or_else(|| string_field(value, &["default", "mode", "visibility"]))
 }
 
-fn security_state_token(token: &str) -> Option<bool> {
+fn decryption_state_security_state(token: &str) -> Option<bool> {
     let normalized = token.trim().to_ascii_lowercase().replace(['-', ' '], "_");
     match normalized.as_str() {
-        "encrypted" | "e2ee" | "mls" | "mls_rfc9420" | "secure" | "ciphertext" => Some(true),
-        "none" | "plain" | "plaintext" | "unencrypted" | "insecure" | "disabled" | "off"
-        | "false" => Some(false),
+        "opaque" | "encrypted" => Some(true),
+        "plaintext" => Some(false),
         _ => None,
     }
 }
@@ -79,28 +78,15 @@ fn direct_security_state(value: &Value) -> Option<bool> {
     }
     if let Some(encrypted) = bool_field(
         value,
-        &[
-            "encrypted",
-            "is_encrypted",
-            "e2ee",
-            "end_to_end_encrypted",
-            "secure",
-            "is_secure",
-        ],
+        &["encrypted", "is_encrypted", "e2ee", "end_to_end_encrypted"],
     ) {
         return Some(encrypted);
     }
-    if let Some(profile) = string_field(
-        value,
-        &["encryption_profile", "encryptionProfile", "encryption"],
-    ) {
+    if let Some(profile) = string_field(value, &["encryption_profile"]) {
         return Some(encryption_profile_is_encrypted(&profile));
     }
-    if let Some(state) = string_field(
-        value,
-        &["security_state", "security", "crypto_state", "privacy_mode"],
-    )
-    .and_then(|state| security_state_token(&state))
+    if let Some(state) = string_field(value, &["decryption_state"])
+        .and_then(|state| decryption_state_security_state(&state))
     {
         return Some(state);
     }

@@ -5,8 +5,8 @@
 //! arbitrary short-string secrets that should land in the OS keychain
 //! rather than `state.json`. Today's callers:
 //!
-//! * OIDC `refresh_token` (currently persisted plaintext in
-//!   [`crate::local_state::OidcTokenBundle`]).
+//! * OIDC `refresh_token` moved out of [`crate::local_state::OidcTokenBundle`] before disk
+//!   persistence.
 //! * coauth-issued session grant (short-lived but useful between `register_device` retries).
 //! * Push provider auth bundles for FCM / APNs once the host adapters land.
 //!

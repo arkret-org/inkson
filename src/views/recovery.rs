@@ -16,7 +16,7 @@
 //! Everything writeable goes through `private_data`, which is itself
 //! encrypted at rest under the account DID via `xor_encrypt` (and on
 //! wasm32 mirrored to localStorage). The Recovery view never persists
-//! the passphrase or the Recovery Key in cleartext.
+//! the passphrase or the Recovery Key in plaintext.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};

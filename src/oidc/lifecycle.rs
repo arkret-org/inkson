@@ -473,20 +473,13 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_policy_returns_refresh_when_bundle_due() {
+    fn evaluate_policy_returns_no_refresh_token_for_disk_only_due_bundle() {
         let mut store = isolated_store("refresh-when-due");
         store.set_oidc_tokens(Some(fresh_bundle(20)));
-        match evaluate_refresh_policy(&store) {
-            RefreshDecision::Refresh {
-                refresh_token,
-                audience,
-                ..
-            } => {
-                assert_eq!(refresh_token, "rt-1");
-                assert_eq!(audience.as_deref(), Some("https://principal.example/api"));
-            }
-            other => panic!("expected Refresh, got {other:?}"),
-        }
+        assert_eq!(
+            evaluate_refresh_policy(&store),
+            RefreshDecision::NoRefreshToken
+        );
     }
 
     #[test]

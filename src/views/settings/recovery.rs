@@ -53,7 +53,7 @@ struct RecoveryPassphraseState {
     #[serde(default)]
     status: String,
     /// RFC-3339 timestamp of the most recent state transition. The
-    /// passphrase itself is NEVER persisted in cleartext.
+    /// passphrase itself is NEVER persisted in plaintext.
     #[serde(default)]
     updated_at: String,
     /// SHA-256 fingerprint of the generated passphrase. Lets the e2e

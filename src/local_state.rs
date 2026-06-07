@@ -986,11 +986,10 @@ pub struct ClientLocalState {
     /// Private ck.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
-    /// Persisted OIDC token bundle - access_token, refresh_token, expiry,
-    /// audience. Written when the PKCE token endpoint exchange succeeds;
-    /// read at boot to seed the API client. The KeyStore abstraction
-    /// provides the signing key for session-grant proofs; this field
-    /// carries the short-lived bearer + the longer-lived refresh handle.
+    /// Persisted OIDC token bundle - access_token, expiry, audience and
+    /// optional id_token. `refresh_token` is always stripped before this
+    /// state is flushed; callers with an actor DID must use the
+    /// SecureKeyStore helper to retain the refresh credential.
     #[serde(default)]
     pub oidc_tokens: Option<OidcTokenBundle>,
     /// Persisted coauth `session_grant` payload. Lets the refresh
@@ -1354,10 +1353,7 @@ fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
         {
             return true;
         }
-        if let Some(profile) = string_field(
-            container,
-            &["encryption_profile", "encryptionProfile", "encryption"],
-        ) {
+        if let Some(profile) = string_field(container, &["encryption_profile"]) {
             let profile = normalized_profile(&profile);
             if matches!(profile.as_str(), "mls" | "mls_rfc9420" | "e2ee") {
                 return true;
@@ -2948,13 +2944,16 @@ impl LocalStateStore {
         self.load().oidc_tokens
     }
 
-    /// Persist a fresh OIDC token bundle (or clear via `None`). Stores
-    /// access + refresh + id_token verbatim - the KeyStore abstraction is
-    /// responsible for the at-rest secrecy of the underlying state.json
-    /// file.
+    /// Persist a fresh OIDC token bundle (or clear via `None`). The refresh
+    /// credential is not serialised to `state.json`; callers that know the
+    /// actor DID should use [`Self::set_oidc_tokens_with_secure_store`] so
+    /// the token lands in SecureKeyStore instead.
     pub fn set_oidc_tokens(&mut self, bundle: Option<OidcTokenBundle>) {
         self.ensure_cached_loaded();
-        self.cached.oidc_tokens = bundle;
+        self.cached.oidc_tokens = bundle.map(|mut bundle| {
+            bundle.refresh_token = None;
+            bundle
+        });
         let _ = self.flush();
     }
 
@@ -4673,6 +4672,10 @@ mod tests {
         assert_eq!(
             state.oidc_tokens.as_ref().unwrap().access_token,
             bundle.access_token,
+        );
+        assert!(
+            state.oidc_tokens.as_ref().unwrap().refresh_token.is_none(),
+            "refresh_token must not be serialised to state.json",
         );
     }
 

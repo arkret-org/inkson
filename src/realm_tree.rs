@@ -57,9 +57,9 @@ pub(crate) fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
 
 pub(crate) fn encryption_profile_is_encrypted(profile: &str) -> bool {
     let normalized = profile.trim().to_ascii_lowercase().replace(['-', ' '], "_");
-    !matches!(
+    matches!(
         normalized.as_str(),
-        "" | "none" | "plain" | "plaintext" | "unencrypted" | "disabled" | "off" | "false"
+        "encrypted" | "e2ee" | "mls" | "mls_rfc9420"
     )
 }
 
@@ -98,10 +98,7 @@ pub(crate) fn realm_projection_is_encrypted(body: &Value) -> bool {
         ) {
             return encrypted;
         }
-        if let Some(profile) = string_field(
-            container,
-            &["encryption_profile", "encryptionProfile", "encryption"],
-        ) {
+        if let Some(profile) = string_field(container, &["encryption_profile"]) {
             return encryption_profile_is_encrypted(&profile);
         }
         if let Some(visibility) = container
@@ -147,10 +144,7 @@ pub(crate) fn realm_projection_is_encrypted(body: &Value) -> bool {
             event.get("object").unwrap_or(&Value::Null),
             event,
         ] {
-            if let Some(profile) = string_field(
-                container,
-                &["encryption_profile", "encryptionProfile", "encryption"],
-            ) {
+            if let Some(profile) = string_field(container, &["encryption_profile"]) {
                 return encryption_profile_is_encrypted(&profile);
             }
         }

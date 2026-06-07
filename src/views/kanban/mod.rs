@@ -1234,7 +1234,7 @@ pub fn KanbanPanel(
     // means the projection is missing / not yet synced. We deliberately drop
     // the old `.unwrap_or(false)` — "unknown" must NOT collapse to "plaintext",
     // otherwise a private field destined for an encrypted Realm could be
-    // submitted in cleartext while the projection is still in flight. The
+    // submitted in plaintext while the projection is still in flight. The
     // plaintext-block guard fails closed on `None`.
     let selected_scope_security_encrypted: Option<bool> = {
         let state = state_store.read().load();
@@ -5399,14 +5399,14 @@ const SECURITY_STATE_NOT_READY_REASON: &str =
 /// - `None`        — the security projection is MISSING / not yet synced (first paint, incremental
 ///   window, projection gap). We do NOT know whether the Realm requires E2EE, so we MUST NOT
 ///   default to plaintext. Block the write and ask the user to retry once the projection lands;
-///   otherwise a private field bound for an encrypted Realm could leak in cleartext while the
+///   otherwise a private field bound for an encrypted Realm could leak in plaintext while the
 ///   projection is still in flight.
 fn kanban_plaintext_block_reason(
     scope_security_encrypted: Option<bool>,
     event: &crate::operation::EventEnvelope,
 ) -> Option<String> {
     match scope_security_encrypted {
-        // Known plaintext Realm — legitimate cleartext write, never block.
+        // Known plaintext Realm — legitimate plaintext write, never block.
         Some(false) => None,
         // Unknown security state — fail-closed: block plaintext private
         // content until the projection is ready. Container scaffold writes
