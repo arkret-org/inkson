@@ -175,7 +175,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
         token_endpoint: "https://auth.local.host/oauth/token",
         userinfo_endpoint: "https://auth.local.host/oauth/userinfo",
         code_challenge_methods_supported: ["plain", "S256"],
-        scopes_supported: ["openid", "profile"],
+        scopes_supported: ["openid", "profile", "urn:cokret:principal-server:session.bind"],
       });
     }
     if (url.hostname === "auth.local.host" && url.pathname === "/authorize") {
