@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use chime::{
-    GatewayBinding, PushBridgeDescribeResponse, PushDeviceConfig,
-    PushGatewayIntegrationDescribeResponse, PushGatewayType, PushPreferences,
-    PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse, UnregisterDeviceRequest,
-    build_register_device_request, build_registration_state, build_unregister_device_request,
-    push_bridge_describe_url, push_integration_describe_url,
+    GatewayBinding, PushBridgeDescribeOutcome, PushDeviceConfig,
+    PushGatewayIntegrationDescribeOutcome, PushGatewayType, PushPreferences,
+    PushRegisterDeviceOutcome, PushRegisterDeviceRequestBody, PushRegistrationState,
+    PushUnregisterDeviceRequestBody, build_register_device_request, build_registration_state,
+    build_unregister_device_request, push_bridge_describe_url, push_integration_describe_url,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -76,7 +76,9 @@ pub fn is_placeholder_push_key(key: &str) -> bool {
 /// describing why the registration must NOT be sent. Callers in the login /
 /// settings flow should funnel through this helper before POSTing a register
 /// request to a non-loopback push gateway.
-pub fn ensure_production_register_request(request: &RegisterDeviceRequest) -> anyhow::Result<()> {
+pub fn ensure_production_register_request(
+    request: &PushRegisterDeviceRequestBody,
+) -> anyhow::Result<()> {
     if is_placeholder_push_key(&request.push_key) {
         anyhow::bail!(
             "refusing to register device {device_id}: push_key is a development placeholder. \
@@ -163,14 +165,14 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     }
 }
 
-pub fn build_register_request(device_id: &str) -> anyhow::Result<RegisterDeviceRequest> {
+pub fn build_register_request(device_id: &str) -> anyhow::Result<PushRegisterDeviceRequestBody> {
     build_register_request_for_actor(device_id, None)
 }
 
 pub fn build_register_request_for_actor(
     device_id: &str,
     principal_id: Option<&str>,
-) -> anyhow::Result<RegisterDeviceRequest> {
+) -> anyhow::Result<PushRegisterDeviceRequestBody> {
     let push_key = acquire_platform_push_key();
     let platform = current_platform();
     let prefs = push_preferences();
@@ -196,7 +198,7 @@ pub fn build_register_request_for_actor(
 pub fn build_unregister_request(
     device_id: &str,
     existing: Option<&PushRegistrationState>,
-) -> anyhow::Result<UnregisterDeviceRequest> {
+) -> anyhow::Result<PushUnregisterDeviceRequestBody> {
     let platform = current_platform();
     let idempotency_key = format!("yougen-push-unregister-{device_id}");
     let registration_id = existing.and_then(|state| state.registration_id.as_deref());
@@ -231,8 +233,8 @@ pub fn build_unregister_request(
 }
 
 pub fn registration_state_from_response(
-    request: &RegisterDeviceRequest,
-    response: &RegisterDeviceResponse,
+    request: &PushRegisterDeviceRequestBody,
+    response: &PushRegisterDeviceOutcome,
 ) -> PushRegistrationState {
     let binding = GatewayBinding::new(PushGatewayType::Standard, request.push_gateway.clone());
     let registered_at = Utc::now().to_rfc3339();
@@ -242,7 +244,7 @@ pub fn registration_state_from_response(
 
 pub async fn describe_push_gateway_bridge(
     push_gateway_url: &str,
-) -> anyhow::Result<PushBridgeDescribeResponse> {
+) -> anyhow::Result<PushBridgeDescribeOutcome> {
     let describe_url = push_bridge_describe_url(push_gateway_url)?;
     let response = reqwest::Client::new().get(&describe_url).send().await?;
     let status = response.status();
@@ -254,7 +256,7 @@ pub async fn describe_push_gateway_bridge(
 
 pub async fn describe_push_gateway_integration(
     push_gateway_url: &str,
-) -> anyhow::Result<PushGatewayIntegrationDescribeResponse> {
+) -> anyhow::Result<PushGatewayIntegrationDescribeOutcome> {
     let describe_url = push_integration_describe_url(push_gateway_url)?;
     let response = reqwest::Client::new().get(&describe_url).send().await?;
     let status = response.status();
@@ -264,7 +266,7 @@ pub async fn describe_push_gateway_integration(
     Ok(response.json().await?)
 }
 
-pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeResponse) -> String {
+pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> String {
     format!(
         "contract={} version={} notify_path={} providers={} auth_modes={} privacy_mode={} todos={}",
         bridge.contract,
@@ -290,7 +292,7 @@ pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeResponse) -> Str
 }
 
 pub fn summarize_push_gateway_integration(
-    manifest: &PushGatewayIntegrationDescribeResponse,
+    manifest: &PushGatewayIntegrationDescribeOutcome,
 ) -> String {
     let dependencies = if manifest.dependencies.is_empty() {
         "none".to_owned()
@@ -855,13 +857,13 @@ impl PushTokenProvider for ApnsPushTokenProvider {
 ///
 /// The lookup order:
 /// 1. If the gateway advertises a `webpush` profile via
-///    [`PushBridgeDescribeResponse::provider_capability_by_kind`], the capability's stable `kind`
+///    [`PushBridgeDescribeOutcome::provider_capability_by_kind`], the capability's stable `kind`
 ///    ack confirms VAPID is in scope and yougen's deploy MAY rely on environment variable
 ///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
 /// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
 ///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for
 ///    restricted-origin demos.
-pub fn vapid_public_key_from_describe(describe: &PushBridgeDescribeResponse) -> Option<String> {
+pub fn vapid_public_key_from_describe(describe: &PushBridgeDescribeOutcome) -> Option<String> {
     // The gateway must at least advertise the webpush profile for VAPID
     // to be relevant.
     let webpush_advertised = describe.gateway.supports_profile("webpush")
@@ -923,7 +925,7 @@ pub fn resolve_provider_push_token(
 // ═══════════════════════════════════════════════════════════════════════════
 // SecureKeyStore-backed push-token binding.
 //
-// The push token (`RegisterDeviceRequest::push_key`) is a long-lived
+// The push token (`PushRegisterDeviceRequestBody::push_key`) is a long-lived
 // platform identifier that we would otherwise persist plaintext in
 // `LocalStateStore` so a register/unregister retry can find it. By
 // routing the persistence through the [`SecureKeyStore`] tier and
@@ -1122,7 +1124,7 @@ impl std::fmt::Debug for PushTokenBinding {
     }
 }
 
-/// Build a chime [`RegisterDeviceRequest`] for `device_id`, persisting
+/// Build a chime [`PushRegisterDeviceRequestBody`] for `device_id`, persisting
 /// the resolved push token through [`PushTokenBinding`] for future
 /// idempotency / rotation. The returned request is wire-identical to
 /// [`build_register_request_for_actor`] — the binding effect is purely
@@ -1135,7 +1137,7 @@ pub fn build_register_request_with_secure_store(
     device_id: &str,
     principal_id: Option<&str>,
     store: &Arc<dyn SecureKeyStore>,
-) -> anyhow::Result<RegisterDeviceRequest> {
+) -> anyhow::Result<PushRegisterDeviceRequestBody> {
     let request = build_register_request_for_actor(device_id, principal_id)?;
     let binding = PushTokenBinding::new(store.clone(), device_id);
     // Best-effort persist. A backend failure here should not block
@@ -1190,7 +1192,7 @@ mod tests {
     #[test]
     fn builds_persistable_registration_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = RegisterDeviceResponse::default();
+        let mut response = PushRegisterDeviceOutcome::default();
         response.ok = true;
         response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
@@ -1204,7 +1206,7 @@ mod tests {
     #[test]
     fn builds_unregister_request_from_existing_state() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = RegisterDeviceResponse::default();
+        let mut response = PushRegisterDeviceOutcome::default();
         response.ok = true;
         response.registration_id = Some("ck:push:test".to_owned());
         let state = registration_state_from_response(&request, &response);
@@ -1217,7 +1219,7 @@ mod tests {
 
     #[test]
     fn summarizes_push_bridge_contract() {
-        let summary = summarize_push_gateway_bridge(&PushBridgeDescribeResponse {
+        let summary = summarize_push_gateway_bridge(&PushBridgeDescribeOutcome {
             contract: "ck.push.bridge.describe".to_owned(),
             version: "2026-05-03".to_owned(),
             api_base_path: "/_cokret/edge/push".to_owned(),
@@ -1300,7 +1302,7 @@ mod tests {
     #[test]
     fn push_status_label_treats_state_without_registration_id_as_registered() {
         let request = build_register_request("dev_yougen").unwrap();
-        let mut response = RegisterDeviceResponse::default();
+        let mut response = PushRegisterDeviceOutcome::default();
         response.ok = true;
         let state = registration_state_from_response(&request, &response);
 
@@ -1343,7 +1345,7 @@ mod tests {
 
     #[test]
     fn vapid_extractor_returns_none_when_webpush_not_advertised() {
-        let mut describe = PushBridgeDescribeResponse::default();
+        let mut describe = PushBridgeDescribeOutcome::default();
         describe.contract = "ck.push.bridge.describe.v1".to_owned();
         describe.version = "2026-05-09".to_owned();
         describe.gateway.supported_profiles = vec!["fcm".to_owned(), "apns".to_owned()];
@@ -1355,7 +1357,7 @@ mod tests {
         // SAFETY: env var mutation in tests is gated behind the per-test
         // serial guard via a unique key; we still scope the change so a
         // panic in the test can't leak into other tests.
-        let mut describe = PushBridgeDescribeResponse::default();
+        let mut describe = PushBridgeDescribeOutcome::default();
         describe.gateway.supported_profiles = vec!["webpush".to_owned()];
 
         // Guard env var manipulation behind cfg(not(target_arch=wasm32))

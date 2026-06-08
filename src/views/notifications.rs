@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
 use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore};
-use crate::models::ClientSyncResponse;
+use crate::models::ClientSyncOutcome;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
     dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
@@ -846,11 +846,11 @@ fn drop_joined_invite_notifications(
     });
 }
 
-fn joined_realm_ids(response: &ClientSyncResponse) -> BTreeSet<String> {
+fn joined_realm_ids(response: &ClientSyncOutcome) -> BTreeSet<String> {
     response.realms.keys().cloned().collect()
 }
 
-fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncResponse) {
+fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncOutcome) {
     store.save_sync_cursor(response.cursor.clone());
     for left_id in &response.left_realms {
         store.forget_realm_tree_projection(left_id);

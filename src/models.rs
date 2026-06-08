@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HealthResponse {
+pub struct HealthOutcome {
     pub ok: bool,
     pub service: String,
     pub storage: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DevLoginResponse {
+pub struct DevLoginOutcome {
     pub access_token: String,
     pub token_type: String,
     pub actor: String,
@@ -21,7 +21,7 @@ pub struct DevLoginResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LogoutResponse {
+pub struct LogoutOutcome {
     pub ok: bool,
     #[serde(default)]
     pub revoked: bool,
@@ -58,7 +58,7 @@ pub struct AccountUpdateProfileOutcome {
 /// spaces). Unknown fields are ignored so forward additions do not
 /// break the client.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IndexSearchResponse {
+pub struct IndexSearchOutcome {
     pub query: String,
     #[serde(default)]
     pub results: Vec<Value>,
@@ -67,7 +67,7 @@ pub struct IndexSearchResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactResponse {
+pub struct ContactOutcome {
     pub requester: String,
     pub target: String,
     #[serde(default)]
@@ -110,7 +110,7 @@ pub struct ContactListRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactsResponse {
+pub struct ContactsOutcome {
     #[serde(default)]
     pub contacts: Vec<ContactListRow>,
     #[serde(default)]
@@ -142,7 +142,7 @@ pub struct DirectConversationResolveOutcome {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellResponse {
+pub struct ConsentCellOutcome {
     pub ok: bool,
     pub cell_id: String,
     pub holder_did: String,
@@ -167,19 +167,19 @@ pub struct ConsentCellResponse {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConsentCellsResponse {
+pub struct ConsentCellsOutcome {
     pub ok: bool,
     #[serde(default)]
-    pub cells: Vec<ConsentCellResponse>,
+    pub cells: Vec<ConsentCellOutcome>,
 }
 
 /// R15: result of `ck.realm.create`. Carries a `ck:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
-/// `space_id` on `SpaceLifecycleResponse`). `state` replaces the old
+/// `space_id` on `SpaceLifecycleOutcome`). `state` replaces the old
 /// `deleted: bool`, matching the spec lifecycle-state enum
 /// (`active` / `archived` / `tombstoned`, `common-fields.md §5.1`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmCreateResponse {
+pub struct RealmCreateOutcome {
     pub ok: bool,
     pub realm_id: String,
     pub owner: String,
@@ -190,9 +190,9 @@ pub struct RealmCreateResponse {
 
 /// R15: result of `ck.space.create`. A Space (`ck:space:*`) lives inside a
 /// Realm and inherits its membership / encryption. `state` mirrors the spec
-/// lifecycle enum (see [`RealmCreateResponse`]).
+/// lifecycle enum (see [`RealmCreateOutcome`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceCreateResponse {
+pub struct SpaceCreateOutcome {
     pub ok: bool,
     pub space_id: String,
     pub owner: String,
@@ -202,7 +202,7 @@ pub struct SpaceCreateResponse {
 }
 
 // (Move/Anchor pipeline DTOs deleted; all writes now go through
-// ck.self.events.submit via SubmitEventResponse.)
+// ck.self.events.submit via SubmitEventOutcome.)
 
 /// Outcome of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
@@ -343,13 +343,13 @@ pub struct SyncDescribeResBody {
 /// [`cokret_sdk::model::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
 /// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
-/// own a custom `ClientSyncResponse` with a bucketed-`spaces`
+/// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
-pub use cokret_sdk::model::SyncOutcome as ClientSyncResponse;
+pub use cokret_sdk::model::SyncOutcome as ClientSyncOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchRealmsResponse {
+pub struct SearchRealmsOutcome {
     pub results: Vec<RealmTreeNode>,
     pub next_cursor: Option<String>,
 }
@@ -368,7 +368,7 @@ pub struct SolandDirectoryDescribeResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveRealmResponse {
+pub struct ResolveRealmOutcome {
     pub realm_preview: RealmTreeNode,
     #[serde(default)]
     pub stripped_state: Vec<Value>,
@@ -679,14 +679,14 @@ pub struct GrantList {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvitesResponse {
+pub struct InvitesOutcome {
     #[serde(default)]
     pub invites: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PushRegisterResponse {
+pub struct PushRegisterOutcome {
     pub ok: bool,
     pub registration_id: Option<String>,
     #[serde(default)]
@@ -719,19 +719,19 @@ pub struct ModerationReportOutcome {
 // ── Directory ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchOrganizationsResponse {
+pub struct SearchOrganizationsOutcome {
     pub results: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchActorsResponse {
+pub struct SearchActorsOutcome {
     pub results: Vec<Value>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveHandleResponse {
+pub struct ResolveHandleOutcome {
     #[serde(default, alias = "subject")]
     pub did: String,
     pub handle: String,
@@ -770,7 +770,7 @@ pub struct ResolveHandleResponse {
     pub via_services: Vec<String>,
 }
 
-impl ResolveHandleResponse {
+impl ResolveHandleOutcome {
     pub fn subject_did(&self) -> Option<&str> {
         (!self.did.trim().is_empty())
             .then_some(self.did.as_str())
@@ -857,7 +857,7 @@ pub struct MemberDeliveryBindingView {
 // ── Realm / Space Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmPolicyResponse {
+pub struct RealmPolicyOutcome {
     pub ok: bool,
     pub realm_id: String,
     pub join_rule: String,
@@ -865,26 +865,26 @@ pub struct RealmPolicyResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypingResponse {
+pub struct TypingOutcome {
     pub ok: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReceiptResponse {
+pub struct ReceiptOutcome {
     pub ok: bool,
 }
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RevokeDeviceResponse {
+pub struct RevokeDeviceOutcome {
     pub ok: bool,
     pub device_id: String,
     pub revoked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceTrustResponse {
+pub struct DeviceTrustOutcome {
     pub devices: Vec<DeviceTrustEntry>,
 }
 
@@ -897,14 +897,14 @@ pub struct DeviceTrustEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VerifyDeviceResponse {
+pub struct VerifyDeviceOutcome {
     pub ok: bool,
     pub device_id: String,
     pub trust_state: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MlsRotateResponse {
+pub struct MlsRotateOutcome {
     pub ok: bool,
     pub epoch: u64,
     pub mls_group_ref: String,
@@ -954,7 +954,7 @@ pub struct SolandEventsDescribeResBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitEventResponse {
+pub struct SubmitEventOutcome {
     pub event_id: String,
     pub status: String,
     #[serde(default)]
@@ -985,7 +985,7 @@ pub struct EphemeralSubmitOutcome {
 // ── Media ────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IceConfigResponse {
+pub struct IceConfigOutcome {
     pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
@@ -1008,7 +1008,7 @@ pub struct IceServer {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct IceConfigRequest {
+pub struct IceConfigRequestBody {
     pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
@@ -1018,7 +1018,7 @@ pub struct IceConfigRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CreateWebrtcSessionResponse {
+pub struct CreateWebrtcSessionOutcome {
     pub session_id: String,
     pub realm_id: String,
     #[serde(default)]
@@ -1034,7 +1034,7 @@ pub struct CreateWebrtcSessionResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WebrtcSignalResponse {
+pub struct WebrtcSignalOutcome {
     #[serde(default)]
     pub ok: bool,
     pub session_id: String,
@@ -1046,7 +1046,7 @@ pub struct WebrtcSignalResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CallRecordingStartResponse {
+pub struct CallRecordingStartOutcome {
     #[serde(default)]
     pub ok: bool,
     pub call_id: String,

@@ -74,10 +74,10 @@ impl CokretApi {
         actor: &str,
         device_id: Option<&str>,
         typing: bool,
-    ) -> anyhow::Result<TypingResponse> {
+    ) -> anyhow::Result<TypingOutcome> {
         let envelope = build_typing_envelope(realm_id, actor, device_id, typing)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(TypingResponse {
+        Ok(TypingOutcome {
             ok: response.accepted,
         })
     }
@@ -92,7 +92,7 @@ impl CokretApi {
         actor: &str,
         event_id: &str,
         receipt_type: &str,
-    ) -> anyhow::Result<ReceiptResponse> {
+    ) -> anyhow::Result<ReceiptOutcome> {
         // Only `ck.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
@@ -101,7 +101,7 @@ impl CokretApi {
         }
         let envelope = build_receipt_read_envelope(realm_id, actor, event_id)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(ReceiptResponse {
+        Ok(ReceiptOutcome {
             ok: response.accepted,
         })
     }
@@ -205,7 +205,7 @@ impl CokretApi {
     pub async fn submit_event_envelope(
         &self,
         event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let mut signed = event.clone();
 
         // Real anchor_ref for reducer-input kinds. The simple heuristic

@@ -81,7 +81,7 @@ impl CokretApi {
         Ok(Some(record))
     }
 
-    pub async fn rotate_mls_epoch(&self, mls_group_ref: &str) -> anyhow::Result<MlsRotateResponse> {
+    pub async fn rotate_mls_epoch(&self, mls_group_ref: &str) -> anyhow::Result<MlsRotateOutcome> {
         self.post_json(
             "_cokret/self/mls/rotate",
             json!({"mls_group_ref": mls_group_ref}),

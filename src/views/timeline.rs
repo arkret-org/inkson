@@ -346,7 +346,7 @@ async fn submit_timeline_message_with_plaintext_retry(
     realm_id: &str,
     actor_did: &str,
     operation: &EventEnvelope,
-) -> anyhow::Result<crate::models::SubmitEventResponse> {
+) -> anyhow::Result<crate::models::SubmitEventOutcome> {
     match api.submit_event_envelope(operation).await {
         Ok(response) => Ok(response),
         Err(error) if crate::api::is_plaintext_visibility_policy_error(&error) => {

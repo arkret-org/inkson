@@ -313,7 +313,7 @@ impl CokretApi {
             .await
     }
 
-    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustResponse> {
+    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustOutcome> {
         self.get_json("_cokret/self/devices/trust").await
     }
 
@@ -322,7 +322,7 @@ impl CokretApi {
         device_id: &str,
         method: &str,
         proof: Value,
-    ) -> anyhow::Result<VerifyDeviceResponse> {
+    ) -> anyhow::Result<VerifyDeviceOutcome> {
         ensure_device_verification_proof_is_signed(&proof)?;
         self.post_json(
             &format!("_cokret/self/devices/{device_id}/verify"),

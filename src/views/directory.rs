@@ -52,7 +52,7 @@ pub fn DirectoryPanel(
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
     let mut object_results = use_signal(Vec::<Value>::new);
-    let mut handle_result = use_signal(|| Option::<ResolveHandleResponse>::None);
+    let mut handle_result = use_signal(|| Option::<ResolveHandleOutcome>::None);
     let mut contact_target_did = use_signal(|| "did:web:bob.example".to_owned());
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());

@@ -8,9 +8,7 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
-use crate::models::{
-    CallRecordingStartResponse, CreateWebrtcSessionResponse, WebrtcSignalResponse,
-};
+use crate::models::{CallRecordingStartOutcome, CreateWebrtcSessionOutcome, WebrtcSignalOutcome};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -914,7 +912,7 @@ async fn create_live_session(
     participants: Vec<String>,
     mode: String,
     recording_policy: String,
-) -> Result<CreateWebrtcSessionResponse, String> {
+) -> Result<CreateWebrtcSessionOutcome, String> {
     with_authed_api(&base, api_token, |api| async move {
         api.create_webrtc_session(&realm_id, participants, &mode, &recording_policy)
             .await
@@ -932,7 +930,7 @@ async fn emit_live_signal(
     message_type: String,
     seq: u64,
     payload: Value,
-) -> Result<WebrtcSignalResponse, String> {
+) -> Result<WebrtcSignalOutcome, String> {
     with_authed_api(&base, api_token, |api| async move {
         api.append_webrtc_signal(&session_id, &actor, &device, &message_type, seq, payload)
             .await
@@ -946,7 +944,7 @@ async fn start_live_recording(
     api_token: String,
     session_id: String,
     realm_id: String,
-) -> Result<CallRecordingStartResponse, String> {
+) -> Result<CallRecordingStartOutcome, String> {
     with_authed_api(&base, api_token, |api| async move {
         api.start_call_recording(&session_id, &realm_id).await
     })

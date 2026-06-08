@@ -182,7 +182,7 @@ fn yougen_accepts_server_contract_payloads() {
         "did:web:server.local"
     );
 
-    let submit: yougen::models::SubmitEventResponse = serde_json::from_value(json!({
+    let submit: yougen::models::SubmitEventOutcome = serde_json::from_value(json!({
         "status": "accepted",
         "event_id": "ck:event:019640ca-0000-7000-8000-000000000000",
         "canonical_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -203,7 +203,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(snapshot.snapshot_ref.starts_with("ck:snapshot:"));
 
-    let login: yougen::models::DevLoginResponse = serde_json::from_value(json!({
+    let login: yougen::models::DevLoginOutcome = serde_json::from_value(json!({
         "access_token": "sx_token",
         "token_type": "Bearer",
         "actor": "did:web:alice.example",
@@ -230,7 +230,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
 
-    let invites: yougen::models::InvitesResponse = serde_json::from_value(json!({
+    let invites: yougen::models::InvitesOutcome = serde_json::from_value(json!({
         "invites": [],
         "next_cursor": null
     }))
@@ -246,7 +246,7 @@ fn yougen_accepts_server_contract_payloads() {
 
     let claimed: yougen::models::KeysClaimOutcome = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"ck:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
-        "failures": {}
+        "failures": []
     }))
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
@@ -267,7 +267,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!device_receive.limited);
 
-    let push: yougen::models::PushRegisterResponse = serde_json::from_value(json!({
+    let push: yougen::models::PushRegisterOutcome = serde_json::from_value(json!({
         "ok": true,
         "registration_id": "ck:push:dev_alice",
         "expires_at": null
@@ -574,7 +574,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     validate_blind_wakeup_payload(&json!({"local_name": secret}))
         .expect_err("blind push must reject local remark fields");
 
-    let search = yougen::models::IndexSearchResponse {
+    let search = yougen::models::IndexSearchOutcome {
         query: "hello".to_owned(),
         results: vec![json!({
             "kind": "message",
@@ -601,7 +601,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = yougen::models::SearchRealmsResponse {
+    let directory = yougen::models::SearchRealmsOutcome {
         results: vec![yougen::models::RealmTreeNode {
             id: "ck:realm:contract".to_owned(),
             title: "Contract Realm".to_owned(),
@@ -677,7 +677,7 @@ fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 }
 
 // (Move/Anchor pipeline tests removed — all writes now go through
-// ck.self.events.submit; the SubmitEventResponse wire shape is exercised by
+// ck.self.events.submit; the SubmitEventOutcome wire shape is exercised by
 // soland's own integration tests and the cokret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401

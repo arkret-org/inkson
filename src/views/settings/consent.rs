@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
-use crate::models::ConsentCellResponse;
+use crate::models::ConsentCellOutcome;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -16,7 +16,7 @@ pub fn ConsentSettingsCard(
 ) -> Element {
     let _ = state_store;
 
-    let cells = use_signal(Vec::<ConsentCellResponse>::new);
+    let cells = use_signal(Vec::<ConsentCellOutcome>::new);
     let mut loaded = use_signal(|| false);
     let mut show_form = use_signal(|| false);
     let mut new_scope = use_signal(|| "message".to_owned());
@@ -273,7 +273,7 @@ pub fn ConsentSettingsCard(
 fn refresh_consent_cells(
     base_url: String,
     api_token: String,
-    mut cells: Signal<Vec<ConsentCellResponse>>,
+    mut cells: Signal<Vec<ConsentCellOutcome>>,
     mut status: Signal<String>,
 ) {
     spawn(async move {

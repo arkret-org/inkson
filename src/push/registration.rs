@@ -36,7 +36,7 @@
 
 use chime::{
     CokretPushClient, GatewayBinding, PushDeviceConfig, PushGatewayType, PushPreferences,
-    PushRegistrationState, RegisterDeviceRequest, RegisterDeviceResponse,
+    PushRegisterDeviceOutcome, PushRegisterDeviceRequestBody, PushRegistrationState,
     build_register_device_request,
 };
 
@@ -129,7 +129,7 @@ pub struct RegisterContext {
 #[derive(Clone, Debug)]
 pub struct RegisterOutcome {
     pub state: PushRegistrationState,
-    pub response: RegisterDeviceResponse,
+    pub response: PushRegisterDeviceOutcome,
 }
 
 #[derive(Clone, Debug)]
@@ -303,7 +303,7 @@ async fn resolve_real_token(ctx: &RegisterContext) -> Result<String, PushRegistr
 fn build_request(
     ctx: &RegisterContext,
     push_key: &str,
-) -> Result<RegisterDeviceRequest, PushRegistrationError> {
+) -> Result<PushRegisterDeviceRequestBody, PushRegistrationError> {
     let push_gateway = if ctx.floria_gateway_url.trim().is_empty() {
         floria_gateway_url()
     } else {
