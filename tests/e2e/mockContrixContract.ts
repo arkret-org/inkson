@@ -36,17 +36,17 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_cokret/self/events") {
+    // Canonical EventsSubmitOutcome wire shape (soland head 37ce729):
+    // {status, accepted[], cursor} — no top-level event_id/sync_token.
+    const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e";
     return json({
-      event_id: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
       status: "accepted",
-      canonical_digest: "sha256:e2e-event",
-      sync_token: "sx:e2e:event",
-      received_at: "2026-04-28T12:00:00Z",
-      receipt: {
-        idempotent: false,
-        reducer_profile: "ck.reducer.v1",
-        projection_source: body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e",
-      },
+      accepted: [acceptedId],
+      duplicate: [],
+      rejected: [],
+      actor_frontier: {},
+      realm_frontier: {},
+      cursor: "sx:e2e:event",
     });
   }
 

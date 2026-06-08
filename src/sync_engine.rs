@@ -64,6 +64,20 @@ const MIN_BACKOFF_SECS: u64 = 1;
 /// true frame reader.
 const MIN_INTER_ITERATION_MS: u64 = 5_000;
 
+/// How many successful delta iterations may pass before the engine
+/// re-pulls `GET /_cokret/self/authz/invites`.
+///
+/// Pending invites are low-churn, so refetching the full list on *every*
+/// sync delta (~`MIN_INTER_ITERATION_MS` apart) just floods the network
+/// panel with identical responses — the symptom of the original
+/// "`invites` keeps firing" report. We refresh at most once per this many
+/// deltas (≈30s at the 5s poll floor) and additionally force a refresh on
+/// every full sync (login / reconnect / cursor reset) so a fresh session
+/// always lands with current invites. Between refreshes the engine passes
+/// `None` to `apply_response`, which preserves the last merged invite
+/// projection rather than clearing it.
+const INVITES_REFRESH_EVERY_N_DELTAS: u32 = 6;
+
 /// Bundle of signals + state-store the engine needs to apply a response.
 /// `Copy` because Dioxus signals already are; the struct is just a
 /// typed shorthand around them.
@@ -141,6 +155,10 @@ pub async fn run_sync_engine(
     // picks up the new profile's cursor / token / account_did.
     let start_profile_id = ctx.profiles.read().active_profile_id.clone();
     let mut backoff_secs = MIN_BACKOFF_SECS;
+    // Counts delta syncs since the last invite refetch; see
+    // `INVITES_REFRESH_EVERY_N_DELTAS`. Seeded at the threshold so the first
+    // delta after spawn refreshes immediately even if it isn't a full sync.
+    let mut deltas_since_invites = INVITES_REFRESH_EVERY_N_DELTAS;
     loop {
         // Cancellation check at the top of every iteration. A change to
         // `generation` mid-iteration is best-effort detected here; the
@@ -159,7 +177,7 @@ pub async fn run_sync_engine(
             return;
         }
 
-        match run_iteration(start_generation, generation, &ctx).await {
+        match run_iteration(start_generation, generation, &ctx, &mut deltas_since_invites).await {
             IterationOutcome::Ok => {
                 backoff_secs = MIN_BACKOFF_SECS;
                 // Recovery: clear any stale error the user has been
@@ -238,6 +256,7 @@ async fn run_iteration(
     start_generation: u64,
     generation: Signal<u64>,
     ctx: &SyncEngineContext,
+    deltas_since_invites: &mut u32,
 ) -> IterationOutcome {
     let base = ctx.base_url.read().clone();
     let token = ctx.token.read().clone();
@@ -274,15 +293,34 @@ async fn run_iteration(
             if generation() != start_generation {
                 return IterationOutcome::Ok;
             }
-            let invite_notifications = match api.invites().await {
-                Ok(response) => Some(response.invites),
-                Err(error) if is_auth_expired_error(&error) => {
-                    return IterationOutcome::AuthExpired;
+            // Throttle invite refetches: full syncs always refresh, delta
+            // syncs only every `INVITES_REFRESH_EVERY_N_DELTAS` iterations.
+            // Otherwise pass `None`, which preserves the last merged invite
+            // projection instead of clearing it. See the constant's doc.
+            let refresh_invites =
+                is_full_sync || *deltas_since_invites >= INVITES_REFRESH_EVERY_N_DELTAS;
+            let invite_notifications = if refresh_invites {
+                match api.invites().await {
+                    Ok(response) => {
+                        *deltas_since_invites = 0;
+                        Some(response.invites)
+                    }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        return IterationOutcome::AuthExpired;
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            ?error,
+                            "sync engine could not refresh invite notifications"
+                        );
+                        // Leave the counter saturated so the next iteration
+                        // retries rather than waiting another full window.
+                        None
+                    }
                 }
-                Err(error) => {
-                    tracing::debug!(?error, "sync engine could not refresh invite notifications");
-                    None
-                }
+            } else {
+                *deltas_since_invites += 1;
+                None
             };
             apply_response(&response, is_full_sync, ctx, invite_notifications);
             IterationOutcome::Ok

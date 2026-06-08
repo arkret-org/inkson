@@ -464,17 +464,17 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           payload: body.payload,
         });
       }
+      // soland (head 37ce729) returns the canonical EventsSubmitOutcome wire
+      // shape: {status, accepted[], cursor} — no top-level event_id/sync_token.
+      // yougen folds accepted[0] -> event_id and cursor -> sync_token.
       return json(route, {
-        event_id: body.event_id,
         status: "accepted",
-        canonical_digest: "sha256:e2e-event",
-        sync_token: syncToken,
-        received_at: "2026-04-28T12:00:00Z",
-        receipt: {
-          idempotent: false,
-          reducer_profile: "ck.reducer.v1",
-          projection_source: body.event_id,
-        },
+        accepted: body.event_id ? [body.event_id] : [],
+        duplicate: [],
+        rejected: [],
+        actor_frontier: {},
+        realm_frontier: {},
+        cursor: syncToken,
       });
     }
 
