@@ -1359,9 +1359,83 @@ impl IndexedDbSecureKeyStore {
         })
     }
 
+    /// Await a one-shot IndexedDB request, resolving to its `result()`
+    /// or rejecting with its `error()`.
+    ///
+    /// The success/error closures are stored in `Rc<RefCell<Option<..>>>`
+    /// bindings that outlive the `.await` and are detached + dropped only
+    /// after the request has settled. The previous per-call-site code used
+    /// `Closure::once_into_js` and let the returned `JsValue` handle drop at
+    /// the end of the `Promise::new` executor scope. Under wasm-bindgen
+    /// 0.2.120's `FinalizationRegistry`-based closure dtor (`CLOSURE_DTORS`)
+    /// that frees the closure registration before the DOM invokes it, which
+    /// surfaces as the runtime panic
+    /// `closure invoked recursively or after being dropped`, immediately
+    /// followed by a cascade of `memory access out of bounds` once the
+    /// wasm-bindgen-futures executor heap is corrupted. Keeping the
+    /// `Closure`s alive across the await removes the use-after-free.
+    async fn idb_request_result(
+        request: &web_sys::IdbRequest,
+    ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::{JsCast, JsValue};
+        use wasm_bindgen_futures::JsFuture;
+        type EventClosure = Closure<dyn FnMut(web_sys::Event)>;
+        let on_success: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_error: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_success_slot = on_success.clone();
+        let on_error_slot = on_error.clone();
+        let promise = js_sys::Promise::new(&mut |resolve, reject| {
+            let reject_for_error = reject.clone();
+            let success = Closure::once(move |event: web_sys::Event| {
+                match event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
+                {
+                    Some(req) => match req.result() {
+                        Ok(value) => {
+                            let _ = resolve.call1(&JsValue::NULL, &value);
+                        }
+                        Err(err) => {
+                            let _ = reject.call1(&JsValue::NULL, &err);
+                        }
+                    },
+                    None => {
+                        let _ = reject.call1(
+                            &JsValue::NULL,
+                            &JsValue::from_str("indexedDB request: event has no IdbRequest target"),
+                        );
+                    }
+                }
+            });
+            let error = Closure::once(move |event: web_sys::Event| {
+                let err = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
+                    .and_then(|req| req.error().ok().flatten())
+                    .map(JsValue::from)
+                    .unwrap_or_else(|| JsValue::from_str("indexedDB request error"));
+                let _ = reject_for_error.call1(&JsValue::NULL, &err);
+            });
+            request.set_onsuccess(Some(success.as_ref().unchecked_ref()));
+            request.set_onerror(Some(error.as_ref().unchecked_ref()));
+            *on_success_slot.borrow_mut() = Some(success);
+            *on_error_slot.borrow_mut() = Some(error);
+        });
+        let settled = JsFuture::from(promise).await;
+        // Detach the handlers and free the closures only after the request
+        // has settled, so the DOM can never invoke a freed closure.
+        request.set_onsuccess(None);
+        request.set_onerror(None);
+        drop(on_success);
+        drop(on_error);
+        settled
+    }
+
     async fn open_db(db_name: &str) -> Result<web_sys::IdbDatabase, SecureKeyStoreError> {
         use wasm_bindgen::JsCast;
-        use wasm_bindgen_futures::JsFuture;
         let window = web_sys::window().ok_or_else(|| {
             SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
         })?;
@@ -1396,51 +1470,11 @@ impl IndexedDbSecureKeyStore {
             },
         );
         open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
-        let result = JsFuture::from(js_sys::Promise::new(&mut |resolve, reject| {
-            let resolve_clone = resolve.clone();
-            let reject_clone = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
-                    if let Some(request) = event
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
-                    {
-                        match request.result() {
-                            Ok(value) => {
-                                let _ = resolve_clone.call1(&wasm_bindgen::JsValue::NULL, &value);
-                            }
-                            Err(err) => {
-                                let _ = reject_clone.call1(&wasm_bindgen::JsValue::NULL, &err);
-                            }
-                        }
-                    }
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
-                    let err = event
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::IdbOpenDbRequest>().ok())
-                        .and_then(|r| r.error().ok())
-                        .map(|opt| {
-                            opt.map(wasm_bindgen::JsValue::from).unwrap_or(
-                                wasm_bindgen::JsValue::from_str(
-                                    "indexedDB open error (no DOMException)",
-                                ),
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            wasm_bindgen::JsValue::from_str("indexedDB open error (no target)")
-                        });
-                    let _ = reject.call1(&wasm_bindgen::JsValue::NULL, &err);
-                });
-            open_req.set_onsuccess(Some(on_success.unchecked_ref()));
-            open_req.set_onerror(Some(on_error.unchecked_ref()));
-        }))
-        .await
-        .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}")))?;
-        // Keep the closure alive past the await — `forget` here
-        // intentionally leaks because the closure has the lifetime
-        // of the request which is consumed once.
+        let result = Self::idb_request_result(open_req.as_ref())
+            .await
+            .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}")))?;
+        // The upgrade handler may fire before success; keep it alive until
+        // the open has settled, then relinquish it to JS (fires at most once).
         on_upgrade.forget();
         let db: web_sys::IdbDatabase = result.dyn_into().map_err(|_| {
             SecureKeyStoreError::Backend("open did not return IdbDatabase".to_owned())
@@ -1589,8 +1623,7 @@ impl IndexedDbSecureKeyStore {
         store: &str,
         key: &str,
     ) -> Result<Option<wasm_bindgen::JsValue>, SecureKeyStoreError> {
-        use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
+        use wasm_bindgen::JsValue;
         let tx = db
             .transaction_with_str(store)
             .map_err(|err| SecureKeyStoreError::Backend(format!("tx open: {err:?}")))?;
@@ -1600,33 +1633,7 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .get(&JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("get: {err:?}")))?;
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let reject_for_error = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
-                    if let Some(req) = event
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
-                    {
-                        match req.result() {
-                            Ok(v) => {
-                                let _ = resolve.call1(&JsValue::NULL, &v);
-                            }
-                            Err(err) => {
-                                let _ = reject.call1(&JsValue::NULL, &err);
-                            }
-                        }
-                    }
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = reject_for_error
-                        .call1(&JsValue::NULL, &JsValue::from_str("indexedDB get error"));
-                });
-            request.set_onsuccess(Some(on_success.unchecked_ref()));
-            request.set_onerror(Some(on_error.unchecked_ref()));
-        });
-        let value = JsFuture::from(promise)
+        let value = Self::idb_request_result(&request)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("get awaited: {err:?}")))?;
         if value.is_undefined() || value.is_null() {
@@ -1642,8 +1649,7 @@ impl IndexedDbSecureKeyStore {
         key: &str,
         value: &wasm_bindgen::JsValue,
     ) -> Result<(), SecureKeyStoreError> {
-        use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
+        use wasm_bindgen::JsValue;
         let tx = db
             .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
             .map_err(|err| SecureKeyStoreError::Backend(format!("tx open rw: {err:?}")))?;
@@ -1653,21 +1659,7 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .put_with_key(value, &JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("put: {err:?}")))?;
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let resolve = resolve.clone();
-            let reject = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("indexedDB put error"));
-                });
-            request.set_onsuccess(Some(on_success.unchecked_ref()));
-            request.set_onerror(Some(on_error.unchecked_ref()));
-        });
-        JsFuture::from(promise)
+        Self::idb_request_result(&request)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("put awaited: {err:?}")))?;
         Ok(())
@@ -1678,8 +1670,7 @@ impl IndexedDbSecureKeyStore {
         store: &str,
         key: &str,
     ) -> Result<(), SecureKeyStoreError> {
-        use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
+        use wasm_bindgen::JsValue;
         let tx = db
             .transaction_with_str_and_mode(store, web_sys::IdbTransactionMode::Readwrite)
             .map_err(|err| SecureKeyStoreError::Backend(format!("tx open rw: {err:?}")))?;
@@ -1689,36 +1680,20 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .delete(&JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("delete: {err:?}")))?;
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let resolve = resolve.clone();
-            let reject = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = resolve.call1(&JsValue::NULL, &JsValue::UNDEFINED);
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ =
-                        reject.call1(&JsValue::NULL, &JsValue::from_str("indexedDB delete error"));
-                });
-            request.set_onsuccess(Some(on_success.unchecked_ref()));
-            request.set_onerror(Some(on_error.unchecked_ref()));
-        });
-        JsFuture::from(promise)
+        Self::idb_request_result(&request)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("delete awaited: {err:?}")))?;
         Ok(())
     }
 
-    /// Read every entry in `store` as `(key, value)`. The promise
-    /// pattern is openCursor → onsuccess loops until cursor is None.
+    /// Read every entry in `store` as `(key, value)` via `getAll` +
+    /// `getAllKeys`, each awaited through [`Self::idb_request_result`].
     async fn idb_all_entries(
         db: &web_sys::IdbDatabase,
         store: &str,
     ) -> Result<Vec<(String, Vec<u8>)>, SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
         let tx = db
             .transaction_with_str(store)
             .map_err(|err| SecureKeyStoreError::Backend(format!("tx open: {err:?}")))?;
@@ -1733,64 +1708,10 @@ impl IndexedDbSecureKeyStore {
         let keys_req = obj_store
             .get_all_keys()
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys: {err:?}")))?;
-        let values_promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let reject_for_error = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
-                    if let Some(req) = event
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
-                    {
-                        match req.result() {
-                            Ok(v) => {
-                                let _ = resolve.call1(&JsValue::NULL, &v);
-                            }
-                            Err(err) => {
-                                let _ = reject.call1(&JsValue::NULL, &err);
-                            }
-                        }
-                    }
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = reject_for_error
-                        .call1(&JsValue::NULL, &JsValue::from_str("indexedDB getAll error"));
-                });
-            values_req.set_onsuccess(Some(on_success.unchecked_ref()));
-            values_req.set_onerror(Some(on_error.unchecked_ref()));
-        });
-        let keys_promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let reject_for_error = reject.clone();
-            let on_success =
-                wasm_bindgen::closure::Closure::once_into_js(move |event: web_sys::Event| {
-                    if let Some(req) = event
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
-                    {
-                        match req.result() {
-                            Ok(v) => {
-                                let _ = resolve.call1(&JsValue::NULL, &v);
-                            }
-                            Err(err) => {
-                                let _ = reject.call1(&JsValue::NULL, &err);
-                            }
-                        }
-                    }
-                });
-            let on_error =
-                wasm_bindgen::closure::Closure::once_into_js(move |_event: web_sys::Event| {
-                    let _ = reject_for_error.call1(
-                        &JsValue::NULL,
-                        &JsValue::from_str("indexedDB getAllKeys error"),
-                    );
-                });
-            keys_req.set_onsuccess(Some(on_success.unchecked_ref()));
-            keys_req.set_onerror(Some(on_error.unchecked_ref()));
-        });
-        let values = JsFuture::from(values_promise)
+        let values = Self::idb_request_result(&values_req)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAll awaited: {err:?}")))?;
-        let keys = JsFuture::from(keys_promise)
+        let keys = Self::idb_request_result(&keys_req)
             .await
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys awaited: {err:?}")))?;
         let values_arr: js_sys::Array = values.into();

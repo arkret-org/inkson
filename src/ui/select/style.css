@@ -27,6 +27,23 @@
   color: var(--secondary-color-1);
 }
 
+/* Keep the trigger one line tall. Without this the label span wraps when
+   the trigger is laid out in a narrow flex slot (e.g. the board toolbar),
+   doubling its height and deforming the control. The label flexes and
+   truncates with an ellipsis; the caret never shrinks. */
+.dx-select-trigger > span {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: start;
+}
+
+.dx-select-trigger > svg {
+  flex-shrink: 0;
+}
+
 .dx-select-trigger span[data-placeholder="true"] {
   color: var(--secondary-color-5);
 }

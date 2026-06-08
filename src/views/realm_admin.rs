@@ -8,7 +8,7 @@ use crate::local_state::{LocalStateStore, MoveSubmissionState};
 use crate::models::RealmTreeNodeKind;
 use crate::operation::cx_ops;
 use crate::routes::Route;
-use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -525,6 +525,7 @@ pub fn RealmMembersPanel(
                         if can_invite {
                             Button {
                                 variant: ButtonVariant::Secondary,
+                                size: ButtonSize::IconSm,
                                 class: "member-head-icon-btn member-head-icon-btn-accent",
                                 "data-testid": "open-invite-modal-button",
                                 title: "Invite member",
@@ -535,6 +536,7 @@ pub fn RealmMembersPanel(
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
+                            size: ButtonSize::IconSm,
                             class: "member-head-icon-btn",
                             "data-testid": "refresh-members-button",
                             title: "{refresh_label}",

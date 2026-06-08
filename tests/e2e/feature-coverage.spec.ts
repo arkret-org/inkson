@@ -355,7 +355,7 @@ test.describe("feature coverage placeholders", () => {
   // claude-design: desktop/realm-admin.html
   // spec: authz/capabilities.md
   test("realm-admin: capability grant and revoke live under security", async ({ page }) => {
-    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/security", {
+    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });

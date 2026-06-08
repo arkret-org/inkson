@@ -99,10 +99,10 @@ pub enum Route {
     #[route("/realms/:realm_id/members", RealmMembersPage)]
     RealmMembers { realm_id: String },
 
-    #[route("/realms/:realm_id/admin", RealmAdminPage)]
+    #[route("/realms/:realm_id/settings", RealmAdminPage)]
     RealmAdmin { realm_id: String },
 
-    #[route("/realms/:realm_id/admin/:section", RealmAdminSectionPage)]
+    #[route("/realms/:realm_id/settings/:section", RealmAdminSectionPage)]
     RealmAdminSection { realm_id: String, section: String },
 
     #[route("/audit", crate::app::RouterView)]

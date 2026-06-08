@@ -1720,7 +1720,7 @@ dependencies = [
 [[package]]
 name = "dioxus-attributes"
 version = "0.1.0"
-source = "git+https://github.com/DioxusLabs/components#02801f27e4b3e30606e5c77e435c9d955c708eb3"
+source = "git+https://github.com/cokret/dioxus-components?branch=cokret%2Ffocus-trap-idempotent#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus-rsx",
  "proc-macro2",
@@ -2109,7 +2109,7 @@ dependencies = [
 [[package]]
 name = "dioxus-primitives"
 version = "0.0.1"
-source = "git+https://github.com/DioxusLabs/components#02801f27e4b3e30606e5c77e435c9d955c708eb3"
+source = "git+https://github.com/cokret/dioxus-components?branch=cokret%2Ffocus-trap-idempotent#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus",
  "dioxus-attributes",

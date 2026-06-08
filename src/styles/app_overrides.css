@@ -3304,15 +3304,12 @@
 /* Self-contained circular icon button for the list header. Deliberately
    does NOT extend .primary/.secondary — their inline-block + 10px padding
    stretched the square into an ellipse. */
+/* Visual-only override. Size/layout (inline-flex, centring, 32×32 square,
+   padding) come from the dx Button `size: IconSm`; this class must NOT
+   set width/height/padding or it re-creates the dual-sizing conflict that
+   left the button 30w×36h (the `data-size=default` height + `:has(svg)`
+   .75rem padding won the cascade and squashed the icon). */
 .member-head-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--surface-2);

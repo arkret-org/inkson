@@ -1466,7 +1466,7 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
   await expect(page.getByTestId("realm-admin-overview")).toContainText("Realm settings");
   await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
@@ -1479,12 +1479,12 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await expect(adminSections.getByRole("link", { name: "Federation" })).toBeVisible();
   await expect(adminSections.getByRole("link", { name: "Repair & Danger" })).toBeVisible();
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/members", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/members", { waitUntil: "domcontentloaded" });
   await expect(page).toHaveURL(/\/realms\/ck:realm:0196419b-0000-7000-8000-000000000000\/members$/);
   await expect(page.getByTestId("realm-members-panel")).toBeVisible();
   await expect(page.getByTestId("realm-admin-panel")).toHaveCount(0);
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/profile", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/profile", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("realm-profile")).toBeVisible();
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("realm-summary-input").fill("Updated realm summary");
@@ -1495,7 +1495,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("profile updated");
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/access", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/access", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("realm-profile")).toHaveCount(0);
   await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
   await expect(page.getByTestId("join-policy")).toBeVisible();
@@ -1540,11 +1540,11 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   // The invite modal closes itself once the create event is accepted.
   await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/security", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security", { waitUntil: "domcontentloaded" });
   await page.getByTestId("rotate-realm-epoch").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/admin/repair", { waitUntil: "domcontentloaded" });
+  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair", { waitUntil: "domcontentloaded" });
   await page.getByTestId("archive-realm-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");
 });
