@@ -41,6 +41,8 @@ use crate::components::HelpTip;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::estimate_passphrase_strength;
 use crate::recovery_flow::ActiveRecoveryPolicy;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
 
 const RECOVERY_PASSPHRASE_STATE_KEY: &str = "recovery.passphrase.v1";
@@ -300,8 +302,8 @@ pub fn SettingsRecoveryPanel(
                             "Words are chosen with the OS RNG (getrandom). The passphrase plaintext only lives in this tab's memory until you navigate away; Cokret cannot recover it for you."
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "recovery-setup-button",
                                 onclick: {
                                     let actor = actor_did.clone();
@@ -352,17 +354,17 @@ pub fn SettingsRecoveryPanel(
                         p { class: "muted",
                             "Type the 12 words back, separated by spaces, to confirm you have a copy."
                         }
-                        textarea {
+                        Textarea {
                             "data-testid": "recovery-confirm-input",
                             rows: "3",
                             cols: "48",
                             value: "{confirm_input}",
                             placeholder: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12",
-                            oninput: move |evt| confirm_input.set(evt.value()),
+                            oninput: move |event: FormEvent| confirm_input.set(event.value()),
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "recovery-confirm-button",
                                 disabled: confirm_input().trim().is_empty()
                                     || stored_fingerprint().is_empty(),

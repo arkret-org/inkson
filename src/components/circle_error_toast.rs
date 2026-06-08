@@ -13,6 +13,7 @@ use dioxus::prelude::*;
 
 use crate::circle::CircleErrorKind;
 use crate::i18n::{I18nSignal, t};
+use crate::ui::button::{Button, ButtonVariant};
 
 /// Process-wide circle-error slot. Newer kinds overwrite older ones —
 /// a deny storm should not stack ten toasts.
@@ -90,7 +91,8 @@ pub fn CircleErrorToast(props: CircleErrorToastProps) -> Element {
                 strong { "Circle error" }
                 p { "{message}" }
             }
-            button {
+            Button {
+                variant: ButtonVariant::Secondary,
                 class: "icon-only",
                 "data-testid": "circle-error-toast-dismiss",
                 onclick: move |_| current.set(None),

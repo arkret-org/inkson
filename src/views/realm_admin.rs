@@ -7,6 +7,10 @@ use crate::local_state::{LocalStateStore, MoveSubmissionState};
 use crate::models::RealmTreeNodeKind;
 use crate::operation::cx_ops;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
 
 /// Default `covered_frontier_lag` warning threshold used by the
@@ -380,8 +384,9 @@ pub fn RealmMembersPanel(
                     on_dismiss: move |_| invite_modal_open.set(false),
                         div { class: "modal-head",
                             h3 { "Invite member" }
-                            button {
-                                class: "secondary icon-button close",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: "icon-button close",
                                 "aria-label": "Close",
                                 "data-testid": "invite-modal-close",
                                 onclick: move |_| invite_modal_open.set(false),
@@ -389,26 +394,27 @@ pub fn RealmMembersPanel(
                             }
                         }
                         div { class: "modal-body workflow-form",
-                            label { "Invite locator" }
-                            input {
+                            Label { html_for: "invite-target-input", "Invite locator" }
+                            Input {
+                                id: "invite-target-input",
                                 "data-testid": "invite-target-input",
                                 value: "{invite_target}",
                                 placeholder: "Paste an invite locator link",
-                                oninput: move |evt| invite_target.set(evt.value()),
+                                oninput: move |event: FormEvent| invite_target.set(event.value()),
                             }
                             div { class: "muted members-invite-hint",
                                 {crate::i18n::tr("realm_admin.invite_hint")}
                             }
                         }
                         div { class: "modal-foot",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "invite-modal-cancel",
                                 onclick: move |_| invite_modal_open.set(false),
                                 "Cancel"
                             }
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "send-invite-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -514,7 +520,8 @@ pub fn RealmMembersPanel(
                             "{total_members}"
                         }
                         if can_invite {
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 class: "member-head-icon-btn member-head-icon-btn-accent",
                                 "data-testid": "open-invite-modal-button",
                                 title: "Invite member",
@@ -523,7 +530,8 @@ pub fn RealmMembersPanel(
                                 crate::components::UiIcon { name: "plus" }
                             }
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             class: "member-head-icon-btn",
                             "data-testid": "refresh-members-button",
                             title: "{refresh_label}",
@@ -556,13 +564,13 @@ pub fn RealmMembersPanel(
                     }
                 }
                 if show_search {
-                    input {
+                    Input {
                         class: "member-search-input",
                         "data-testid": "member-search-input",
                         value: "{member_filter}",
                         placeholder: "Search members…",
-                        oninput: move |evt| {
-                            member_filter.set(evt.value());
+                        oninput: move |event: FormEvent| {
+                            member_filter.set(event.value());
                             member_visible.set(MEMBER_PAGE_SIZE);
                         },
                     }
@@ -627,8 +635,8 @@ pub fn RealmMembersPanel(
                                 }
                                 div { class: "actions",
                                     if can_remove {
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "kick-member-button",
                                             onclick: {
                                                 let base = base_url.clone();
@@ -696,8 +704,8 @@ pub fn RealmMembersPanel(
                                             },
                                             {crate::i18n::tr("realm_admin.kick_member")}
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "ban-member-button",
                                             onclick: {
                                                 let base = base_url.clone();
@@ -758,8 +766,8 @@ pub fn RealmMembersPanel(
                                             {crate::i18n::tr("realm_admin.ban_member")}
                                         }
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "member-row-block-button",
                                         onclick: {
                                             let m = member.clone();
@@ -776,8 +784,8 @@ pub fn RealmMembersPanel(
                                         div { class: "muted", title: "{member}", "{member_label}" }
                                         div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
                                         div { class: "actions",
-                                            button {
-                                                class: "primary",
+                                            Button {
+                                                variant: ButtonVariant::Primary,
                                                 "data-testid": "block-user-confirm-button",
                                                 onclick: {
                                                     let m = member.clone();
@@ -810,8 +818,8 @@ pub fn RealmMembersPanel(
                                                 },
                                                 {crate::i18n::tr("member.block_confirm.confirm")}
                                             }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 "data-testid": "block-user-cancel-button",
                                                 onclick: move |_| block_confirm_did.set(None),
                                                 {crate::i18n::tr("timeline.cancel")}
@@ -841,8 +849,8 @@ pub fn RealmMembersPanel(
                 }
                 if has_more {
                     div { class: "member-load-more",
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "load-more-members-button",
                             onclick: move |_| {
                                 let next = member_visible() + MEMBER_PAGE_SIZE;
@@ -1239,8 +1247,8 @@ pub fn RealmAdminPanel(
                                         }
                                     }
                                     if record.state.is_failed() {
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "move-failure-detail-toggle",
                                             onclick: {
                                                 let mid = record.move_id.clone();
@@ -1335,8 +1343,8 @@ pub fn RealmAdminPanel(
                             .cloned()
                         {
                             div { class: "actions",
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "prefer-safer-side-button",
                                     "data-cell": "{cell_ref}",
                                     onclick: {
@@ -1366,58 +1374,65 @@ pub fn RealmAdminPanel(
                     div { class: "muted",
                         "Build a repair Event with the competing heads and recovery capability ref to merge the two concurrent histories. Soland's authz reducer requires the repair to be signed by a holder of the named recovery capability."
                     }
-                    label { "Target cell (id of unresolved bottom/conflict cell)" }
-                    input {
+                    Label { html_for: "repair-target-cell-input", "Target cell (id of unresolved bottom/conflict cell)" }
+                    Input {
+                        id: "repair-target-cell-input",
                         "data-testid": "repair-target-cell-input",
                         value: "{repair_target_cell}",
                         placeholder: "ck:cell:ck.component.realm.organization.v1:...",
-                        oninput: move |evt| repair_target_cell.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_target_cell.set(event.value()),
                     }
-                    label { "conflict_head_A" }
-                    input {
+                    Label { html_for: "repair-head-a-input", "conflict_head_A" }
+                    Input {
+                        id: "repair-head-a-input",
                         "data-testid": "repair-head-a-input",
                         value: "{repair_head_a}",
                         placeholder: "ck:anchor:sha256:headA...",
-                        oninput: move |evt| repair_head_a.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_head_a.set(event.value()),
                     }
-                    label { "conflict_head_B" }
-                    input {
+                    Label { html_for: "repair-head-b-input", "conflict_head_B" }
+                    Input {
+                        id: "repair-head-b-input",
                         "data-testid": "repair-head-b-input",
                         value: "{repair_head_b}",
                         placeholder: "ck:anchor:sha256:headB...",
-                        oninput: move |evt| repair_head_b.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_head_b.set(event.value()),
                     }
-                    label { "recovery_capability ref" }
-                    input {
+                    Label { html_for: "repair-capability-input", "recovery_capability ref" }
+                    Input {
+                        id: "repair-capability-input",
                         "data-testid": "repair-capability-input",
                         value: "{repair_capability_ref}",
                         placeholder: "cap.recovery-01",
-                        oninput: move |evt| repair_capability_ref.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_capability_ref.set(event.value()),
                     }
-                    label { "state_witness ref" }
-                    input {
+                    Label { html_for: "repair-state-witness-input", "state_witness ref" }
+                    Input {
+                        id: "repair-state-witness-input",
                         "data-testid": "repair-state-witness-input",
                         value: "{repair_state_witness_ref}",
                         placeholder: "ck:snapshot:sha256:...",
-                        oninput: move |evt| repair_state_witness_ref.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_state_witness_ref.set(event.value()),
                     }
-                    label { "inclusion_proof ref" }
-                    input {
+                    Label { html_for: "repair-inclusion-proof-input", "inclusion_proof ref" }
+                    Input {
+                        id: "repair-inclusion-proof-input",
                         "data-testid": "repair-inclusion-proof-input",
                         value: "{repair_inclusion_proof_ref}",
                         placeholder: "ck:proof:sha256:...",
-                        oninput: move |evt| repair_inclusion_proof_ref.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_inclusion_proof_ref.set(event.value()),
                     }
-                    label { "Winner value (JSON)" }
-                    textarea {
+                    Label { html_for: "repair-winner-json-input", "Winner value (JSON)" }
+                    Textarea {
+                        id: "repair-winner-json-input",
                         "data-testid": "repair-winner-json-input",
                         value: "{repair_winner_json}",
                         placeholder: "{{\"title\": \"merged\"}}",
-                        oninput: move |evt| repair_winner_json.set(evt.value()),
+                        oninput: move |event: FormEvent| repair_winner_json.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "repair-submit-button",
                             onclick: {
                                 let base = base_url.clone();
@@ -1516,8 +1531,9 @@ pub fn RealmAdminPanel(
                     div { class: "muted",
                         "Surface a banner when soland's published covered_frontier_lag exceeds this value. Default 5 (mirrors sodmin)."
                     }
-                    label { "Threshold (Moves)" }
+                    Label { html_for: "covered-frontier-threshold-input", "Threshold (Moves)" }
                     input {
+                        id: "covered-frontier-threshold-input",
                         "data-testid": "covered-frontier-threshold-input",
                         r#type: "number",
                         min: "0",
@@ -1595,8 +1611,8 @@ pub fn RealmAdminPanel(
                         "Recovery anchorer mode for this Realm — controls who can re-anchor a paused frontier. Read-only; modifications go through the dedicated anchorer-rotation flow."
                     }
                     div { class: "actions",
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "anchorer-cell-refresh",
                             onclick: {
                                 let base = base_url.clone();
@@ -1671,19 +1687,21 @@ pub fn RealmAdminPanel(
                         }
                     }
                     div { class: "workflow-form",
-                        label { "Title" }
-                        input {
+                        Label { html_for: "realm-name-input", "Title" }
+                        Input {
+                            id: "realm-name-input",
                             "data-testid": "realm-name-input",
                             value: "{metadata_title}",
                             placeholder: "{metadata_subject_label} title",
-                            oninput: move |evt| metadata_title.set(evt.value()),
+                            oninput: move |event: FormEvent| metadata_title.set(event.value()),
                         }
-                        label { "Summary" }
-                        textarea {
+                        Label { html_for: "realm-summary-input", "Summary" }
+                        Textarea {
+                            id: "realm-summary-input",
                             "data-testid": "realm-summary-input",
                             value: "{metadata_summary}",
                             placeholder: "Optional summary",
-                            oninput: move |evt| metadata_summary.set(evt.value()),
+                            oninput: move |event: FormEvent| metadata_summary.set(event.value()),
                         }
                         label { "Avatar" }
                         crate::components::AvatarUploader {
@@ -1703,8 +1721,8 @@ pub fn RealmAdminPanel(
                             },
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "update-metadata-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -1798,23 +1816,23 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "join-policy",
                 div { class: "event-head", span { "Join Policy" } span { "access control" } }
                 div { class: "actions",
-                    button {
-                        class: if join_rule() == "open" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if join_rule() == "open" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| join_rule.set("open".to_owned()),
                         "Open"
                     }
-                    button {
-                        class: if join_rule() == "invite" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if join_rule() == "invite" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| join_rule.set("invite".to_owned()),
                         "Invite"
                     }
-                    button {
-                        class: if join_rule() == "request" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if join_rule() == "request" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| join_rule.set("request".to_owned()),
                         "Request"
                     }
-                    button {
-                        class: if join_rule() == "restricted" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if join_rule() == "restricted" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| join_rule.set("restricted".to_owned()),
                         "Restricted"
                     }
@@ -1833,26 +1851,29 @@ pub fn RealmAdminPanel(
                     " Enabled"
                 }
                 if principal_admission_enabled() {
-                    label { "Allowed DID methods" }
-                    input {
+                    Label { html_for: "principal-admission-methods-input", "Allowed DID methods" }
+                    Input {
+                        id: "principal-admission-methods-input",
                         "data-testid": "principal-admission-methods-input",
                         value: "{principal_admission_methods}",
                         placeholder: "did:webvh, did:web",
-                        oninput: move |evt| principal_admission_methods.set(evt.value()),
+                        oninput: move |event: FormEvent| principal_admission_methods.set(event.value()),
                     }
-                    label { "Allowed principal DIDs" }
-                    textarea {
+                    Label { html_for: "principal-admission-allowed-dids-input", "Allowed principal DIDs" }
+                    Textarea {
+                        id: "principal-admission-allowed-dids-input",
                         "data-testid": "principal-admission-allowed-dids-input",
                         value: "{principal_admission_allowed_dids}",
                         placeholder: "did:web:alice.example",
-                        oninput: move |evt| principal_admission_allowed_dids.set(evt.value()),
+                        oninput: move |event: FormEvent| principal_admission_allowed_dids.set(event.value()),
                     }
-                    label { "Denied principal DIDs" }
-                    textarea {
+                    Label { html_for: "principal-admission-denied-dids-input", "Denied principal DIDs" }
+                    Textarea {
+                        id: "principal-admission-denied-dids-input",
                         "data-testid": "principal-admission-denied-dids-input",
                         value: "{principal_admission_denied_dids}",
                         placeholder: "did:web:blocked.example",
-                        oninput: move |evt| principal_admission_denied_dids.set(evt.value()),
+                        oninput: move |event: FormEvent| principal_admission_denied_dids.set(event.value()),
                     }
                 } else {
                     div { class: "muted", "Disabled" }
@@ -1863,30 +1884,30 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "history-visibility",
                 div { class: "event-head", span { "History Visibility" } span { "" } }
                 div { class: "actions",
-                    button {
-                        class: if history_visibility() == "shared" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if history_visibility() == "shared" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| history_visibility.set("shared".to_owned()),
                         "Shared"
                     }
-                    button {
-                        class: if history_visibility() == "invited" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if history_visibility() == "invited" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| history_visibility.set("invited".to_owned()),
                         "Invited"
                     }
-                    button {
-                        class: if history_visibility() == "joined" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if history_visibility() == "joined" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| history_visibility.set("joined".to_owned()),
                         "Joined"
                     }
-                    button {
-                        class: if history_visibility() == "world_readable" { "primary" } else { "secondary" },
+                    Button {
+                        variant: if history_visibility() == "world_readable" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| history_visibility.set("world_readable".to_owned()),
                         "World Readable"
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "apply-policy-button",
                         onclick: {
                             let base = base_url.clone();
@@ -1950,8 +1971,8 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "mls-rotation",
                 div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "rotate-realm-epoch",
                         onclick: {
                             let base = base_url.clone();
@@ -1989,8 +2010,8 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "leave-realm",
                 div { class: "event-head", span { "Leave Realm" } span { "" } }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "leave-realm-button",
                         onclick: {
                             let base = base_url.clone();
@@ -2045,23 +2066,26 @@ pub fn RealmAdminPanel(
                     span { "Capability grant / revoke" }
                     span { "Advanced" }
                 }
-                label { "Grant ID (cell subject)" }
-                input {
+                Label { html_for: "cap-grant-id-input", "Grant ID (cell subject)" }
+                Input {
+                    id: "cap-grant-id-input",
                     "data-testid": "cap-grant-id-input",
                     value: "{cap_grant_id}",
-                    oninput: move |evt| cap_grant_id.set(evt.value()),
+                    oninput: move |event: FormEvent| cap_grant_id.set(event.value()),
                 }
-                label { "Capability tag (action / scope)" }
-                input {
+                Label { html_for: "cap-grant-tag-input", "Capability tag (action / scope)" }
+                Input {
+                    id: "cap-grant-tag-input",
                     "data-testid": "cap-grant-tag-input",
                     value: "{cap_tag}",
-                    oninput: move |evt| cap_tag.set(evt.value()),
+                    oninput: move |event: FormEvent| cap_tag.set(event.value()),
                 }
-                label { "Revoke reason (optional)" }
-                input {
+                Label { html_for: "cap-revoke-reason-input", "Revoke reason (optional)" }
+                Input {
+                    id: "cap-revoke-reason-input",
                     "data-testid": "cap-revoke-reason-input",
                     value: "{cap_revoke_reason}",
-                    oninput: move |evt| cap_revoke_reason.set(evt.value()),
+                    oninput: move |event: FormEvent| cap_revoke_reason.set(event.value()),
                 }
                 // Capability constraint editor. Choose a family from the
                 // dropdown (`temporal` / `quota` / `scope_limitation` /
@@ -2086,8 +2110,9 @@ pub fn RealmAdminPanel(
                 }
                 if cap_constraint_kind() == "temporal" {
                     div { "data-testid": "cap-constraint-temporal-fields",
-                        label { "not_before (RFC 3339, optional)" }
+                        Label { html_for: "cap-constraint-not-before-input", "not_before (RFC 3339, optional)" }
                         input {
+                            id: "cap-constraint-not-before-input",
                             "data-testid": "cap-constraint-not-before-input",
                             r#type: "datetime-local",
                             value: "{cap_temporal_not_before}",
@@ -2095,8 +2120,9 @@ pub fn RealmAdminPanel(
                                 cap_temporal_not_before.set(evt.value());
                             },
                         }
-                        label { "expires_at (RFC 3339, optional)" }
+                        Label { html_for: "cap-constraint-expires-at-input", "expires_at (RFC 3339, optional)" }
                         input {
+                            id: "cap-constraint-expires-at-input",
                             "data-testid": "cap-constraint-expires-at-input",
                             r#type: "datetime-local",
                             value: "{cap_temporal_expires_at}",
@@ -2116,8 +2142,8 @@ pub fn RealmAdminPanel(
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "cap-grant-submit-button",
                         onclick: {
                             let base = base_url.clone();
@@ -2215,8 +2241,8 @@ pub fn RealmAdminPanel(
                         },
                         {crate::i18n::tr("realm_admin.grant_capability_move")}
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "cap-revoke-submit-button",
                         onclick: {
                             let base = base_url.clone();
@@ -2303,8 +2329,8 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "danger-zone",
                 div { class: "event-head", span { "Danger Zone" } span { "destructive actions" } }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "archive-realm-button",
                         onclick: {
                             let base = base_url.clone();
@@ -2343,8 +2369,8 @@ pub fn RealmAdminPanel(
                         },
                         {crate::i18n::tr("realm_admin.archive_realm")}
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "destroy-realm-button",
                         onclick: {
                             let base = base_url.clone();

@@ -325,25 +325,3 @@ pub fn LazyLinkBadge(
         }
     }
 }
-
-#[component]
-pub fn ActionButton(
-    label: String,
-    class_name: Option<String>,
-    test_id: Option<String>,
-    disabled: Option<bool>,
-    onclick: EventHandler<MouseEvent>,
-) -> Element {
-    let cls = class_name.unwrap_or_else(|| "secondary".to_owned());
-    let tid = test_id.unwrap_or_default();
-    let dis = disabled.unwrap_or(false);
-    rsx! {
-        button {
-            class: "{cls}",
-            "data-testid": "{tid}",
-            disabled: dis,
-            onclick: move |evt| onclick.call(evt),
-            "{label}"
-        }
-    }
-}

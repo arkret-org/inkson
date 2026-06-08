@@ -46,6 +46,10 @@ use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -259,8 +263,8 @@ pub fn SettingsDevicesPanel(
                                 to: Route::SettingsDevicesPair,
                                 "Pair new device"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "device-list-refresh",
                                 onclick: refresh_devices,
                                 "Refresh"
@@ -486,8 +490,8 @@ fn render_device_row(
             td { "{row.verification_state}" }
             td { "{row.created_at}" }
             td {
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "device-rename-button",
                     onclick: move |_| {
                         rename_input.set(name_for_rename.clone());
@@ -498,8 +502,8 @@ fn render_device_row(
                     },
                     "Rename"
                 }
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "device-revoke-button",
                     disabled: is_current,
                     onclick: move |_| {
@@ -544,19 +548,19 @@ fn render_revoke_modal(
                 p { class: "muted", "data-testid": "device-revoke-threat-note",
                     "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."
                 }
-                label { r#for: "device-revoke-passphrase", "Recovery passphrase" }
-                input {
+                Label { html_for: "device-revoke-passphrase", "Recovery passphrase" }
+                Input {
                     id: "device-revoke-passphrase",
                     "data-testid": "device-revoke-passphrase-input",
                     r#type: "password",
                     value: "{revoke_passphrase}",
                     autocomplete: "current-password",
                     placeholder: "Required to rotate encrypted history backups",
-                    oninput: move |evt| revoke_passphrase.set(evt.value()),
+                    oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
                 }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "device-revoke-cancel-button",
                         onclick: move |_| {
                             let _ = &cancel_target;
@@ -564,8 +568,8 @@ fn render_revoke_modal(
                         },
                         "Cancel"
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "device-revoke-confirm-button",
                         disabled: revoke_passphrase().trim().is_empty(),
                         onclick: move |_| {
@@ -717,27 +721,27 @@ fn render_rename_modal(
                     code { "#{id_suffix}" }
                     "."
                 }
-                label { r#for: "device-rename-input", "Device name" }
-                input {
+                Label { html_for: "device-rename-input", "Device name" }
+                Input {
                     id: "device-rename-input",
                     "data-testid": "device-rename-input",
                     r#type: "text",
                     maxlength: "128",
                     value: "{rename_input}",
                     placeholder: "e.g. Work laptop",
-                    oninput: move |evt| rename_input.set(evt.value()),
+                    oninput: move |event: FormEvent| rename_input.set(event.value()),
                 }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "device-rename-cancel-button",
                         onclick: move |_| {
                             rename_target.set(None);
                         },
                         "Cancel"
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "device-rename-confirm-button",
                         disabled: rename_input().trim().is_empty()
                             || rename_input().trim() == original_for_disable.trim(),
@@ -855,8 +859,8 @@ fn render_pair_flow(
                 ", choose \"Add to existing account\", and paste the payload below (or scan the QR with the device camera)."
             }
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "pair-device-start-button",
                     disabled: actor_did.trim().is_empty(),
                     onclick: move |_| {
@@ -907,8 +911,8 @@ fn render_pair_flow(
                     },
                     "Start pairing"
                 }
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "pair-device-clear-button",
                     disabled: payload_for_state.is_empty(),
                     onclick: move |_| {
@@ -930,7 +934,7 @@ fn render_pair_flow(
                     }
                     div { class: "metric",
                         strong { "Payload (paste on new device)" }
-                        textarea {
+                        Textarea {
                             "data-testid": "pair-device-secret",
                             readonly: true,
                             rows: "5",
@@ -957,16 +961,16 @@ fn render_pair_flow(
                 code { "/_cokret/self/devices/authorize-pairing" }
                 "."
             }
-            textarea {
+            Textarea {
                 "data-testid": "accept-pairing-input",
                 rows: "5",
                 cols: "48",
                 value: "{accept_input}",
-                oninput: move |evt| accept_input.set(evt.value()),
+                oninput: move |event: FormEvent| accept_input.set(event.value()),
             }
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "accept-pairing-button",
                     disabled: accept_input().trim().is_empty(),
                     onclick: move |_| {

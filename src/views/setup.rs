@@ -8,6 +8,10 @@ use crate::components::PermissionPillRow;
 use crate::config::LocalConfigStore;
 use crate::local_state::LocalStateStore;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{authed_api, persist_config, short_protocol_id};
 
 const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
@@ -692,8 +696,8 @@ pub fn SetupPanel(
                             }
                             div { class: "setup-step-list",
                                 for step in NEW_REALM_STEPS {
-                                    button {
-                                        class: if active_create_step == step { "primary" } else { "secondary" },
+                                    Button {
+                                        variant: if active_create_step == step { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                         disabled: step == NewRealmStep::Done && !has_created_realm,
                                         onclick: move |_| create_step.set(step),
                                         span { class: "setup-step-index", "{step.number()}" }
@@ -714,28 +718,30 @@ pub fn SetupPanel(
                                 }
                                 div { class: "workflow-form setup-form-grid",
                                     div { class: "setup-field",
-                                        label { "Realm title" }
-                                        input {
+                                        Label { html_for: "realm-title-input-input", "Realm title" }
+                                        Input {
+                                            id: "realm-title-input-input",
                                             "data-testid": "realm-title-input",
                                             value: "{title_value}",
                                             placeholder: "Engineering, Research, Design system...",
-                                            oninput: move |event| realm_title.set(event.value())
+                                            oninput: move |event: FormEvent| realm_title.set(event.value())
                                         }
                                     }
                                     div { class: "setup-field setup-field-span-2",
-                                        label { "Summary" }
-                                        textarea {
+                                        Label { html_for: "realm-summary-input-input", "Summary" }
+                                        Textarea {
+                                            id: "realm-summary-input-input",
                                             "data-testid": "realm-summary-input",
                                             value: "{summary_value}",
                                             rows: "3",
                                             placeholder: "What this Realm is for.",
-                                            oninput: move |event| realm_summary.set(event.value())
+                                            oninput: move |event: FormEvent| realm_summary.set(event.value())
                                         }
                                     }
                                 }
                                 div { class: "actions setup-nav-actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "new-realm-next-button",
                                         disabled: !can_advance_step,
                                         onclick: move |_| create_step.set(active_create_step.next()),
@@ -961,14 +967,14 @@ pub fn SetupPanel(
                                 }
 
                                 div { class: "actions setup-nav-actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "new-realm-back-button",
                                         onclick: move |_| create_step.set(active_create_step.previous()),
                                         "Back"
                                     }
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "new-realm-next-button",
                                         disabled: !can_advance_step,
                                         onclick: move |_| create_step.set(active_create_step.next()),
@@ -986,13 +992,14 @@ pub fn SetupPanel(
                                 }
                                 div { class: "workflow-form setup-form-grid",
                                     div { class: "setup-field setup-field-span-2",
-                                        label { "Initial members" }
-                                        textarea {
+                                        Label { html_for: "seed-members-input-input", "Initial members" }
+                                        Textarea {
+                                            id: "seed-members-input-input",
                                             "data-testid": "seed-members-input",
                                             value: "{seed_members_value}",
                                             rows: "4",
                                             placeholder: "alice:example.com\nbob:example.com",
-                                            oninput: move |event| seed_members.set(event.value())
+                                            oninput: move |event: FormEvent| seed_members.set(event.value())
                                         }
                                         div { class: "muted", "One handle (user:domain.com) or DID per line, or comma-separated." }
                                     }
@@ -1016,14 +1023,14 @@ pub fn SetupPanel(
                                     }
                                 }
                                 div { class: "actions setup-nav-actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "new-realm-back-button",
                                         onclick: move |_| create_step.set(active_create_step.previous()),
                                         "Back"
                                     }
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "create-realm-button",
                                         disabled: !can_create_realm,
                                         onclick: {
@@ -1380,8 +1387,8 @@ pub fn SetupPanel(
                                         }
                                     }
                                     div { class: "actions setup-nav-actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "new-realm-back-button",
                                             onclick: move |_| create_step.set(active_create_step.previous()),
                                             "Back"
@@ -1400,8 +1407,8 @@ pub fn SetupPanel(
                                 } else {
                                     div { class: "muted", "Create a Realm before opening the next context." }
                                     div { class: "actions setup-nav-actions",
-                                        button {
-                                            class: "primary",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
                                             "data-testid": "new-realm-back-button",
                                             onclick: move |_| create_step.set(NewRealmStep::Seed),
                                             "Back to Seed"
@@ -1517,14 +1524,15 @@ pub fn SetupPanel(
                             }
                             div { class: "workflow-form setup-form-grid",
                                 div { class: "setup-field",
-                                    label { "Space title" }
-                                    input {
+                                    Label { html_for: "new-space-title-input-input", "Space title" }
+                                    Input {
+                                        id: "new-space-title-input-input",
                                         "data-testid": "new-space-title-input",
                                         required: true,
                                         "aria-required": "true",
                                         value: "{new_space_title_value}",
                                         placeholder: "Backlog, Roadmap, Onboarding...",
-                                        oninput: move |event| new_space_title.set(event.value())
+                                        oninput: move |event: FormEvent| new_space_title.set(event.value())
                                     }
                                 }
                                 div { class: "setup-field",
@@ -1551,13 +1559,14 @@ pub fn SetupPanel(
                                     }
                                 }
                                 div { class: "setup-field setup-field-span-2",
-                                    label { "Summary" }
-                                    textarea {
+                                    Label { html_for: "new-space-summary-input-input", "Summary" }
+                                    Textarea {
+                                        id: "new-space-summary-input-input",
                                         "data-testid": "new-space-summary-input",
                                         value: "{new_space_summary_value}",
                                         rows: "3",
                                         placeholder: "Optional description.",
-                                        oninput: move |event| new_space_summary.set(event.value())
+                                        oninput: move |event: FormEvent| new_space_summary.set(event.value())
                                     }
                                 }
                                 // Spec realm-and-space.md §3.2 — optional
@@ -1635,11 +1644,13 @@ pub fn SetupPanel(
                                 }
                             }
                             div { class: "actions setup-nav-actions",
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     "data-testid": "new-space-submit-button",
                                     disabled: !new_space_can_submit,
-                                    onclick: move |_| {
+                                    onclick: {
+                                        let base_url = base_url.clone();
+                                        move |_| {
                                         let api_token = token();
                                         let base = base_url.clone();
                                         let realm_id = new_space_realm_id();
@@ -1726,6 +1737,7 @@ pub fn SetupPanel(
                                                 }
                                             }
                                         });
+                                        }
                                     },
                                     "Create Space"
                                 }
@@ -1777,8 +1789,8 @@ pub fn SetupPanel(
                                 }
                             } else {
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "space-lifecycle-archive",
                                         title: "Set state to archived; server doesn't cascade.",
                                         onclick: {
@@ -1808,8 +1820,8 @@ pub fn SetupPanel(
                                         },
                                         "Archive"
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "space-lifecycle-restore",
                                         title: "Move archived → active; only valid from archived.",
                                         onclick: {
@@ -1839,8 +1851,8 @@ pub fn SetupPanel(
                                         },
                                         "Restore"
                                     }
-                                    button {
-                                        class: "secondary danger",
+                                    Button {
+                                        variant: ButtonVariant::Destructive,
                                         "data-testid": "space-lifecycle-tombstone",
                                         title: "Irreversible. Server rejects if live child Spaces / placement Flows exist.",
                                         onclick: {

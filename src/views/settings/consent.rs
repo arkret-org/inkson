@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
 use crate::models::ConsentCellResponse;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
@@ -61,8 +63,8 @@ pub fn ConsentSettingsCard(
                             }
                             div { class: "mono", "{cell.peer_did}" }
                             div { class: "muted", "{cell.scope}" }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "consent-detail-button",
                                 onclick: {
                                     let cell = cell.clone();
@@ -89,13 +91,13 @@ pub fn ConsentSettingsCard(
                                         option { value: "message", "message" }
                                         option { value: "call", "call" }
                                     }
-                                    input {
+                                    Input {
                                         "data-testid": "consent-expires-at-input",
                                         value: "{detail_expires_at}",
-                                        oninput: move |evt| detail_expires_at.set(evt.value()),
+                                        oninput: move |event: FormEvent| detail_expires_at.set(event.value()),
                                     }
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "grant-consent-button",
                                         onclick: {
                                             let holder = account_did();
@@ -153,8 +155,8 @@ pub fn ConsentSettingsCard(
                                     }
                                     div { class: "mono", "{cell.peer_did}" }
                                     div { class: "muted", "{expiry_label}" }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "revoke-consent-button",
                                         onclick: {
                                             let holder = account_did();
@@ -192,8 +194,8 @@ pub fn ConsentSettingsCard(
             }
 
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "consent-new-grant-button",
                     onclick: move |_| show_form.set(!show_form()),
                     if show_form() { "Cancel" } else { "New grant" }
@@ -202,24 +204,24 @@ pub fn ConsentSettingsCard(
 
             if show_form() {
                 div { class: "event",
-                    input {
+                    Input {
                         "data-testid": "consent-new-grant-scope-input",
                         value: "{new_scope}",
-                        oninput: move |evt| new_scope.set(evt.value()),
+                        oninput: move |event: FormEvent| new_scope.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "consent-new-grant-grantee-input",
                         value: "{new_grantee}",
                         placeholder: "did:web:peer.example",
-                        oninput: move |evt| new_grantee.set(evt.value()),
+                        oninput: move |event: FormEvent| new_grantee.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "consent-new-grant-ttl-input",
                         value: "{new_ttl}",
-                        oninput: move |evt| new_ttl.set(evt.value()),
+                        oninput: move |event: FormEvent| new_ttl.set(event.value()),
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "consent-new-grant-submit-button",
                         disabled: new_grantee.read().trim().is_empty(),
                         onclick: {

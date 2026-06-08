@@ -25,6 +25,8 @@ use std::sync::Mutex;
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+
 /// One denial event captured from the HTTP layer.
 #[derive(Clone, Debug)]
 pub struct PolicyDenyEvent {
@@ -187,8 +189,10 @@ pub fn PolicyDenyBanner() -> Element {
                     "data-testid": "policy-deny-code",
                     "{event.code}"
                 }
-                button {
-                    class: "btn icon sm ghost",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::IconSm,
+                    class: "btn",
                     "data-testid": "policy-deny-dismiss",
                     "aria-label": "Dismiss policy deny notice",
                     onclick: move |_| current.set(None),

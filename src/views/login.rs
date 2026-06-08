@@ -147,7 +147,7 @@ pub fn LoginPanel(
 
                 Button {
                     variant: ButtonVariant::Primary,
-                    class: "primary auth-primary",
+                    class: "auth-primary",
                     "data-testid": "start-server-login-button",
                     disabled: is_busy(),
                     onclick: move |_| {

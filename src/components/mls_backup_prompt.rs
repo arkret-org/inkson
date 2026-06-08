@@ -6,6 +6,9 @@ use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input};
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
@@ -526,10 +529,10 @@ pub fn MlsBackupPrompt(
                     }
                     if !generated_now.trim().is_empty() {
                         div { class: "workflow-form",
-                            label { r#for: "mls-backup-generated-key",
+                            Label { html_for: "mls-backup-generated-key",
                                 {crate::i18n::tr("mls_backup.generated_key_label")}
                             }
-                            textarea {
+                            Textarea {
                                 id: "mls-backup-generated-key",
                                 "data-testid": "mls-backup-generated-key",
                                 rows: "3",
@@ -547,8 +550,8 @@ pub fn MlsBackupPrompt(
                 }
                 div { class: "modal-foot mls-backup-row",
                     if generated_now.trim().is_empty() {
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "mls-backup-submit",
                             disabled: !can_submit,
                             onclick: on_backup,
@@ -558,16 +561,16 @@ pub fn MlsBackupPrompt(
                                 {crate::i18n::tr("mls_backup.button_idle")}
                             }
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mls-backup-dismiss",
                             disabled: busy(),
                             onclick: move |_| needs_mls_backup.set(false),
                             {crate::i18n::tr("mls_backup.button_dismiss")}
                         }
                     } else {
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "mls-backup-saved",
                             onclick: move |_| {
                                 generated_recovery_key.set(String::new());

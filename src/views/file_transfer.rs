@@ -9,6 +9,7 @@ use crate::file_transfer::{
     file_transfer_items_from_account_data, format_size, load_file_transfer_crypto_context,
     load_or_create_file_transfer_crypto_context, upload_actor_private_file,
 };
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 
 #[component]
 pub fn FileTransferPanel(
@@ -168,7 +169,8 @@ pub fn FileTransferPanel(
                             }
                         },
                     }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: "btn",
                         "data-testid": "file-transfer-refresh-button",
                         disabled: refreshing(),
@@ -254,8 +256,10 @@ fn FileTransferRow(
                 span { class: "mono", title: "{item.record.created_at}", "{item.record.created_at}" }
             }
             div { class: "file-transfer-actions",
-                button {
-                    class: "btn sm",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
+                    class: "btn",
                     "data-testid": "file-transfer-prepare-download",
                     onclick: {
                         let item = item.clone();

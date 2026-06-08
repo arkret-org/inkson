@@ -6,6 +6,9 @@ use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
 use crate::local_state::LocalStateStore;
 use crate::models::*;
 use crate::secure_key_store::default_secure_key_store;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
@@ -276,14 +279,14 @@ pub fn VerifyDevicePanel(
                     span { {crate::i18n::tr("verify_device.choose_method")} }
                 }
                 div { class: "actions",
-                    button {
-                        class: if verify_method() == VerifyMethod::QrCode { "primary" } else { "secondary" },
+                    Button {
+                        variant: if verify_method() == VerifyMethod::QrCode { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         "data-testid": "qr-verify-button",
                         onclick: move |_| verify_method.set(VerifyMethod::QrCode),
                         {crate::i18n::tr("verify_device.qr_code")}
                     }
-                    button {
-                        class: if verify_method() == VerifyMethod::Sas { "primary" } else { "secondary" },
+                    Button {
+                        variant: if verify_method() == VerifyMethod::Sas { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         "data-testid": "sas-verify-button",
                         onclick: move |_| verify_method.set(VerifyMethod::Sas),
                         {crate::i18n::tr("verify_device.sas_emoji")}
@@ -299,16 +302,17 @@ pub fn VerifyDevicePanel(
                         span { {crate::i18n::tr("verify_device.qr_section_hint")} }
                     }
                     div { class: "workflow-form",
-                        label { {crate::i18n::tr("verify_device.target_device_id")} }
-                        input {
+                        Label { html_for: "qr-target-device-input", {crate::i18n::tr("verify_device.target_device_id")} }
+                        Input {
+                            id: "qr-target-device-input",
                             "data-testid": "qr-target-device",
                             value: "{target_device}",
                             placeholder: crate::i18n::tr("verify_device.target_device_placeholder"),
-                            oninput: move |evt| target_device.set(evt.value()),
+                            oninput: move |event: FormEvent| target_device.set(event.value()),
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "generate-qr-button",
                                 onclick: {
                                     let device_id = device_id.clone();
@@ -363,16 +367,17 @@ pub fn VerifyDevicePanel(
                         span { {crate::i18n::tr("verify_device.sas_section_hint")} }
                     }
                     div { class: "workflow-form",
-                        label { {crate::i18n::tr("verify_device.target_device_id")} }
-                        input {
+                        Label { html_for: "sas-target-device-input", {crate::i18n::tr("verify_device.target_device_id")} }
+                        Input {
+                            id: "sas-target-device-input",
                             "data-testid": "sas-target-device",
                             value: "{target_device}",
                             placeholder: crate::i18n::tr("verify_device.target_device_placeholder"),
-                            oninput: move |evt| target_device.set(evt.value()),
+                            oninput: move |event: FormEvent| target_device.set(event.value()),
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "start-sas-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -450,8 +455,8 @@ pub fn VerifyDevicePanel(
                                 "Generate a fresh ephemeral X25519 keypair, send the public half to your other device, and paste its public key here. The SAS pair below recomputes from the real ECDH shared secret as soon as both halves are present."
                             }
                             div { class: "actions",
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "sas-generate-keypair-button",
                                     onclick: move |_| {
                                         let pair = std::sync::Arc::new(
@@ -464,8 +469,8 @@ pub fn VerifyDevicePanel(
                                     },
                                     "Generate my X25519 keypair"
                                 }
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     "data-testid": "sas-send-public-button",
                                     disabled: ephemeral_keypair().is_none() || target_device().trim().is_empty(),
                                     onclick: {
@@ -552,11 +557,11 @@ pub fn VerifyDevicePanel(
                                     }
                                 }
                             }
-                            input {
+                            Input {
                                 "data-testid": "sas-peer-public-input",
                                 value: "{peer_public_b64}",
                                 placeholder: "Paste peer's X25519 public key (base64)",
-                                oninput: move |evt| peer_public_b64.set(evt.value().trim().to_owned()),
+                                oninput: move |event: FormEvent| peer_public_b64.set(event.value().trim().to_owned()),
                             }
                             if !sas_send_status().is_empty() {
                                 div { class: "muted", "data-testid": "sas-send-status", "{sas_send_status}" }
@@ -636,8 +641,8 @@ pub fn VerifyDevicePanel(
                                 div { class: "entity-title", "data-testid": "sas-digits", "{digits_text}" }
                                 div { class: "muted", "{sas_code}" }
                                 div { class: "actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "sas-match-button",
                                         onclick: {
                                             let base = base_url.clone();
@@ -705,8 +710,8 @@ pub fn VerifyDevicePanel(
                                         },
                                         "They Match"
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "sas-mismatch-button",
                                         onclick: move |_| verify_status.set("Mismatch — aborted. The new device will not be authorized and will not receive encrypted history.".to_owned()),
                                         "They Don't Match"
@@ -764,8 +769,8 @@ pub fn VerifyDevicePanel(
             div { class: "event", "data-testid": "trust-table",
                 div { class: "event-head", span { "Device Trust" } span { "{trust_devices().len()} devices" } }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "refresh-trust-button",
                         onclick: {
                             let base = base_url.clone();
@@ -805,8 +810,8 @@ pub fn VerifyDevicePanel(
                                     div { class: "muted", "Verified: {verified}" }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "verify-action-button",
                                         onclick: {
                                             let base = base_url.clone();
@@ -858,8 +863,8 @@ pub fn VerifyDevicePanel(
                                         },
                                         {crate::i18n::tr("verify_device.verify_action")}
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "revoke-action-button",
                                         onclick: {
                                             let dev_id = entry.device_id.clone();
@@ -874,19 +879,19 @@ pub fn VerifyDevicePanel(
                                         div { class: "muted",
                                             "Revoking removes the device from the authorized set, excludes it from future encrypted messages, and rotates the account MLS history secret. This cannot be undone."
                                         }
-                                        label { r#for: "verify-device-revoke-passphrase", "Recovery passphrase" }
-                                        input {
+                                        Label { html_for: "verify-device-revoke-passphrase", "Recovery passphrase" }
+                                        Input {
                                             id: "verify-device-revoke-passphrase",
                                             "data-testid": "verify-device-revoke-passphrase-input",
                                             r#type: "password",
                                             value: "{revoke_passphrase}",
                                             autocomplete: "current-password",
                                             placeholder: "Required to rotate encrypted history backups",
-                                            oninput: move |evt| revoke_passphrase.set(evt.value()),
+                                            oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
                                         }
                                         div { class: "actions",
-                                            button {
-                                                class: "primary",
+                                            Button {
+                                                variant: ButtonVariant::Primary,
                                                 "data-testid": "confirm-revoke-button",
                                                 disabled: revoke_passphrase().trim().is_empty(),
                                                 onclick: {
@@ -978,8 +983,8 @@ pub fn VerifyDevicePanel(
                                                 },
                                                 {crate::i18n::tr("verify_device.revoke_confirm_button")}
                                             }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 "data-testid": "cancel-revoke-button",
                                                 onclick: move |_| revoke_confirm.set(None),
                                                 {crate::i18n::tr("common.cancel_button")}
@@ -1010,8 +1015,8 @@ pub fn VerifyDevicePanel(
                     "Spec: crypto-media/device-lifecycle.md §5."
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "setup-cross-signing",
                         onclick: {
                             let device_id_clone = device_id.clone();
@@ -1050,8 +1055,8 @@ pub fn VerifyDevicePanel(
                         }
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "run-cross-signing-setup",
                             disabled: account_did.trim().is_empty(),
                             onclick: {

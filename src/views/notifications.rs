@@ -14,6 +14,7 @@ use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel,
     dnd_settings_from_account_data, evaluate_notification, push_rules_from_account_data,
 };
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,25 +137,30 @@ pub fn NotificationsPanel(
         div { class: "timeline notifications-panel", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
             div { class: "toolbar-row",
                 div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: if group_by() == NotificationGroup::Latest { "segment active" } else { "segment" },
                         onclick: move |_| group_by.set(NotificationGroup::Latest),
                         {crate::i18n::tr("notifications.view.latest")}
                     }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: if group_by() == NotificationGroup::ByRealm { "segment active" } else { "segment" },
                         onclick: move |_| group_by.set(NotificationGroup::ByRealm),
                         {crate::i18n::tr("notifications.view.realm")}
                     }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: if group_by() == NotificationGroup::ByType { "segment active" } else { "segment" },
                         onclick: move |_| group_by.set(NotificationGroup::ByType),
                         {crate::i18n::tr("notifications.view.type")}
                     }
                 }
                 div { class: "icon-actions",
-                    button {
-                        class: "btn icon sm ghost",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        class: "btn icon",
                         "data-testid": "mark-all-read-button",
                         title: crate::i18n::tr("notifications.tooltip.mark_all_read"),
                         "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
@@ -176,16 +182,20 @@ pub fn NotificationsPanel(
                         },
                         UiIcon { name: "check" }
                     }
-                    button {
-                        class: "btn icon sm ghost",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        class: "btn icon",
                         "data-testid": "toggle-archived",
                         title: if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
                         "aria-label": if show_archived() { crate::i18n::tr("notifications.tooltip.hide_archived") } else { crate::i18n::tr("notifications.tooltip.show_archived") },
                         onclick: move |_| show_archived.set(!show_archived()),
                         UiIcon { name: "archive" }
                     }
-                    button {
-                        class: "btn icon sm ghost",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        class: "btn icon",
                         "data-testid": "refresh-notifications",
                         title: crate::i18n::tr("notifications.tooltip.refresh"),
                         "aria-label": crate::i18n::tr("notifications.tooltip.refresh"),
@@ -256,8 +266,10 @@ pub fn NotificationsPanel(
                     }
                     div { class: "actions",
                         if !notification.read {
-                            button {
-                                class: "btn icon sm ghost",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon",
                                 "data-testid": "mark-read-button",
                                 title: "Mark read",
                                 "aria-label": "Mark read",
@@ -273,8 +285,10 @@ pub fn NotificationsPanel(
                                 UiIcon { name: "check" }
                             }
                         } else {
-                            button {
-                                class: "btn icon sm ghost",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon",
                                 "data-testid": "mark-unread-button",
                                 title: "Mark unread",
                                 "aria-label": "Mark unread",
@@ -291,8 +305,10 @@ pub fn NotificationsPanel(
                             }
                         }
                         if !notification.archived {
-                            button {
-                                class: "btn icon sm ghost",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon",
                                 "data-testid": "archive-button",
                                 title: "Archive",
                                 "aria-label": "Archive",
@@ -309,8 +325,10 @@ pub fn NotificationsPanel(
                             }
                         }
                         if !notification.realm_id.is_empty() {
-                            button {
-                                class: "btn icon sm ghost",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon",
                                 "data-testid": "mute-realm-button",
                                 title: "Mute this realm",
                                 "aria-label": "Mute this realm",
@@ -328,8 +346,8 @@ pub fn NotificationsPanel(
                             }
                         }
                         if let Some(ref action) = notification.action_label {
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "notification-action",
                                 onclick: {
                                     let action_to_run = notification.action.clone();
@@ -382,8 +400,8 @@ pub fn NotificationsPanel(
                             visible_total,
                         )}
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "notifications-load-more",
                         onclick: move |_| {
                             visible_limit.with_mut(|n| *n = n.saturating_add(50));

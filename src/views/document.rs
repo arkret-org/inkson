@@ -23,6 +23,9 @@ use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
 use crate::operation::cx_ops;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 pub fn document_collaboration_enabled() -> bool {
@@ -642,12 +645,12 @@ pub fn DocumentPanel(
                     "Edits save locally first. Save Version writes the document Morph projection."
                 }
                 div { class: "workflow-form", "data-testid": "postmortem-link-controls",
-                    input {
+                    Input {
                         "data-testid": "document-title-input",
                         value: "{document_title_input}",
                         placeholder: "Postmortem title",
-                        oninput: move |evt| {
-                            let value = evt.value();
+                        oninput: move |event: FormEvent| {
+                            let value = event.value();
                             document_title_input.set(value.clone());
                             let mut draft_blocks = blocks.write();
                             if let Some(block) = draft_blocks
@@ -664,13 +667,13 @@ pub fn DocumentPanel(
                             }
                         },
                     }
-                    textarea {
+                    Textarea {
                         "data-testid": "document-body-editor",
                         value: "{document_body_editor}",
                         placeholder: "Impact, root cause, action items.",
                         style: "width: 100%; min-height: 96px;",
-                        oninput: move |evt| {
-                            let value = evt.value();
+                        oninput: move |event: FormEvent| {
+                            let value = event.value();
                             document_body_editor.set(value.clone());
                             let mut draft_blocks = blocks.write();
                             if let Some(block) = draft_blocks
@@ -687,11 +690,11 @@ pub fn DocumentPanel(
                             }
                         },
                     }
-                    input {
+                    Input {
                         "data-testid": "document-link-incident-input",
                         value: "{linked_incident_input}",
                         placeholder: "Incident Flow or Space id",
-                        oninput: move |evt| linked_incident_input.set(evt.value()),
+                        oninput: move |event: FormEvent| linked_incident_input.set(event.value()),
                     }
                 }
                 if !save_status().is_empty() {
@@ -699,19 +702,19 @@ pub fn DocumentPanel(
                     div { class: "muted", "data-testid": "document-status", "{save_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: if !show_versions() { "primary" } else { "secondary" },
+                    Button {
+                        variant: if !show_versions() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         onclick: move |_| show_versions.set(false),
                         "Edit"
                     }
-                    button {
-                        class: if show_versions() { "primary" } else { "secondary" },
+                    Button {
+                        variant: if show_versions() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                         "data-testid": "document-versions-button",
                         onclick: move |_| show_versions.set(true),
                         "History ({versions().len()})"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "save-document-button",
                         onclick: {
                             let persist = persist.clone();
@@ -887,15 +890,15 @@ pub fn DocumentPanel(
                         }
 
                         if editing_block() == Some(block.id.clone()) {
-                            textarea {
+                            Textarea {
                                 "data-testid": "block-edit-input",
                                 value: "{edit_text}",
-                                oninput: move |evt| edit_text.set(evt.value()),
+                                oninput: move |event: FormEvent| edit_text.set(event.value()),
                                 style: "width: 100%; min-height: 60px;",
                             }
                             div { class: "actions",
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     onclick: {
                                         let persist = persist.clone();
                                         let mut store = state_store;
@@ -917,8 +920,8 @@ pub fn DocumentPanel(
                                     },
                                     "Save"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     onclick: move |_| { editing_block.set(None); edit_text.set(String::new()); },
                                     "Cancel"
                                 }
@@ -945,8 +948,8 @@ pub fn DocumentPanel(
 
                         // Block type change
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 title: "Paragraph",
                                 "aria-label": "Convert block to paragraph",
                                 onclick: {
@@ -962,8 +965,8 @@ pub fn DocumentPanel(
                                 },
                                 "P"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 title: "Heading",
                                 "aria-label": "Convert block to heading",
                                 onclick: {
@@ -979,8 +982,8 @@ pub fn DocumentPanel(
                                 },
                                 "H"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 title: "Bullet list",
                                 "aria-label": "Convert block to bullet list",
                                 onclick: {
@@ -996,8 +999,8 @@ pub fn DocumentPanel(
                                 },
                                 "L"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 title: "Code block",
                                 "aria-label": "Convert block to code block",
                                 onclick: {
@@ -1013,8 +1016,8 @@ pub fn DocumentPanel(
                                 },
                                 "</>"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 title: "Delete block",
                                 "aria-label": "Delete this block",
                                 onclick: {
@@ -1034,8 +1037,8 @@ pub fn DocumentPanel(
 
                 // Add block button
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "add-block-button",
                         onclick: {
                             let persist = persist.clone();
@@ -1108,8 +1111,8 @@ pub fn DocumentPanel(
                 div { class: "event-head",
                     span { "Comments" }
                     span { class: "badge", "{comment_threads().len()} thread(s)" }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "document-comment-add-button",
                         onclick: move |_| comment_composer_open.set(!comment_composer_open()),
                         if comment_composer_open() { "Close" } else { "+ Comment" }
@@ -1117,21 +1120,21 @@ pub fn DocumentPanel(
                 }
                 if comment_composer_open() {
                     div { class: "workflow-form",
-                        input {
+                        Input {
                             "data-testid": "document-comment-range-input",
                             placeholder: "start..end (e.g. 100..110)",
                             value: "{comment_range_input}",
-                            oninput: move |evt| comment_range_input.set(evt.value()),
+                            oninput: move |event: FormEvent| comment_range_input.set(event.value()),
                         }
-                        textarea {
+                        Textarea {
                             "data-testid": "document-comment-text-input",
                             placeholder: "comment body",
                             value: "{comment_text_input}",
-                            oninput: move |evt| comment_text_input.set(evt.value()),
+                            oninput: move |event: FormEvent| comment_text_input.set(event.value()),
                             style: "width: 100%; min-height: 40px;",
                         }
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "document-comment-submit-button",
                             onclick: {
                                 let author_did = actor_key.clone();
@@ -1257,14 +1260,14 @@ pub fn DocumentPanel(
                                 }
                                 if !resolved {
                                     div { class: "actions",
-                                        input {
+                                        Input {
                                             "data-testid": "document-comment-reply-input",
                                             placeholder: "reply…",
                                             value: "{comment_reply_input}",
-                                            oninput: move |evt| comment_reply_input.set(evt.value()),
+                                            oninput: move |event: FormEvent| comment_reply_input.set(event.value()),
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "document-comment-reply-button",
                                             onclick: {
                                                 let thread_id = thread_id.clone();
@@ -1290,8 +1293,8 @@ pub fn DocumentPanel(
                                             },
                                             "Reply"
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "document-comment-resolve-button",
                                             onclick: {
                                                 let thread_id = thread_id.clone();
@@ -1351,8 +1354,8 @@ pub fn DocumentPanel(
                                 }
                                 div { class: "muted", "{block_count} blocks" }
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "document-version-restore-button",
                                         onclick: {
                                             let vid = version_id.clone();
@@ -1379,8 +1382,8 @@ pub fn DocumentPanel(
                                         },
                                         "Restore"
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "document-version-diff-button",
                                         onclick: {
                                             let vid = version_id.clone();
@@ -1429,8 +1432,8 @@ pub fn DocumentPanel(
                                 }
                                 footer {
                                     class: "publish-to-source-modal-footer",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         onclick: move |_| diff_modal_for.set(None),
                                         "Close"
                                     }

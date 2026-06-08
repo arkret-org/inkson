@@ -11,6 +11,10 @@ use crate::local_state::LocalStateStore;
 use crate::models::{
     CallRecordingStartResponse, CreateWebrtcSessionResponse, WebrtcSignalResponse,
 };
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 pub fn live_media_enabled() -> bool {
@@ -200,29 +204,32 @@ pub fn WebrtcCallPanel(
 
                 if stage() == CallStage::Idle {
                     div { class: "event", "data-testid": "webrtc-call-config",
-                        label { "Realm" }
-                        input {
+                        Label { html_for: "webrtc-realm-id-input-input", "Realm" }
+                        Input {
+                            id: "webrtc-realm-id-input-input",
                             "data-testid": "webrtc-realm-id-input",
                             value: "{call_realm_id}",
                             placeholder: "ck:realm:...",
-                            oninput: move |evt| call_realm_id.set(evt.value()),
+                            oninput: move |event: FormEvent| call_realm_id.set(event.value()),
                         }
-                        label { "Peer" }
-                        input {
+                        Label { html_for: "webrtc-peer-did-input-input", "Peer" }
+                        Input {
+                            id: "webrtc-peer-did-input-input",
                             "data-testid": "webrtc-peer-did-input",
                             value: "{peer_did}",
                             placeholder: "did:web:bob.example",
-                            oninput: move |evt| peer_did.set(evt.value()),
+                            oninput: move |event: FormEvent| peer_did.set(event.value()),
                         }
-                        label { "Group participants" }
-                        textarea {
+                        Label { html_for: "webrtc-group-participants-input-input", "Group participants" }
+                        Textarea {
+                            id: "webrtc-group-participants-input-input",
                             "data-testid": "webrtc-group-participants-input",
                             value: "{group_participants_input}",
-                            oninput: move |evt| group_participants_input.set(evt.value()),
+                            oninput: move |event: FormEvent| group_participants_input.set(event.value()),
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "webrtc-call-start-button",
                                 disabled: call_realm_id.read().trim().is_empty() || peer_did.read().trim().is_empty(),
                                 onclick: {
@@ -282,8 +289,8 @@ pub fn WebrtcCallPanel(
                                 },
                                 "Start 1:1 call"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "webrtc-group-call-start-button",
                                 disabled: call_realm_id.read().trim().is_empty(),
                                 onclick: {
@@ -339,8 +346,8 @@ pub fn WebrtcCallPanel(
                                 },
                                 "Start group call"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "webrtc-simulate-incoming-button",
                                 onclick: move |_| {
                                     incoming_from.set(peer_did().trim().to_owned());
@@ -364,8 +371,8 @@ pub fn WebrtcCallPanel(
                                     span { class: "mono", title: "{outgoing_to_value}", "{outgoing_to_label}" }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "webrtc-call-connect-button",
                                         onclick: {
                                             let base = base_url.clone();
@@ -389,8 +396,8 @@ pub fn WebrtcCallPanel(
                                         },
                                         "Connect"
                                     }
-                                    button {
-                                        class: "danger",
+                                    Button {
+                                        variant: ButtonVariant::Destructive,
                                         "data-testid": "webrtc-call-cancel-button",
                                         onclick: move |_| {
                                             stage.set(CallStage::Ended);
@@ -418,8 +425,8 @@ pub fn WebrtcCallPanel(
                                     span { class: "mono", title: "{incoming_from_value}", "{incoming_from_label}" }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "webrtc-call-accept-button",
                                         onclick: move |_| {
                                             let _ok = maybe_setup_peer_connection();
@@ -431,8 +438,8 @@ pub fn WebrtcCallPanel(
                                         },
                                         "Accept"
                                     }
-                                    button {
-                                        class: "danger",
+                                    Button {
+                                        variant: ButtonVariant::Destructive,
                                         "data-testid": "webrtc-call-decline-button",
                                         onclick: move |_| {
                                             stage.set(CallStage::Idle);
@@ -454,8 +461,8 @@ pub fn WebrtcCallPanel(
                             span { class: "badge badge-info", "SDP/ICE" }
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "webrtc-call-activate-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -524,8 +531,8 @@ pub fn WebrtcCallPanel(
                             }
                         }
                         div { class: "actions",
-                            button {
-                                class: if mic_muted() { "primary" } else { "secondary" },
+                            Button {
+                                variant: if mic_muted() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                 "data-testid": "webrtc-mute-button",
                                 "aria-pressed": "{mic_muted()}",
                                 onclick: {
@@ -562,8 +569,8 @@ pub fn WebrtcCallPanel(
                                 },
                                 if mic_muted() { "Unmute" } else { "Mute" }
                             }
-                            button {
-                                class: if camera_on() { "secondary" } else { "primary" },
+                            Button {
+                                variant: if camera_on() { ButtonVariant::Secondary } else { ButtonVariant::Primary },
                                 "data-testid": "webrtc-camera-toggle-button",
                                 "aria-pressed": "{!camera_on()}",
                                 onclick: move |_| {
@@ -576,8 +583,8 @@ pub fn WebrtcCallPanel(
                                 if camera_on() { "Camera off" } else { "Camera on" }
                             }
                             if !screen_sharing() {
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "webrtc-screen-share-start-button",
                                     onclick: {
                                         let base = base_url.clone();
@@ -603,8 +610,8 @@ pub fn WebrtcCallPanel(
                                     "Start screen share"
                                 }
                             } else {
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     "data-testid": "webrtc-screen-share-stop-button",
                                     onclick: {
                                         let base = base_url.clone();
@@ -630,8 +637,8 @@ pub fn WebrtcCallPanel(
                                     "Stop screen share"
                                 }
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "webrtc-recording-toggle-button",
                                 disabled: !can_record && recording_state() == RecordingState::Off,
                                 onclick: {
@@ -670,8 +677,8 @@ pub fn WebrtcCallPanel(
                                 },
                                 "Toggle recording"
                             }
-                            button {
-                                class: "danger",
+                            Button {
+                                variant: ButtonVariant::Destructive,
                                 "data-testid": "webrtc-leave-call-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -756,8 +763,8 @@ pub fn WebrtcCallPanel(
                             span { class: "badge", "ended" }
                         }
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "webrtc-call-reset-button",
                                 onclick: move |_| {
                                     stage.set(CallStage::Idle);

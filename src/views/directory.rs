@@ -8,6 +8,8 @@ use crate::local_state::LocalStateStore;
 use crate::models::*;
 use crate::object_address::OpenedLink;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,32 +66,32 @@ pub fn DirectoryPanel(
         div { class: "timeline", "data-testid": "directory-panel", role: "region", "aria-label": "Search realms and people",
             // Tab bar
             div { class: "actions", "data-testid": "directory-tabs", role: "tablist", "aria-label": "Directory categories",
-                button {
-                    class: if active_tab() == DirectoryTab::Realms { "primary" } else { "secondary" },
+                Button {
+                    variant: if active_tab() == DirectoryTab::Realms { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                     "data-testid": "tab-realms",
                     role: "tab",
                     "aria-selected": if active_tab() == DirectoryTab::Realms { "true" } else { "false" },
                     onclick: move |_| active_tab.set(DirectoryTab::Realms),
                     "Realms"
                 }
-                button {
-                    class: if active_tab() == DirectoryTab::Organizations { "primary" } else { "secondary" },
+                Button {
+                    variant: if active_tab() == DirectoryTab::Organizations { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                     "data-testid": "tab-organizations",
                     role: "tab",
                     "aria-selected": if active_tab() == DirectoryTab::Organizations { "true" } else { "false" },
                     onclick: move |_| active_tab.set(DirectoryTab::Organizations),
                     "Organizations"
                 }
-                button {
-                    class: if active_tab() == DirectoryTab::Actors { "primary" } else { "secondary" },
+                Button {
+                    variant: if active_tab() == DirectoryTab::Actors { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                     "data-testid": "tab-actors",
                     role: "tab",
                     "aria-selected": if active_tab() == DirectoryTab::Actors { "true" } else { "false" },
                     onclick: move |_| active_tab.set(DirectoryTab::Actors),
                     "Actors"
                 }
-                button {
-                    class: if active_tab() == DirectoryTab::Handles { "primary" } else { "secondary" },
+                Button {
+                    variant: if active_tab() == DirectoryTab::Handles { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                     "data-testid": "tab-handles",
                     role: "tab",
                     "aria-selected": if active_tab() == DirectoryTab::Handles { "true" } else { "false" },
@@ -171,8 +173,8 @@ pub fn DirectoryPanel(
                         "Protocol-object lookup is for renderer and visibility debugging. It stays collapsed by default so the end-user directory starts on normal entity search."
                     }
                     div { class: "actions",
-                        button {
-                            class: if active_tab() == DirectoryTab::ProtocolObjects { "primary" } else { "secondary" },
+                        Button {
+                            variant: if active_tab() == DirectoryTab::ProtocolObjects { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "tab-objects",
                             role: "tab",
                             "aria-selected": if active_tab() == DirectoryTab::ProtocolObjects { "true" } else { "false" },
@@ -192,23 +194,23 @@ pub fn DirectoryPanel(
                     "Contact and actor relationship actions now live with directory lookups instead of the setup page. Search for a DID or handle here, then issue the relationship operation against that actor."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "contact-target-did-input",
                         value: "{contact_target_did}",
                         placeholder: "Target DID",
-                        oninput: move |event| contact_target_did.set(event.value())
+                        oninput: move |event: FormEvent| contact_target_did.set(event.value())
                     }
-                    input {
+                    Input {
                         "data-testid": "contact-requester-did-input",
                         value: "{contact_requester_did}",
                         placeholder: "Requester DID",
-                        oninput: move |event| contact_requester_did.set(event.value())
+                        oninput: move |event: FormEvent| contact_requester_did.set(event.value())
                     }
                     div { class: "muted", "{contact_state}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "request-contact-button",
                         onclick: {
                             let base = base_url.clone();
@@ -234,8 +236,8 @@ pub fn DirectoryPanel(
                         },
                         "Request"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "accept-contact-button",
                         onclick: {
                             let base = base_url.clone();
@@ -261,8 +263,8 @@ pub fn DirectoryPanel(
                         },
                         "Accept"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "reject-contact-button",
                         onclick: {
                             let base = base_url.clone();
@@ -288,8 +290,8 @@ pub fn DirectoryPanel(
                         },
                         "Reject"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "list-contacts-button",
                         onclick: {
                             let base = base_url.clone();
@@ -333,7 +335,7 @@ pub fn DirectoryPanel(
                     }}
                 }
                 div { class: "search",
-                    input {
+                    Input {
                         "data-testid": "directory-search-input",
                         value: "{query}",
                         "aria-label": match active_tab() {
@@ -350,8 +352,8 @@ pub fn DirectoryPanel(
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Enter handle (e.g. alice:example.com)",
                         },
-                        oninput: move |event| query.set(event.value()),
-                        onkeydown: move |event| {
+                        oninput: move |event: FormEvent| query.set(event.value()),
+                        onkeydown: move |event: KeyboardEvent| {
                             if event.key().to_string() == "Enter" {
                                 let base = base_url_key.clone();
                                 let q = query();
@@ -411,8 +413,8 @@ pub fn DirectoryPanel(
                         },
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "directory-search-button",
                             onclick: {
                                 let base = base_url.clone();
@@ -476,8 +478,8 @@ pub fn DirectoryPanel(
                             {crate::i18n::tr("directory.search_button")}
                         }
                         if active_tab() == DirectoryTab::Realms {
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "resolve-selected-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -524,15 +526,15 @@ pub fn DirectoryPanel(
                     HelpTip { text: "Paste a Cokret share link to open the Realm, Flow, or Message it points at." }
                 }
                 div { class: "actions",
-                    input {
+                    Input {
                         r#type: "text",
                         "data-testid": "open-link-input",
                         placeholder: crate::i18n::tr("object_link.open_placeholder"),
                         value: "{open_link_input}",
-                        oninput: move |event| open_link_input.set(event.value()),
+                        oninput: move |event: FormEvent| open_link_input.set(event.value()),
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "open-link-button",
                         onclick: {
                             let base = base_url.clone();
@@ -622,8 +624,8 @@ pub fn DirectoryPanel(
                                 },
                                 "Open Realm"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "directory-select-button",
                                 onclick: {
                                     let id = realm.id.clone();
@@ -650,8 +652,8 @@ pub fn DirectoryPanel(
                     div { class: "event",
                         div { class: "actions",
                             if pagination().realms_cursor.is_some() {
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "load-more-realms",
                                     disabled: pagination().loading_more,
                                     onclick: {
@@ -767,8 +769,8 @@ pub fn DirectoryPanel(
                                     div { class: "muted", "Directory services: {directory_services.join(\", \")}" }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "org-search-members",
                                         onclick: {
                                             let seed = actor_lookup_seed.clone();
@@ -780,8 +782,8 @@ pub fn DirectoryPanel(
                                         "Search Members"
                                     }
                                     if !org_handle.is_empty() {
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "org-resolve-handle",
                                             onclick: {
                                                 let handle = org_handle.clone();
@@ -809,8 +811,8 @@ pub fn DirectoryPanel(
                 if pagination().orgs_cursor.is_some() {
                     div { class: "event",
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "load-more-orgs",
                                 disabled: pagination().loading_more,
                                 onclick: {
@@ -959,8 +961,8 @@ pub fn DirectoryPanel(
                 if pagination().actors_cursor.is_some() {
                     div { class: "event",
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "load-more-actors",
                                 disabled: pagination().loading_more,
                                 onclick: {

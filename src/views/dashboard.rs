@@ -6,6 +6,7 @@ use crate::i18n::tr;
 use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -442,8 +443,10 @@ pub fn DashboardPanel(
                                 UiIcon { name: "settings" }
                                 "Advanced Diagnostics"
                             }
-                            button {
-                                class: "btn icon sm ghost ml-auto",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Icon,
+                                class: "btn sm ml-auto",
                                 "data-testid": "check-health-button",
                                 title: if health_loading() { "Checking health" } else { "Run health checks" },
                                 "aria-label": if health_loading() { "Checking health" } else { "Run health checks" },

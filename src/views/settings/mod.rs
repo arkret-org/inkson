@@ -30,6 +30,10 @@ use crate::i18n::Locale;
 use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 use crate::workflows::blocked_release_workflows;
 
@@ -1126,18 +1130,18 @@ pub fn SettingsPanel(
                                             },
                                         }
                                         if avatar_uploading() {
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 r#type: "button",
                                                 disabled: true,
                                                 span { class: "spinner-inline", "aria-hidden": "true" }
                                                 {crate::i18n::tr("settings.avatar.uploading")}
                                             }
                                         } else {
-                                            label {
+                                            Label {
+                                                html_for: "settings-avatar-input",
                                                 class: "secondary",
                                                 "data-testid": "settings-avatar-upload-label",
-                                                r#for: "settings-avatar-input",
                                                 {crate::i18n::tr("settings.avatar.upload")}
                                             }
                                         }
@@ -1218,8 +1222,8 @@ pub fn SettingsPanel(
                                                         }
                                                     }
                                                     div { class: "actions",
-                                                        button {
-                                                            class: "secondary",
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
                                                             "data-testid": "settings-avatar-upload-cropped",
                                                             disabled: avatar_uploading(),
                                                             onclick: {
@@ -1330,8 +1334,8 @@ pub fn SettingsPanel(
                                                                 {crate::i18n::tr("settings.avatar.upload_cropped")}
                                                             }
                                                         }
-                                                        button {
-                                                            class: "secondary",
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
                                                             "data-testid": "settings-avatar-crop-cancel",
                                                             disabled: avatar_uploading(),
                                                             onclick: move |_| {
@@ -1348,8 +1352,8 @@ pub fn SettingsPanel(
                                             }
                                         }
                                         if !profile_avatar_blob_ref().trim().is_empty() {
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 "data-testid": "settings-avatar-clear",
                                                 disabled: avatar_uploading(),
                                                 onclick: {
@@ -1472,7 +1476,7 @@ pub fn SettingsPanel(
                                         }
                                         div { class: "metric",
                                             strong { "URL" }
-                                            textarea {
+                                            Textarea {
                                                 class: "mono",
                                                 "data-testid": "settings-invite-locator-url",
                                                 readonly: true,
@@ -1480,8 +1484,8 @@ pub fn SettingsPanel(
                                                 value: "{invite_locator_url}",
                                             }
                                             div { class: "actions",
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "settings-invite-locator-copy",
                                                     onclick: {
                                                         let invite_url = invite_locator_url.clone();
@@ -1492,8 +1496,8 @@ pub fn SettingsPanel(
                                                     },
                                                     "Copy URL"
                                                 }
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "settings-invite-locator-refresh",
                                                     onclick: move |_| {
                                                         let did = account_did();
@@ -1671,8 +1675,8 @@ pub fn SettingsPanel(
                             div { class: "event", "data-testid": "mimi-interop-panel",
                     div { class: "event-head", span { "MIMI interop checks" } span { "Advanced" } }
                     div { class: "actions",
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-refresh-directory",
                             onclick: {
                                 move |_| {
@@ -1709,8 +1713,8 @@ pub fn SettingsPanel(
                             },
                             "Refresh Directory"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-group-info",
                             onclick: {
                                 move |_| {
@@ -1747,8 +1751,8 @@ pub fn SettingsPanel(
                             },
                             "Group Info"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-identifier-query",
                             onclick: {
                                 move |_| {
@@ -1783,8 +1787,8 @@ pub fn SettingsPanel(
                             },
                             "Identifier Query"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-submit-message",
                             onclick: {
                                 move |_| {
@@ -1819,8 +1823,8 @@ pub fn SettingsPanel(
                             },
                             "Submit Test Message"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-proxy-download",
                             onclick: {
                                 move |_| {
@@ -1877,11 +1881,11 @@ pub fn SettingsPanel(
                                 }
                                 label {
                                     "Realm"
-                                    input {
+                                    Input {
                                         "data-testid": "realm-notification-target-input",
                                         value: "{notification_realm_input}",
                                         placeholder: "ck:realm:...",
-                                        oninput: move |evt| notification_realm_input.set(evt.value()),
+                                        oninput: move |event: FormEvent| notification_realm_input.set(event.value()),
                                     }
                                 }
                                 label {
@@ -1929,8 +1933,8 @@ pub fn SettingsPanel(
                                         option { value: "off", "Off" }
                                         option { value: "now", "Now" }
                                     }
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "save-notification-settings-button",
                                         onclick: move |_| {
                                             push_dnd_account_data(
@@ -1968,8 +1972,8 @@ pub fn SettingsPanel(
                     div { class: "muted", "Push notification preferences and gateway registration." }
                     div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
                     div { class: "actions",
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "push-register-button",
                             onclick: {
                                 move |_| {
@@ -2018,8 +2022,8 @@ pub fn SettingsPanel(
                             },
                             {crate::i18n::tr("settings.register_push")}
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "push-unregister-button",
                             onclick: {
                                 move |_| {
@@ -2071,8 +2075,8 @@ pub fn SettingsPanel(
                                     rsx! {
                                         div { class: "actions", "data-testid": "settings-muted-realm-row",
                                             span { title: "{realm_id}", "{realm_id_label}" }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 "data-testid": "notifications-settings-unmute-realm",
                                                 onclick: {
                                                     let realm_id = realm_id.clone();
@@ -2095,8 +2099,8 @@ pub fn SettingsPanel(
                                     }
                                 }
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "notifications-settings-clear-muted-realms",
                                 onclick: move |_| {
                                     state_store.write().clear_muted_realms();
@@ -2211,8 +2215,8 @@ pub fn SettingsPanel(
                                                 "locked by Realm policy"
                                             }
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "read-receipt-override-toggle",
                                             disabled: locked,
                                             onclick: {
@@ -2243,8 +2247,8 @@ pub fn SettingsPanel(
                                             },
                                             {if send { "Switch to skip" } else { "Switch to send" }}
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "read-receipt-override-clear",
                                             disabled: locked,
                                             onclick: {
@@ -2284,14 +2288,14 @@ pub fn SettingsPanel(
                             }
                         }
                     div { class: "actions", "data-testid": "read-receipt-add-override",
-                        input {
+                        Input {
                             r#type: "text",
                             placeholder: "ck:realm:...",
                             value: "{read_receipt_override_input()}",
-                            oninput: move |evt| read_receipt_override_input.set(evt.value()),
+                            oninput: move |event: FormEvent| read_receipt_override_input.set(event.value()),
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-skip",
                             onclick: move |_| {
                                 let realm_id = read_receipt_override_input().trim().to_owned();
@@ -2319,8 +2323,8 @@ pub fn SettingsPanel(
                             },
                             "Add (skip)"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-send",
                             onclick: move |_| {
                                 let realm_id = read_receipt_override_input().trim().to_owned();
@@ -2385,22 +2389,23 @@ pub fn SettingsPanel(
                                                 "data-testid": "realm-remark-row",
                                                 "data-realm-id": "{realm_id}",
                                                 span { class: "mono", title: "{realm_id}", "{realm_id_label}" }
-                                                input {
+                                                Input {
                                                     r#type: "text",
                                                     "data-testid": "realm-remark-input",
                                                     placeholder: "Local name (private)",
                                                     value: "{realm_remark_inputs().get(&realm_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
                                                     oninput: {
                                                         let id = realm_id.clone();
-                                                        move |evt: FormEvent| {
+                                                        move |event: FormEvent| {
                                                             let mut current = realm_remark_inputs();
-                                                            current.insert(id.clone(), evt.value());
+                                                            current.insert(id.clone(), event.value());
                                                             realm_remark_inputs.set(current);
                                                         }
                                                     },
                                                 }
-                                                button {
-                                                    class: if remark.pinned { "secondary active" } else { "secondary" },
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    class: if remark.pinned { "active" } else { "" },
                                                     "data-testid": "realm-remark-pin-toggle",
                                                     title: if remark.pinned { crate::i18n::tr("realm.unpin") } else { crate::i18n::tr("realm.pin") },
                                                     "aria-pressed": if remark.pinned { "true" } else { "false" },
@@ -2448,8 +2453,8 @@ pub fn SettingsPanel(
                                                     UiIcon { name: "pin" }
                                                     span { {if remark.pinned { crate::i18n::tr("realm.pinned") } else { crate::i18n::tr("realm.pin") }} }
                                                 }
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "realm-remark-save",
                                                     onclick: {
                                                         let id = realm_id.clone();
@@ -2496,8 +2501,8 @@ pub fn SettingsPanel(
                                                     },
                                                     "Save"
                                                 }
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "realm-remark-delete",
                                                     onclick: {
                                                         let id = realm_id.clone();
@@ -2532,22 +2537,22 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "actions", "data-testid": "realm-remark-add-row",
-                        input {
+                        Input {
                             r#type: "text",
                             "data-testid": "realm-remark-add-id",
                             placeholder: "ck:realm:...",
                             value: "{new_realm_remark_id()}",
-                            oninput: move |evt| new_realm_remark_id.set(evt.value()),
+                            oninput: move |event: FormEvent| new_realm_remark_id.set(event.value()),
                         }
-                        input {
+                        Input {
                             r#type: "text",
                             "data-testid": "realm-remark-add-name",
                             placeholder: "Local name",
                             value: "{new_realm_remark_name()}",
-                            oninput: move |evt| new_realm_remark_name.set(evt.value()),
+                            oninput: move |event: FormEvent| new_realm_remark_name.set(event.value()),
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "realm-remark-add-save",
                             onclick: move |_| {
                                 let realm_id = new_realm_remark_id().trim().to_owned();
@@ -2620,22 +2625,22 @@ pub fn SettingsPanel(
                                                 "data-testid": "contact-remark-row",
                                                 "data-actor-did": "{actor_did}",
                                                 span { class: "mono", title: "{actor_did}", "{actor_did_label}" }
-                                                input {
+                                                Input {
                                                     r#type: "text",
                                                     "data-testid": "contact-remark-input",
                                                     placeholder: "Local name (private)",
                                                     value: "{contact_remark_inputs().get(&actor_did).cloned().unwrap_or_else(|| remark.local_name.clone())}",
                                                     oninput: {
                                                         let did = actor_did.clone();
-                                                        move |evt: FormEvent| {
+                                                        move |event: FormEvent| {
                                                             let mut current = contact_remark_inputs();
-                                                            current.insert(did.clone(), evt.value());
+                                                            current.insert(did.clone(), event.value());
                                                             contact_remark_inputs.set(current);
                                                         }
                                                     },
                                                 }
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "contact-remark-save",
                                                     onclick: {
                                                         let did = actor_did.clone();
@@ -2682,8 +2687,8 @@ pub fn SettingsPanel(
                                                     },
                                                     "Save"
                                                 }
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "contact-remark-delete",
                                                     onclick: {
                                                         let did = actor_did.clone();
@@ -2718,22 +2723,22 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "actions", "data-testid": "contact-remark-add-row",
-                        input {
+                        Input {
                             r#type: "text",
                             "data-testid": "contact-remark-add-did",
                             placeholder: "alice:example.com or did:web:...",
                             value: "{new_contact_remark_did()}",
-                            oninput: move |evt| new_contact_remark_did.set(evt.value()),
+                            oninput: move |event: FormEvent| new_contact_remark_did.set(event.value()),
                         }
-                        input {
+                        Input {
                             r#type: "text",
                             "data-testid": "contact-remark-add-name",
                             placeholder: "Local name",
                             value: "{new_contact_remark_name()}",
-                            oninput: move |evt| new_contact_remark_name.set(evt.value()),
+                            oninput: move |event: FormEvent| new_contact_remark_name.set(event.value()),
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "contact-remark-add-save",
                             onclick: move |_| {
                                 let raw_actor = new_contact_remark_did();
@@ -2811,8 +2816,8 @@ pub fn SettingsPanel(
                                 "Manage handle at your organization's issuer"
                             }
                         } else {
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "handle-issuer-link-disabled",
                                 disabled: true,
                                 "Issuer link unavailable"
@@ -2855,22 +2860,22 @@ pub fn SettingsPanel(
                                 "blocklist-did blocklist-did-invalid"
                             };
                             rsx! {
-                                input {
+                                Input {
                                     class: "{did_input_class}",
                                     "data-testid": "blocklist-did-input",
                                     placeholder: crate::i18n::tr("settings.privacy.blocked_users.did_placeholder"),
                                     value: "{blocklist_did_input}",
                                     "aria-invalid": if !did_empty && !did_valid { "true" } else { "false" },
-                                    oninput: move |event| blocklist_did_input.set(event.value()),
+                                    oninput: move |event: FormEvent| blocklist_did_input.set(event.value()),
                                 }
-                                input {
+                                Input {
                                     "data-testid": "blocklist-reason-input",
                                     placeholder: crate::i18n::tr("settings.privacy.blocked_users.reason_placeholder"),
                                     value: "{blocklist_reason_input}",
-                                    oninput: move |event| blocklist_reason_input.set(event.value()),
+                                    oninput: move |event: FormEvent| blocklist_reason_input.set(event.value()),
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "blocklist-add",
                                     disabled: !did_valid,
                                     onclick: {
@@ -2977,8 +2982,8 @@ pub fn SettingsPanel(
                                                     div { class: "muted", "{blocked_at}" }
                                                 }
                                             }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 "data-testid": "blocklist-unblock",
                                                 onclick: {
                                                     let did = entry.did.clone();
@@ -3078,8 +3083,10 @@ pub fn SettingsPanel(
                             div { class: "event", "data-testid": "theme-settings",
                     div { class: "event-head", span { "Theme" } span { "appearance" } }
                     div { class: "actions",
-                        button {
-                            class: if theme() == "light" { "btn icon sm primary" } else { "btn icon sm ghost" },
+                        Button {
+                            variant: if theme() == "light" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                            size: ButtonSize::Sm,
+                            class: "btn icon",
                             "data-testid": "theme-light",
                             title: "Light theme",
                             "aria-label": "Light theme",
@@ -3091,8 +3098,10 @@ pub fn SettingsPanel(
                             },
                             UiIcon { name: "sun" }
                         }
-                        button {
-                            class: if theme() == "night" { "btn icon sm primary" } else { "btn icon sm ghost" },
+                        Button {
+                            variant: if theme() == "night" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                            size: ButtonSize::Sm,
+                            class: "btn icon",
                             "data-testid": "theme-night",
                             title: "Night theme",
                             "aria-label": "Night theme",
@@ -3104,8 +3113,10 @@ pub fn SettingsPanel(
                             },
                             UiIcon { name: "moon" }
                         }
-                        button {
-                            class: if theme() == "system" { "btn icon sm primary" } else { "btn icon sm ghost" },
+                        Button {
+                            variant: if theme() == "system" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                            size: ButtonSize::Sm,
+                            class: "btn icon",
                             "data-testid": "theme-system",
                             title: "System theme",
                             "aria-label": "System theme",
@@ -3142,8 +3153,8 @@ pub fn SettingsPanel(
                         span { "data-testid": "text-direction", "{active_direction}" }
                     }
                     div { class: "actions",
-                        button {
-                            class: if active_locale == Locale::En { "primary" } else { "secondary" },
+                        Button {
+                            variant: if active_locale == Locale::En { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "language-en",
                             onclick: move |_| {
                                 locale.set(Locale::En);
@@ -3152,8 +3163,8 @@ pub fn SettingsPanel(
                             },
                             "English"
                         }
-                        button {
-                            class: if active_locale == Locale::Zh { "primary" } else { "secondary" },
+                        Button {
+                            variant: if active_locale == Locale::Zh { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "language-zh",
                             onclick: move |_| {
                                 locale.set(Locale::Zh);
@@ -3162,8 +3173,8 @@ pub fn SettingsPanel(
                             },
                             "中文"
                         }
-                        button {
-                            class: if active_locale == Locale::Ar { "primary" } else { "secondary" },
+                        Button {
+                            variant: if active_locale == Locale::Ar { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "language-ar",
                             onclick: move |_| {
                                 locale.set(Locale::Ar);

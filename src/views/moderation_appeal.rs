@@ -25,6 +25,8 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::operation::{OperationBuilder, trim_realm_id};
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// User-facing projection of the four moderation appeal wire states.
@@ -181,14 +183,14 @@ pub fn AppealEntrypoint(
                 "{state_label}"
             }
             if matches!(local_state(), AppealState::None) {
-                textarea {
+                Textarea {
                     "data-testid": "moderation-appeal-reason",
                     value: "{reason}",
                     placeholder: "Why should this decision be reconsidered? (required)",
-                    oninput: move |evt| reason.set(evt.value()),
+                    oninput: move |event: FormEvent| reason.set(event.value()),
                 }
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "moderation-appeal-submit",
                     disabled: submitting() || reason.read().trim().is_empty(),
                     onclick: move |_| {

@@ -15,6 +15,10 @@ use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, Mov
 use crate::models::SubmitEventResponse;
 use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     StructuredMention, active_sync_token, authed_api_with_sync, parse_structured_mentions,
     short_protocol_id, with_authed_api_with_sync,
@@ -296,10 +300,10 @@ pub fn ChatPanel(
     // plaintext. We hide the plaintext send button and promote the MLS send
     // button to the primary action carrying the `send-chat-button` testid;
     // in plaintext channels it stays the secondary `send-e2ee-move-button`.
-    let send_secure_class = if selected_channel_security_encrypted {
-        "primary"
+    let send_secure_variant = if selected_channel_security_encrypted {
+        ButtonVariant::Primary
     } else {
-        "secondary"
+        ButtonVariant::Secondary
     };
     let send_secure_testid = if selected_channel_security_encrypted {
         "send-chat-button"
@@ -685,16 +689,18 @@ pub fn ChatPanel(
                             HelpTip { text: "Discussion is the selected Flow's track. The default Flow is always available for this Realm; the alternate filter includes every Flow with a discussion track." }
                         }
                         div { class: "discussion-panel-head-actions",
-                            button {
-                                class: "primary icon-button",
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                class: "icon-button",
                                 "aria-label": crate::i18n::tr("chat.new_flow"),
                                 title: crate::i18n::tr("chat.new_flow"),
                                 "data-testid": "open-channel-dialog",
                                 onclick: move |_| create_dialog_open.set(true),
                                 UiIcon { name: "plus" }
                             }
-                            button {
-                                class: "secondary icon-button",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: "icon-button",
                                 "aria-label": crate::i18n::tr("chat.hide_list"),
                                 "data-testid": "collapse-discussion-list",
                                 onclick: move |_| left_panel_open.set(false),
@@ -703,13 +709,15 @@ pub fn ChatPanel(
                         }
                     }
                     div { class: "discussion-filter segmented-control",
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             class: if track_filter() == "discussion_only" { "segment active" } else { "segment" },
                             "data-testid": "discussion-filter-only",
                             onclick: move |_| track_filter.set("discussion_only".to_owned()),
                             "Default + discussion"
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             class: if track_filter() == "with_discussion_track" { "segment active" } else { "segment" },
                             "data-testid": "discussion-filter-track",
                             onclick: move |_| track_filter.set("with_discussion_track".to_owned()),
@@ -718,7 +726,8 @@ pub fn ChatPanel(
                     }
                     div { class: "discussion-list", "data-testid": "channel-list",
                         for channel in visible_channels {
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 class: if channel.flow_id == selected_channel() { "discussion-track-row active" } else { "discussion-track-row" },
                                 "data-testid": "channel-item",
                                 onclick: {
@@ -757,8 +766,9 @@ pub fn ChatPanel(
                 }
             } else if !embedded && !direct_mode {
                 div { class: "discussion-rail discussion-left-rail", "data-testid": "discussion-list-rail",
-                    button {
-                        class: "secondary icon-button",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        class: "icon-button",
                         "aria-label": "Show discussion list",
                         "data-testid": "expand-discussion-list",
                         onclick: move |_| left_panel_open.set(true),
@@ -775,8 +785,9 @@ pub fn ChatPanel(
                                 h2 { "New Flow" }
                                 HelpTip { text: "Creates an additional Flow. Its discussion track is available from this view; enable the card option when the same Flow should also carry a synthesis track." }
                             }
-                            button {
-                                class: "secondary icon-button",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: "icon-button",
                                 "aria-label": "Close",
                                 "data-testid": "close-channel-dialog",
                                 onclick: move |_| create_dialog_open.set(false),
@@ -784,19 +795,21 @@ pub fn ChatPanel(
                             }
                         }
                         div { class: "discussion-modal-body workflow-form",
-                            label { {crate::i18n::tr("chat.label.title")} }
-                            input {
+                            Label { html_for: "new-channel-name-input", {crate::i18n::tr("chat.label.title")} }
+                            Input {
+                                id: "new-channel-name-input",
                                 "data-testid": "new-channel-name",
                                 value: "{new_channel_name}",
                                 placeholder: "Flow title",
-                                oninput: move |evt| new_channel_name.set(evt.value()),
+                                oninput: move |event: FormEvent| new_channel_name.set(event.value()),
                             }
-                            label { {crate::i18n::tr("chat.label.summary")} }
-                            input {
+                            Label { html_for: "new-channel-topic-input", {crate::i18n::tr("chat.label.summary")} }
+                            Input {
+                                id: "new-channel-topic-input",
                                 "data-testid": "new-channel-topic",
                                 value: "{new_channel_topic}",
                                 placeholder: "Short purpose or context",
-                                oninput: move |evt| new_channel_topic.set(evt.value()),
+                                oninput: move |event: FormEvent| new_channel_topic.set(event.value()),
                             }
                             label { class: "discussion-checkbox-row",
                                 input {
@@ -809,14 +822,14 @@ pub fn ChatPanel(
                             }
                         }
                         div { class: "discussion-modal-actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "cancel-channel-create",
                                 onclick: move |_| create_dialog_open.set(false),
                                 {crate::i18n::tr("common.cancel")}
                             }
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "create-channel-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -975,9 +988,10 @@ pub fn ChatPanel(
                             let watch_disabled = flow_id_for_watch.trim().is_empty();
                             rsx! {
                                 div { class: "watch-level-picker", "data-testid": "watch-level-picker",
-                                    button {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         r#type: "button",
-                                        class: "secondary watch-level-toggle",
+                                        class: "watch-level-toggle",
                                         "data-testid": "watch-level-toggle",
                                         disabled: watch_disabled,
                                         title: crate::i18n::tr("chat.watch_level.tooltip"),
@@ -1008,7 +1022,8 @@ pub fn ChatPanel(
                                                             let base_for_click = base_url.clone();
                                                             let is_active = level_now == option;
                                                             rsx! {
-                                                                button {
+                                                                Button {
+                                                                    variant: ButtonVariant::Secondary,
                                                                     r#type: "button",
                                                                     class: if is_active { "watch-level-option active" } else { "watch-level-option" },
                                                                     "data-testid": "watch-level-option",
@@ -1060,8 +1075,9 @@ pub fn ChatPanel(
                                 }
                             }
                         }
-                        button {
-                            class: if active_right_panel == Some(DiscussionSidePanel::Settings) { "secondary icon-button active" } else { "secondary icon-button" },
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            class: if active_right_panel == Some(DiscussionSidePanel::Settings) { "icon-button active" } else { "icon-button" },
                             "aria-label": "Settings",
                             title: "Settings",
                             "data-testid": "discussion-settings-toggle",
@@ -1075,8 +1091,9 @@ pub fn ChatPanel(
                             },
                             UiIcon { name: "settings" }
                         }
-                        button {
-                            class: if active_right_panel == Some(DiscussionSidePanel::Users) { "secondary icon-button active" } else { "secondary icon-button" },
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            class: if active_right_panel == Some(DiscussionSidePanel::Users) { "icon-button active" } else { "icon-button" },
                             "aria-label": "Users",
                             title: "Users",
                             "data-testid": "discussion-users-toggle",
@@ -1142,7 +1159,8 @@ pub fn ChatPanel(
                                                     body
                                                 };
                                                 rsx! {
-                                                    button {
+                                                    Button {
+                                                        variant: ButtonVariant::Secondary,
                                                         r#type: "button",
                                                         class: "pinned-bar-item",
                                                         "data-testid": "pinned-bar-item",
@@ -1311,7 +1329,8 @@ pub fn ChatPanel(
                                         let msg_id = msg.id.clone();
                                         let msg_id_for_label = msg.id.clone();
                                         rsx! {
-                                            button {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 r#type: "button",
                                                 "data-testid": "message-pin-button",
                                                 onclick: move |_| {
@@ -1338,9 +1357,9 @@ pub fn ChatPanel(
                                                     {crate::i18n::tr("message.pin")}
                                                 }
                                             }
-                                            button {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 r#type: "button",
-                                                class: "secondary",
                                                 onclick: move |_| {
                                                     let _ = msg_id_for_label.clone();
                                                     message_context_menu.set(None);
@@ -1353,7 +1372,8 @@ pub fn ChatPanel(
                             }
                             div { class: "msg-body",
                                 if message_is_pinned {
-                                    button {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         r#type: "button",
                                         class: "message-pin-indicator",
                                         "data-testid": "message-pinned-button",
@@ -1470,8 +1490,8 @@ pub fn ChatPanel(
                                         "data-testid": "timeline-blocked-row",
                                         {crate::i18n::tr("timeline.blocked_user")}
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "timeline-blocked-show-anyway",
                                         onclick: {
                                             let eid = msg.id.clone();
@@ -1503,7 +1523,8 @@ pub fn ChatPanel(
                                                 "Message send failed"
                                             }
                                         }
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "message-retry-button",
                                             "data-testid": "chat-retry-button",
                                             onclick: {
@@ -1635,7 +1656,8 @@ pub fn ChatPanel(
                                 }
                                 if !msg.redacted {
                                     div { class: "actions chat-message-actions",
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
                                             "data-testid": "chat-reply-button",
                                             onclick: {
@@ -1644,7 +1666,8 @@ pub fn ChatPanel(
                                             },
                                             {crate::i18n::tr("chat.button.reply")}
                                         }
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
                                             "data-testid": "chat-react-button",
                                             onclick: {
@@ -1656,7 +1679,8 @@ pub fn ChatPanel(
                                             },
                                             {crate::i18n::tr("chat.button.react")}
                                         }
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
                                             "data-testid": "chat-edit-button",
                                             onclick: {
@@ -1669,7 +1693,8 @@ pub fn ChatPanel(
                                             },
                                             {crate::i18n::tr("common.edit")}
                                         }
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
                                             "data-testid": "chat-redact-button",
                                             onclick: {
@@ -1772,7 +1797,8 @@ pub fn ChatPanel(
                                                                     "data-option-index": "{option_index_attr}",
                                                                     "data-option-text": "{option_label}",
                                                                     if !card_closed {
-                                                                        button {
+                                                                        Button {
+                                                                            variant: ButtonVariant::Secondary,
                                                                             class: "poll-option poll-vote-button",
                                                                             "data-testid": "poll-option",
                                                                             disabled: card_closed,
@@ -1859,9 +1885,10 @@ pub fn ChatPanel(
                                                         }
                                                     }
                                                     if !card.closed {
-                                                        button {
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
                                                             r#type: "button",
-                                                            class: "secondary poll-close-button",
+                                                            class: "poll-close-button",
                                                             "data-testid": "poll-close-button",
                                                             onclick: {
                                                                 let card_message_id = card.message_id.clone();
@@ -1987,8 +2014,9 @@ pub fn ChatPanel(
                                 if reaction_picker() == Some(msg.id.clone()) {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-reaction-picker",
                                         for emoji in CHAT_EMOJI_GRID {
-                                            button {
-                                                class: "secondary emoji-button",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                class: "emoji-button",
                                                 onclick: {
                                                     let base = base_url.clone();
                                                     let realm = selected_realm_id.clone();
@@ -2049,13 +2077,13 @@ pub fn ChatPanel(
                                 }
                                 if editing_message() == Some(msg.id.clone()) {
                                     div { class: "composer compact-composer", "data-testid": "chat-edit-composer",
-                                        textarea {
+                                        Textarea {
                                             value: "{edit_draft}",
-                                            oninput: move |evt| edit_draft.set(evt.value()),
+                                            oninput: move |event: FormEvent| edit_draft.set(event.value()),
                                         }
                                         div { class: "actions",
-                                            button {
-                                                class: "primary",
+                                            Button {
+                                                variant: ButtonVariant::Primary,
                                                 "data-testid": "chat-save-edit-button",
                                                 onclick: {
                                                     let base = base_url.clone();
@@ -2114,8 +2142,8 @@ pub fn ChatPanel(
                                                 },
                                                 "Save"
                                             }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 onclick: move |_| editing_message.set(None),
                                                 "Cancel"
                                             }
@@ -2126,8 +2154,8 @@ pub fn ChatPanel(
                                     div { class: "chat-redact-confirm", "data-testid": "chat-redact-confirm",
                                         div { class: "discussion-subhead", span { "Remove message" } }
                                         div { class: "actions",
-                                            button {
-                                                class: "primary",
+                                            Button {
+                                                variant: ButtonVariant::Primary,
                                                 "data-testid": "chat-confirm-redact-button",
                                                 onclick: {
                                                     let base = base_url.clone();
@@ -2179,8 +2207,8 @@ pub fn ChatPanel(
                                                 },
                                                 "Confirm"
                                             }
-                                            button {
-                                                class: "secondary",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 onclick: move |_| redact_confirm.set(None),
                                                 "Cancel"
                                             }
@@ -2199,8 +2227,8 @@ pub fn ChatPanel(
                             div { class: "s", {crate::i18n::tr("chat.empty.description")} }
                             if !embedded {
                                 div { class: "actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "discussion-empty-create-button",
                                         onclick: move |_| create_dialog_open.set(true),
                                         {crate::i18n::tr("chat.empty.create_button")}
@@ -2236,14 +2264,16 @@ pub fn ChatPanel(
                     // `DiscussionSidePanel` value the existing buttons
                     // already toggle.
                     div { class: "discussion-right-tabs",
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "discussion-right-tab active",
                             "data-testid": "discussion-right-tab-members",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
                             {crate::i18n::tr("chat.tabs.members")}
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "discussion-right-tab",
                             "data-testid": "discussion-right-tab-settings",
@@ -2411,14 +2441,16 @@ pub fn ChatPanel(
                     // can switch tabs in-place without re-clicking the
                     // topbar icons.
                     div { class: "discussion-right-tabs",
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "discussion-right-tab",
                             "data-testid": "discussion-right-tab-members",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
                             {crate::i18n::tr("chat.tabs.members")}
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "discussion-right-tab active",
                             "data-testid": "discussion-right-tab-settings",
@@ -2495,9 +2527,9 @@ pub fn ChatPanel(
                     div { class: "discussion-modal",
                         div { class: "discussion-modal-head",
                             h2 { "Promote discussion to its own Space" }
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 r#type: "button",
-                                class: "secondary",
                                 onclick: move |_| promote_discussion_draft.write().close(),
                                 "Cancel"
                             }
@@ -2514,8 +2546,8 @@ pub fn ChatPanel(
                             }
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "discussion-promote-confirm-button",
                                 disabled: !promote_discussion_draft.read().is_submittable(),
                                 onclick: {
@@ -2636,8 +2668,8 @@ pub fn ChatPanel(
                                 "Replying to a message"
                             }
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             onclick: move |_| reply_to_message.set(None),
                             "Cancel"
                         }
@@ -2757,7 +2789,7 @@ pub fn ChatPanel(
                             });
                         }
                     },
-                    textarea {
+                    Textarea {
                         "data-testid": "chat-input",
                         value: "{chat_draft}",
                         placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
@@ -2765,8 +2797,8 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
-                            move |evt: Event<FormData>| {
-                                let value = evt.value();
+                            move |event: FormEvent| {
+                                let value = event.value();
                                 chat_draft.set(value.clone());
                                 // G3.Y2 — auto-open the mention picker
                                 // when the user types an `@`. The
@@ -2812,7 +2844,8 @@ pub fn ChatPanel(
                     // by typing `@`, but having the explicit button
                     // gives the tests a stable click target.
                     div { class: "mention-chip-row",
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "composer-tool-button",
                             "data-testid": "mention-trigger-button",
@@ -2828,7 +2861,8 @@ pub fn ChatPanel(
                             },
                             UiIcon { name: "at-sign" }
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             r#type: "button",
                             class: "composer-tool-button",
                             "data-testid": "attachment-menu-button",
@@ -2841,7 +2875,8 @@ pub fn ChatPanel(
                             UiIcon { name: "plus" }
                         }
                         if crate::messaging::polls::polls_enabled() {
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 r#type: "button",
                                 class: "composer-tool-button",
                                 "data-testid": "open-poll-composer-button",
@@ -2859,7 +2894,8 @@ pub fn ChatPanel(
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
                                 if crate::messaging::polls::polls_enabled() {
-                                    button {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         r#type: "button",
                                         class: "attachment-menu-item",
                                         "data-testid": "attachment-menu-poll",
@@ -2880,9 +2916,9 @@ pub fn ChatPanel(
                                 "data-testid": "mention-chip",
                                 "data-mention-did": "{chip.did}",
                                 span { "@{chip.display_name}" }
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     r#type: "button",
-                                    class: "secondary",
                                     onclick: {
                                         let did = chip.did.clone();
                                         move |_| mention_picker_state.write().remove(&did)
@@ -2896,16 +2932,17 @@ pub fn ChatPanel(
                         div { class: "mention-picker",
                             "data-testid": "mention-picker",
                             div { class: "mention-picker-head",
-                                input {
+                                Input {
                                     r#type: "text",
                                     class: "mention-picker-query",
                                     placeholder: "Search members",
                                     value: "{mention_picker_state.read().query}",
-                                    oninput: move |evt| {
-                                        mention_picker_state.write().set_query(evt.value());
+                                    oninput: move |event: FormEvent| {
+                                        mention_picker_state.write().set_query(event.value());
                                     },
                                 }
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     r#type: "button",
                                     "data-testid": "mention-picker-close-button",
                                     onclick: move |_| mention_picker_state.write().close(),
@@ -2944,7 +2981,8 @@ pub fn ChatPanel(
                                             for candidate in matches {
                                                 {
                                                     rsx! {
-                                                        button {
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
                                                             key: "{candidate.did}",
                                                             r#type: "button",
                                                             class: "mention-suggestion",
@@ -3011,35 +3049,35 @@ pub fn ChatPanel(
                 if let Some(draft) = poll_draft.read().clone() {
                     div { class: "poll-composer",
                         "data-testid": "poll-composer",
-                        input {
+                        Input {
                             r#type: "text",
                             "data-testid": "poll-question-input",
                             placeholder: "Question",
                             value: "{draft.question}",
-                            oninput: move |evt| {
+                            oninput: move |event: FormEvent| {
                                 if let Some(current) = poll_draft.write().as_mut() {
-                                    current.set_question(evt.value());
+                                    current.set_question(event.value());
                                 }
                             },
                         }
                         for (idx, option) in draft.options.iter().enumerate() {
-                            input {
+                            Input {
                                 r#type: "text",
                                 "data-testid": "poll-option-input",
                                 "data-option-index": "{idx as i64}",
                                 placeholder: "Option {idx + 1}",
                                 value: "{option}",
-                                oninput: move |evt| {
+                                oninput: move |event: FormEvent| {
                                     if let Some(current) = poll_draft.write().as_mut() {
-                                        current.set_option(idx, evt.value());
+                                        current.set_option(idx, event.value());
                                     }
                                 },
                             }
                         }
                         div { class: "actions",
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 r#type: "button",
-                                class: "secondary",
                                 "data-testid": "poll-add-option-button",
                                 onclick: move |_| {
                                     if let Some(current) = poll_draft.write().as_mut() {
@@ -3048,9 +3086,9 @@ pub fn ChatPanel(
                                 },
                                 "Add option"
                             }
-                            button {
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 r#type: "button",
-                                class: "primary",
                                 "data-testid": "poll-create-button",
                                 disabled: !draft.is_sendable(),
                                 onclick: {
@@ -3146,9 +3184,9 @@ pub fn ChatPanel(
                             // Cotest also references `send-poll-button`
                             // — wire it to the same handler so both
                             // testids resolve.
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 r#type: "button",
-                                class: "secondary",
                                 "data-testid": "send-poll-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -3236,9 +3274,9 @@ pub fn ChatPanel(
                                 },
                                 "Send"
                             }
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 r#type: "button",
-                                class: "secondary",
                                 onclick: move |_| poll_draft.set(None),
                                 "Cancel"
                             }
@@ -3248,8 +3286,8 @@ pub fn ChatPanel(
                 }
                 div { class: "actions",
                     if !selected_channel_security_encrypted {
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "send-chat-button",
                         onclick: {
                             let base = base_url.clone();
@@ -3482,8 +3520,8 @@ pub fn ChatPanel(
                         {crate::i18n::tr("chat.send")}
                     }
                     }
-                    button {
-                        class: send_secure_class,
+                    Button {
+                        variant: send_secure_variant,
                         "data-testid": send_secure_testid,
                         onclick: {
                             let base = base_url.clone();

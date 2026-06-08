@@ -20,6 +20,9 @@ use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::short_protocol_id;
 
 #[component]
@@ -73,8 +76,8 @@ pub fn BlocklistSettingsCard(
                                         div { class: "muted", "{reason}" }
                                     }
                                     div { class: "actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "unblock-button",
                                             "data-actor-did": "{entry.did}",
                                             onclick: {
@@ -108,16 +111,17 @@ pub fn BlocklistSettingsCard(
             }
 
             div { class: "event",
-                label { "Block another actor (DID)" }
-                input {
+                Label { html_for: "block-target-input-input", "Block another actor (DID)" }
+                Input {
+                    id: "block-target-input-input",
                     "data-testid": "block-target-input",
                     value: "{add_input}",
                     placeholder: "did:web:peer.example",
-                    oninput: move |evt| add_input.set(evt.value()),
+                    oninput: move |event: FormEvent| add_input.set(event.value()),
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "block-user-button",
                         disabled: add_input.read().trim().is_empty(),
                         onclick: {

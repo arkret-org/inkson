@@ -14,6 +14,10 @@
 
 use dioxus::prelude::*;
 
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::textarea::Textarea;
+
 /// Form payload emitted by the modal on submit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CircleCreateForm {
@@ -61,7 +65,8 @@ pub fn CreateCircleModal(
             div { class: "modal",
                 header { class: "modal-head",
                     h2 { "New Circle in {realm_id}" }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: "icon-only",
                         "data-testid": "create-circle-cancel",
                         "aria-label": "Cancel and close dialog",
@@ -72,24 +77,24 @@ pub fn CreateCircleModal(
                 div { class: "modal-body",
                     label { class: "field",
                         span { class: "field-label", "Title" }
-                        input {
+                        Input {
                             class: "input",
                             "data-testid": "create-circle-title",
                             value: "{form.read().title}",
-                            oninput: move |evt| {
-                                let value = evt.value();
+                            oninput: move |event: FormEvent| {
+                                let value = event.value();
                                 form.with_mut(|f| f.title = value);
                             },
                         }
                     }
                     label { class: "field",
                         span { class: "field-label", "Short name" }
-                        input {
+                        Input {
                             class: "input",
                             "data-testid": "create-circle-short-name",
                             value: "{form.read().short_name}",
-                            oninput: move |evt| {
-                                let value = evt.value();
+                            oninput: move |event: FormEvent| {
+                                let value = event.value();
                                 form.with_mut(|f| f.short_name = value);
                             },
                         }
@@ -145,13 +150,13 @@ pub fn CreateCircleModal(
                     }
                     label { class: "field",
                         span { class: "field-label", "Initial members (one DID per line — strict subset of Realm)" }
-                        textarea {
+                        Textarea {
                             class: "textarea",
                             "data-testid": "create-circle-members",
                             rows: "5",
                             value: "{members_text.read()}",
-                            oninput: move |evt| {
-                                members_text.set(evt.value());
+                            oninput: move |event: FormEvent| {
+                                members_text.set(event.value());
                             },
                         }
                     }
@@ -164,15 +169,15 @@ pub fn CreateCircleModal(
                     }
                 }
                 footer { class: "modal-foot",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "create-circle-cancel-bottom",
                         "aria-label": "Cancel new Circle",
                         onclick: move |_| on_cancel.call(()),
                         "Cancel"
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "create-circle-submit",
                         "aria-label": "Create new Circle",
                         onclick: move |_| {

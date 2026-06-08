@@ -23,6 +23,10 @@
 use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 // NOTE: build_signed_consent_grant / build_signed_consent_revoke /
@@ -56,28 +60,31 @@ pub fn ConsentGrantDemoCard(
             div { class: "muted",
                 "Submits a ck.consent.grant event via ck.self.events.submit; soland's reducer folds the OrSet add into the ck.component.consent.grant.v1 cell."
             }
-            label { "Realm ID" }
-            input {
+            Label { html_for: "consent-grant-realm-id-input", "Realm ID" }
+            Input {
+                id: "consent-grant-realm-id-input",
                 "data-testid": "consent-grant-realm-id",
                 placeholder: "ck:realm:...",
                 value: "{realm_id}",
-                oninput: move |evt| realm_id.set(evt.value()),
+                oninput: move |event: FormEvent| realm_id.set(event.value()),
             }
-            label { "Consent ID (cell subject)" }
-            input {
+            Label { html_for: "consent-grant-consent-id-input", "Consent ID (cell subject)" }
+            Input {
+                id: "consent-grant-consent-id-input",
                 "data-testid": "consent-grant-consent-id",
                 value: "{consent_id}",
-                oninput: move |evt| consent_id.set(evt.value()),
+                oninput: move |event: FormEvent| consent_id.set(event.value()),
             }
-            label { "Tag (OrSet add)" }
-            input {
+            Label { html_for: "consent-grant-tag-input", "Tag (OrSet add)" }
+            Input {
+                id: "consent-grant-tag-input",
                 "data-testid": "consent-grant-tag",
                 value: "{tag}",
-                oninput: move |evt| tag.set(evt.value()),
+                oninput: move |event: FormEvent| tag.set(event.value()),
             }
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "consent-grant-submit",
                     onclick: move |_| {
                         let base = base_url();
@@ -128,8 +135,8 @@ pub fn ConsentGrantDemoCard(
                     },
                     "Grant consent (build + sign + POST)"
                 }
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "consent-revoke-submit",
                     onclick: move |_| {
                         let base = base_url();
@@ -304,18 +311,20 @@ pub fn RevokeAllConsentCard(
             div { class: "muted",
                 "Revoking with scope=any submits one ck.consent.revoke event per subscope; soland's reducer collapses them into a single OrSet remove fanout. This is irreversible — the recipient must re-issue consent if you change your mind."
             }
-            label { "Realm ID" }
-            input {
+            Label { html_for: "revoke-all-realm-id-input", "Realm ID" }
+            Input {
+                id: "revoke-all-realm-id-input",
                 "data-testid": "revoke-all-realm-id",
                 placeholder: "ck:realm:...",
                 value: "{realm_id}",
-                oninput: move |evt| realm_id.set(evt.value()),
+                oninput: move |event: FormEvent| realm_id.set(event.value()),
             }
-            label { "Consent ID (cell subject)" }
-            input {
+            Label { html_for: "revoke-all-consent-id-input", "Consent ID (cell subject)" }
+            Input {
+                id: "revoke-all-consent-id-input",
                 "data-testid": "revoke-all-consent-id",
                 value: "{consent_id}",
-                oninput: move |evt| consent_id.set(evt.value()),
+                oninput: move |event: FormEvent| consent_id.set(event.value()),
             }
             div { class: "muted", "data-testid": "revoke-all-cascade-list",
                 strong { "Subscopes that will be cleared:" }
@@ -330,14 +339,15 @@ pub fn RevokeAllConsentCard(
             // surface the observations they are revoking. One
             // `actor_id:actor_seq` per line; rendered straight into the
             // wire payload by `build_signed_consent_revoke_v1`.
-            label {
+            Label { html_for: "revoke-all-observed-dots-input",
                 {crate::i18n::tr("consent.revoke.dot_list_header")}
             }
-            textarea {
+            Textarea {
+                id: "revoke-all-observed-dots-input",
                 "data-testid": "revoke-all-observed-dots",
                 placeholder: "did:web:peer.example:42",
                 value: "{observed_dots_raw}",
-                oninput: move |evt| observed_dots_raw.set(evt.value()),
+                oninput: move |event: FormEvent| observed_dots_raw.set(event.value()),
             }
             if let Some(parsed_count) = parse_observed_dots_count(&observed_dots_raw()) {
                 div { class: "muted", "data-testid": "revoke-all-observed-dots-count",
@@ -362,8 +372,8 @@ pub fn RevokeAllConsentCard(
                         }
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "revoke-all-confirm-submit",
                             onclick: move |_| {
                                 let base = base_url();
@@ -436,8 +446,8 @@ pub fn RevokeAllConsentCard(
                             },
                             "Yes, revoke everything"
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "revoke-all-confirm-cancel",
                             onclick: move |_| confirming.set(false),
                             "Cancel"
@@ -446,8 +456,8 @@ pub fn RevokeAllConsentCard(
                 }
             } else {
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "revoke-all-button",
                         onclick: move |_| confirming.set(true),
                         "Revoke ALL consent (scope=any)"

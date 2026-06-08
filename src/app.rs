@@ -34,6 +34,8 @@ pub(crate) use crate::realm_tree::{
     realm_tree_nodes_from_sync_realms,
 };
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
 use crate::views::timeline::TimelineEvent;
@@ -1926,8 +1928,10 @@ pub fn RouterView() -> Element {
                 needs_mls_backup,
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
-                button {
-                    class: "btn icon sm ghost",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    class: "btn icon",
                     "data-testid": "mobile-nav-toggle",
                     title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
                     "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
@@ -1941,8 +1945,10 @@ pub fn RouterView() -> Element {
                     }
                 }
                 div { class: "brand", "Cokret" }
-                button {
-                    class: "btn icon sm ghost",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    class: "btn icon",
                     "data-testid": "mobile-theme-toggle",
                     title: "{theme_toggle_title}",
                     "aria-label": "{theme_toggle_title}",
@@ -1961,9 +1967,11 @@ pub fn RouterView() -> Element {
                     },
                     UiIcon { name: theme_toggle_icon }
                 }
-                button {
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
                     r#type: "button",
-                    class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
+                    class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
                     "data-testid": "mobile-topbar-notifications-button",
                     title: "Notifications",
                     "aria-label": "Notifications",
@@ -1991,8 +1999,8 @@ pub fn RouterView() -> Element {
                 div { class: "mobile-status", "data-testid": "mobile-connection-status",
                     span { "data-testid": "mobile-status-label", "{status}" }
                     span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "mobile-connect-button",
                         title: "Refresh server metadata and sync state",
                         "aria-label": "Refresh server metadata and sync state",
@@ -2039,12 +2047,12 @@ pub fn RouterView() -> Element {
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_realm_tree_nodes.is_empty() {
                     div { class: "muted", "{crate::i18n::tr(\"command_palette.realms\")} ({realm_tree.len()})" }
-                    input {
+                    Input {
                         class: "mobile-realm-tree-filter",
                         "data-testid": "mobile-realm-tree-filter",
                         value: "{mobile_space_query}",
                         placeholder: crate::i18n::tr("mobile.filter_realms"),
-                        oninput: move |event| mobile_space_query.set(event.value()),
+                        oninput: move |event: FormEvent| mobile_space_query.set(event.value()),
                     }
                     div { class: "mobile-realm-tree-list", "data-testid": "mobile-realm-tree-list",
                         {
@@ -2109,7 +2117,8 @@ pub fn RouterView() -> Element {
                 }
 
                 div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current server context",
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: "server-switch-button",
                         "data-testid": "server-switch-button",
                         title: "Switch server",
@@ -2138,7 +2147,8 @@ pub fn RouterView() -> Element {
                         div { class: "server-switch-menu", "data-testid": "server-switch-menu",
                             div { class: "server-option-list", "aria-label": "Server choices",
                                 for option_url in server_options.clone() {
-                                    button {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
                                         "data-testid": "server-option",
                                         title: "Switch to {option_url}",
@@ -2263,7 +2273,8 @@ pub fn RouterView() -> Element {
                     }
                     if !sidebar_is_collapsed {
                         div { class: "sidebar-scope-toggle", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Workspace section",
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
                                 "data-testid": "realm-sidebar-tab-collaboration",
                                 role: "tab",
@@ -2271,7 +2282,8 @@ pub fn RouterView() -> Element {
                                 onclick: move |_| realm_sidebar_tab.set("collaboration".to_owned()),
                                 {crate::i18n::tr("nav.collaboration")}
                             }
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 class: if realm_sidebar_tab() == "direct" { "scope-chip active" } else { "scope-chip" },
                                 "data-testid": "realm-sidebar-tab-direct",
                                 role: "tab",
@@ -2311,7 +2323,8 @@ pub fn RouterView() -> Element {
                         div { class: "sidebar-scope-filter", "data-testid": "navigation-scope-filter",
                             div { class: "sidebar-scope-filter-label", {crate::i18n::tr("nav.filter")} }
                             div { class: "sidebar-scope-toggle sidebar-scope-toggle--child", "data-testid": "navigation-scope-toggle", role: "group", "aria-label": "Navigation selection scope",
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: if active_scope_mode == NavigationScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
                                     "data-testid": "navigation-scope-exact",
                                     title: "Select only the current item",
@@ -2322,7 +2335,8 @@ pub fn RouterView() -> Element {
                                     },
                                     {crate::i18n::tr("nav.scope_current")}
                                 }
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: if active_scope_mode == NavigationScopeMode::IncludeDescendants { "scope-chip active" } else { "scope-chip" },
                                     "data-testid": "navigation-scope-descendants",
                                     title: "Select the current item and all descendants",
@@ -2383,7 +2397,8 @@ pub fn RouterView() -> Element {
                                         crate::i18n::tr("direct.unavailable")
                                     };
                                     rsx! {
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: if can_resolve { "sidebar-nav-item contact-sidebar-row" } else { "sidebar-nav-item contact-sidebar-row is-dim" },
                                             r#type: "button",
                                             "data-testid": "direct-conversation-row",
@@ -2633,7 +2648,8 @@ pub fn RouterView() -> Element {
                             // NewSpace form can derive the prefilled
                             // realm_id + parent_space_id from it.
                             if can_pin_realm {
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: if is_pinned_realm { "sidebar-row-pin-action is-active" } else { "sidebar-row-pin-action" },
                                     r#type: "button",
                                     "data-testid": "realm-tree-row-pin-action",
@@ -2720,8 +2736,10 @@ pub fn RouterView() -> Element {
             main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
                 div { class: "topbar workspace-header",
                     div { class: "topbar-left",
-                        button {
-                            class: "btn icon sm ghost sidebar-collapse-toggle",
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            class: "btn icon sidebar-collapse-toggle",
                             "data-testid": "sidebar-collapse-toggle",
                             title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
                             "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
@@ -2782,8 +2800,10 @@ pub fn RouterView() -> Element {
                         }
                     }
                     div { class: "actions",
-                        button {
-                            class: "btn icon sm ghost theme-toggle-button",
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            class: "btn icon theme-toggle-button",
                             "data-testid": "theme-toggle",
                             title: "{theme_toggle_title}",
                             "aria-label": "{theme_toggle_title}",
@@ -2819,9 +2839,11 @@ pub fn RouterView() -> Element {
                                 }
                             },
                             if !topbar_search_is_open {
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    size: ButtonSize::Sm,
                                     r#type: "button",
-                                    class: "btn icon sm ghost",
+                                    class: "btn icon",
                                     "data-testid": "topbar-search-button",
                                     title: crate::i18n::tr("topbar.search_placeholder"),
                                     "aria-label": crate::i18n::tr("topbar.search_placeholder"),
@@ -2866,9 +2888,11 @@ pub fn RouterView() -> Element {
                                         },
                                     }
                                     kbd { "⌘K" }
-                                    button {
+                                    Button {
+                                        variant: ButtonVariant::Ghost,
+                                        size: ButtonSize::Sm,
                                         r#type: "button",
-                                        class: "btn icon sm ghost topbar-command-search-close",
+                                        class: "btn icon topbar-command-search-close",
                                         title: crate::i18n::tr("common.close"),
                                         "aria-label": crate::i18n::tr("common.close"),
                                         onclick: move |_| {
@@ -2915,9 +2939,11 @@ pub fn RouterView() -> Element {
                                 span { "data-testid": "last-error", "{err}" }
                             }
                         }
-                        button {
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
                             r#type: "button",
-                            class: if notifications_drawer_open() { "btn icon sm ghost topbar-notifications-link is-active" } else { "btn icon sm ghost topbar-notifications-link" },
+                            class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
                             "data-testid": "topbar-notifications-button",
                             title: crate::i18n::tr("nav.notifications"),
                             "aria-label": crate::i18n::tr("nav.notifications"),
@@ -2948,8 +2974,10 @@ pub fn RouterView() -> Element {
                         // parent context was confusing — it actually
                         // opened the Realm bootstrap flow.
                         div { class: "account-menu-wrap",
-                            button {
-                                class: "btn icon sm ghost account-menu-button",
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon account-menu-button",
                                 "data-testid": "account-menu-button",
                                 title: crate::i18n::tr("topbar.account_menu"),
                                 "aria-label": crate::i18n::tr("topbar.account_menu"),
@@ -2996,8 +3024,10 @@ pub fn RouterView() -> Element {
                                             strong { "DID" }
                                             div { class: "account-menu__value",
                                                 span { class: "mono", "data-testid": "account-menu-did", title: "{account_did_value}", "{account_did_label}" }
-                                                button {
-                                                    class: "btn icon sm ghost account-menu__copy",
+                                                Button {
+                                                    variant: ButtonVariant::Ghost,
+                                                    size: ButtonSize::Sm,
+                                                    class: "btn icon account-menu__copy",
                                                     "data-testid": "account-menu-copy-did",
                                                     title: "Copy DID",
                                                     "aria-label": "Copy DID",
@@ -3025,8 +3055,10 @@ pub fn RouterView() -> Element {
                                             strong { "Device" }
                                             div { class: "account-menu__value",
                                                 span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_label}" }
-                                                button {
-                                                    class: "btn icon sm ghost account-menu__copy",
+                                                Button {
+                                                    variant: ButtonVariant::Ghost,
+                                                    size: ButtonSize::Sm,
+                                                    class: "btn icon account-menu__copy",
                                                     "data-testid": "account-menu-copy-device",
                                                     title: "Copy device ID",
                                                     "aria-label": "Copy device ID",
@@ -3083,8 +3115,10 @@ pub fn RouterView() -> Element {
                                         }
                                     }
                                     div { class: "account-menu__actions",
-                                        button {
-                                            class: "btn sm ghost",
+                                        Button {
+                                            variant: ButtonVariant::Ghost,
+                                            size: ButtonSize::Sm,
+                                            class: "btn",
                                             "data-testid": "account-menu-session-refresh",
                                             "aria-label": "Refresh session",
                                             disabled: !has_session,
@@ -3193,8 +3227,10 @@ pub fn RouterView() -> Element {
                                             },
                                             "Refresh"
                                         }
-                                        button {
-                                            class: "btn sm ghost",
+                                        Button {
+                                            variant: ButtonVariant::Ghost,
+                                            size: ButtonSize::Sm,
+                                            class: "btn",
                                             "data-testid": "account-menu-session-logout",
                                             "aria-label": "Log out",
                                             disabled: !has_session,
@@ -3801,7 +3837,8 @@ pub fn RouterView() -> Element {
                 div {
                     class: "notifications-drawer-layer",
                     "data-testid": "notifications-drawer",
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         r#type: "button",
                         class: "notifications-drawer-scrim",
                         "data-testid": "notifications-drawer-scrim",
@@ -3830,9 +3867,11 @@ pub fn RouterView() -> Element {
                                     onclick: move |_| notifications_drawer_open.set(false),
                                     UiIcon { name: "settings" }
                                 }
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    size: ButtonSize::Sm,
                                     r#type: "button",
-                                    class: "btn icon sm ghost",
+                                    class: "btn icon",
                                     "data-testid": "notifications-drawer-close",
                                     title: crate::i18n::tr("common.close"),
                                     "aria-label": crate::i18n::tr("common.close"),
@@ -3904,8 +3943,8 @@ fn RealmContextBar(
                             "{surface.short_label()}"
                         }
                     } else {
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             disabled: true,
                             UiIcon { name: surface.icon_name() }
                             "{surface.short_label()}"
@@ -3928,8 +3967,10 @@ fn RealmContextBar(
             div {
                 class: if menu_open() { "realm-nav-menu-host is-open" } else { "realm-nav-menu-host" },
                 "data-testid": "realm-context-menu",
-                button {
-                    class: "btn icon sm secondary realm-nav-menu-button",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
+                    class: "btn icon realm-nav-menu-button",
                     "data-testid": "realm-context-menu-button",
                     title: "Switch view: {current_nav_label}",
                     "aria-label": "Switch Realm view",
@@ -3938,7 +3979,8 @@ fn RealmContextBar(
                     UiIcon { name: current_nav_icon }
                 }
                 if menu_open() {
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: "realm-nav-menu-scrim",
                         "aria-label": "Close Realm view menu",
                         onclick: move |_| menu_open.set(false),
@@ -3970,7 +4012,8 @@ fn RealmContextBar(
                                     "{surface.short_label()}"
                                 }
                             } else {
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: "realm-nav-menu-item",
                                     role: "menuitem",
                                     disabled: true,
@@ -4104,7 +4147,8 @@ fn CommandPalette(
                                 RealmTreeNodeKind::Space => "Space",
                             };
                             rsx! {
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: "command-palette-item",
                                     "data-testid": "command-palette-realm-tree-node",
                                     role: "option",
@@ -4125,7 +4169,8 @@ fn CommandPalette(
                 div { class: "command-palette-group",
                     div { class: "command-palette-label", {crate::i18n::tr("command_palette.jump_to")} }
                     for (label, hint, route) in matched_dests.iter() {
-                        button {
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             class: "command-palette-item",
                             "data-testid": "command-palette-dest",
                             role: "option",
@@ -4141,8 +4186,10 @@ fn CommandPalette(
                 }
             }
             div { class: "command-palette-footer",
-                button {
-                    class: "btn sm ghost",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    class: "btn",
                     "data-testid": "command-palette-close",
                     "aria-label": "Close command palette",
                     onclick: move |_| on_close.call(()),
@@ -4190,7 +4237,8 @@ fn ProfileGateNotice(profile: &'static str) -> Element {
                 }
                 div { class: "entity-title", "{body}" }
                 div { class: "profile-gate-details",
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         r#type: "button",
                         class: "link-button",
                         "data-testid": "profile-gate-toggle-technical",

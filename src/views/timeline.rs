@@ -12,6 +12,9 @@ use crate::crypto::compose_local_encrypted_message;
 use crate::local_state::{LocalStateStore, ReadMarkerRecord};
 use crate::media::{hash_matches, media_type_preview_policy, sha256_hex};
 use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
     with_authed_api_with_sync,
@@ -651,12 +654,12 @@ pub fn TimelinePanel(
             }
 
             div { class: "composer", style: "margin-bottom: 8px;",
-                input {
+                Input {
                     r#type: "text",
                     "data-testid": "timeline-search",
                     placeholder: "Search messages...",
                     value: "{search_query}",
-                    oninput: move |evt| search_query.set(evt.value()),
+                    oninput: move |event: FormEvent| search_query.set(event.value()),
                 }
             }
 
@@ -753,8 +756,8 @@ pub fn TimelinePanel(
                                 "data-testid": "timeline-blocked-row",
                                 {crate::i18n::tr("timeline.blocked_user")}
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "timeline-blocked-show-anyway",
                                 onclick: {
                                     let eid = event.id.clone();
@@ -786,8 +789,8 @@ pub fn TimelinePanel(
                             if !event.reactions.is_empty() {
                                 div { class: "actions",
                                     for (emoji, senders) in &event.reactions {
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "reaction-badge",
                                             "{emoji} {senders.len()}"
                                         }
@@ -796,14 +799,14 @@ pub fn TimelinePanel(
                             }
 
                             div { class: "actions",
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "reply-button",
                                     onclick: move |_| reply_to_index.set(Some(idx)),
                                     "Reply"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "react-button",
                                     onclick: move |_| {
                                         let current = show_reaction_picker();
@@ -811,8 +814,8 @@ pub fn TimelinePanel(
                                     },
                                     "React"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "edit-button",
                                     onclick: {
                                         let body = event.body.clone();
@@ -823,14 +826,14 @@ pub fn TimelinePanel(
                                     },
                                     "Edit"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "redact-button",
                                     onclick: move |_| redact_confirm.set(Some(idx)),
                                     "Redact"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "thread-button",
                                     onclick: move |_| {
                                         let current = thread_open();
@@ -838,8 +841,8 @@ pub fn TimelinePanel(
                                     },
                                     "Thread"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "mark-read-button",
                                     disabled: event.pending || selected_realm_id.trim().is_empty(),
                                     onclick: {
@@ -973,8 +976,8 @@ pub fn TimelinePanel(
                             if show_reaction_picker() == Some(idx) {
                                 div { class: "actions", "data-testid": "reaction-picker",
                                     for emoji in EMOJI_GRID {
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             key: "{emoji}",
                                             onclick: {
                                                 let base = base_url.clone();
@@ -1007,13 +1010,13 @@ pub fn TimelinePanel(
 
                             if editing_index() == Some(idx) {
                                 div { class: "composer", "data-testid": "edit-composer",
-                                    textarea {
+                                    Textarea {
                                         value: "{edit_draft}",
-                                        oninput: move |evt| edit_draft.set(evt.value()),
+                                        oninput: move |event: FormEvent| edit_draft.set(event.value()),
                                     }
                                     div { class: "actions",
-                                        button {
-                                            class: "primary",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
                                             "data-testid": "save-edit-button",
                                             onclick: {
                                                 let base = base_url.clone();
@@ -1113,8 +1116,8 @@ pub fn TimelinePanel(
                                             },
                                             "Save"
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             onclick: move |_| editing_index.set(None),
                                             "Cancel"
                                         }
@@ -1126,8 +1129,8 @@ pub fn TimelinePanel(
                                 div { class: "event", "data-testid": "redact-confirm",
                                     div { class: "entity-title", "Redact this message?" }
                                     div { class: "actions",
-                                        button {
-                                            class: "primary",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
                                             "data-testid": "confirm-redact-button",
                                             onclick: {
                                                 let base = base_url.clone();
@@ -1211,8 +1214,8 @@ pub fn TimelinePanel(
                                             },
                                             "Confirm Redact"
                                         }
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             onclick: move |_| redact_confirm.set(None),
                                             "Cancel"
                                         }
@@ -1231,8 +1234,8 @@ pub fn TimelinePanel(
                                             }
                                             div { class: "muted", "Thread messages would appear here." }
                                             div { class: "actions",
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     onclick: move |_| thread_open.set(None),
                                                     "Close Thread"
                                                 }
@@ -1386,8 +1389,8 @@ pub fn TimelinePanel(
                         "Private plaintext is not E2EE. Enable Encrypt Local or acknowledge that this server may see the body."
                     }
                     if !plaintext_ack() {
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "plaintext-boundary-ack",
                             onclick: move |_| plaintext_ack.set(true),
                             "Acknowledge plaintext exposure"
@@ -1419,8 +1422,8 @@ pub fn TimelinePanel(
                             "Replying to a message"
                         }
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         onclick: move |_| reply_to_index.set(None),
                         "Cancel Reply"
                     }
@@ -1536,7 +1539,7 @@ pub fn TimelinePanel(
                         {crate::i18n::tr("compose.drop_zone.hint")}
                     }
                 }
-                textarea {
+                Textarea {
                     "data-testid": "composer-input",
                     "aria-label": "Message composer",
                     value: "{draft}",
@@ -1559,7 +1562,7 @@ pub fn TimelinePanel(
                     let sc = selected_realm_c.clone();
                     let actor_for_typing = account_did_c.clone();
                     let device_for_typing = device_id_c.clone();
-                    move |event| {
+                    move |event: FormEvent| {
                         let value = event.value();
                         // Local draft signal updates instantly for responsive
                         // typing; the (blocking) persist is debounced.
@@ -1601,7 +1604,7 @@ pub fn TimelinePanel(
                         });
                     }
                 },
-                onkeydown: move |event| {
+                onkeydown: move |event: KeyboardEvent| {
                     if event.key().to_string() == "Enter" && event.modifiers().ctrl() {
                         let body = draft().trim().to_owned();
                         if body.is_empty() {
@@ -1748,8 +1751,8 @@ pub fn TimelinePanel(
                     " Encrypt Local"
                 }
 
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "attach-blob-button",
                     onclick: move |_| {
                         let base = base_url_sig();
@@ -1804,8 +1807,8 @@ pub fn TimelinePanel(
                         div { class: "muted", "Policy: {media_type_preview_policy(&blob.media_type).label()}" }
                         div { class: "muted", "Download path uses Authorization header; bearer token is never placed in the blob URL." }
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "verify-blob-download",
                                 onclick: {
                                     let blob_ref = blob.blob_ref.clone();
@@ -1859,8 +1862,8 @@ pub fn TimelinePanel(
                     }
                 }
 
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "send-button",
                     // Round R2/R3 (T07) — block new writes when the Realm
                     // is in the destroy terminal state. Server enforces via
@@ -2062,8 +2065,8 @@ pub fn TimelinePanel(
                     "Send"
                 }
 
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "report-queue-button",
                     onclick: {
                         let sc = selected_realm_c.clone();

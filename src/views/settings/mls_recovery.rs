@@ -16,6 +16,9 @@ use dioxus::prelude::*;
 
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input};
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
 
 /// Resolved backup status for the section header / status line.
@@ -256,10 +259,10 @@ pub fn SettingsMlsRecoveryPanel(
             if current_status != MlsRecoveryStatus::NoLocalSecret {
                 if !generated_now.trim().is_empty() {
                     div { class: "workflow-form",
-                        label { r#for: "settings-mls-recovery-generated-key",
+                        Label { html_for: "settings-mls-recovery-generated-key",
                             {crate::i18n::tr("mls_backup.generated_key_label")}
                         }
-                        textarea {
+                        Textarea {
                             id: "settings-mls-recovery-generated-key",
                             "data-testid": "settings-mls-recovery-generated-key",
                             rows: "3",
@@ -274,8 +277,8 @@ pub fn SettingsMlsRecoveryPanel(
                 div { class: "workflow-form",
                     div { class: "actions",
                         if !generated_now.trim().is_empty() {
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "settings-mls-recovery-saved",
                                 onclick: move |_| {
                                     generated_recovery_key.set(String::new());
@@ -284,8 +287,8 @@ pub fn SettingsMlsRecoveryPanel(
                                 {crate::i18n::tr("mls_backup.button_saved")}
                             }
                         } else {
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "settings-mls-recovery-submit",
                                 disabled: !can_submit,
                                 onclick: on_submit,

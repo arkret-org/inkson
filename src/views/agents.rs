@@ -35,6 +35,8 @@ use crate::models::{
     AgentGrantAttachReqBody, AgentLifecycleReqBody, AgentProvisionReqBody, AgentResBody,
     AgentRotateKeyReqBody, AgentSidecarThreadEnsureReqBody,
 };
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -512,33 +514,33 @@ pub fn AgentsPanel(
                     "Fill in agent_id + protocol + comma-separated capabilities. Submits a ck.agent.endpoint envelope."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-register-did",
                         "aria-label": "Agent DID (bot handle)",
                         "aria-describedby": "agent-register-form-help",
                         value: "{agent_id}",
                         placeholder: "bot handle (e.g. assistant:example.com)",
-                        oninput: move |evt| agent_id.set(evt.value()),
+                        oninput: move |event: FormEvent| agent_id.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "agent-register-protocol",
                         "aria-label": "Agent invocation protocol",
                         "aria-describedby": "agent-register-form-help",
                         value: "{protocol}",
                         placeholder: "protocol (ck.agent.v1)",
-                        oninput: move |evt| protocol.set(evt.value()),
+                        oninput: move |event: FormEvent| protocol.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "agent-register-capabilities",
                         "aria-label": "Capability list (comma-separated)",
                         "aria-describedby": "agent-register-form-help",
                         value: "{capabilities}",
                         placeholder: "capabilities (comma-separated)",
-                        oninput: move |evt| capabilities.set(evt.value()),
+                        oninput: move |event: FormEvent| capabilities.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "agent-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
@@ -766,15 +768,15 @@ pub fn AgentsPanel(
                     "Initiates a ck.agent.protocol_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-handoff-target-input",
                         placeholder: "target agent_id (must match a registered endpoint)",
                         value: "{handoff_target_did}",
-                        oninput: move |evt| handoff_target_did.set(evt.value()),
+                        oninput: move |event: FormEvent| handoff_target_did.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "agent-protocol-handoff-button",
                             disabled: matches!(
                                 handoff_state(),
@@ -800,8 +802,8 @@ pub fn AgentsPanel(
                             "Initiate handoff"
                         }
                         if handoff_state().awaits_confirmation() {
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "agent-protocol-handoff-confirm-button",
                                 onclick: {
                                     let base = base_url.clone();
@@ -877,8 +879,8 @@ pub fn AgentsPanel(
                                 "Confirm handoff"
                             }
                         }
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "agent-protocol-audit-verify-button",
                             onclick: move |_| {
                                 // Verify the most recently-fetched
@@ -1181,8 +1183,8 @@ pub fn PersonalAgentAdminPanel(
                     div { class: "muted", "data-testid": "agent-admin-list-status", "{list_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "agent-admin-refresh-button",
                         onclick: {
                             let base = base_url.clone();
@@ -1242,8 +1244,8 @@ pub fn PersonalAgentAdminPanel(
                                 div { class: "muted", "did: {agent_id_label}" }
                                 div { class: "muted", "display_name: {agent.display_name}" }
                                 div { class: "actions",
-                                    button {
-                                        class: if selected_agent_id() == id { "primary" } else { "secondary" },
+                                    Button {
+                                        variant: if selected_agent_id() == id { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                         "data-testid": "agent-admin-select-button",
                                         onclick: {
                                             let id = id.clone();
@@ -1252,8 +1254,8 @@ pub fn PersonalAgentAdminPanel(
                                         "Select"
                                     }
                                     // ck.self.agent.get
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-get-button",
                                         onclick: {
                                             let base = base_url.clone();
@@ -1306,22 +1308,22 @@ pub fn PersonalAgentAdminPanel(
                     "Provisions a new native personal agent: DID issuance + first agent-key authorize + controller grant attach (orchestrated server-side)."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-admin-provision-display-name",
                         placeholder: "display name",
                         value: "{new_display_name}",
-                        oninput: move |e| new_display_name.set(e.value()),
+                        oninput: move |event: FormEvent| new_display_name.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "agent-admin-provision-agent-did",
                         placeholder: "optional agent_id (server-issued if blank)",
                         value: "{new_agent_id}",
-                        oninput: move |e| new_agent_id.set(e.value()),
+                        oninput: move |event: FormEvent| new_agent_id.set(event.value()),
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "agent-admin-provision-button",
                         onclick: {
                             let base = base_url.clone();
@@ -1387,8 +1389,8 @@ pub fn PersonalAgentAdminPanel(
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "agent-admin-pause-button",
                         disabled: selected_agent_id().is_empty(),
                         onclick: {
@@ -1421,8 +1423,8 @@ pub fn PersonalAgentAdminPanel(
                         },
                         "Pause"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "agent-admin-resume-button",
                         disabled: selected_agent_id().is_empty(),
                         onclick: {
@@ -1458,15 +1460,15 @@ pub fn PersonalAgentAdminPanel(
                 }
                 // Deactivate (destructive) — type-to-confirm dialog.
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-admin-deactivate-confirm-input",
                         placeholder: "type DEACTIVATE to enable the destructive button",
                         value: "{deactivate_confirm}",
-                        oninput: move |e| deactivate_confirm.set(e.value()),
+                        oninput: move |event: FormEvent| deactivate_confirm.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "destructive",
+                        Button {
+                            variant: ButtonVariant::Destructive,
                             "data-testid": "agent-admin-deactivate-button",
                             disabled: selected_agent_id().is_empty() || deactivate_confirm() != "DEACTIVATE",
                             onclick: {
@@ -1513,15 +1515,15 @@ pub fn PersonalAgentAdminPanel(
                     span { class: "badge blue", "ck.self.agent.rotate_key" }
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-admin-rotate-vm-input",
                         placeholder: "new verification_method (e.g. did:key:zNew...)",
                         value: "{rotate_vm}",
-                        oninput: move |e| rotate_vm.set(e.value()),
+                        oninput: move |event: FormEvent| rotate_vm.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-rotate-key-button",
                             disabled: selected_agent_id().is_empty() || rotate_vm().trim().is_empty(),
                             onclick: {
@@ -1581,21 +1583,21 @@ pub fn PersonalAgentAdminPanel(
                     "TODO(P3-impl): expand the grant_kind input into a dropdown driven by the 14 CKP-0008 capability actions; today the input is free-form so the wire shape can be exercised."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-admin-grant-kind-input",
                         placeholder: "grant_kind (one of ck.agent.* capability actions)",
                         value: "{grant_kind}",
-                        oninput: move |e| grant_kind.set(e.value()),
+                        oninput: move |event: FormEvent| grant_kind.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "agent-admin-grant-scope-input",
                         placeholder: "scope (JSON)",
                         value: "{grant_scope_json}",
-                        oninput: move |e| grant_scope_json.set(e.value()),
+                        oninput: move |event: FormEvent| grant_scope_json.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-grant-attach-button",
                             disabled: selected_agent_id().is_empty() || grant_kind().trim().is_empty(),
                             onclick: {
@@ -1640,8 +1642,8 @@ pub fn PersonalAgentAdminPanel(
                         // detach surface is currently a stub button
                         // wired to the most recent grant — TODO(P3-impl)
                         // surface the grant list + per-row detach.
-                        button {
-                            class: "secondary",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             "data-testid": "agent-admin-grant-detach-button",
                             disabled: selected_agent_id().is_empty(),
                             onclick: {
@@ -1701,21 +1703,22 @@ pub fn PersonalAgentAdminPanel(
                     "Ensures the controller-private sidecar objects for the selected agent in a Realm."
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "agent-admin-sidecar-realm-input",
                         placeholder: "realm_id",
                         value: "{sidecar_realm}",
-                        oninput: move |e| sidecar_realm.set(e.value()),
+                        oninput: move |event: FormEvent| sidecar_realm.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "agent-admin-sidecar-ensure-button",
                             disabled: selected_agent_id().is_empty()
                                 || sidecar_realm().trim().is_empty()
                                 || controller_did.trim().is_empty(),
                             onclick: {
                                 let base = base_url.clone();
+                                let controller_did = controller_did.clone();
                                 move |_| {
                                     let id = selected_agent_id();
                                     if id.is_empty() { return; }
@@ -1871,8 +1874,8 @@ pub fn ActionApproveDialog(
                 }
             }
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "action-approve-confirm-button",
                     disabled: !can_submit,
                     onclick: {
@@ -1933,8 +1936,8 @@ pub fn ActionApproveDialog(
                     },
                     "Approve"
                 }
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "action-approve-reject-button",
                     disabled: state() == ActionApproveDialogState::Submitting,
                     onclick: move |_| {

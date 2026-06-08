@@ -8,6 +8,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use dioxus::prelude::*;
 
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::label::Label;
+
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAvatarSelection {
     bytes: Vec<u8>,
@@ -97,10 +100,10 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                 }
             }
             div { class: "avatar-uploader-controls",
-                label {
+                Label {
                     class: "secondary avatar-upload-button",
                     "data-testid": "{upload_label_test_id}",
-                    r#for: "{input_id}",
+                    html_for: "{input_id}",
                     crate::components::UiIcon { name: "image" }
                     span { "Upload image" }
                 }
@@ -233,8 +236,8 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                                 }
                             }
                             div { class: "actions",
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     "data-testid": "{upload_cropped_test_id}",
                                     onclick: {
                                         let base = base_url.clone();
@@ -291,8 +294,8 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                                     },
                                     "Save avatar"
                                 }
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "{crop_cancel_test_id}",
                                     onclick: move |_| {
                                         pending_selection.set(None);
@@ -306,8 +309,8 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                 }
 
                 if !current_blob_ref.trim().is_empty() {
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "{clear_test_id}",
                         onclick: move |_| {
                             pending_selection.set(None);

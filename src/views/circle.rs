@@ -14,6 +14,7 @@
 use dioxus::prelude::*;
 
 use crate::circle::CircleSummary;
+use crate::ui::button::{Button, ButtonVariant};
 
 /// Props for the Circle detail page. The parent route (e.g. a
 /// `/circles/:circle_id` page added in a follow-up commit) fetches the
@@ -86,23 +87,23 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
             }
 
             div { class: "panel-actions",
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "circle-leave-button",
                     onclick: move |_| if let Some(handler) = on_leave.as_ref() { handler.call(()); },
                     "Leave Circle"
                 }
                 if viewer_can_archive {
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "circle-archive-button",
                         onclick: move |_| if let Some(handler) = on_archive.as_ref() { handler.call(()); },
                         "Archive Circle"
                     }
                 }
                 if viewer_can_scope_rotate {
-                    button {
-                        class: "danger",
+                    Button {
+                        variant: ButtonVariant::Destructive,
                         "data-testid": "circle-scope-rotate-button",
                         onclick: move |_| if let Some(handler) = on_scope_rotate.as_ref() { handler.call(()); },
                         "Rotate scope (audited)"
@@ -216,7 +217,8 @@ pub fn CircleSidebarRow(summary: CircleSummary, onclick: EventHandler<String>) -
     let member_count = summary.member_count;
 
     rsx! {
-        button {
+        Button {
+            variant: ButtonVariant::Secondary,
             class: "sidebar-row circle-sidebar-row",
             "data-testid": "circle-sidebar-row",
             "data-circle-id": "{circle_id}",

@@ -30,6 +30,9 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// Whether the local UI should expose applet install / registration panels.
@@ -255,27 +258,27 @@ pub fn AppletsPanel(
                     span { class: "badge", title: "ck.applet.registration", "Applet" }
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "applet-register-service-did",
                         value: "{service_did}",
                         placeholder: "applet handle (e.g. applet:example.com)",
-                        oninput: move |evt| service_did.set(evt.value()),
+                        oninput: move |event: FormEvent| service_did.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "applet-register-namespace",
                         value: "{namespace}",
                         placeholder: "namespace (extensions / messaging / …)",
-                        oninput: move |evt| namespace.set(evt.value()),
+                        oninput: move |event: FormEvent| namespace.set(event.value()),
                     }
-                    input {
+                    Input {
                         "data-testid": "applet-register-capabilities",
                         value: "{capabilities}",
                         placeholder: "capabilities (comma-separated)",
-                        oninput: move |evt| capabilities.set(evt.value()),
+                        oninput: move |event: FormEvent| capabilities.set(event.value()),
                     }
                     div { class: "actions",
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "applet-register-submit-button",
                             onclick: {
                                 let base = base_url.clone();
@@ -419,8 +422,8 @@ pub fn AppletsPanel(
                 div { class: "event-head",
                     span { "Installed applets" }
                     span { class: "badge", "{applet_rows.len()}" }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "applet-install-button",
                         onclick: move |_| install_open.set(!install_open()),
                         if install_open() { "Close install" } else { "+ Install applet" }
@@ -428,19 +431,19 @@ pub fn AppletsPanel(
                 }
                 if install_open() {
                     div { class: "workflow-form",
-                        textarea {
+                        Textarea {
                             "data-testid": "applet-install-manifest-input",
                             placeholder: "manifest URL or JSON body",
                             value: "{install_manifest}",
-                            oninput: move |evt| {
-                                install_manifest.set(evt.value());
+                            oninput: move |event: FormEvent| {
+                                install_manifest.set(event.value());
                                 install_verified.set(false);
                             },
                             style: "width: 100%; min-height: 60px;",
                         }
                         div { class: "actions",
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "applet-install-verify-button",
                                 onclick: move |_| {
                                     let raw = install_manifest();
@@ -471,8 +474,8 @@ pub fn AppletsPanel(
                                 },
                                 "Verify manifest"
                             }
-                            button {
-                                class: if install_verified() { "primary" } else { "secondary" },
+                            Button {
+                                variant: if install_verified() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                 disabled: !install_verified(),
                                 "data-testid": "applet-install-confirm-button",
                                 onclick: move |_| {
@@ -518,8 +521,8 @@ pub fn AppletsPanel(
                                         span { class: "mono muted", title: "{manifest_hash}", "{manifest_hash_label}" }
                                     }
                                     div { class: "actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "applet-accountability-trace-button",
                                             onclick: {
                                                 let aid = applet_id.clone();
@@ -527,8 +530,8 @@ pub fn AppletsPanel(
                                             },
                                             "Trace events"
                                         }
-                                        button {
-                                            class: "danger",
+                                        Button {
+                                            variant: ButtonVariant::Destructive,
                                             "data-testid": "applet-uninstall-button",
                                             onclick: {
                                                 let sd = service_did.clone();
@@ -609,8 +612,8 @@ pub fn AppletsPanel(
                                 }
                                 footer {
                                     class: "publish-to-source-modal-footer",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         onclick: move |_| trace_open_for.set(None),
                                         "Close"
                                     }

@@ -10,6 +10,9 @@
 use dioxus::prelude::*;
 
 use crate::models::ContactListRow;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
@@ -27,15 +30,17 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
                             span { "New contact" }
                             span { "consent gate" }
                         }
-                        label { "DID" }
-                        input {
+                        Label { html_for: "contact-target-input-input", "DID" }
+                        Input {
+                            id: "contact-target-input-input",
                             "data-testid": "contact-target-input",
                             value: "{target}",
                             placeholder: "did:web:alice.example",
-                            oninput: move |evt| target.set(evt.value()),
+                            oninput: move |event: FormEvent| target.set(event.value()),
                         }
-                        label { "Scope" }
+                        Label { html_for: "contact-scope-select-input", "Scope" }
                         select {
+                            id: "contact-scope-select-input",
                             "data-testid": "contact-scope-select",
                             value: "{scope}",
                             onchange: move |evt| scope.set(evt.value()),
@@ -45,8 +50,8 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
                             option { value: "video_call", "video_call" }
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "send-contact-request-button",
                                 disabled: target.read().trim().is_empty(),
                                 onclick: {

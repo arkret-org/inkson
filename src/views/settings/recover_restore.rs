@@ -26,6 +26,9 @@ use serde_json::Value;
 
 use crate::components::HelpTip;
 use crate::local_state::LocalStateStore;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::with_authed_api;
 
 #[component]
@@ -69,29 +72,29 @@ pub fn RecoverPanel(
                             span { "passphrase + backup id" }
                         }
                         div { class: "workflow-form",
-                            label { r#for: "recovery-restore-passphrase-input", "Recovery passphrase" }
-                            input {
+                            Label { html_for: "recovery-restore-passphrase-input", "Recovery passphrase" }
+                            Input {
                                 id: "recovery-restore-passphrase-input",
                                 "data-testid": "recovery-restore-passphrase-input",
                                 r#type: "password",
                                 value: "{passphrase}",
                                 placeholder: "12-word passphrase or vault passphrase",
                                 autocomplete: "current-password",
-                                oninput: move |evt| passphrase.set(evt.value()),
+                                oninput: move |evt: FormEvent| passphrase.set(evt.value()),
                             }
-                            label { r#for: "recovery-restore-backup-id-input", "Backup id (optional)" }
-                            input {
+                            Label { html_for: "recovery-restore-backup-id-input", "Backup id (optional)" }
+                            Input {
                                 id: "recovery-restore-backup-id-input",
                                 "data-testid": "recovery-restore-backup-id-input",
                                 r#type: "text",
                                 value: "{backup_id}",
                                 placeholder: "ck:backup:01964137-… (leave blank to use the latest)",
-                                oninput: move |evt| backup_id.set(evt.value()),
+                                oninput: move |evt: FormEvent| backup_id.set(evt.value()),
                             }
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "recovery-restore-button",
                                 disabled: passphrase().trim().is_empty(),
                                 onclick: move |_| {
@@ -219,8 +222,8 @@ pub fn RecoverPanel(
                                 },
                                 "Restore recovery vault"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "recovery-restore-mls-history-button",
                                 disabled: !has_session || !has_account_device,
                                 onclick: move |_| {

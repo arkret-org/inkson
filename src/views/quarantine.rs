@@ -31,6 +31,9 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::coauth::CoauthApi;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::short_protocol_id;
 
 /// One quarantined invite row, parsed from the wire JSON.
@@ -152,8 +155,8 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "quarantine-refresh-button",
                         onclick: load_handler.clone(),
                         "Refresh"
@@ -163,12 +166,13 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                     div { class: "muted", "data-testid": "quarantine-status", "{status}" }
                 }
             }
-            label { "Reject reason (used for the next reject click)" }
-            input {
+            Label { html_for: "quarantine-reject-reason-input-input", "Reject reason (used for the next reject click)" }
+            Input {
+                id: "quarantine-reject-reason-input-input",
                 "data-testid": "quarantine-reject-reason-input",
                 value: "{reject_reason}",
                 placeholder: "violates issuance policy ...",
-                oninput: move |evt| reject_reason.set(evt.value()),
+                oninput: move |event: FormEvent| reject_reason.set(event.value()),
             }
             for entry in entries() {
                 div { class: "event", "data-testid": "quarantine-row",
@@ -202,8 +206,8 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                     }
                     if is_admin {
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "quarantine-approve-button",
                                 onclick: {
                                     let url = coauth_url.clone();
@@ -239,8 +243,8 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                 },
                                 "Approve"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "quarantine-reject-button",
                                 onclick: {
                                     let invite_id = entry.invite_id.clone();
@@ -256,8 +260,8 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                     "Rejection is recorded in the audit trail with the reason above. The target cannot be re-invited without a new issuance."
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "confirm-reject-button",
                                         onclick: {
                                             let url = coauth_url.clone();
@@ -300,8 +304,8 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                         },
                                         "Confirm Reject"
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "cancel-reject-button",
                                         onclick: move |_| reject_confirm.set(None),
                                         "Cancel"

@@ -126,7 +126,7 @@
 
 .dx-button[data-style="primary"] {
   background-color: var(--secondary-color-2);
-  color: var(--primary-color);
+  color: var(--text-on-accent);
 }
 
 .dx-button[data-style="primary"]:not(:disabled):hover {

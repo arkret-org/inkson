@@ -10,6 +10,7 @@ use dioxus::prelude::*;
 
 use crate::components::DismissiblePopup;
 use crate::i18n::tr;
+use crate::ui::button::{Button, ButtonVariant};
 
 /// One entry in the shortcut help list. `keys` is the visible chord
 /// rendered as a `<kbd>` group; `description_key` is the i18n key for
@@ -94,8 +95,8 @@ pub fn ShortcutHelpOverlay(visible: Signal<bool>) -> Element {
                     style: "margin: 0; font-size: 1.05rem;",
                     "{title}"
                 }
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "shortcut-help-dismiss",
                     onclick: move |_| visible.set(false),
                     "{tr(\"shortcuts.dismiss\")}"

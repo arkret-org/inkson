@@ -6,6 +6,7 @@ use crate::api::{
     normalize_wait_for_sync_token,
 };
 use crate::config::{ClientConfig, LocalConfigStore};
+use crate::ui::button::{Button, ButtonVariant};
 
 /// R3.2 (cokret-spec @ b56cab1) — composer/render-side mention node.
 ///
@@ -621,8 +622,8 @@ pub fn WhyThisHandlePanel(
                 code { "ck.schema.handle_claim.v1" }
                 " evidence. This shows the claims visible to you and the §3.2.1 primary handle."
             }
-            button {
-                class: "secondary",
+            Button {
+                variant: ButtonVariant::Secondary,
                 "data-testid": "why-this-handle-load",
                 onclick: on_load,
                 "Show visible handle claims"

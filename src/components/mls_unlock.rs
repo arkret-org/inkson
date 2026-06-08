@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 use super::UiIcon;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::normalize_recovery_key_input;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
 
 /// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
@@ -46,9 +48,11 @@ pub fn MlsUnlockPrompt(
 
     if dismissed() {
         return rsx! {
-            button {
+            Button {
+                variant: ButtonVariant::Primary,
+                size: ButtonSize::IconSm,
                 r#type: "button",
-                class: "btn icon sm primary mls-unlock-reopen-button",
+                class: "btn mls-unlock-reopen-button",
                 "data-testid": "mls-unlock-reopen",
                 title: crate::i18n::tr("mls_unlock.reopen"),
                 "aria-label": crate::i18n::tr("mls_unlock.reopen"),
@@ -168,9 +172,11 @@ pub fn MlsUnlockPrompt(
                 div { class: "modal-head event-head",
                     h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::IconSm,
                         r#type: "button",
-                        class: "btn icon sm ghost close",
+                        class: "btn close",
                         "data-testid": "mls-unlock-dismiss",
                         title: crate::i18n::tr("mls_unlock.dismiss"),
                         "aria-label": crate::i18n::tr("mls_unlock.dismiss"),
@@ -196,16 +202,16 @@ pub fn MlsUnlockPrompt(
                     }
                 }
                 div { class: "modal-foot mls-unlock-row",
-                    input {
+                    Input {
                         r#type: "password",
                         "data-testid": "mls-unlock-passphrase",
                         placeholder: crate::i18n::tr("mls_unlock.placeholder"),
                         value: "{passphrase}",
                         disabled: busy(),
-                        oninput: move |evt| passphrase.set(evt.value()),
+                        oninput: move |event: FormEvent| passphrase.set(event.value()),
                     }
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "mls-unlock-submit",
                         disabled: busy(),
                         onclick: on_unlock,
@@ -268,8 +274,8 @@ pub fn MlsRecoverySetupMissingBanner(
                     }
                 }
                 div { class: "modal-foot mls-unlock-row",
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "mls-recovery-missing-dismiss",
                         onclick: move |_| needs_mls_recovery_setup.set(false),
                         {crate::i18n::tr("mls_recovery_missing.button_dismiss")}

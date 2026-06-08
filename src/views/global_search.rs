@@ -28,6 +28,8 @@ use serde_json::Value;
 use crate::api::CokretApi;
 use crate::i18n::tr;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// True when a `key` event should be treated as the global search
@@ -208,18 +210,18 @@ pub fn GlobalSearchPanel(
                         );
                     },
                     div { class: "actions", style: "gap: 8px;",
-                        input {
+                        Input {
                             "data-testid": "global-search-input",
                             "aria-label": tr("search.title"),
                             r#type: "search",
                             placeholder: tr("search.placeholder"),
                             value: "{query}",
-                            autofocus: true,
-                            oninput: move |evt| query.set(evt.value()),
+                            "autofocus": true,
+                            oninput: move |event: FormEvent| query.set(event.value()),
                             style: "flex: 1; min-width: 280px;",
                         }
-                        button {
-                            class: "primary",
+                        Button {
+                            variant: ButtonVariant::Primary,
                             "data-testid": "global-search-submit",
                             r#type: "submit",
                             disabled: query().trim().is_empty() || loading(),
@@ -315,8 +317,8 @@ pub fn GlobalSearchPanel(
             // Convenience back-link so the panel doesn't trap users on
             // a dead-end route when no results show up.
             div { class: "actions",
-                button {
-                    class: "secondary",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     "data-testid": "global-search-back",
                     onclick: move |_| {
                         let _ = navigator.push(Route::Dashboard);

@@ -12,6 +12,8 @@
 
 use dioxus::prelude::*;
 
+use crate::ui::button::{Button, ButtonVariant};
+
 /// Opt-in preference for crash telemetry. Default is `false` — the
 /// user must explicitly tick the box.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -165,8 +167,9 @@ pub fn ReportProblemButton(
     on_open: EventHandler<String>,
 ) -> Element {
     rsx! {
-        button {
-            class: "secondary report-problem-button",
+        Button {
+            variant: ButtonVariant::Secondary,
+            class: "report-problem-button",
             "data-testid": "report-problem-button",
             onclick: move |_| {
                 let body = build_report_body(&recent_tracing, &app_version, &os);

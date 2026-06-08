@@ -19,6 +19,8 @@
 
 use dioxus::prelude::*;
 
+use crate::ui::button::{Button, ButtonVariant};
+
 #[derive(Clone, PartialEq, Props)]
 pub struct RetryableErrorProps {
     /// User-facing error message. Should already be localized /
@@ -77,8 +79,8 @@ pub fn RetryableError(props: RetryableErrorProps) -> Element {
             div { class: "muted", "{props.message}" }
             div { class: "actions",
                 if let Some(on_retry) = props.on_retry {
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "{tid}-retry",
                         "aria-label": "Retry",
                         onclick: move |evt| on_retry.call(evt),
@@ -86,8 +88,8 @@ pub fn RetryableError(props: RetryableErrorProps) -> Element {
                     }
                 }
                 if !request_id_full.is_empty() {
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "{tid}-copy-request-id",
                         "aria-label": "Copy request ID for bug report",
                         title: "{request_id_full}",

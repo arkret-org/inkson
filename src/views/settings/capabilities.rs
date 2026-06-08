@@ -18,6 +18,7 @@ use serde_json::Value;
 use crate::api::CokretApi;
 use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// One row in the user's capability list. Backed by either the user
@@ -221,8 +222,8 @@ pub fn CapabilitiesSettingsCard(
                                     }
                                     div { class: "muted mono", "scope {row.scope}" }
                                     div { class: "actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "capability-detail-button",
                                             "data-capability-id": "{row.capability_id}",
                                             onclick: {
@@ -252,8 +253,10 @@ pub fn CapabilitiesSettingsCard(
                                 "aria-modal": "true",
                                 div { class: "event-head",
                                     span { "Delegation chain" }
-                                    button {
-                                        class: "btn icon sm ghost",
+                                    Button {
+                                        variant: ButtonVariant::Ghost,
+                                        size: ButtonSize::Icon,
+                                        class: "btn",
                                         "data-testid": "capability-detail-close",
                                         "aria-label": "Close capability detail",
                                         onclick: move |_| detail_for.set(None),

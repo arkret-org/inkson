@@ -17,6 +17,10 @@ use crate::move_builder::{FlowPositionEffect, FlowPositionExpectation, flow_posi
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::rank::{RankError, rank_for_drop};
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     display_name_for_did, handle_display_from_did, short_protocol_id, with_authed_api,
 };
@@ -75,13 +79,13 @@ fn CardMarkdownEditor(
                 class: "card-rich-editor-host",
                 "data-testid": "card-detail-description-rich-editor",
             }
-            textarea {
+            Textarea {
                 id: "{fallback_id}",
                 class: "textarea card-rich-editor-fallback",
                 "data-testid": "card-detail-description-input",
                 value: "{value}",
                 maxlength: "8192",
-                oninput: move |evt| on_change.call(evt.value()),
+                oninput: move |event: FormEvent| on_change.call(event.value()),
             }
         }
     }
@@ -104,16 +108,16 @@ fn CardDetailEditActions(
             }
         }
         div { class: "card-detail-form-actions",
-            button {
+            Button {
+                variant: ButtonVariant::Primary,
                 r#type: "button",
-                class: "primary",
                 "data-testid": "card-detail-save-button",
                 onclick: move |_| on_save.call(()),
                 {crate::i18n::tr("common.save")}
             }
-            button {
+            Button {
+                variant: ButtonVariant::Secondary,
                 r#type: "button",
-                class: "secondary",
                 "data-testid": "card-detail-cancel-edit-button",
                 onclick: move |_| on_cancel.call(()),
                 {crate::i18n::tr("common.cancel")}
@@ -1341,7 +1345,8 @@ pub fn KanbanPanel(
                                     }
                                 }
                             }
-                            button {
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 class: "board-select-button",
                                 "data-testid": "board-space-select-button",
                                 title: "Switch board: {selected_board_title}",
@@ -1370,7 +1375,8 @@ pub fn KanbanPanel(
                                         let account_did_for_empty = account_did.clone();
                                         let device_id_for_empty = device_id.clone();
                                         rsx! {
-                                            button {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 class: if selected_board_space_id().trim().is_empty() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
                                                 role: "option",
                                                 "aria-selected": "{selected_board_space_id().trim().is_empty()}",
@@ -1409,7 +1415,8 @@ pub fn KanbanPanel(
                                             let account_did_for_option = account_did.clone();
                                             let device_id_for_option = device_id.clone();
                                             rsx! {
-                                                button {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     class: if option_is_active { "board-select-menu-item is-active" } else { "board-select-menu-item" },
                                                     role: "option",
                                                     "aria-selected": "{option_is_active}",
@@ -1463,14 +1470,16 @@ pub fn KanbanPanel(
                         }
                         if board_selected {
                             div { class: "actions board-list-compose",
-                                input {
+                                Input {
                                     "data-testid": "new-column-input",
                                     value: "{new_column_title}",
                                     placeholder: "New list title",
-                                    oninput: move |evt| new_column_title.set(evt.value()),
+                                    oninput: move |event: FormEvent| new_column_title.set(event.value()),
                                 }
-                                button {
-                                    class: "btn sm secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::Sm,
+                                    class: "btn",
                                     "data-testid": "add-column-button",
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
@@ -1538,8 +1547,10 @@ pub fn KanbanPanel(
                         }
                         div {
                             class: if board_popover() == BoardToolbarPopover::CreateBoard { "board-popover-host is-open" } else { "board-popover-host" },
-                            button {
-                                class: "btn sm secondary board-popover-trigger",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                class: "btn board-popover-trigger",
                                 "data-testid": "new-board-toggle",
                                 onclick: move |_| {
                                     let next = if board_popover() == BoardToolbarPopover::CreateBoard {
@@ -1555,14 +1566,14 @@ pub fn KanbanPanel(
                                 div {
                                     class: "board-popover-panel",
                                     onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                                    input {
+                                    Input {
                                         "data-testid": "new-board-title-input",
                                         value: "{new_board_title}",
                                         placeholder: "Board title",
-                                        oninput: move |evt| new_board_title.set(evt.value()),
+                                        oninput: move |event: FormEvent| new_board_title.set(event.value()),
                                     }
-                                    button {
-                                        class: "primary",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
                                         "data-testid": "create-board-space-button",
                                         onclick: {
                                             let base = base_url.clone();
@@ -1627,8 +1638,10 @@ pub fn KanbanPanel(
                         }
                         div {
                             class: if board_popover() == BoardToolbarPopover::Projection { "board-popover-host is-open" } else { "board-popover-host" },
-                            button {
-                                class: "btn sm secondary board-popover-trigger",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                class: "btn board-popover-trigger",
                                 "data-testid": "board-projection-toggle",
                                 onclick: move |_| {
                                     let next = if board_popover() == BoardToolbarPopover::Projection {
@@ -1644,17 +1657,18 @@ pub fn KanbanPanel(
                                 div {
                                     class: "board-popover-panel board-projection-panel",
                                     onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                                    label { class: "field board-inline-field",
+                                    Label { html_for: "board-view-id-input-input", class: "field board-inline-field",
                                         span { "View ID" }
-                                        input {
+                                        Input {
+                                            id: "board-view-id-input-input",
                                             "data-testid": "board-view-id-input",
                                             value: "{board_view_id}",
                                             placeholder: "ck:view:...",
-                                            oninput: move |evt| board_view_id.set(evt.value()),
+                                            oninput: move |event: FormEvent| board_view_id.set(event.value()),
                                         }
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "board-projection-refresh",
                                         onclick: {
                                             // T20 — real API call to soland's
@@ -1780,8 +1794,10 @@ pub fn KanbanPanel(
                         div {
                             class: if board_popover() == BoardToolbarPopover::Queue { "board-popover-host is-open" } else { "board-popover-host" },
                             "data-testid": "board-offline-queue",
-                            button {
-                                class: "btn sm secondary board-popover-trigger",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                class: "btn board-popover-trigger",
                                 "data-testid": "board-queue-toggle",
                                 onclick: move |_| {
                                     let next = if board_popover() == BoardToolbarPopover::Queue {
@@ -1798,8 +1814,8 @@ pub fn KanbanPanel(
                                     class: "board-popover-panel board-queue-panel",
                                     onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                     div { class: "actions board-queue-actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "replay-board-queue",
                                             onclick: {
                                                 // Replay path resubmits a queued Move via
@@ -2210,7 +2226,8 @@ pub fn KanbanPanel(
                                         };
                                         let testid_state = if gate.enabled { "open" } else { "denied" };
                                         rsx! {
-                                            button {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 class: "kanban-inline-action",
                                                 "data-testid": "card-archive-button",
                                                 "data-flow-id": "{card.id}",
@@ -2268,7 +2285,7 @@ pub fn KanbanPanel(
                         if adding_card_to() == Some(column.id.clone()) {
                             div { class: "board-card-composer",
                                 div { class: "board-card-composer-card",
-                                textarea {
+                                Textarea {
                                     class: "board-card-composer-input",
                                     "data-testid": "new-card-title-input",
                                     value: "{new_card_title}",
@@ -2276,12 +2293,13 @@ pub fn KanbanPanel(
                                     rows: "3",
                                     wrap: "soft",
                                     maxlength: "512",
-                                    oninput: move |evt| new_card_title.set(evt.value()),
+                                    oninput: move |event: FormEvent| new_card_title.set(event.value()),
                                 }
                                 }
                                 div { class: "board-card-composer-actions",
-                                    button {
-                                        class: "primary board-card-composer-save",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        class: "board-card-composer-save",
                                         "data-testid": "save-card-button",
                                         title: "Save card",
                                         "aria-label": "Save card",
@@ -2361,8 +2379,9 @@ pub fn KanbanPanel(
                                         UiIcon { name: "check" }
                                         span { {crate::i18n::tr("kanban.save_card")} }
                                     }
-                                    button {
-                                        class: "secondary board-card-composer-cancel",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        class: "board-card-composer-cancel",
                                         title: "Cancel card",
                                         "aria-label": "Cancel card",
                                         onclick: move |_| adding_card_to.set(None),
@@ -2373,8 +2392,8 @@ pub fn KanbanPanel(
                             }
                         } else {
                             div { class: "board-add-card-row",
-                                button {
-                                    class: "secondary",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "add-card-button",
                                     onclick: {
                                         let col_id = column.id.clone();
@@ -2399,7 +2418,8 @@ pub fn KanbanPanel(
                             };
                             let testid_state = if gate.enabled { "open" } else { "denied" };
                             rsx! {
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     class: "kanban-inline-action",
                                     "data-testid": "list-archive-button",
                                     "data-space-container-id": "{column.id}",
@@ -2478,8 +2498,8 @@ pub fn KanbanPanel(
                                             };
                                             let testid_state = if gate.enabled { "open" } else { "denied" };
                                             rsx! {
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "list-restore-button",
                                                     "data-space-container-id": "{column.id}",
                                                     "data-cap-gate": testid_state,
@@ -2584,8 +2604,8 @@ pub fn KanbanPanel(
                                             };
                                             let testid_state = if gate.enabled { "open" } else { "denied" };
                                             rsx! {
-                                                button {
-                                                    class: "secondary",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
                                                     "data-testid": "card-restore-button",
                                                     "data-flow-id": "{row.card.id}",
                                                     "data-cap-gate": testid_state,
@@ -2838,8 +2858,9 @@ pub fn KanbanPanel(
                                         }
                                     }
                                     div { class: "card-detail-header-actions",
-                                        button {
-                                            class: "secondary card-detail-header-button",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            class: "card-detail-header-button",
                                             "data-testid": "card-detail-share-link-button",
                                             "aria-label": "Copy flow link",
                                             title: "Copy flow link",
@@ -2854,8 +2875,9 @@ pub fn KanbanPanel(
                                             UiIcon { name: "share" }
                                         }
                                         if !editing_card_detail() {
-                                            button {
-                                                class: "secondary card-detail-header-button",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                class: "card-detail-header-button",
                                                 "data-testid": "card-detail-sidebar-toggle",
                                                 "aria-label": "{sidebar_toggle_label}",
                                                 "aria-pressed": "{sidebar_is_visible}",
@@ -2867,8 +2889,9 @@ pub fn KanbanPanel(
                                                 UiIcon { name: sidebar_toggle_icon }
                                             }
                                         }
-                                        button {
-                                            class: "secondary card-detail-header-button",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            class: "card-detail-header-button",
                                             "data-testid": "card-detail-dock-toggle",
                                             "aria-label": "{dock_toggle_label}",
                                             "aria-pressed": "{is_docked}",
@@ -2882,8 +2905,9 @@ pub fn KanbanPanel(
                                             UiIcon { name: dock_toggle_icon }
                                         }
                                         div { class: "card-detail-action-menu-wrap",
-                                            button {
-                                                class: "secondary card-detail-header-button",
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                class: "card-detail-header-button",
                                                 "data-testid": "card-detail-actions-button",
                                                 "aria-label": "Actions",
                                                 "aria-expanded": "{card_detail_actions_open()}",
@@ -2895,27 +2919,30 @@ pub fn KanbanPanel(
                                                 div { class: "{action_menu_class}", "data-testid": "card-detail-actions-menu",
                                                     if editing_card_detail() {
                                                         div { class: "card-detail-action-menu-field",
-                                                            label { "Labels" }
-                                                            input {
+                                                            Label { html_for: "card-detail-labels-input-input", "Labels" }
+                                                            Input {
+                                                                id: "card-detail-labels-input-input",
                                                                 class: "input",
                                                                 "data-testid": "card-detail-labels-input",
                                                                 value: "{card_edit_labels}",
                                                                 placeholder: "release, ops",
-                                                                oninput: move |evt| card_edit_labels.set(evt.value()),
+                                                                oninput: move |event: FormEvent| card_edit_labels.set(event.value()),
                                                             }
                                                         }
                                                         div { class: "card-detail-action-menu-field",
-                                                            label { "Due date" }
-                                                            input {
+                                                            Label { html_for: "card-detail-due-input-input", "Due date" }
+                                                            Input {
+                                                                id: "card-detail-due-input-input",
                                                                 class: "input",
                                                                 "data-testid": "card-detail-due-input",
                                                                 value: "{card_edit_due}",
                                                                 placeholder: "2026-05-20",
-                                                                oninput: move |evt| card_edit_due.set(evt.value()),
+                                                                oninput: move |event: FormEvent| card_edit_due.set(event.value()),
                                                             }
                                                         }
                                                     } else {
-                                                        button {
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
                                                             class: "card-detail-action-menu-item",
                                                             "data-testid": "card-detail-menu-edit-button",
                                                             onclick: {
@@ -2976,7 +3003,8 @@ pub fn KanbanPanel(
                                                             let action_navigator = navigator;
                                                             let action_board_route = board_route_after_close.clone();
                                                             rsx! {
-                                                                button {
+                                                                Button {
+                                                                    variant: ButtonVariant::Secondary,
                                                                     class: "card-detail-action-menu-item",
                                                                     "data-testid": testid,
                                                                     "data-flow-id": "{card.id}",
@@ -3017,8 +3045,9 @@ pub fn KanbanPanel(
                                                 }
                                             }
                                         }
-                                        button {
-                                            class: "secondary card-detail-header-button card-detail-close",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            class: "card-detail-header-button card-detail-close",
                                             "data-testid": "card-detail-close-button",
                                             "aria-label": "Close card detail",
                                             title: "Close",
@@ -3053,8 +3082,9 @@ pub fn KanbanPanel(
                                                         span { "Summary" }
                                                     }
                                                     if !editing_card_detail() {
-                                                        button {
-                                                            class: "secondary card-detail-mini-action card-detail-edit-action",
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
+                                                            class: "card-detail-mini-action card-detail-edit-action",
                                                             "data-testid": "card-detail-edit-button",
                                                             onclick: {
                                                                 let current = card.clone();
@@ -3081,17 +3111,18 @@ pub fn KanbanPanel(
                                                 if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
                                                     div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
                                                         div { class: "field",
-                                                            label { "Title" }
-                                                            input {
+                                                            Label { html_for: "card-detail-title-input-input", "Title" }
+                                                            Input {
+                                                                id: "card-detail-title-input-input",
                                                                 class: "input",
                                                                 "data-testid": "card-detail-title-input",
                                                                 value: "{card_edit_title}",
                                                                 maxlength: "512",
-                                                                oninput: move |evt| card_edit_title.set(evt.value()),
+                                                                oninput: move |event: FormEvent| card_edit_title.set(event.value()),
                                                             }
                                                         }
                                                         div { class: "field",
-                                                            label { "Summary" }
+                                                            Label { html_for: "card-detail-summary-input", "Summary" }
                                                             CardMarkdownEditor {
                                                                 value: card_edit_description(),
                                                                 base_url: base_url.clone(),
@@ -3231,7 +3262,7 @@ pub fn KanbanPanel(
                                                         if editing_card_detail() && card_edit_scope() == CardEditScope::Description {
                                                             div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
                                                                 div { class: "field",
-                                                                    label { "Description" }
+                                                                    Label { html_for: "card-detail-description-input", "Description" }
                                                                     CardMarkdownEditor {
                                                                         value: card_edit_body(),
                                                                         base_url: base_url.clone(),
@@ -3318,8 +3349,9 @@ pub fn KanbanPanel(
                                                             div { class: "card-detail-empty",
                                                                 div { "No description" }
                                                                 if !editing_card_detail() {
-                                                                    button {
-                                                                        class: "secondary card-detail-mini-action",
+                                                                    Button {
+                                                                        variant: ButtonVariant::Secondary,
+                                                                        class: "card-detail-mini-action",
                                                                         "data-testid": "card-detail-add-description-button",
                                                                         onclick: {
                                                                             let current = card.clone();
@@ -3346,8 +3378,9 @@ pub fn KanbanPanel(
                                                         } else {
                                                             if !editing_card_detail() {
                                                                 div { class: "card-detail-tab-actions",
-                                                                    button {
-                                                                        class: "secondary card-detail-mini-action card-detail-edit-action",
+                                                                    Button {
+                                                                        variant: ButtonVariant::Secondary,
+                                                                        class: "card-detail-mini-action card-detail-edit-action",
                                                                         "data-testid": "card-detail-edit-description-button",
                                                                         onclick: {
                                                                             let current = card.clone();
@@ -3454,7 +3487,8 @@ pub fn KanbanPanel(
                                                                                         span { class: "badge badge-success", "latest" }
                                                                                     } else {
                                                                                         span { class: "badge badge-warning", "historical version" }
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "badge card-synthesis-latest-button",
                                                                                             "data-testid": "card-synthesis-latest-button",
@@ -3467,7 +3501,8 @@ pub fn KanbanPanel(
                                                                                     }
                                                                                     if entry.revisions.len() > 1 {
                                                                                         div { class: "card-synthesis-history-wrap",
-                                                                                            button {
+                                                                                            Button {
+                                                                                                variant: ButtonVariant::Secondary,
                                                                                                 r#type: "button",
                                                                                                 class: "badge card-synthesis-history-trigger",
                                                                                                 "data-testid": "card-synthesis-history-trigger",
@@ -3510,7 +3545,8 @@ pub fn KanbanPanel(
                                                                                                                 preview
                                                                                                             };
                                                                                                             rsx! {
-                                                                                                                button {
+                                                                                                                Button {
+                                                                                                                    variant: ButtonVariant::Secondary,
                                                                                                                     key: "{history_entry.id}",
                                                                                                                     r#type: "button",
                                                                                                                     class: "{history_item_class}",
@@ -3541,9 +3577,10 @@ pub fn KanbanPanel(
                                                                                         }
                                                                                     }
                                                                                     if !editing_card_detail() {
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
-                                                                                            class: "secondary card-detail-mini-action card-synthesis-entry-edit",
+                                                                                            class: "card-detail-mini-action card-synthesis-entry-edit",
                                                                                             "data-testid": "card-detail-edit-synthesis-button",
                                                                                             onclick: {
                                                                                                 let current = card.clone();
@@ -3576,7 +3613,7 @@ pub fn KanbanPanel(
                                                                                     && card_edit_synthesis_target_id().as_deref() == Some(entry.id.as_str()) {
                                                                                     div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
                                                                                         div { class: "field",
-                                                                                            label { "Synthesis" }
+                                                                                            Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                                             CardMarkdownEditor {
                                                                                                 value: card_edit_synthesis(),
                                                                                                 base_url: base_url.clone(),
@@ -3665,7 +3702,7 @@ pub fn KanbanPanel(
                                                             && card_edit_synthesis_target_id().is_none() {
                                                             div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
                                                                 div { class: "field",
-                                                                    label { "Synthesis" }
+                                                                    Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                     CardMarkdownEditor {
                                                                         value: card_edit_synthesis(),
                                                                         base_url: base_url.clone(),
@@ -3739,8 +3776,9 @@ pub fn KanbanPanel(
                                                         }
                                                         if !editing_card_detail() {
                                                             div { class: "card-synthesis-footer-action",
-                                                                button {
-                                                                    class: "secondary card-detail-mini-action",
+                                                                Button {
+                                                                    variant: ButtonVariant::Secondary,
+                                                                    class: "card-detail-mini-action",
                                                                     "data-testid": "card-detail-new-synthesis-button",
                                                                     onclick: {
                                                                         let current = card.clone();
@@ -3918,7 +3956,8 @@ pub fn KanbanPanel(
                                                                             "data-testid": "card-detail-assignees",
                                                                             div { class: "assignee-chip-row", title: "{assignee_title}",
                                                                                 if assigned_people.is_empty() {
-                                                                                    button {
+                                                                                    Button {
+                                                                                        variant: ButtonVariant::Secondary,
                                                                                         r#type: "button",
                                                                                         class: "assignee-add assignee-add-empty",
                                                                                         "aria-haspopup": "listbox",
@@ -3951,7 +3990,8 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                         }
                                                                                     }
-                                                                                    button {
+                                                                                    Button {
+                                                                                        variant: ButtonVariant::Secondary,
                                                                                         r#type: "button",
                                                                                         class: "assignee-add",
                                                                                         "aria-label": "Add or remove assignees",
@@ -3972,7 +4012,8 @@ pub fn KanbanPanel(
                                                                                         },
                                                                                         UiIcon { name: "plus" }
                                                                                     }
-                                                                                    button {
+                                                                                    Button {
+                                                                                        variant: ButtonVariant::Secondary,
                                                                                         r#type: "button",
                                                                                         class: "assignee-add assignee-clear",
                                                                                         "aria-label": "Clear assignees",
@@ -4012,12 +4053,12 @@ pub fn KanbanPanel(
                                                                                     "data-testid": "card-detail-assignees-picker",
                                                                                     div { class: "assignee-search",
                                                                                         UiIcon { name: "search" }
-                                                                                        input {
+                                                                                        Input {
                                                                                             class: "input",
                                                                                             "data-testid": "card-detail-assignees-search",
                                                                                             value: "{picker_filter}",
                                                                                             placeholder: "Filter members",
-                                                                                            oninput: move |evt| assignee_filter.set(evt.value()),
+                                                                                            oninput: move |event: FormEvent| assignee_filter.set(event.value()),
                                                                                         }
                                                                                     }
                                                                                     div {
@@ -4037,7 +4078,8 @@ pub fn KanbanPanel(
                                                                                                     };
                                                                                                     let target_actor_id = actor_id.clone();
                                                                                                     rsx! {
-                                                                                                        button {
+                                                                                                        Button {
+                                                                                                            variant: ButtonVariant::Secondary,
                                                                                                             key: "{actor_id}",
                                                                                                             r#type: "button",
                                                                                                             class: "{option_class}",
@@ -4077,15 +4119,15 @@ pub fn KanbanPanel(
                                                                                         }
                                                                                     }
                                                                                     div { class: "assignee-popover-actions",
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
-                                                                                            class: "secondary",
                                                                                             onclick: move |_| assignee_selected_actor_ids.set(BTreeSet::new()),
                                                                                             "Clear"
                                                                                         }
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
-                                                                                            class: "secondary",
                                                                                             onclick: move |_| {
                                                                                                 assignee_picker_open.set(false);
                                                                                                 assignee_filter.set(String::new());
@@ -4093,9 +4135,9 @@ pub fn KanbanPanel(
                                                                                             },
                                                                                             {crate::i18n::tr("common.cancel")}
                                                                                         }
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Primary,
                                                                                             r#type: "button",
-                                                                                            class: "primary",
                                                                                             onclick: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
@@ -4151,7 +4193,8 @@ pub fn KanbanPanel(
                                                                                             title: "{due_editor_value}",
                                                                                             "{due_editor_value}"
                                                                                         }
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "due-edit-button",
                                                                                             "aria-label": "Edit due date",
@@ -4170,7 +4213,8 @@ pub fn KanbanPanel(
                                                                                             },
                                                                                             UiIcon { name: "calendar" }
                                                                                         }
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "due-edit-button due-clear-button",
                                                                                             "aria-label": "Clear due date",
@@ -4206,7 +4250,8 @@ pub fn KanbanPanel(
                                                                                             UiIcon { name: "x" }
                                                                                         }
                                                                                     } else {
-                                                                                        button {
+                                                                                        Button {
+                                                                                            variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "due-add-button",
                                                                                             "aria-haspopup": "dialog",
@@ -4228,14 +4273,15 @@ pub fn KanbanPanel(
                                                                                             class: "due-popover",
                                                                                             "data-testid": "card-detail-due-picker",
                                                                                             div { class: "due-popover-field",
-                                                                                                label { "Due date" }
-                                                                                                input {
+                                                                                                Label { html_for: "card-detail-due-inline-input-input", "Due date" }
+                                                                                                Input {
+                                                                                                    id: "card-detail-due-inline-input-input",
                                                                                                     class: "input",
                                                                                                     "data-testid": "card-detail-due-inline-input",
                                                                                                     value: "{due_edit_value}",
                                                                                                     placeholder: "YYYY-MM-DD",
-                                                                                                    oninput: move |evt| {
-                                                                                                        let next = evt.value();
+                                                                                                    oninput: move |event: FormEvent| {
+                                                                                                        let next = event.value();
                                                                                                         if let Some(date) = parse_due_calendar_date(&next) {
                                                                                                             due_calendar_month.set(start_of_due_calendar_month(date));
                                                                                                         }
@@ -4245,7 +4291,8 @@ pub fn KanbanPanel(
                                                                                             }
                                                                                             div { class: "due-calendar",
                                                                                                 div { class: "due-calendar-header",
-                                                                                                    button {
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
                                                                                                         r#type: "button",
                                                                                                         class: "due-calendar-nav",
                                                                                                         "aria-label": "Previous month",
@@ -4256,7 +4303,8 @@ pub fn KanbanPanel(
                                                                                                         UiIcon { name: "chevron-left" }
                                                                                                     }
                                                                                                     strong { class: "due-calendar-title", "{month_label}" }
-                                                                                                    button {
+                                                                                                    Button {
+                                                                                                        variant: ButtonVariant::Secondary,
                                                                                                         r#type: "button",
                                                                                                         class: "due-calendar-nav",
                                                                                                         "aria-label": "Next month",
@@ -4298,7 +4346,8 @@ pub fn KanbanPanel(
                                                                                                             let iso_date = cell.iso_date.clone();
                                                                                                             let cell_label = format!("Select {iso_date}");
                                                                                                             rsx! {
-                                                                                                                button {
+                                                                                                                Button {
+                                                                                                                    variant: ButtonVariant::Secondary,
                                                                                                                     key: "{cell.iso_date}",
                                                                                                                     r#type: "button",
                                                                                                                     class: "{day_class}",
@@ -4325,18 +4374,18 @@ pub fn KanbanPanel(
                                                                                                 }
                                                                                             }
                                                                                             div { class: "due-popover-actions",
-                                                                                                button {
+                                                                                                Button {
+                                                                                                    variant: ButtonVariant::Secondary,
                                                                                                     r#type: "button",
-                                                                                                    class: "secondary",
                                                                                                     onclick: move |_| {
                                                                                                         due_edit_value.set(String::new());
                                                                                                         due_calendar_month.set(default_due_calendar_month());
                                                                                                     },
                                                                                                     "Clear"
                                                                                                 }
-                                                                                                button {
+                                                                                                Button {
+                                                                                                    variant: ButtonVariant::Secondary,
                                                                                                     r#type: "button",
-                                                                                                    class: "secondary",
                                                                                                     onclick: {
                                                                                                         let cancel_due = due_editor_value.clone();
                                                                                                         move |_| {
@@ -4348,9 +4397,9 @@ pub fn KanbanPanel(
                                                                                                     },
                                                                                                     {crate::i18n::tr("common.cancel")}
                                                                                                 }
-                                                                                                button {
+                                                                                                Button {
+                                                                                                    variant: ButtonVariant::Primary,
                                                                                                     r#type: "button",
-                                                                                                    class: "primary",
                                                                                                     onclick: {
                                                                                                         let base = base_url.clone();
                                                                                                         let realm = selected_realm_id.clone();

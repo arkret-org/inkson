@@ -31,6 +31,9 @@ use crate::recovery_crypto::{
     open_recovery_key_with_passkey_prf, recovery_passphrase_strength_error,
     seal_recovery_key_with_passkey_prf,
 };
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
@@ -568,24 +571,24 @@ pub fn RecoveryPanel(
                     HelpTip { text: "Your passphrase unlocks encrypted backup material. It is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret; it is not by itself DID ownership proof." }
                 }
                 div { class: "workflow-form",
-                    label { r#for: "vault-passphrase", "Vault passphrase" }
-                    input {
+                    Label { html_for: "vault-passphrase", "Vault passphrase" }
+                    Input {
                         id: "vault-passphrase",
                         "data-testid": "vault-passphrase",
                         r#type: "password",
                         value: "{passphrase}",
                         placeholder: "24+ characters or several random words",
                         autocomplete: "new-password",
-                        oninput: move |evt| passphrase.set(evt.value()),
+                        oninput: move |event: FormEvent| passphrase.set(event.value()),
                     }
-                    label { r#for: "vault-passphrase-confirm", "Confirm passphrase" }
-                    input {
+                    Label { html_for: "vault-passphrase-confirm", "Confirm passphrase" }
+                    Input {
                         id: "vault-passphrase-confirm",
                         "data-testid": "vault-passphrase-confirm",
                         r#type: "password",
                         value: "{confirm_pass}",
                         autocomplete: "new-password",
-                        oninput: move |evt| confirm_pass.set(evt.value()),
+                        oninput: move |event: FormEvent| confirm_pass.set(event.value()),
                     }
                     div { class: "muted", "data-testid": "vault-passphrase-strength",
                         "Strength: {passphrase_strength_label(strength)} ({strength}/5). Minimum: Good ({min_strength}/5)."
@@ -622,8 +625,8 @@ pub fn RecoveryPanel(
                     div { class: "muted", "data-testid": "vault-status", "{vault_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "vault-rekey",
                         disabled: recovery_passphrase_strength_error(&passphrase()).is_some()
                             || passphrase() != confirm_pass()
@@ -818,8 +821,8 @@ pub fn RecoveryPanel(
                         },
                         {crate::i18n::tr("recovery.vault_encrypt_button")}
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "vault-rotate-passphrase",
                         disabled: vault_backup_id().is_empty(),
                         title: crate::i18n::tr("recovery.vault_rotate_hint"),
@@ -889,8 +892,8 @@ pub fn RecoveryPanel(
                     div { class: "muted", "data-testid": "recovery-key-status", "{recovery_key_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "recovery-key-regenerate",
                         onclick: {
                             let actor_key = actor_key.clone();
@@ -919,8 +922,8 @@ pub fn RecoveryPanel(
                         },
                         if recovery_key_fp().is_empty() { "Generate" } else { "Regenerate" }
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "recovery-key-clear-live",
                         disabled: live_recovery_key().is_empty(),
                         title: "Drop the plaintext from memory. The fingerprint stays in local state.",
@@ -971,8 +974,8 @@ pub fn RecoveryPanel(
                     div { class: "muted", "data-testid": "passkey-wrap-status", "{passkey_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "passkey-wrap-create",
                         disabled: live_recovery_key().trim().is_empty(),
                         title: if live_recovery_key().trim().is_empty() {
@@ -1067,8 +1070,8 @@ pub fn RecoveryPanel(
                         },
                         "Create passkey unlock"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "passkey-wrap-unlock",
                         disabled: passkey_wraps().is_empty(),
                         title: "Use the latest local passkey wrapper to show the 24-word Recovery Key after user verification.",
@@ -1134,8 +1137,8 @@ pub fn RecoveryPanel(
                         },
                         "Unlock with passkey"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "passkey-wrap-remove",
                         disabled: passkey_wraps().is_empty(),
                         title: "Remove local passkey quick-unlock wrappers. This does not delete server backups or the 24-word Recovery Key.",
@@ -1161,8 +1164,8 @@ pub fn RecoveryPanel(
                     HelpTip { text: "The recovery secret is split into N shares; any T of them can reconstruct it. Guardians can be individuals, organizations' IT, family members, or trusted HSMs. Rotating the polynomial invalidates every prior share." }
                 }
                 div { class: "workflow-form",
-                    label { r#for: "sss-threshold", "Threshold (T)" }
-                    input {
+                    Label { html_for: "sss-threshold", "Threshold (T)" }
+                    Input {
                         id: "sss-threshold",
                         "data-testid": "sss-threshold",
                         r#type: "number",
@@ -1172,16 +1175,16 @@ pub fn RecoveryPanel(
                         oninput: {
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
-                            move |evt: Event<FormData>| {
-                                if let Ok(v) = evt.value().parse::<u32>() {
+                            move |event: FormEvent| {
+                                if let Ok(v) = event.value().parse::<u32>() {
                                     threshold.set(v.clamp(2, 10));
                                     save_state(&mut store, &actor_key, &snapshot_state());
                                 }
                             }
                         },
                     }
-                    label { r#for: "sss-total", "Total shares (N)" }
-                    input {
+                    Label { html_for: "sss-total", "Total shares (N)" }
+                    Input {
                         id: "sss-total",
                         "data-testid": "sss-total",
                         r#type: "number",
@@ -1191,8 +1194,8 @@ pub fn RecoveryPanel(
                         oninput: {
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
-                            move |evt: Event<FormData>| {
-                                if let Ok(v) = evt.value().parse::<u32>() {
+                            move |event: FormEvent| {
+                                if let Ok(v) = event.value().parse::<u32>() {
                                     total.set(v.clamp(2, 10));
                                     save_state(&mut store, &actor_key, &snapshot_state());
                                 }
@@ -1219,8 +1222,8 @@ pub fn RecoveryPanel(
                                     }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "guardian-toggle-confirm",
                                         onclick: {
                                             let actor_key = actor_key.clone();
@@ -1236,8 +1239,8 @@ pub fn RecoveryPanel(
                                         },
                                         if g.confirmed { "Mark pending" } else { "Mark confirmed" }
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "guardian-remove",
                                         onclick: {
                                             let actor_key = actor_key.clone();
@@ -1259,37 +1262,37 @@ pub fn RecoveryPanel(
                     }
                 }
                 div { class: "workflow-form", "data-testid": "guardian-add-form",
-                    label { r#for: "guardian-label", "Guardian label" }
-                    input {
+                    Label { html_for: "guardian-label", "Guardian label" }
+                    Input {
                         id: "guardian-label",
                         "data-testid": "guardian-label",
                         value: "{new_guardian_label}",
                         placeholder: "e.g. Mei / Backup HSM",
-                        oninput: move |evt| new_guardian_label.set(evt.value()),
+                        oninput: move |event: FormEvent| new_guardian_label.set(event.value()),
                     }
-                    label { r#for: "guardian-did", "Handle or DID" }
-                    input {
+                    Label { html_for: "guardian-did", "Handle or DID" }
+                    Input {
                         id: "guardian-did",
                         "data-testid": "guardian-did",
                         value: "{new_guardian_did}",
                         placeholder: "alice:example.com or did:web:...",
-                        oninput: move |evt| new_guardian_did.set(evt.value()),
+                        oninput: move |event: FormEvent| new_guardian_did.set(event.value()),
                     }
-                    label { r#for: "guardian-note", "Note (optional)" }
-                    input {
+                    Label { html_for: "guardian-note", "Note (optional)" }
+                    Input {
                         id: "guardian-note",
                         "data-testid": "guardian-note",
                         value: "{new_guardian_note}",
                         placeholder: "Person · Organization · Family · HSM",
-                        oninput: move |evt| new_guardian_note.set(evt.value()),
+                        oninput: move |event: FormEvent| new_guardian_note.set(event.value()),
                     }
                 }
                 if !social_status().is_empty() {
                     div { class: "muted", "data-testid": "social-status", "{social_status}" }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "social-add-guardian",
                         disabled: new_guardian_label().trim().is_empty() || new_guardian_did().trim().is_empty(),
                         onclick: {
@@ -1320,8 +1323,8 @@ pub fn RecoveryPanel(
                         },
                         "+ Add guardian"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "social-recover-now",
                         disabled: guardians().len() < threshold() as usize,
                         title: if (guardians().len() as u32) < threshold() {
@@ -1358,8 +1361,8 @@ pub fn RecoveryPanel(
                     HelpTip { text: "List every encrypted vault the server still holds for your principal. Decryption happens on-device with your passphrase; the server never sees plaintext. Use this on a new device, or to verify that the latest upload is still readable." }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "restore-list-button",
                         disabled: restore_loading(),
                         onclick: {
@@ -1392,8 +1395,8 @@ pub fn RecoveryPanel(
                         },
                         if restore_loading() { "Loading…" } else { "List my backups" }
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "restore-clear-button",
                         disabled: backup_rows().is_empty() && restore_plaintext().is_empty(),
                         onclick: move |_| {
@@ -1435,8 +1438,8 @@ pub fn RecoveryPanel(
                                     }
                                 }
                                 div { class: "actions",
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "restore-select-button",
                                         onclick: {
                                             let bid = row.backup_id.clone();
@@ -1451,8 +1454,8 @@ pub fn RecoveryPanel(
                                         },
                                         if restore_target() == Some(row.backup_id.clone()) { "Selected" } else { "Decrypt" }
                                     }
-                                    button {
-                                        class: "secondary",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
                                         "data-testid": "restore-delete-button",
                                         title: "Delete the server-side ciphertext. Local fingerprint metadata stays.",
                                         onclick: {
@@ -1512,19 +1515,19 @@ pub fn RecoveryPanel(
                                     div { class: "muted", title: "{target_row.backup_id}", "Decrypt {target_backup_id_label}" }
                                 }
                             }
-                            label { r#for: "restore-passphrase", "Vault passphrase" }
-                            input {
+                            Label { html_for: "restore-passphrase", "Vault passphrase" }
+                            Input {
                                 id: "restore-passphrase",
                                 "data-testid": "restore-passphrase",
                                 r#type: "password",
                                 value: "{restore_pass}",
                                 autocomplete: "current-password",
                                 placeholder: "Enter the passphrase you used when this vault was uploaded",
-                                oninput: move |evt| restore_pass.set(evt.value()),
+                                oninput: move |event: FormEvent| restore_pass.set(event.value()),
                             }
                             div { class: "actions",
-                                button {
-                                    class: "primary",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     "data-testid": "restore-decrypt-button",
                                     disabled: restore_pass().is_empty(),
                                     onclick: {
@@ -1665,8 +1668,8 @@ pub fn RecoveryPanel(
                                         "{restore_plaintext}"
                                     }
                                     div { class: "actions",
-                                        button {
-                                            class: "secondary",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             "data-testid": "restore-clear-plaintext-button",
                                             onclick: move |_| {
                                                 restore_plaintext.set(String::new());

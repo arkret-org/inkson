@@ -26,6 +26,9 @@ use crate::recovery_crypto::{
     RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
     recovery_passphrase_strength_error,
 };
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const KEY_BACKUP_STATE_KEY: &str = "key_backup.state.v1";
@@ -168,23 +171,23 @@ pub fn SettingsSecurityPanel(
                             "Enter a strong passphrase, then trigger a backup or restore. The passphrase plaintext only lives in this tab's memory during the Argon2id stretch."
                         }
                         div { class: "workflow-form",
-                            label { r#for: "key-backup-passphrase", "Backup passphrase" }
-                            input {
+                            Label { html_for: "key-backup-passphrase", "Backup passphrase" }
+                            Input {
                                 id: "key-backup-passphrase",
                                 "data-testid": "key-backup-passphrase-input",
                                 r#type: "password",
                                 value: "{passphrase}",
                                 placeholder: "24+ characters or several random words",
                                 autocomplete: "new-password",
-                                oninput: move |evt| passphrase.set(evt.value()),
+                                oninput: move |event: FormEvent| passphrase.set(event.value()),
                             }
                             div { class: "muted", "data-testid": "key-backup-passphrase-strength",
                                 "Strength: {passphrase_strength_label(passphrase_strength)} ({passphrase_strength}/5). Minimum: good ({min_strength}/5)."
                             }
                         }
                         div { class: "actions",
-                            button {
-                                class: "primary",
+                            Button {
+                                variant: ButtonVariant::Primary,
                                 "data-testid": "key-backup-trigger-button",
                                 disabled: !has_session
                                     || recovery_passphrase_strength_error(&passphrase()).is_some(),
@@ -286,8 +289,8 @@ pub fn SettingsSecurityPanel(
                                 },
                                 "Trigger backup"
                             }
-                            button {
-                                class: "secondary",
+                            Button {
+                                variant: ButtonVariant::Secondary,
                                 "data-testid": "key-backup-restore-button",
                                 disabled: !has_session || last_backup_id().is_empty(),
                                 onclick: move |_| {

@@ -18,6 +18,7 @@
 use dioxus::prelude::*;
 
 use crate::config::{AccountProfile, MultiProfileConfig, ProfileSwitchEvent};
+use crate::ui::button::{Button, ButtonVariant};
 
 #[component]
 pub fn AccountSwitcher(
@@ -48,7 +49,8 @@ pub fn AccountSwitcher(
         div {
             class: "account-switcher",
             "data-testid": "account-switcher",
-            button {
+            Button {
+                variant: ButtonVariant::Secondary,
                 class: "account-switcher-trigger",
                 "data-testid": "account-switcher-trigger",
                 "aria-label": "Account switcher: {active_label}",
@@ -79,7 +81,8 @@ pub fn AccountSwitcher(
                                         class: if is_active { "account-row active" } else { "account-row" },
                                         "data-testid": "account-switcher-row",
                                         "data-profile-id": "{pid}",
-                                        button {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
                                             class: "account-row-switch",
                                             "aria-label": "Switch to account {label}",
                                             role: "menuitem",
@@ -105,7 +108,8 @@ pub fn AccountSwitcher(
                                             span { class: "muted", "{did}" }
                                         }
                                         if !is_active {
-                                            button {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
                                                 class: "icon-only",
                                                 "data-testid": "account-switcher-remove",
                                                 "aria-label": "Remove account {label}",
@@ -118,7 +122,8 @@ pub fn AccountSwitcher(
                             }
                         }
                     }
-                    button {
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         class: "account-add-button",
                         "data-testid": "account-switcher-add",
                         "aria-label": "Add another account",

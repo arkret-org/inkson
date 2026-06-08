@@ -20,6 +20,8 @@
 
 use dioxus::prelude::*;
 
+use crate::ui::button::{Button, ButtonVariant};
+
 /// One of the three canonical theme modes. The string round-trip
 /// matches what `app.rs` writes into private data (`"theme"` key) so
 /// the existing hydration path keeps working unchanged.
@@ -101,8 +103,9 @@ pub fn ThemeSwitcher(props: ThemeSwitcherProps) -> Element {
                     let on_persist = props.on_persist;
                     let mode_value = mode;
                     rsx! {
-                        button {
-                            class: if is_active { "theme-switcher-option primary" } else { "theme-switcher-option secondary" },
+                        Button {
+                            variant: if is_active { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                            class: "theme-switcher-option",
                             "data-testid": match mode_value {
                                 ThemeMode::Light => "theme-switcher-light",
                                 ThemeMode::Dark => "theme-switcher-dark",

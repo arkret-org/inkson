@@ -26,6 +26,9 @@ use crate::api::CokretApi;
 use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
 use crate::local_state::LocalStateStore;
 use crate::routes::Route;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{handle_from_did, short_protocol_id, with_authed_api};
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
@@ -146,8 +149,8 @@ pub fn OnboardingPanel(
                 }
                 div { class: "actions", "data-testid": "onboarding-progress", role: "tablist",
                     for s in [OnboardingStep::DidMethod, OnboardingStep::Handle, OnboardingStep::Device, OnboardingStep::Recovery] {
-                        button {
-                            class: if step() == s { "primary" } else { "secondary" },
+                        Button {
+                            variant: if step() == s { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             role: "tab",
                             "aria-selected": if step() == s { "true" } else { "false" },
                             onclick: move |_| step.set(s),
@@ -177,39 +180,39 @@ pub fn OnboardingPanel(
                     "{account_state}"
                 }
                 div { class: "workflow-form",
-                    input {
+                    Input {
                         "data-testid": "account-register-did-input",
                         "aria-label": "Account DID",
                         "aria-describedby": "account-flow-help",
                         value: "{register_did}",
-                        oninput: move |event| {
+                        oninput: move |event: FormEvent| {
                             let value = event.value();
                             register_handle.set(handle_from_did(&value));
                             register_did.set(value);
                         }
                     }
-                    input {
+                    Input {
                         "data-testid": "account-register-handle-input",
                         "aria-label": "Local handle",
                         value: "{register_handle}",
-                        oninput: move |event| register_handle.set(event.value())
+                        oninput: move |event: FormEvent| register_handle.set(event.value())
                     }
-                    input {
+                    Input {
                         "data-testid": "account-register-display-name-input",
                         "aria-label": "Display name",
                         value: "{register_display_name}",
-                        oninput: move |event| register_display_name.set(event.value())
+                        oninput: move |event: FormEvent| register_display_name.set(event.value())
                     }
-                    input {
+                    Input {
                         "data-testid": "account-register-device-id-input",
                         "aria-label": "Device ID",
                         value: "{register_device_id}",
-                        oninput: move |event| register_device_id.set(event.value())
+                        oninput: move |event: FormEvent| register_device_id.set(event.value())
                     }
                 }
                 div { class: "actions",
-                    button {
-                        class: "primary",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         "data-testid": "register-account-button",
                         onclick: {
                             let base = base_url.clone();
@@ -237,8 +240,8 @@ pub fn OnboardingPanel(
                         },
                         "Register"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         "data-testid": "account-me-button",
                         onclick: {
                             let base = base_url.clone();
@@ -261,8 +264,8 @@ pub fn OnboardingPanel(
                         },
                         "Me"
                     }
-                    button {
-                        class: "secondary",
+                    Button {
+                        variant: ButtonVariant::Secondary,
                         onclick: move |_| step.set(OnboardingStep::Handle),
                         "Continue Onboarding"
                     }
@@ -304,19 +307,19 @@ pub fn OnboardingPanel(
                         }
                     }
                     div { class: "actions",
-                        button {
-                            class: if did_method() == DEFAULT_PRINCIPAL_DID_METHOD { "primary" } else { "secondary" },
+                        Button {
+                            variant: if did_method() == DEFAULT_PRINCIPAL_DID_METHOD { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "did-method-webvh",
                             onclick: move |_| did_method.set(DEFAULT_PRINCIPAL_DID_METHOD.to_owned()),
                             "Use did:webvh (default)"
                         }
-                        button {
-                            class: if did_method() == TEST_ONLY_DID_METHOD { "primary" } else { "secondary" },
+                        Button {
+                            variant: if did_method() == TEST_ONLY_DID_METHOD { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "did-method-web",
                             onclick: move |_| did_method.set(TEST_ONLY_DID_METHOD.to_owned()),
                             "Use did:web (test only)"
                         }
-                        button { class: "secondary", "data-testid": "next-handle", onclick: move |_| step.set(OnboardingStep::Handle), "Next →" }
+                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-handle", onclick: move |_| step.set(OnboardingStep::Handle), "Next →" }
                     }
                 }
             }
@@ -351,21 +354,21 @@ pub fn OnboardingPanel(
                                 "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
                             }
                             div { class: "workflow-form",
-                                label { r#for: "handle-local-input", "Local part" }
-                                input {
+                                Label { html_for: "handle-local-input", "Local part" }
+                                Input {
                                     id: "handle-local-input",
                                     "data-testid": "handle-local-input",
                                     "aria-label": "Handle local part",
                                     value: "{handle_local}",
-                                    oninput: move |evt| handle_local.set(evt.value()),
+                                    oninput: move |event: FormEvent| handle_local.set(event.value()),
                                 }
-                                label { r#for: "handle-domain-input", "Domain" }
-                                input {
+                                Label { html_for: "handle-domain-input", "Domain" }
+                                Input {
                                     id: "handle-domain-input",
                                     "data-testid": "handle-domain-input",
                                     "aria-label": "Handle domain",
                                     value: "{handle_domain}",
-                                    oninput: move |evt| handle_domain.set(evt.value()),
+                                    oninput: move |event: FormEvent| handle_domain.set(event.value()),
                                 }
                             }
                             // R3 — inline homograph + NFC warnings.
@@ -394,9 +397,9 @@ pub fn OnboardingPanel(
                                 "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
                             }
                             div { class: "actions",
-                                button { class: "secondary", onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
-                                button {
-                                    class: "secondary",
+                                Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     "data-testid": "next-device",
                                     disabled: homograph_present,
                                     onclick: move |_| step.set(OnboardingStep::Device),
@@ -460,8 +463,8 @@ pub fn OnboardingPanel(
                     }
 
                     div { class: "actions",
-                        button { class: "secondary", onclick: move |_| step.set(OnboardingStep::Handle), "← Back" }
-                        button { class: "secondary", "data-testid": "next-recovery", onclick: move |_| step.set(OnboardingStep::Recovery), "Next →" }
+                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Handle), "← Back" }
+                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-recovery", onclick: move |_| step.set(OnboardingStep::Recovery), "Next →" }
                     }
                 }
             }
@@ -496,8 +499,8 @@ pub fn OnboardingPanel(
                     div { class: "actions",
                         role: "radiogroup",
                         "aria-label": "Recovery policy",
-                        button {
-                            class: if recovery_choice() == "vault" { "primary" } else { "secondary" },
+                        Button {
+                            variant: if recovery_choice() == "vault" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "recovery-vault",
                             role: "radio",
                             "aria-checked": if recovery_choice() == "vault" { "true" } else { "false" },
@@ -505,8 +508,8 @@ pub fn OnboardingPanel(
                             onclick: move |_| recovery_choice.set("vault".to_owned()),
                             "Vault"
                         }
-                        button {
-                            class: if recovery_choice() == "social" { "primary" } else { "secondary" },
+                        Button {
+                            variant: if recovery_choice() == "social" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "recovery-social",
                             role: "radio",
                             "aria-checked": if recovery_choice() == "social" { "true" } else { "false" },
@@ -514,8 +517,8 @@ pub fn OnboardingPanel(
                             onclick: move |_| recovery_choice.set("social".to_owned()),
                             "Social Recovery"
                         }
-                        button {
-                            class: if recovery_choice() == "key" { "primary" } else { "secondary" },
+                        Button {
+                            variant: if recovery_choice() == "key" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             "data-testid": "recovery-key",
                             role: "radio",
                             "aria-checked": if recovery_choice() == "key" { "true" } else { "false" },
@@ -525,7 +528,7 @@ pub fn OnboardingPanel(
                         }
                     }
                     div { class: "actions",
-                        button { class: "secondary", onclick: move |_| step.set(OnboardingStep::Device), "← Back" }
+                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Device), "← Back" }
                         {
                             let choice = recovery_choice();
                             let choice_empty = choice.trim().is_empty();
@@ -677,8 +680,8 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { class: "actions",
-                button {
-                    class: "primary",
+                Button {
+                    variant: ButtonVariant::Primary,
                     "data-testid": "onboarding-first-backup-retry",
                     onclick: {
                         let do_check = do_check.clone();
