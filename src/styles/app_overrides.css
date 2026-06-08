@@ -149,6 +149,35 @@
   --nav-input-border: rgba(168, 147, 137, 0.18);
 }
 
+/* dioxus-components 主题桥接。
+ * 厂商提供的 dx-components-theme.css 只在 `html[data-theme]` 上翻转
+ * --light/--dark 开关,而 yougen 把 data-theme 放在 shell 元素(并非
+ * <html>)上,且使用自定义的 "night" 值。结果是 dx-select / dx-tabs 等
+ * 组件看不到应用主题,退回到 @media(prefers-color-scheme),于是在浅色
+ * 应用里渲染成深色(Scope 下拉、Contacts 选项卡发黑)。这里把开关重新
+ * 绑定到应用自身的 data-theme,与上面应用 token 的取值逻辑保持一致:
+ * light→浅色、night→深色、system→跟随系统。 */
+[data-theme="light"] {
+  --dark: ;
+  --light: initial;
+}
+[data-theme="night"] {
+  --dark: initial;
+  --light: ;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --dark: initial;
+    --light: ;
+  }
+}
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --dark: ;
+    --light: initial;
+  }
+}
+
 .discussion-shell {
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px);
