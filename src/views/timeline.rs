@@ -1986,7 +1986,6 @@ pub fn TimelinePanel(
                                                                 op_id.clone(),
                                                             );
                                                         }
-                                                        sync_cursor.set(sent.sync_token.clone());
                                                         frontier_state.set(sent.event_id.clone());
                                                         {
                                                             let mut store = state_store.write();

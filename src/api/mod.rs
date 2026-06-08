@@ -2932,6 +2932,49 @@ mod tests {
     }
 
     #[test]
+    fn events_submit_barriers_do_not_mutate_account_sync_cursor() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        collect_submit_barrier_cursor_writes(&src, &mut offenders);
+        assert!(
+            offenders.is_empty(),
+            "POST /events sync_token is a write barrier for X-Cokret-Wait-For, not an \
+             account/subscribe after cursor. Offenders:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    fn collect_submit_barrier_cursor_writes(dir: &std::path::Path, out: &mut Vec<String>) {
+        let signal_write = concat!("sync_", "cursor.set(");
+        let store_write = concat!("save_", "sync_cursor(");
+        let submit_token = concat!("sync_", "token");
+        for entry in std::fs::read_dir(dir).expect("read src dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_submit_barrier_cursor_writes(&path, out);
+                continue;
+            }
+            if !path.extension().is_some_and(|ext| ext == "rs") {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&path).expect("read rs file");
+            for needle in [signal_write, store_write] {
+                for (idx, _) in contents.match_indices(needle) {
+                    let end = idx.saturating_add(240).min(contents.len());
+                    let window = &contents[idx..end];
+                    if window.contains(submit_token) {
+                        out.push(format!(
+                            "{}: {}",
+                            path.display(),
+                            window.lines().next().unwrap_or(needle)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn endpoint_absent_only_triggers_on_404() {
         // 404 unrecognized_endpoint → the canonical bridge path is missing,
         // so `auth_bridge_describe` should fall back to the legacy vendor path.

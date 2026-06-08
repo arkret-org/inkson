@@ -468,7 +468,6 @@ pub fn RealmMembersPanel(
                                                     match api.submit_event_envelope(&op).await {
                                                         Ok(submitted) => {
                                                             frontier_state.set(submitted.event_id.clone());
-                                                            sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
                                                                 store.append_raw_operation(

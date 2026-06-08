@@ -907,7 +907,6 @@ pub fn ChatPanel(
                                                             });
                                                             selected_channel.set(flow_id.clone());
                                                             frontier_state.set(submitted.event_id.clone());
-                                                            sync_cursor.set(submitted.sync_token.clone());
                                                             {
                                                                 let mut store = state_store.write();
                                                                 // Keep POST /events sync_token out of the persisted
@@ -1606,7 +1605,6 @@ pub fn ChatPanel(
                                                                     found.failed = false;
                                                                     found.error = None;
                                                                 }
-                                                                sync_cursor.set(resp.sync_token.clone());
                                                                 frontier_state.set(resp.event_id.clone());
                                                                 status_msg.set("Message sent".to_owned());
                                                             }
@@ -3446,7 +3444,6 @@ pub fn ChatPanel(
                                                 found.failed = false;
                                                 found.error = None;
                                             }
-                                            sync_cursor.set(resp.sync_token.clone());
                                             frontier_state.set(resp.event_id.clone());
                                             status_msg.set("Message sent".to_owned());
                                         }
@@ -4028,7 +4025,6 @@ pub fn ChatPanel(
                                                     found.failed = false;
                                                     found.error = None;
                                                 }
-                                                sync_cursor.set(resp.sync_token.clone());
                                                 frontier_state.set(resp.event_id.clone());
                                                 status_msg.set("Encrypted message sent".to_owned());
                                                 crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
