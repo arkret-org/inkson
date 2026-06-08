@@ -5,6 +5,7 @@ use chrono::Utc;
 // FormData events; not re-exported via the prelude root.
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use crate::conformance::PlaintextBoundary;
@@ -16,7 +17,6 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use dioxus_primitives::checkbox::CheckboxState;
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
     with_authed_api_with_sync,
