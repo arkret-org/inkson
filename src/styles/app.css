@@ -2674,6 +2674,16 @@ body {
   justify-content: flex-start;
   text-align: left;
 }
+/* The dxc Button clamps to a single-row height (`[data-size]` → 2.25rem),
+   which squashes these two-line steps (title + subtitle). `[data-size]`
+   raises specificity above that rule so the box can grow to fit. */
+.setup-step-list button[data-size] {
+  height: auto;
+  min-height: 3.5rem;
+  padding: 10px 14px;
+  align-items: center;
+  gap: 10px;
+}
 .setup-step-index {
   display: inline-grid;
   place-items: center;

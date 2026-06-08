@@ -3001,6 +3001,24 @@
   position: relative;
 }
 
+/* The account trigger is just the avatar — drop the icon-button frame
+   (border + surface fill) the other topbar icons carry, so the avatar
+   reads as itself rather than a boxed glyph. Scoped through
+   `.account-menu-wrap` to outrank the base `.btn` border/background. */
+.account-menu-wrap .account-menu-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+.account-menu-wrap .account-menu-button:hover,
+.account-menu-wrap .account-menu-button:active {
+  background: transparent;
+}
+.account-menu-wrap .account-menu-button:hover .topbar-account-avatar {
+  filter: brightness(1.08);
+}
+
 .account-menu-scrim {
   position: fixed;
   inset: -100vmax;
@@ -3014,6 +3032,35 @@
   bottom: 4px;
   margin: 0;
   box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* Topbar account trigger shows the same avatar as the settings "Account
+   identity" card — the uploaded photo, or the default letter+tone circle —
+   instead of a generic person glyph. Frameless and sized to fill the
+   topbar slot so it reads larger than the boxed icons next to it. */
+.account-menu-button .topbar-account-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  transition: filter 120ms ease;
+}
+.account-menu-button .topbar-account-avatar.default-avatar {
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.account-menu-button .topbar-account-avatar.default-avatar::after {
+  inset: 4px;
+}
+.account-menu-button .topbar-account-avatar .content-block-image,
+.account-menu-button .topbar-account-avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
 }
 
 .account-menu {
@@ -3066,12 +3113,49 @@
   overflow-wrap: anywhere;
 }
 
-.account-menu__qr {
+/* Account-menu header avatar — same identity avatar as the topbar trigger
+   (uploaded photo or default letter+tone circle), but larger to anchor the
+   menu header. */
+.account-menu__head .account-menu__avatar {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
+}
+.account-menu__head .account-menu__avatar.default-avatar {
+  font-size: 18px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.account-menu__head .account-menu__avatar.default-avatar::after {
+  inset: 6px;
+}
+.account-menu__head .account-menu__avatar .content-block-image,
+.account-menu__head .account-menu__avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Match the header avatar's footprint. The selector carries the full
+   `.btn.icon.sm` chain so it outranks `.btn.icon.sm` (width:22) and the
+   `.btn.icon` min-width:32 that otherwise clamp this Link. */
+.account-menu__qr.btn.icon,
+.account-menu__qr.btn.icon.sm {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   margin-left: auto;
   padding: 0;
+}
+.account-menu__qr .ui-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .account-menu__rows {

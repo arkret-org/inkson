@@ -230,17 +230,33 @@ impl CokretApi {
                 },
             )?;
         }
+        self.post_signed_event_envelope(&signed).await
+    }
+
+    /// Wire-submit a fully-prepared, already-signed [`EventEnvelope`]
+    /// verbatim over `POST /_cokret/self/events`. This does NOT stamp
+    /// `anchor_ref` or sign — the caller owns both. It is the shared
+    /// tail of [`Self::submit_event_envelope`] and the per-envelope
+    /// fallback in [`Self::submit_events_batch`]: a genesis Realm
+    /// bootstrap deliberately carries `anchor_ref: None` (it asserts
+    /// `head_eq null`, there is no prior anchor head), so re-running the
+    /// anchor-stamp heuristic here would both 404 against the
+    /// not-yet-existing Realm's snapshot head and corrupt the signature.
+    async fn post_signed_event_envelope(
+        &self,
+        signed: &EventEnvelope,
+    ) -> anyhow::Result<SubmitEventOutcome> {
         if signed.proofs.is_empty() {
             anyhow::bail!("no active signer configured \u{2014} cannot submit unsigned event");
         }
-        ensure_event_proofs_are_domain_bound(&signed)?;
-        validate_outgoing_registered_payload(&signed)?;
+        ensure_event_proofs_are_domain_bound(signed)?;
+        validate_outgoing_registered_payload(signed)?;
 
         let idempotency_key = signed
             .local_operation_idempotency_alias()
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let value = serde_json::to_value(&signed)?;
+        let value = serde_json::to_value(signed)?;
         let request = self
             .http
             .post(self.endpoint("_cokret/self/events")?)
@@ -288,8 +304,15 @@ impl CokretApi {
         // every event. The envelopes are already signed; we just lose the
         // atomic accept/reject grouping the batch endpoint would give us.
         if !self.batch_submit_supported().await {
+            // Submit each pre-signed envelope verbatim. We MUST NOT route
+            // through `submit_event_envelope` here: its anchor_ref
+            // auto-stamp would fetch `/_cokret/self/snapshot/head` for a
+            // genesis bootstrap whose Realm does not exist yet (404
+            // not_found) and would also mutate the already-signed
+            // envelope. The caller already stamped anchor_ref + signed in
+            // the atomic sequence the batch path is built around.
             for envelope in envelopes {
-                self.submit_event_envelope(envelope).await?;
+                self.post_signed_event_envelope(envelope).await?;
             }
             return Ok(json!({
                 "status": "accepted",
