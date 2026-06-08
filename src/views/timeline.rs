@@ -13,8 +13,10 @@ use crate::local_state::{LocalStateStore, ReadMarkerRecord};
 use crate::media::{hash_matches, media_type_preview_policy, sha256_hex};
 use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
+use dioxus_primitives::checkbox::CheckboxState;
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
     with_authed_api_with_sync,
@@ -1337,11 +1339,16 @@ pub fn TimelinePanel(
                         }
                     }
                     label {
-                        input {
-                            r#type: "checkbox",
+                        Checkbox {
                             "data-testid": "public-update-guard-toggle",
-                            checked: public_update_guard(),
-                            onchange: move |evt| public_update_guard.set(evt.value() == "true"),
+                            checked: if public_update_guard() {
+                                CheckboxState::Checked
+                            } else {
+                                CheckboxState::Unchecked
+                            },
+                            on_checked_change: move |state: CheckboxState| {
+                                public_update_guard.set(bool::from(state))
+                            },
                         }
                         " Public update guard"
                     }
