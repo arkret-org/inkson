@@ -12,7 +12,7 @@
 //!   `authorization_code` POST against the IdP's token endpoint and returns a typed
 //!   [`OidcTokenResponse`].
 //! * [`crate::api::CokretApi::exchange_session_grant_at`] swaps a coauth-issued audience grant JWT
-//!   for an authenticated Principal Server session (a `DevLoginResponse` with access_token +
+//!   for an authenticated Principal Server session (a `DevLoginOutcome` with access_token +
 //!   refresh).
 //!
 //! Until this module landed there was no glue that ran those steps in
@@ -40,7 +40,7 @@ use crate::coauth::{
     extract_state_from_callback,
 };
 use crate::local_state::{LocalStateStore, OidcTokenBundle};
-use crate::models::DevLoginResponse;
+use crate::models::DevLoginOutcome;
 
 /// Inputs required to drive a callback through to a persisted token
 /// bundle and (optionally) an audience-grant exchange.
@@ -49,7 +49,7 @@ use crate::models::DevLoginResponse;
 /// access_token has been presented to coauth's `/cokret/session-grants`
 /// endpoint and a per-audience grant JWT has been minted. Callers that
 /// already hold an audience grant (e.g. coauth's
-/// `CoauthLoginResponse::session_grant`) can pass it straight through;
+/// `CoauthLoginOutcome::session_grant`) can pass it straight through;
 /// the orchestrator then signs an introspection proof with the device
 /// signing key and POSTs the grant to the principal-server.
 pub struct CallbackProcessRequest<'a> {
@@ -92,7 +92,7 @@ pub enum CallbackOutcome {
     /// (if requested).
     Completed {
         token_bundle: OidcTokenBundle,
-        audience_session: Option<DevLoginResponse>,
+        audience_session: Option<DevLoginOutcome>,
     },
     /// IdP returned `error=…` in the callback URL (user denied consent,
     /// IdP-side policy failure, etc.). `description` carries the human

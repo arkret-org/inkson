@@ -125,7 +125,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchRealmsResponse> {
+    ) -> anyhow::Result<SearchRealmsOutcome> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -141,7 +141,7 @@ impl CokretApi {
         self.get_json("_cokret/find/directory/describe").await
     }
 
-    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmResponse> {
+    pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmOutcome> {
         self.post_json(
             "_cokret/find/directory/resolve-realm",
             json!({"realm_id": realm_id}),
@@ -194,7 +194,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchOrganizationsResponse> {
+    ) -> anyhow::Result<SearchOrganizationsOutcome> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -210,7 +210,7 @@ impl CokretApi {
         &self,
         query: &str,
         next_cursor: Option<&str>,
-    ) -> anyhow::Result<SearchActorsResponse> {
+    ) -> anyhow::Result<SearchActorsOutcome> {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
@@ -238,7 +238,7 @@ impl CokretApi {
         realm_ids: &[String],
         object_kinds: Option<&[&str]>,
         limit: u32,
-    ) -> anyhow::Result<IndexSearchResponse> {
+    ) -> anyhow::Result<IndexSearchOutcome> {
         let kinds: Vec<&str> = object_kinds
             .map(|k| k.to_vec())
             .unwrap_or_else(|| vec!["message"]);
@@ -251,7 +251,7 @@ impl CokretApi {
         self.post_json("_soland/self/index/search", body).await
     }
 
-    pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleResponse> {
+    pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleOutcome> {
         self.resolve_handle_with_context(
             handle,
             ResolveHandleContext {
@@ -266,7 +266,7 @@ impl CokretApi {
         &self,
         handle: &str,
         context: ResolveHandleContext<'_>,
-    ) -> anyhow::Result<ResolveHandleResponse> {
+    ) -> anyhow::Result<ResolveHandleOutcome> {
         self.post_json(
             "_cokret/find/directory/resolve-handle",
             resolve_handle_request_body(handle, context),

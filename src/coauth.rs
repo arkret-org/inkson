@@ -48,7 +48,7 @@ pub struct OidcDiscoveryDocument {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct CoauthLoginResponse {
+pub struct CoauthLoginOutcome {
     pub status: String,
     #[serde(default)]
     pub error: Option<String>,
@@ -213,11 +213,11 @@ pub struct CoauthOidcBrowserBridgeSession {
 /// [`CoauthApi::exchange_pkce_code_for_tokens`] and
 /// [`CoauthApi::refresh_oidc_tokens`]. Mirrors RFC 6749 §5.1 +
 /// Wire shape of coauth's private session-grant refresh response.
-/// Mirrors `coauth::handlers::cokret::RefreshSessionGrantResponse`. We
+/// Mirrors `coauth::handlers::cokret::RefreshSessionGrantOutcome`. We
 /// keep the fields as `String` so the cotest harness can assert
 /// equality against the JSON body verbatim.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RefreshSessionGrantResponse {
+pub struct RefreshSessionGrantOutcome {
     pub grant_id: String,
     pub grant_jwt: String,
     pub session_public_key: String,
@@ -531,7 +531,7 @@ impl CoauthApi {
         state: Option<&str>,
         expected_state: Option<&str>,
         expected_nonce: Option<&str>,
-    ) -> anyhow::Result<CoauthLoginResponse> {
+    ) -> anyhow::Result<CoauthLoginOutcome> {
         let _ = (
             exchange_path,
             authorization_code,
@@ -739,7 +739,7 @@ impl CoauthApi {
         grant_jwt: &str,
         audience: Option<&str>,
         dpop_proof: &str,
-    ) -> anyhow::Result<RefreshSessionGrantResponse> {
+    ) -> anyhow::Result<RefreshSessionGrantOutcome> {
         let _ = (grant_jwt, audience, dpop_proof);
         anyhow::bail!(
             "coauth session-grant refresh is not part of the Cokret spec; yougen must not call private coauth paths"
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn login_response_accepts_current_coauth_viewer_shape() {
-        let response: CoauthLoginResponse = serde_json::from_value(json!({
+        let response: CoauthLoginOutcome = serde_json::from_value(json!({
             "status": "success",
             "viewer": {
                 "id": "user:01K",

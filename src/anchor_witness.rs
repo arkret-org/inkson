@@ -6,7 +6,7 @@
 //! treating the post-state root as authoritative.
 //!
 //! Yougen currently consumes server-side anchor responses
-//! (`SignAnchorResponse` from `api.rs`) as opaque envelopes — the
+//! (`SignAnchorOutcome` from `api.rs`) as opaque envelopes — the
 //! server publishes them, the client trusts the resulting state root.
 //! That's fine for a single-node deployment but breaks the spec's
 //! finality guarantee in federation / multi-anchorer scenarios: a

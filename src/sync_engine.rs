@@ -43,7 +43,7 @@ use crate::api::{
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalAnchorView, LocalStateStore};
-use crate::models::{ClientSyncResponse, RealmTreeNode, RealmTreeNodeKind};
+use crate::models::{ClientSyncOutcome, RealmTreeNode, RealmTreeNodeKind};
 
 /// Sleep ceiling between failed iterations. 60s matches what other
 /// Long enough that a wedged server doesn't get DoSed by retries,
@@ -338,7 +338,7 @@ async fn run_iteration(
 /// the engine fully owns sync, `connect()` is just a "force one
 /// iteration now" entry that calls this.
 pub fn apply_response(
-    response: &ClientSyncResponse,
+    response: &ClientSyncOutcome,
     is_full_sync: bool,
     ctx: &SyncEngineContext,
     invite_notifications: Option<Vec<Value>>,
@@ -547,7 +547,7 @@ fn ingest_member_identity_events_from_projection(
 
 fn apply_notification_projection(
     store: &mut LocalStateStore,
-    response: &ClientSyncResponse,
+    response: &ClientSyncOutcome,
     invite_notifications: Option<Vec<Value>>,
 ) {
     let projection_from_sync =
@@ -583,7 +583,7 @@ fn apply_notification_projection(
 
 fn apply_account_data(
     store: &mut LocalStateStore,
-    response: &ClientSyncResponse,
+    response: &ClientSyncOutcome,
     account_did: &str,
     theme: &mut Signal<String>,
     last_error: &mut Signal<Option<String>>,
@@ -667,8 +667,8 @@ mod tests {
 
     use super::*;
 
-    fn empty_response(cursor: &str) -> ClientSyncResponse {
-        ClientSyncResponse {
+    fn empty_response(cursor: &str) -> ClientSyncOutcome {
+        ClientSyncOutcome {
             cursor: cursor.to_owned(),
             realms: Default::default(),
             left_realms: Vec::new(),

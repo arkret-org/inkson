@@ -9,7 +9,7 @@
 //!
 //! Without a refresh path the user gets bounced back to the login page
 //! every time the bearer dies. We don't have a refresh token (the
-//! `DevLoginResponse` body doesn't carry one) — but we still have the
+//! `DevLoginOutcome` body doesn't carry one) — but we still have the
 //! grant. Persisting it lets us silently mint a new bearer by repeating
 //! the principal-side exchange.
 //!
@@ -31,7 +31,7 @@ use crate::coauth::{
 };
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
-use crate::models::DevLoginResponse;
+use crate::models::DevLoginOutcome;
 
 /// Window before the current `session_expires_at` at which the
 /// background poller proactively re-exchanges the grant.
@@ -255,7 +255,7 @@ pub fn prepare_refresh_for_server_after_unauthorized(
 pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
     proof: &SessionGrantIntrospectionProof,
-) -> anyhow::Result<DevLoginResponse> {
+) -> anyhow::Result<DevLoginOutcome> {
     let api = CokretApi::new(&grant.principal_server_url)?;
     api.exchange_session_grant_at_with_proof(
         &grant.session_grant_exchange_path,
@@ -272,7 +272,7 @@ pub async fn exchange_refresh(
 /// `RefreshOutcome` the caller can act on.
 pub fn commit_refresh(
     store: &mut LocalStateStore,
-    result: anyhow::Result<DevLoginResponse>,
+    result: anyhow::Result<DevLoginOutcome>,
 ) -> RefreshOutcome {
     match result {
         Ok(session) => {
@@ -337,7 +337,7 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
 /// `/login`) but keep the device DPoP key in place per the G3.Y0
 /// soft/hard split.
 ///
-/// Returns the [`crate::coauth::RefreshSessionGrantResponse`] body so
+/// Returns the [`crate::coauth::RefreshSessionGrantOutcome`] body so
 /// the caller can persist the new grant id + `cnf.jkt` for the next
 /// rotation. The `htu` argument is the absolute URL of coauth's
 /// refresh endpoint — the cotest harness pins it; production callers
@@ -347,7 +347,7 @@ pub async fn refresh_via_dpop(
     grant_jwt: &str,
     audience: Option<&str>,
     dpop_proof: &str,
-) -> anyhow::Result<crate::coauth::RefreshSessionGrantResponse> {
+) -> anyhow::Result<crate::coauth::RefreshSessionGrantOutcome> {
     let coauth = crate::coauth::CoauthApi::new(auth_server_url)?;
     coauth
         .refresh_session_grant(grant_jwt, audience, dpop_proof)

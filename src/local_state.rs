@@ -319,7 +319,7 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 
 /// Lifecycle state of a locally-submitted Move. Mirrors the states
 /// soland's Move/Anchor pipeline can report via the
-/// `SubmitMoveResponse.state` field plus the post-anchor effects the
+/// `SubmitMoveOutcome.state` field plus the post-anchor effects the
 /// next `/sync` cycle exposes:
 ///
 /// - `PendingAnchor` — server accepted the Move into MoveStore, waiting for the next anchorer batch
@@ -351,7 +351,7 @@ pub enum MoveSubmissionState {
 }
 
 impl MoveSubmissionState {
-    /// Map a soland `SubmitMoveResponse.state` string into the typed
+    /// Map a soland `SubmitMoveOutcome.state` string into the typed
     /// enum. Unknown strings fall back to `PendingAnchor` (the safe
     /// "we accepted it, server will tell us more later" default) so
     /// new server-side states surface as in-flight rather than as
@@ -2577,7 +2577,7 @@ impl LocalStateStore {
     // ── Move submission tracking ─────────────────────────────────────────
 
     /// Record a freshly-submitted Move and its initial state. The
-    /// caller has just received soland's `SubmitMoveResponse`; the
+    /// caller has just received soland's `SubmitMoveOutcome`; the
     /// state is mapped in via [`MoveSubmissionState::from_submit_state`].
     /// `kind` is a free-form classifier (e.g. `ck.consent.grant`,
     /// `ck.message.create`, `mls_commit`) the UI uses to decorate

@@ -9,7 +9,7 @@ impl CokretApi {
         participants: Vec<String>,
         mode: &str,
         recording_policy: &str,
-    ) -> anyhow::Result<CreateWebrtcSessionResponse> {
+    ) -> anyhow::Result<CreateWebrtcSessionOutcome> {
         self.post_json(
             "_cokret/self/webrtc/sessions",
             json!({
@@ -31,7 +31,7 @@ impl CokretApi {
         message_type: &str,
         seq: u64,
         payload: Value,
-    ) -> anyhow::Result<WebrtcSignalResponse> {
+    ) -> anyhow::Result<WebrtcSignalOutcome> {
         self.post_json(
             &format!("_cokret/self/webrtc/sessions/{session_id}/signals"),
             json!({
@@ -52,7 +52,7 @@ impl CokretApi {
         &self,
         session_id: &str,
         realm_id: &str,
-    ) -> anyhow::Result<CallRecordingStartResponse> {
+    ) -> anyhow::Result<CallRecordingStartOutcome> {
         self.post_json(
             &format!("_cokret/self/calls/{session_id}/recording/start"),
             json!({ "realm_id": realm_id }),
@@ -64,8 +64,8 @@ impl CokretApi {
 
     pub async fn ice_config(
         &self,
-        request: &IceConfigRequest,
-    ) -> anyhow::Result<IceConfigResponse> {
+        request: &IceConfigRequestBody,
+    ) -> anyhow::Result<IceConfigOutcome> {
         self.post_json(
             "_cokret/self/rtc/ice-config",
             serde_json::to_value(request)?,

@@ -2477,7 +2477,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
     actor_did: &str,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
-) -> anyhow::Result<SubmitEventResponse> {
+) -> anyhow::Result<SubmitEventOutcome> {
     match api.submit_event_envelope(operation).await {
         Ok(response) => Ok(response),
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
@@ -2529,7 +2529,7 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
-) -> anyhow::Result<SubmitEventResponse> {
+) -> anyhow::Result<SubmitEventOutcome> {
     let api = authed_api_with_sync(base_url, access_token, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(
         &api,

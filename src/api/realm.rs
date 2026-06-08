@@ -36,7 +36,7 @@ impl CokretApi {
         trust_domain: &str,
         invitees: Vec<String>,
         plaintext_visible_services: Vec<String>,
-    ) -> anyhow::Result<RealmCreateResponse> {
+    ) -> anyhow::Result<RealmCreateOutcome> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -95,7 +95,7 @@ impl CokretApi {
             }
         }
 
-        Ok(RealmCreateResponse {
+        Ok(RealmCreateOutcome {
             ok: true,
             realm_id,
             owner: actor_id.to_owned(),
@@ -118,7 +118,7 @@ impl CokretApi {
         kind: &str,
         parent_space_id: Option<&str>,
         default_realm_id: Option<&str>,
-    ) -> anyhow::Result<SpaceCreateResponse> {
+    ) -> anyhow::Result<SpaceCreateOutcome> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
@@ -146,7 +146,7 @@ impl CokretApi {
         )?;
         self.submit_event_envelope(&event).await?;
 
-        Ok(SpaceCreateResponse {
+        Ok(SpaceCreateOutcome {
             ok: true,
             space_id,
             owner: actor_id.to_owned(),
@@ -281,7 +281,7 @@ impl CokretApi {
         from_state: Option<&str>,
         to_state: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let event = build_member_state_transition_event(
             realm_id, actor_id, member, from_state, to_state, reason,
         )?;
@@ -354,7 +354,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         patch: Value,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         if patch_touches_create_locked_encryption_profile(&patch) {
             anyhow::bail!(
                 "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
@@ -375,7 +375,7 @@ impl CokretApi {
         space_id: &str,
         actor_id: &str,
         patch: Value,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
             crate::operation::cx_ops::space_update_patch(realm_id, actor_id, space_id, patch)
                 .build("yougen");
@@ -414,7 +414,7 @@ impl CokretApi {
         join_rule: &str,
         history_visibility: &str,
         join_policy: Option<Value>,
-    ) -> anyhow::Result<RealmPolicyResponse> {
+    ) -> anyhow::Result<RealmPolicyOutcome> {
         let actor_id = actor_id.trim();
         if actor_id.is_empty() {
             return Err(anyhow::anyhow!(
@@ -450,7 +450,7 @@ impl CokretApi {
         for event in events {
             self.submit_event_envelope(&event).await?;
         }
-        Ok(RealmPolicyResponse {
+        Ok(RealmPolicyOutcome {
             ok: true,
             realm_id: realm_id.to_owned(),
             join_rule: join_rule.to_owned(),
@@ -468,7 +468,7 @@ impl CokretApi {
         invite_id: &str,
         target: &str,
         role: Option<&str>,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let invitee = self
             .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?;
@@ -491,7 +491,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
             crate::operation::cx_ops::invite_accept(realm_id, actor_id, invite_id).build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
@@ -508,7 +508,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate = select_join_candidate(&resolved, "invite_accept")?;
@@ -520,7 +520,7 @@ impl CokretApi {
         &self,
         candidate: &RealmJoinCandidate,
         event: &EventEnvelope,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let Some(endpoint) = candidate
             .endpoint
             .as_deref()
@@ -551,7 +551,7 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
         reason: Option<&str>,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
             crate::operation::cx_ops::invite_cancel(realm_id, actor_id, invite_id, reason)
                 .build("yougen");
@@ -563,7 +563,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         self.transition_member_state(
             realm_id,
             actor_id,
@@ -580,7 +580,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
             build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
         self.submit_event_envelope(&envelope).await
@@ -591,7 +591,7 @@ impl CokretApi {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope =
             build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
         self.submit_event_envelope(&envelope).await
@@ -604,7 +604,7 @@ impl CokretApi {
         actor_id: &str,
         successor_realm_id: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
         self.submit_event_envelope(&envelope).await
     }
@@ -615,7 +615,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         reason: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope = build_realm_destroy_event(realm_id, actor_id, reason)?;
         self.submit_event_envelope(&envelope).await
     }
@@ -626,7 +626,7 @@ impl CokretApi {
         realm_id: &str,
         actor_id: &str,
         member: &str,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         self.transition_member_state(realm_id, actor_id, member, Some("join"), "ban", "admin_ban")
             .await
     }
@@ -653,7 +653,7 @@ impl CokretApi {
     pub async fn list_space_container_projections(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionResponse<SpaceContainerProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionOutcome<SpaceContainerProjectionView>> {
         // `ck:realm:<uuid>` is RFC-3986-safe in query string position
         // (colon + hyphen + alpha-digit), so no percent-encoding needed.
         let realm_id = trim_realm_id(realm_id);
@@ -664,7 +664,7 @@ impl CokretApi {
     pub async fn list_flow_projections(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionResponse<FlowProjectionView>> {
+    ) -> anyhow::Result<LifecycleProjectionOutcome<FlowProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
         let path = format!("_cokret/self/projection/flows?realm_id={realm_id}");
         self.get_json(&path).await

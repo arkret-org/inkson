@@ -1,12 +1,12 @@
 use super::*;
 
 #[derive(Debug, serde::Deserialize)]
-struct PrincipalRealmLookupResponse {
+struct PrincipalRealmLookupOutcome {
     realm_id: String,
 }
 
 impl CokretApi {
-    pub async fn health(&self) -> anyhow::Result<HealthResponse> {
+    pub async fn health(&self) -> anyhow::Result<HealthOutcome> {
         self.get_json("health").await
     }
 
@@ -20,19 +20,13 @@ impl CokretApi {
             .await
     }
 
-    pub async fn auth_bridge_describe(
-        &self,
-    ) -> anyhow::Result<PrincipalAuthBridgeDescribeResponse> {
+    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeOutcome> {
         anyhow::bail!(
             "principal auth bridge describe is not part of the Cokret spec; yougen must not call private bridge paths"
         )
     }
 
-    pub async fn dev_login(
-        &self,
-        actor: &str,
-        device_id: &str,
-    ) -> anyhow::Result<DevLoginResponse> {
+    pub async fn dev_login(&self, actor: &str, device_id: &str) -> anyhow::Result<DevLoginOutcome> {
         self.post_json(
             "_soland/gate/auth/dev-login",
             json!({
@@ -50,7 +44,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginResponse> {
+    ) -> anyhow::Result<DevLoginOutcome> {
         self.exchange_session_grant_at_with_proof(path, grant_jwt, principal_id, device_id, None)
             .await
     }
@@ -62,7 +56,7 @@ impl CokretApi {
         principal_id: &str,
         device_id: &str,
         introspection_proof: Option<&SessionGrantIntrospectionProof>,
-    ) -> anyhow::Result<DevLoginResponse> {
+    ) -> anyhow::Result<DevLoginOutcome> {
         let mut body = json!({
             "grant_jwt": grant_jwt,
             "principal_id": principal_id,
@@ -80,7 +74,7 @@ impl CokretApi {
         grant_jwt: &str,
         principal_id: &str,
         device_id: &str,
-    ) -> anyhow::Result<DevLoginResponse> {
+    ) -> anyhow::Result<DevLoginOutcome> {
         self.exchange_session_grant_at(
             "_cokret/gate/account/session-grants",
             grant_jwt,
@@ -142,7 +136,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactResponse> {
+    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactOutcome> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -150,7 +144,7 @@ impl CokretApi {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<ContactResponse> {
+    ) -> anyhow::Result<ContactOutcome> {
         self.post_json(
             "_cokret/self/contacts/request",
             json!({"target": target, "requested_scopes": [scope]}),
@@ -162,7 +156,7 @@ impl CokretApi {
         &self,
         requester: &str,
         action: &str,
-    ) -> anyhow::Result<ContactResponse> {
+    ) -> anyhow::Result<ContactOutcome> {
         self.post_json(
             "_cokret/self/contacts/respond",
             json!({"requester": requester, "action": action}),
@@ -170,7 +164,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn contacts(&self) -> anyhow::Result<ContactsResponse> {
+    pub async fn contacts(&self) -> anyhow::Result<ContactsOutcome> {
         self.get_json("_cokret/self/contacts").await
     }
 
@@ -189,7 +183,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsResponse> {
+    pub async fn list_consent_cells(&self) -> anyhow::Result<ConsentCellsOutcome> {
         self.get_json("_soland/self/consent/cells").await
     }
 
@@ -199,7 +193,7 @@ impl CokretApi {
         peer: &str,
         scope: &str,
         expires_at: Option<&str>,
-    ) -> anyhow::Result<ConsentCellResponse> {
+    ) -> anyhow::Result<ConsentCellOutcome> {
         self.post_json(
             &format!(
                 "_soland/self/consent/cells/{}/grant",
@@ -220,7 +214,7 @@ impl CokretApi {
         holder: &str,
         peer: &str,
         scope: &str,
-    ) -> anyhow::Result<ConsentCellResponse> {
+    ) -> anyhow::Result<ConsentCellOutcome> {
         self.post_json(
             &format!(
                 "_soland/self/consent/cells/{}/revoke",
@@ -234,7 +228,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn logout(&self) -> anyhow::Result<LogoutResponse> {
+    pub async fn logout(&self) -> anyhow::Result<LogoutOutcome> {
         self.post_json("_soland/gate/auth/logout", json!({})).await
     }
 
@@ -356,7 +350,7 @@ impl CokretApi {
 
     async fn account_data_actor_scope(&self) -> anyhow::Result<(String, String)> {
         let account = self.account_me().await?;
-        let lookup: PrincipalRealmLookupResponse = self
+        let lookup: PrincipalRealmLookupOutcome = self
             .get_json(&format!(
                 "_soland/self/account/{}/principal-realm",
                 path_component(&account.did)
@@ -371,11 +365,11 @@ impl CokretApi {
 
     /// `ck.self.account.subscribe` snapshot fold. The server returns NDJSON frames;
     /// this consumes the first `delta` frame and keeps the rest of the app on
-    /// the existing folded `ClientSyncResponse` projection path.
+    /// the existing folded `ClientSyncOutcome` projection path.
     pub async fn account_subscribe_snapshot(
         &self,
         after: Option<&str>,
-    ) -> anyhow::Result<ClientSyncResponse> {
+    ) -> anyhow::Result<ClientSyncOutcome> {
         match self.account_subscribe_snapshot_outcome(after).await? {
             AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
             AccountSubscribeSnapshotOutcome::ReconnectAfter {
@@ -440,12 +434,12 @@ impl CokretApi {
     pub async fn submit_read_cursor_advance(
         &self,
         marker: &crate::local_state::ReadMarkerRecord,
-    ) -> anyhow::Result<SubmitEventResponse> {
+    ) -> anyhow::Result<SubmitEventOutcome> {
         let event = build_read_cursor_advance_event(marker);
         self.submit_event_envelope(&event).await
     }
 
-    pub async fn invites(&self) -> anyhow::Result<InvitesResponse> {
+    pub async fn invites(&self) -> anyhow::Result<InvitesOutcome> {
         self.get_json("_cokret/self/authz/invites").await
     }
 }

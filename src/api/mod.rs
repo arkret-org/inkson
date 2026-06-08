@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chime::{CokretPushClient, RegisterDeviceRequest, UnregisterDeviceRequest};
+use chime::{CokretPushClient, PushRegisterDeviceRequestBody, PushUnregisterDeviceRequestBody};
 use cokret_sdk::ErrorEnvelope;
 use ed25519_dalek::Signer;
 use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
@@ -24,7 +24,7 @@ pub struct CancellationToken {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct PrincipalAuthBridgeDescribeResponse {
+pub struct PrincipalAuthBridgeDescribeOutcome {
     pub contract: String,
     pub version: String,
     pub api_base_path: String,
@@ -100,22 +100,22 @@ use crate::models::{
     AgentKeyPairResBody, AgentLifecycleReqBody, AgentLifecycleResBody, AgentListResBody,
     AgentProvisionReqBody, AgentResBody, AgentRotateKeyReqBody, AgentRotateKeyResBody,
     AgentSidecarThreadEnsureReqBody, AgentSidecarThreadEnsureResBody, AuthzCheckOutcome,
-    BackfillOutcome, BlobUploadOutcome, CallRecordingStartResponse, ClientSyncResponse,
-    ConsentCellResponse, ConsentCellsResponse, ContactResponse, ContactsResponse,
-    CreateWebrtcSessionResponse, DevLoginResponse, DeviceMessagesGetOutcome,
-    DeviceMessagesPutOutcome, DeviceTrustResponse, DidOperationSubmitOutcome,
-    EphemeralSubmitOutcome, GrantList, HealthResponse, IceConfigRequest, IceConfigResponse,
-    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchResponse, InvitesResponse,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutResponse, MimiGroupInfoOutcome,
+    BackfillOutcome, BlobUploadOutcome, CallRecordingStartOutcome, ClientSyncOutcome,
+    ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
+    CreateWebrtcSessionOutcome, DevLoginOutcome, DeviceMessagesGetOutcome,
+    DeviceMessagesPutOutcome, DeviceTrustOutcome, DidOperationSubmitOutcome,
+    EphemeralSubmitOutcome, GrantList, HealthOutcome, IceConfigOutcome, IceConfigRequestBody,
+    IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome,
+    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, LogoutOutcome, MimiGroupInfoOutcome,
     MimiIdentifierQueryOutcome, MimiKeyMaterialOutcome, MimiNotifyOutcome, MimiProviderDirectory,
     MimiProxyDownloadOutcome, MimiReportAbuseOutcome, MimiRequestConsentOutcome,
-    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, MlsRotateResponse, ModerationReportOutcome,
-    OkOutcome, PolicyCheckOutcome, PushRegisterResponse, RealmCreateResponse, RealmJoinCandidate,
-    RealmPolicyResponse, ReceiptResponse, ResolveHandleResponse, ResolveRealmResponse,
-    SearchActorsResponse, SearchOrganizationsResponse, SearchRealmsResponse, ServerDescription,
+    MimiRoomUpdateOutcome, MimiSubmitMessageOutcome, MlsRotateOutcome, ModerationReportOutcome,
+    OkOutcome, PolicyCheckOutcome, PushRegisterOutcome, RealmCreateOutcome, RealmJoinCandidate,
+    RealmPolicyOutcome, ReceiptOutcome, ResolveHandleOutcome, ResolveRealmOutcome,
+    SearchActorsOutcome, SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
     SnapshotHeadState, SolandDirectoryDescribeResBody, SolandEventsDescribeResBody,
-    SpaceCreateResponse, SubmitEventResponse, SyncDescribeResBody, TypingResponse,
-    VerifyDeviceResponse, WebrtcSignalResponse,
+    SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeResBody, TypingOutcome,
+    VerifyDeviceOutcome, WebrtcSignalOutcome,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,
@@ -128,7 +128,7 @@ use crate::operation::{
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `flows` / `morphs` collection keys into `items`.
 #[derive(Clone, Debug, Deserialize)]
-pub struct LifecycleProjectionResponse<T> {
+pub struct LifecycleProjectionOutcome<T> {
     pub realm_id: String,
     #[serde(default)]
     pub total: u32,
@@ -361,7 +361,7 @@ pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
 
 #[derive(Clone, Debug)]
 pub enum AccountSubscribeSnapshotOutcome {
-    Delta(ClientSyncResponse),
+    Delta(ClientSyncOutcome),
     ReconnectAfter {
         reconnect_after_ms: u64,
         reason: Option<String>,
@@ -2262,11 +2262,11 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
     Ok(())
 }
 
-/// Project chime's full [`RegisterDeviceResponse`](chime::RegisterDeviceResponse)
-/// onto yougen's slimmer `PushRegisterResponse` view (the upstream
+/// Project chime's full [`PushRegisterDeviceOutcome`](chime::PushRegisterDeviceOutcome)
+/// onto yougen's slimmer `PushRegisterOutcome` view (the upstream
 /// fields not modelled here are intentionally dropped for now).
-fn map_chime_register_response(response: chime::RegisterDeviceResponse) -> PushRegisterResponse {
-    PushRegisterResponse {
+fn map_chime_register_response(response: chime::PushRegisterDeviceOutcome) -> PushRegisterOutcome {
+    PushRegisterOutcome {
         ok: response.ok,
         registration_id: response.registration_id,
         expires_at: response.expires_at,
@@ -2658,12 +2658,12 @@ fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
     bytes
 }
 
-pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncResponse> {
+pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
 #[cfg(test)]
-fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncResponse> {
+fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
     match parse_account_subscribe_snapshot_outcome(bytes)? {
         AccountSubscribeSnapshotOutcome::Delta(response) => Ok(response),
         AccountSubscribeSnapshotOutcome::ReconnectAfter {
@@ -2698,7 +2698,7 @@ fn parse_account_subscribe_snapshot_outcome(
                 reset_cursor,
             });
         }
-        if let Some(response) = ClientSyncResponse::from_account_subscribe_frame(frame) {
+        if let Some(response) = ClientSyncOutcome::from_account_subscribe_frame(frame) {
             return Ok(AccountSubscribeSnapshotOutcome::Delta(response));
         }
     }
@@ -2713,12 +2713,12 @@ pub fn parse_directory_describe(value: Value) -> anyhow::Result<SolandDirectoryD
     Ok(serde_json::from_value(value)?)
 }
 
-pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmResponse> {
+pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
 fn select_join_candidate<'a>(
-    resolved: &'a ResolveRealmResponse,
+    resolved: &'a ResolveRealmOutcome,
     join_method: &str,
 ) -> anyhow::Result<&'a RealmJoinCandidate> {
     let realm_id = trim_realm_id(resolved.realm_preview.projection_realm_id());
@@ -3075,7 +3075,7 @@ mod tests {
     #[test]
     fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
         let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
-        let resolved: ResolveHandleResponse = serde_json::from_value(json!({
+        let resolved: ResolveHandleOutcome = serde_json::from_value(json!({
             "subject": "did:web:bob.example",
             "handle": "bob:local.host",
             "handle_claim": {
@@ -3097,7 +3097,7 @@ mod tests {
             "did:web:local.host"
         );
 
-        let missing_binding: ResolveHandleResponse = serde_json::from_value(json!({
+        let missing_binding: ResolveHandleOutcome = serde_json::from_value(json!({
             "did": "did:web:bob.example",
             "handle": "bob:local.host",
             "audience": realm_id
@@ -3130,7 +3130,7 @@ mod tests {
 
     #[test]
     fn lifecycle_projection_response_accepts_spec_keys() {
-        let canonical_spaces: LifecycleProjectionResponse<SpaceContainerProjectionView> =
+        let canonical_spaces: LifecycleProjectionOutcome<SpaceContainerProjectionView> =
             serde_json::from_value(json!({
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
                 "total": 1,
@@ -3148,22 +3148,21 @@ mod tests {
             "ck:space:01904100-0000-7000-8000-f10dc0000001"
         );
 
-        let flows: LifecycleProjectionResponse<FlowProjectionView> =
-            serde_json::from_value(json!({
+        let flows: LifecycleProjectionOutcome<FlowProjectionView> = serde_json::from_value(json!({
+            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "flows": [{
+                "flow_id": "ck:flow:01904100-0000-7000-8000-f20dc0000001",
                 "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-                "flows": [{
-                    "flow_id": "ck:flow:01904100-0000-7000-8000-f20dc0000001",
-                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-                    "title": "Card",
-                    "summary": "Projection-backed card",
-                    "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
-                    "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
-                    "rank": "U",
-                    "fields": { "labels": ["demo"] },
-                    "state": "archived"
-                }]
-            }))
-            .unwrap();
+                "title": "Card",
+                "summary": "Projection-backed card",
+                "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
+                "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
+                "rank": "U",
+                "fields": { "labels": ["demo"] },
+                "state": "archived"
+            }]
+        }))
+        .unwrap();
         assert_eq!(flows.items[0].realm_id, flows.realm_id);
         assert_eq!(flows.items[0].state, "archived");
         assert_eq!(

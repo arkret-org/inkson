@@ -12,7 +12,7 @@ use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalAnchorView, LocalStateStore, MoveSubmissionState};
-use crate::models::SubmitEventResponse;
+use crate::models::SubmitEventOutcome;
 use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
