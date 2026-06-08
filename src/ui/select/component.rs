@@ -101,11 +101,20 @@ pub fn SelectGroupLabel(props: SelectGroupLabelProps) -> Element {
 }
 
 #[component]
-pub fn SelectOption<T: Clone + PartialEq + 'static>(props: SelectOptionProps<T>) -> Element {
+pub fn SelectOption<T: Clone + PartialEq + std::fmt::Display + 'static>(
+    props: SelectOptionProps<T>,
+) -> Element {
     let base = attributes!(div {
         class: Styles::dx_select_option
     });
-    let merged = merge_attributes(vec![base, props.attributes]);
+    // e2e 测试钩子:dxc Select 渲染自定义弹层(`role="option"` 的 div,而非原生
+    // `<option>`),Playwright 的 `locator.selectOption()` 只对原生 `<select>` 有效。
+    // 把底层 value 暴露为 `data-value`,供 cotest 的 `selectDxcOption()` helper 按
+    // value 定位并点击。值与原 `selectOption(value)` 传入的字符串一致。
+    let value_attr = attributes!(div {
+        "data-value": props.value.cloned().to_string()
+    });
+    let merged = merge_attributes(vec![base, value_attr, props.attributes]);
 
     rsx! {
         select::SelectOption::<T> {

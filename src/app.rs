@@ -1515,17 +1515,27 @@ pub fn RouterView() -> Element {
     }
 
     let loaded_realm_tree_nodes = realm_tree_nodes();
-    let direct_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
+    // The principal control / self Realm (device ledger, key log, and the
+    // holder's own private uploads — see key-management.md §4.1) is account
+    // infrastructure, not a collaboration workspace, so it MUST NOT show up in
+    // the sidebar realm list. Derive its canonical id from the account DID and
+    // hide that node plus its descendants, mirroring the direct-conversation
+    // filter below.
+    let self_realm_id: Option<String> = cokret_sdk::Did::new(account_did())
+        .ok()
+        .map(|did| cokret_sdk::auth::principal_control_realm_id(&did));
+    let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
         .iter()
         .filter(|node| {
             node.kind == RealmTreeNodeKind::Realm
-                && realm_tree_node_looks_like_direct_conversation(node)
+                && (realm_tree_node_looks_like_direct_conversation(node)
+                    || self_realm_id.as_deref() == Some(node.id.as_str()))
         })
         .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
         .collect();
     let collaboration_realm_tree_nodes: Vec<_> = loaded_realm_tree_nodes
         .iter()
-        .filter(|node| !direct_realm_tree_node_ids.contains(node.id.as_str()))
+        .filter(|node| !hidden_realm_tree_node_ids.contains(node.id.as_str()))
         .cloned()
         .collect();
     let selected_preview = loaded_realm_tree_nodes

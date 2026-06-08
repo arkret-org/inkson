@@ -124,16 +124,23 @@
   pointer-events: none;
 }
 
+/* yougen CTA 主题对齐:还原 `.primary` 的 accent→accent-2 渐变 + 发光。
+   dxc 默认 primary 是纯色 `var(--secondary-color-2)`,迁移后会让所有
+   `variant: Primary` 按钮(如登录页 Continue)丢失渐变,在浅色卡片上显示为
+   白块。`--accent` 随上下文主题切换(app 内为绿、auth 内为橙→粉),与裸
+   `.primary` 保持同一观感。见 src/styles/app_overrides.css 的 `.primary`。 */
 .dx-button[data-style="primary"] {
-  background-color: var(--secondary-color-2);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  border-color: transparent;
   color: var(--text-on-accent);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .dx-button[data-style="primary"]:not(:disabled):hover {
-  background-color: color-mix(
-    in oklab,
-    var(--secondary-color-2) 90%,
-    transparent
+  background: linear-gradient(
+    135deg,
+    var(--accent-strong) 0%,
+    color-mix(in srgb, var(--accent-2) 92%, white) 100%
   );
 }
 
