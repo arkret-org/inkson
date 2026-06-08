@@ -5,6 +5,7 @@ use crate::local_state::LocalStateStore;
 use crate::models::ConsentCellOutcome;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
+use crate::ui::select::{Select, SelectOption};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
@@ -24,6 +25,7 @@ pub fn ConsentSettingsCard(
     let mut new_ttl = use_signal(|| "30d".to_owned());
     let mut selected_cell_id = use_signal(String::new);
     let mut detail_scope = use_signal(|| "message".to_owned());
+    let detail_scope_selected = use_memo(move || Some(detail_scope()));
     let mut detail_expires_at = use_signal(String::new);
     let mut status = use_signal(String::new);
 
@@ -83,13 +85,13 @@ pub fn ConsentSettingsCard(
                             if selected_cell_id() == cell.cell_id {
                                 div { class: "event", "data-testid": "consent-pending-detail",
                                     div { class: "mono", "{cell.peer_did}" }
-                                    select {
+                                    Select::<String> {
                                         "data-testid": "consent-scope-select",
-                                        value: "{detail_scope}",
-                                        onchange: move |evt| detail_scope.set(evt.value()),
-                                        option { value: "invite", "invite" }
-                                        option { value: "message", "message" }
-                                        option { value: "call", "call" }
+                                        value: Some(detail_scope_selected.into()),
+                                        on_value_change: move |v: Option<String>| { if let Some(v) = v { detail_scope.set(v); } },
+                                        SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "invite", "invite" }
+                                        SelectOption::<String> { index: 1usize, value: "message".to_string(), text_value: "message", "message" }
+                                        SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "call", "call" }
                                     }
                                     Input {
                                         "data-testid": "consent-expires-at-input",

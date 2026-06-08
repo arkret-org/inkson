@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use crate::local_state::LocalStateStore;
 use crate::operation::cx_ops;
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -1404,13 +1405,16 @@ pub fn DocumentPanel(
                 {
                     let target_vid_label = short_protocol_id(&target_vid);
                     rsx! {
-                        div {
-                            class: "publish-to-source-modal-backdrop",
+                        Dialog {
+                            open: true,
+                            on_open_change: move |open: bool| {
+                                if !open {
+                                    diff_modal_for.set(None);
+                                }
+                            },
                             "data-testid": "document-version-diff-modal",
                             div {
                                 class: "publish-to-source-modal",
-                                role: "dialog",
-                                "aria-modal": "true",
                                 header {
                                     class: "publish-to-source-modal-header",
                                     h2 { title: "{target_vid}", "Diff vs {target_vid_label}" }

@@ -20,6 +20,7 @@ use base64::engine::general_purpose::{
     STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
 };
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
 use serde_json::json;
@@ -31,8 +32,12 @@ use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::select::{Select, SelectOption};
+use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 use crate::workflows::blocked_release_workflows;
@@ -643,11 +648,10 @@ fn render_notification_kind_toggle(
         div { class: "metric",
             strong { "{label}" }
             label {
-                input {
-                    r#type: "checkbox",
-                    checked: enabled,
-                    onchange: move |event| {
-                        let enabled = event.value() == "true";
+                Checkbox {
+                    checked: if enabled { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                    on_checked_change: move |state: CheckboxState| {
+                        let enabled = bool::from(state);
                         state_store.write().set_notification_kind_enabled(kind, enabled);
                         status.set(format!(
                             "{} {}.",
@@ -817,6 +821,7 @@ pub fn SettingsPanel(
     let mut notification_realm_muted = use_signal(|| false);
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
+    let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
     let mut notification_settings_status = use_signal(String::new);
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
@@ -880,6 +885,7 @@ pub fn SettingsPanel(
     let mut blocklist_reason_input = use_signal(String::new);
     let mut blocklist_status = use_signal(String::new);
     let mut mls_group_policy = use_signal(|| "default".to_owned());
+    let mls_group_policy_selected = use_memo(move || Some(mls_group_policy()));
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
@@ -1146,11 +1152,20 @@ pub fn SettingsPanel(
                                             }
                                         }
                                         if let Some(selection) = pending_avatar_crop.read().clone() {
-                                            div {
+                                            Dialog {
+                                                open: true,
+                                                on_open_change: move |open: bool| {
+                                                    if !open {
+                                                        if avatar_uploading() {
+                                                            return;
+                                                        }
+                                                        pending_avatar_crop.set(None);
+                                                        avatar_upload_status.set(String::new());
+                                                    }
+                                                },
                                                 "data-testid": "settings-avatar-crop-editor",
-                                                role: "dialog",
-                                                "aria-modal": "true",
                                                 "aria-label": "Edit avatar",
+                                                div {
                                                 style: "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--layer-modal, 300); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: center; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border: 1px solid var(--border, #333); border-radius: var(--radius-lg, 12px); background: var(--surface-solid, var(--surface, #1a1d22)); box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));",
                                                 div {
                                                     "data-testid": "settings-avatar-crop-stage",
@@ -1172,52 +1187,43 @@ pub fn SettingsPanel(
                                                     }
                                                     label { class: "form-field",
                                                         span { {crate::i18n::tr("settings.avatar.zoom")} }
-                                                        input {
+                                                        Slider {
                                                             "data-testid": "settings-avatar-crop-zoom",
-                                                            r#type: "range",
-                                                            min: "100",
-                                                            max: "300",
-                                                            step: "5",
-                                                            value: "{avatar_crop_zoom()}",
+                                                            min: 100.0,
+                                                            max: 300.0,
+                                                            step: 5.0,
+                                                            value: avatar_crop_zoom() as f64,
                                                             disabled: avatar_uploading(),
-                                                            oninput: move |event| {
-                                                                if let Ok(value) = event.value().parse::<i32>() {
-                                                                    avatar_crop_zoom.set(value.clamp(100, 300));
-                                                                }
+                                                            on_value_change: move |value: f64| {
+                                                                avatar_crop_zoom.set((value as i32).clamp(100, 300));
                                                             },
                                                         }
                                                     }
                                                     label { class: "form-field",
                                                         span { {crate::i18n::tr("settings.avatar.pan_x")} }
-                                                        input {
+                                                        Slider {
                                                             "data-testid": "settings-avatar-crop-x",
-                                                            r#type: "range",
-                                                            min: "-100",
-                                                            max: "100",
-                                                            step: "5",
-                                                            value: "{avatar_crop_x()}",
+                                                            min: -100.0,
+                                                            max: 100.0,
+                                                            step: 5.0,
+                                                            value: avatar_crop_x() as f64,
                                                             disabled: avatar_uploading(),
-                                                            oninput: move |event| {
-                                                                if let Ok(value) = event.value().parse::<i32>() {
-                                                                    avatar_crop_x.set(value.clamp(-100, 100));
-                                                                }
+                                                            on_value_change: move |value: f64| {
+                                                                avatar_crop_x.set((value as i32).clamp(-100, 100));
                                                             },
                                                         }
                                                     }
                                                     label { class: "form-field",
                                                         span { {crate::i18n::tr("settings.avatar.pan_y")} }
-                                                        input {
+                                                        Slider {
                                                             "data-testid": "settings-avatar-crop-y",
-                                                            r#type: "range",
-                                                            min: "-100",
-                                                            max: "100",
-                                                            step: "5",
-                                                            value: "{avatar_crop_y()}",
+                                                            min: -100.0,
+                                                            max: 100.0,
+                                                            step: 5.0,
+                                                            value: avatar_crop_y() as f64,
                                                             disabled: avatar_uploading(),
-                                                            oninput: move |event| {
-                                                                if let Ok(value) = event.value().parse::<i32>() {
-                                                                    avatar_crop_y.set(value.clamp(-100, 100));
-                                                                }
+                                                            on_value_change: move |value: f64| {
+                                                                avatar_crop_y.set((value as i32).clamp(-100, 100));
                                                             },
                                                         }
                                                     }
@@ -1348,6 +1354,7 @@ pub fn SettingsPanel(
                                                             {crate::i18n::tr("settings.avatar.cancel_crop")}
                                                         }
                                                     }
+                                                }
                                                 }
                                             }
                                         }
@@ -1614,12 +1621,12 @@ pub fn SettingsPanel(
                                     span { "MLS / E2EE" }
                                 }
                                 label { "MLS Group Policy" }
-                                select {
-                                    value: "{mls_group_policy}",
-                                    onchange: move |evt| mls_group_policy.set(evt.value()),
-                                    option { value: "default", "Default" }
-                                    option { value: "always-encrypt", "Always Encrypt" }
-                                    option { value: "prefer-plaintext", "Prefer Plaintext" }
+                                Select::<String> {
+                                    value: Some(mls_group_policy_selected.into()),
+                                    on_value_change: move |v: Option<String>| { if let Some(v) = v { mls_group_policy.set(v); } },
+                                    SelectOption::<String> { index: 0usize, value: "default".to_string(), text_value: "Default", "Default" }
+                                    SelectOption::<String> { index: 1usize, value: "always-encrypt".to_string(), text_value: "Always Encrypt", "Always Encrypt" }
+                                    SelectOption::<String> { index: 2usize, value: "prefer-plaintext".to_string(), text_value: "Prefer Plaintext", "Prefer Plaintext" }
                                 }
                             }
                             // X11.1 — persistent MLS recovery-key entry.
@@ -1889,12 +1896,11 @@ pub fn SettingsPanel(
                                     }
                                 }
                                 label {
-                                    input {
-                                        r#type: "checkbox",
+                                    Checkbox {
                                         "data-testid": "realm-mute-toggle",
-                                        checked: notification_realm_muted(),
-                                        onchange: move |evt| {
-                                            let muted = evt.value() == "true";
+                                        checked: if notification_realm_muted() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                        on_checked_change: move |state: CheckboxState| {
+                                            let muted = bool::from(state);
                                             notification_realm_muted.set(muted);
                                             let realm_id = notification_realm_input().trim().to_owned();
                                             if realm_id.is_empty() {
@@ -1918,20 +1924,19 @@ pub fn SettingsPanel(
                                 }
                                 div { class: "actions",
                                     label {
-                                        input {
-                                            r#type: "checkbox",
+                                        Checkbox {
                                             "data-testid": "dnd-enabled-toggle",
-                                            checked: dnd_enabled(),
-                                            onchange: move |evt| dnd_enabled.set(evt.value() == "true"),
+                                            checked: if dnd_enabled() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                            on_checked_change: move |state: CheckboxState| dnd_enabled.set(bool::from(state)),
                                         }
                                         " Do not disturb"
                                     }
-                                    select {
+                                    Select::<String> {
                                         "data-testid": "dnd-mode-select",
-                                        value: "{dnd_mode}",
-                                        onchange: move |evt| dnd_mode.set(evt.value()),
-                                        option { value: "off", "Off" }
-                                        option { value: "now", "Now" }
+                                        value: Some(dnd_mode_selected.into()),
+                                        on_value_change: move |v: Option<String>| { if let Some(v) = v { dnd_mode.set(v); } },
+                                        SelectOption::<String> { index: 0usize, value: "off".to_string(), text_value: "Off", "Off" }
+                                        SelectOption::<String> { index: 1usize, value: "now".to_string(), text_value: "Now", "Now" }
                                     }
                                     Button {
                                         variant: ButtonVariant::Primary,
@@ -2125,10 +2130,9 @@ pub fn SettingsPanel(
                             div { class: "event", "data-testid": "privacy-settings",
                     div { class: "event-head", span { "Privacy" } span { "visibility controls" } }
                     label {
-                        input {
-                            r#type: "checkbox",
-                            checked: presence_visible(),
-                            onchange: move |evt| presence_visible.set(evt.value() == "true"),
+                        Checkbox {
+                            checked: if presence_visible() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |state: CheckboxState| presence_visible.set(bool::from(state)),
                         }
                         " Show presence to others"
                     }
@@ -2137,12 +2141,11 @@ pub fn SettingsPanel(
                         span { "Default" }
                     }
                     label {
-                        input {
-                            r#type: "checkbox",
+                        Checkbox {
                             "data-testid": "read-receipts-default-toggle",
-                            checked: read_receipt_default_send(),
-                            onchange: move |evt| {
-                                let send = evt.value() == "true";
+                            checked: if read_receipt_default_send() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |state: CheckboxState| {
+                                let send = bool::from(state);
                                 read_receipt_default_send.set(send);
                                 state_store.write().set_read_receipt_default_send(send);
                                 status.set(format!(

@@ -20,6 +20,7 @@ use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     display_name_for_did, handle_display_from_did, short_protocol_id, with_authed_api,
@@ -403,6 +404,7 @@ pub fn KanbanPanel(
     let mut columns = use_signal(|| initial_columns);
     let mut board_space_options = use_signal(move || initial_board_options.clone());
     let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
+    let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
     let mut board_view_id = use_signal(String::new);
     let mut lifecycle_container_projection =
         use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
@@ -1306,39 +1308,43 @@ pub fn KanbanPanel(
                                 let account_did_for_select = account_did.clone();
                                 let device_id_for_select = device_id.clone();
                                 rsx! {
-                                    select {
+                                    Select::<String> {
                                         class: "board-select-native",
                                         "data-testid": "board-space-select",
-                                        value: "{selected_board_space_id}",
-                                        onchange: move |event| {
-                                            select_kanban_board(
-                                                event.value(),
-                                                selected_board_space_id,
-                                                board_popover,
-                                                selected_card,
-                                                board_route_realm_id_for_select.clone(),
-                                                local_realm_id_for_select.clone(),
-                                                lifecycle_container_projection,
-                                                lifecycle_flow_projection,
-                                                columns,
-                                                adding_card_to,
-                                                board_status,
-                                                board_space_options,
-                                                projection_source,
-                                                state_store,
-                                                account_did_for_select.clone(),
-                                                device_id_for_select.clone(),
-                                            );
+                                        value: Some(selected_board_space_id_selected.into()),
+                                        on_value_change: move |v: Option<String>| {
+                                            if let Some(v) = v {
+                                                select_kanban_board(
+                                                    v,
+                                                    selected_board_space_id,
+                                                    board_popover,
+                                                    selected_card,
+                                                    board_route_realm_id_for_select.clone(),
+                                                    local_realm_id_for_select.clone(),
+                                                    lifecycle_container_projection,
+                                                    lifecycle_flow_projection,
+                                                    columns,
+                                                    adding_card_to,
+                                                    board_status,
+                                                    board_space_options,
+                                                    projection_source,
+                                                    state_store,
+                                                    account_did_for_select.clone(),
+                                                    device_id_for_select.clone(),
+                                                );
+                                            }
                                         },
-                                        option {
-                                            value: "",
-                                            selected: selected_board_space_id().is_empty(),
+                                        SelectOption::<String> {
+                                            index: 0usize,
+                                            value: "".to_string(),
+                                            text_value: "Select board",
                                             "Select board"
                                         }
-                                        for board_option in board_space_options().iter() {
-                                            option {
-                                                value: "{board_option.id}",
-                                                selected: selected_board_space_id() == board_option.id,
+                                        for (i, board_option) in board_space_options().iter().enumerate() {
+                                            SelectOption::<String> {
+                                                index: i + 1,
+                                                value: board_option.id.to_string(),
+                                                text_value: "{board_option.title}",
                                                 "{board_option.title}"
                                             }
                                         }

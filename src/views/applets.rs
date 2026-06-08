@@ -31,6 +31,7 @@ use serde_json::Value;
 
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -561,13 +562,16 @@ pub fn AppletsPanel(
                 {
                     let target_label = short_protocol_id(&target);
                     rsx! {
-                        div {
-                            class: "publish-to-source-modal-backdrop",
+                        Dialog {
+                            open: true,
+                            on_open_change: move |open: bool| {
+                                if !open {
+                                    trace_open_for.set(None);
+                                }
+                            },
                             "data-testid": "applet-accountability-modal",
                             div {
                                 class: "publish-to-source-modal",
-                                role: "dialog",
-                                "aria-modal": "true",
                                 header {
                                     class: "publish-to-source-modal-header",
                                     h2 { title: "{target}", "Accountability trace — {target_label}" }

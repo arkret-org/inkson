@@ -4,6 +4,7 @@ use super::UiIcon;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
 
@@ -159,16 +160,19 @@ pub fn MlsUnlockPrompt(
     };
 
     rsx! {
-        div {
-            class: "modal-overlay mls-recovery-modal-overlay",
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    dismissed.set(true);
+                }
+            },
             "data-testid": "mls-unlock-modal",
+            "aria-labelledby": "mls-unlock-title",
+            "aria-label": crate::i18n::tr("mls_unlock.aria_label"),
             div {
                 class: "modal event mls-recovery-modal mls-unlock-banner",
                 "data-testid": "mls-unlock-banner",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "mls-unlock-title",
-                "aria-label": crate::i18n::tr("mls_unlock.aria_label"),
                 div { class: "modal-head event-head",
                     h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
@@ -254,16 +258,19 @@ pub fn MlsRecoverySetupMissingBanner(
     }
 
     rsx! {
-        div {
-            class: "modal-overlay mls-recovery-modal-overlay",
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    needs_mls_recovery_setup.set(false);
+                }
+            },
             "data-testid": "mls-recovery-missing-modal",
+            "aria-labelledby": "mls-recovery-missing-title",
+            "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
             div {
                 class: "modal event mls-recovery-modal mls-recovery-missing-banner",
                 "data-testid": "mls-recovery-missing-banner",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "mls-recovery-missing-title",
-                "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
                 div { class: "modal-head event-head",
                     h3 { id: "mls-recovery-missing-title", {crate::i18n::tr("mls_recovery_missing.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }

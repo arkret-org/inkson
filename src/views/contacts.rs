@@ -13,12 +13,14 @@ use crate::models::ContactListRow;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::select::{Select, SelectOption};
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
 pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
     let mut target = use_signal(String::new);
     let mut scope = use_signal(|| "direct_message".to_owned());
+    let scope_selected = use_memo(move || Some(scope()));
     let mut status = use_signal(|| "ready".to_owned());
 
     rsx! {
@@ -39,15 +41,15 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
                             oninput: move |event: FormEvent| target.set(event.value()),
                         }
                         Label { html_for: "contact-scope-select-input", "Scope" }
-                        select {
+                        Select::<String> {
                             id: "contact-scope-select-input",
                             "data-testid": "contact-scope-select",
-                            value: "{scope}",
-                            onchange: move |evt| scope.set(evt.value()),
-                            option { value: "invite", "invite" }
-                            option { value: "direct_message", "direct_message" }
-                            option { value: "voice_call", "voice_call" }
-                            option { value: "video_call", "video_call" }
+                            value: Some(scope_selected.into()),
+                            on_value_change: move |v: Option<String>| { if let Some(v) = v { scope.set(v); } },
+                            SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "invite", "invite" }
+                            SelectOption::<String> { index: 1usize, value: "direct_message".to_string(), text_value: "direct_message", "direct_message" }
+                            SelectOption::<String> { index: 2usize, value: "voice_call".to_string(), text_value: "voice_call", "voice_call" }
+                            SelectOption::<String> { index: 3usize, value: "video_call".to_string(), text_value: "video_call", "video_call" }
                         }
                         div { class: "actions",
                             Button {

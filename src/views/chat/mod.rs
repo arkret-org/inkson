@@ -1,6 +1,7 @@
 use cokret_sdk::push_rule_core::WatchLevel;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
@@ -16,6 +17,8 @@ use crate::models::SubmitEventOutcome;
 use crate::operation::{EventEnvelope, OperationBuilder, cx_ops, trim_realm_id, uuid_v7};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
@@ -778,8 +781,16 @@ pub fn ChatPanel(
             }
 
             if !embedded && !direct_mode && create_dialog_open() {
-                div { class: "discussion-modal-backdrop", "data-testid": "channel-create-modal",
-                    div { class: "discussion-modal", role: "dialog", "aria-modal": "true", "aria-label": "New Flow",
+                Dialog {
+                    open: true,
+                    on_open_change: move |open: bool| {
+                        if !open {
+                            create_dialog_open.set(false);
+                        }
+                    },
+                    "data-testid": "channel-create-modal",
+                    "aria-label": "New Flow",
+                    div { class: "discussion-modal",
                         div { class: "discussion-modal-head",
                             div { class: "discussion-title-row",
                                 h2 { "New Flow" }
@@ -812,11 +823,10 @@ pub fn ChatPanel(
                                 oninput: move |event: FormEvent| new_channel_topic.set(event.value()),
                             }
                             label { class: "discussion-checkbox-row",
-                                input {
-                                    r#type: "checkbox",
+                                Checkbox {
                                     "data-testid": "new-channel-create-card",
-                                    checked: new_channel_create_card(),
-                                    onchange: move |evt| new_channel_create_card.set(evt.value() == "true"),
+                                    checked: if new_channel_create_card() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                    on_checked_change: move |state: CheckboxState| new_channel_create_card.set(bool::from(state)),
                                 }
                                 span { "Create matching Card" }
                             }
@@ -2462,14 +2472,13 @@ pub fn ChatPanel(
                         div { class: "discussion-subhead", span { "Settings" } }
                         label { class: "settings-row",
                             span { {crate::i18n::tr("chat.settings.mute_notifications")} }
-                            input {
-                                r#type: "checkbox",
+                            Checkbox {
                                 "data-testid": "discussion-settings-mute",
-                                checked: realm_is_muted,
-                                onchange: {
+                                checked: if realm_is_muted { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: {
                                     let realm_id = realm_id_for_mute.clone();
-                                    move |evt: Event<FormData>| {
-                                        let new_muted = evt.value() == "true";
+                                    move |state: CheckboxState| {
+                                        let new_muted = bool::from(state);
                                         state_store
                                             .write()
                                             .set_realm_muted(realm_id.clone(), new_muted);
@@ -2479,14 +2488,13 @@ pub fn ChatPanel(
                         }
                         label { class: "settings-row",
                             span { {crate::i18n::tr("chat.settings.read_receipts")} }
-                            input {
-                                r#type: "checkbox",
+                            Checkbox {
                                 "data-testid": "discussion-settings-read-receipts",
-                                checked: rr_active,
-                                onchange: {
+                                checked: if rr_active { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: {
                                     let flow_id = flow_id_for_rr.clone();
-                                    move |evt: Event<FormData>| {
-                                        let new_value = evt.value() == "true";
+                                    move |state: CheckboxState| {
+                                        let new_value = bool::from(state);
                                         state_store
                                             .write()
                                             .set_read_receipt_flow_override(

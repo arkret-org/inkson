@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
@@ -8,8 +9,10 @@ use crate::models::RealmTreeNodeKind;
 use crate::operation::cx_ops;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{active_sync_token, authed_api_with_sync, short_protocol_id};
 
@@ -978,6 +981,7 @@ pub fn RealmAdminPanel(
     // field name). Quota / scope_limitation are surfaced in the dropdown
     // but show a "coming soon" hint until matching widgets land.
     let mut cap_constraint_kind = use_signal(|| "none".to_owned());
+    let cap_constraint_kind_selected = use_memo(move || Some(cap_constraint_kind()));
     let mut cap_temporal_not_before = use_signal(String::new);
     let mut cap_temporal_expires_at = use_signal(String::new);
     // Covered_frontier alert threshold. Default 5 (mirrors sodmin's
@@ -1843,10 +1847,9 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "principal-admission-policy",
                 div { class: "event-head", span { "Principal Admission" } span { "hard gate" } }
                 label {
-                    input {
-                        r#type: "checkbox",
-                        checked: principal_admission_enabled(),
-                        onchange: move |evt| principal_admission_enabled.set(evt.value() == "true"),
+                    Checkbox {
+                        checked: if principal_admission_enabled() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                        on_checked_change: move |state: CheckboxState| principal_admission_enabled.set(bool::from(state)),
                     }
                     " Enabled"
                 }
@@ -2099,14 +2102,14 @@ pub fn RealmAdminPanel(
                     span { "temporal MVP · quota / scope_limitation soon" }
                 }
                 label { "Constraint family" }
-                select {
+                Select::<String> {
                     "data-testid": "cap-constraint-kind-select",
-                    value: "{cap_constraint_kind}",
-                    onchange: move |evt| cap_constraint_kind.set(evt.value()),
-                    option { value: "none", "none" }
-                    option { value: "temporal", "temporal (not_before / expires_at)" }
-                    option { value: "quota", "quota (coming soon)" }
-                    option { value: "scope_limitation", "scope_limitation (coming soon)" }
+                    value: Some(cap_constraint_kind_selected.into()),
+                    on_value_change: move |v: Option<String>| { if let Some(v) = v { cap_constraint_kind.set(v); } },
+                    SelectOption::<String> { index: 0usize, value: "none".to_string(), text_value: "none", "none" }
+                    SelectOption::<String> { index: 1usize, value: "temporal".to_string(), text_value: "temporal (not_before / expires_at)", "temporal (not_before / expires_at)" }
+                    SelectOption::<String> { index: 2usize, value: "quota".to_string(), text_value: "quota (coming soon)", "quota (coming soon)" }
+                    SelectOption::<String> { index: 3usize, value: "scope_limitation".to_string(), text_value: "scope_limitation (coming soon)", "scope_limitation (coming soon)" }
                 }
                 if cap_constraint_kind() == "temporal" {
                     div { "data-testid": "cap-constraint-temporal-fields",

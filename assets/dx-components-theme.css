@@ -1,45 +1,70 @@
-/* dioxus-components 主题桥接层
- * -------------------------------------------------------------------
- * 把 dioxus-primitives 样式化组件(src/ui/*)所引用的 dxc 主题变量
- * 映射到 yougen 现有设计 token(design.css 的 --accent / --surface /
- * --text / --border 等)。目的:组件原生贴合 yougen 观感、并自动随
- * <html> 的 [data-theme] 明暗切换 —— 无需 dxc 自带的 --dark/--light
- * 机制(yougen token 本身已按主题切换)。
- *
- * 这是「保持现有观感」全量迁移的支点:组件样式集中在此对齐,旧的
- * per-element 通用 CSS(.primary / .auth-form input 等)随视图迁移
- * 后即可删除。
+/* This file contains the theme variables for the styled dioxus-components components. You only
+ * need to import this file once in your project root.
  */
 
+html[data-theme="dark"] {
+  --dark: initial;
+  --light: ;
+}
+
+html[data-theme="light"] {
+  --dark: ;
+  --light: initial;
+}
+
+html[data-theme="dark"] [class~="dxc-system"] {
+  --dxc-light-on: ;
+  --dxc-dark-on: initial;
+}
+
+html[data-theme="light"] [class~="dxc-system"] {
+  --dxc-light-on: initial;
+  --dxc-dark-on: ;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dark: initial;
+    --light: ;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --dark: ;
+    --light: initial;
+  }
+}
+
 :root {
-  /* primary(中性/表面)阶 —— 表面、悬浮、边框 */
-  --primary-color: var(--surface);
-  --primary-color-1: var(--bg-elev);
-  --primary-color-2: var(--surface);
-  --primary-color-3: var(--surface-2);
-  --primary-color-4: var(--surface-2);
-  --primary-color-5: var(--surface-3);
-  --primary-color-6: var(--border-strong);
-  --primary-color-7: var(--border-strong);
+  /* Primary colors */
+  --primary-color: var(--dark, #000) var(--light, #fff);
+  --primary-color-1: var(--dark, #0e0e0e) var(--light, #fbfbfb);
+  --primary-color-2: var(--dark, #0a0a0a) var(--light, #fff);
+  --primary-color-3: var(--dark, #141313) var(--light, #f8f8f8);
+  --primary-color-4: var(--dark, #1a1a1a) var(--light, #f8f8f8);
+  --primary-color-5: var(--dark, #262626) var(--light, #f5f5f5);
+  --primary-color-6: var(--dark, #232323) var(--light, #e5e5e5);
+  --primary-color-7: var(--dark, #3e3e3e) var(--light, #b0b0b0);
 
-  /* secondary(前景/文字 + 强调)阶 */
-  --secondary-color: var(--text);
-  --secondary-color-1: var(--text);
-  --secondary-color-2: var(--accent);
-  --secondary-color-3: var(--text-2);
-  --secondary-color-4: var(--text);
-  --secondary-color-5: var(--text-3);
-  --secondary-color-6: var(--border);
+  /* Secondary colors */
+  --secondary-color: var(--dark, #fff) var(--light, #000);
+  --secondary-color-1: var(--dark, #fafafa) var(--light, #000);
+  --secondary-color-2: var(--dark, #e6e6e6) var(--light, #0d0d0d);
+  --secondary-color-3: var(--dark, #dcdcdc) var(--light, #2b2b2b);
+  --secondary-color-4: var(--dark, #d4d4d4) var(--light, #111);
+  --secondary-color-5: var(--dark, #a1a1a1) var(--light, #848484);
+  --secondary-color-6: var(--dark, #5d5d5d) var(--light, #d0d0d0);
 
-  /* 焦点与语义色 */
-  --focused-border-color: var(--accent);
-  --primary-success-color: var(--success-soft);
-  --secondary-success-color: var(--success);
-  --primary-warning-color: var(--warning-soft);
-  --secondary-warning-color: var(--warning);
-  --primary-error-color: var(--danger);
-  --secondary-error-color: var(--danger);
-  --contrast-error-color: var(--text-on-accent);
-  --primary-info-color: var(--text);
-  --secondary-info-color: var(--text-2);
+  /* Highlight colors */
+  --focused-border-color: var(--dark, #2b7fff) var(--light, #2b7fff);
+  --primary-success-color: var(--dark, #02271c) var(--light, #ecfdf5);
+  --secondary-success-color: var(--dark, #b6fae3) var(--light, #10b981);
+  --primary-warning-color: var(--dark, #342203) var(--light, #fffbeb);
+  --secondary-warning-color: var(--dark, #feeac7) var(--light, #f59e0b);
+  --primary-error-color: var(--dark, #a22e2e) var(--light, #dc2626);
+  --secondary-error-color: var(--dark, #9b1c1c) var(--light, #ef4444);
+  --contrast-error-color: var(--dark, var(--secondary-color-3)) var(--light, var(--primary-color));
+  --primary-info-color: var(--dark, var(--primary-color-5)) var(--light, var(--primary-color));
+  --secondary-info-color: var(--dark, var(--primary-color-7)) var(--light, var(--secondary-color-3));
 }

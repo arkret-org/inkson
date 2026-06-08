@@ -708,7 +708,10 @@ test("kanban board selector swaps projected board columns", async ({ page }) => 
   await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
   await expect(page.getByTestId("kanban-board-grid")).toContainText("Legal review for public beta");
 
-  await page.getByTestId("board-space-select").selectOption({ label: "Secondary planning board" });
+  // board-space-select 现为 dxc Select(自定义 listbox 弹层,非原生 <select>),
+  // 故不能再用 selectOption();改为「点 trigger 按钮打开 → 点 role=option 选项」。
+  await page.getByTestId("board-space-select").getByRole("button").click();
+  await page.getByRole("option", { name: "Secondary planning board" }).click();
 
   await expect(page.getByTestId("kanban-column")).toHaveCount(1);
   await expect(page.getByTestId("kanban-board-grid")).toContainText("Secondary board card");

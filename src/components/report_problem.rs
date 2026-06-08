@@ -11,8 +11,10 @@
 //! preference is persisted via `LocalStateStore`.
 
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 
 /// Opt-in preference for crash telemetry. Default is `false` — the
 /// user must explicitly tick the box.
@@ -190,14 +192,12 @@ pub fn CrashTelemetryToggle(
         label {
             class: "field crash-telemetry-toggle",
             "data-testid": "crash-telemetry-toggle",
-            input {
-                r#type: "checkbox",
-                checked: enabled,
+            Checkbox {
+                checked: if enabled { CheckboxState::Checked } else { CheckboxState::Unchecked },
                 "data-testid": "crash-telemetry-checkbox",
-                onchange: move |evt| {
-                    on_change.call(CrashTelemetryPrefs {
-                        enabled: evt.value() == "true" || evt.value() == "on",
-                    });
+                on_checked_change: move |state: CheckboxState| {
+                    let enabled = bool::from(state);
+                    on_change.call(CrashTelemetryPrefs { enabled });
                 },
             }
             span { class: "field-label", "Send anonymous crash reports (opt-in)" }

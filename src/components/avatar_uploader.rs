@@ -10,6 +10,7 @@ use dioxus::prelude::*;
 
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::label::Label;
+use crate::ui::slider::Slider;
 
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAvatarSelection {
@@ -189,49 +190,40 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                             }
                             label { class: "form-field",
                                 span { "Zoom" }
-                                input {
+                                Slider {
                                     "data-testid": "{crop_zoom_test_id}",
-                                    r#type: "range",
-                                    min: "100",
-                                    max: "300",
-                                    step: "5",
-                                    value: "{crop_zoom()}",
-                                    oninput: move |event| {
-                                        if let Ok(value) = event.value().parse::<i32>() {
-                                            crop_zoom.set(value.clamp(100, 300));
-                                        }
+                                    min: 100.0,
+                                    max: 300.0,
+                                    step: 5.0,
+                                    value: crop_zoom() as f64,
+                                    on_value_change: move |value: f64| {
+                                        crop_zoom.set((value as i32).clamp(100, 300));
                                     },
                                 }
                             }
                             label { class: "form-field",
                                 span { "Pan X" }
-                                input {
+                                Slider {
                                     "data-testid": "{crop_x_test_id}",
-                                    r#type: "range",
-                                    min: "-100",
-                                    max: "100",
-                                    step: "5",
-                                    value: "{crop_x()}",
-                                    oninput: move |event| {
-                                        if let Ok(value) = event.value().parse::<i32>() {
-                                            crop_x.set(value.clamp(-100, 100));
-                                        }
+                                    min: -100.0,
+                                    max: 100.0,
+                                    step: 5.0,
+                                    value: crop_x() as f64,
+                                    on_value_change: move |value: f64| {
+                                        crop_x.set((value as i32).clamp(-100, 100));
                                     },
                                 }
                             }
                             label { class: "form-field",
                                 span { "Pan Y" }
-                                input {
+                                Slider {
                                     "data-testid": "{crop_y_test_id}",
-                                    r#type: "range",
-                                    min: "-100",
-                                    max: "100",
-                                    step: "5",
-                                    value: "{crop_y()}",
-                                    oninput: move |event| {
-                                        if let Ok(value) = event.value().parse::<i32>() {
-                                            crop_y.set(value.clamp(-100, 100));
-                                        }
+                                    min: -100.0,
+                                    max: 100.0,
+                                    step: 5.0,
+                                    value: crop_y() as f64,
+                                    on_value_change: move |value: f64| {
+                                        crop_y.set((value as i32).clamp(-100, 100));
                                     },
                                 }
                             }

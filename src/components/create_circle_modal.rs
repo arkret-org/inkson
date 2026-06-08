@@ -15,7 +15,9 @@
 use dioxus::prelude::*;
 
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
+use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 
 /// Form payload emitted by the modal on submit.
@@ -56,13 +58,22 @@ pub fn CreateCircleModal(
     let mut members_text = use_signal(String::new);
     let mut validation_error = use_signal(|| Option::<String>::None);
 
+    let color_token_selected = use_memo(move || Some(form.read().color_token.clone()));
+    let symbol_glyph_selected = use_memo(move || Some(form.read().symbol_glyph.clone()));
+    let directory_visibility_selected =
+        use_memo(move || Some(form.read().directory_visibility.clone()));
+
     rsx! {
-        div { class: "modal-overlay create-circle-modal-overlay",
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    on_cancel.call(());
+                }
+            },
             "data-testid": "create-circle-modal",
-            role: "dialog",
-            "aria-modal": "true",
             "aria-label": "New Circle in {realm_id}",
-            div { class: "modal",
+            div { class: "modal create-circle-modal-overlay",
                 header { class: "modal-head",
                     h2 { "New Circle in {realm_id}" }
                     Button {
@@ -101,51 +112,54 @@ pub fn CreateCircleModal(
                     }
                     label { class: "field",
                         span { class: "field-label", "Color token" }
-                        select {
+                        Select::<String> {
                             class: "select",
                             "data-testid": "create-circle-color",
-                            value: "{form.read().color_token}",
-                            onchange: move |evt| {
-                                let value = evt.value();
-                                form.with_mut(|f| f.color_token = value);
+                            value: Some(color_token_selected.into()),
+                            on_value_change: move |v: Option<String>| {
+                                if let Some(v) = v {
+                                    form.with_mut(|f| f.color_token = v);
+                                }
                             },
-                            for token in ["slate", "indigo", "violet", "emerald", "amber", "pink", "cyan"] {
-                                option { value: "{token}", "{token}" }
+                            for (i, token) in ["slate", "indigo", "violet", "emerald", "amber", "pink", "cyan"].iter().enumerate() {
+                                SelectOption::<String> { index: i, value: token.to_string(), text_value: "{token}", "{token}" }
                             }
                         }
                     }
                     label { class: "field",
                         span { class: "field-label", "Symbol glyph" }
-                        select {
+                        Select::<String> {
                             class: "select",
                             "data-testid": "create-circle-symbol",
-                            value: "{form.read().symbol_glyph}",
-                            onchange: move |evt| {
-                                let value = evt.value();
-                                form.with_mut(|f| f.symbol_glyph = value);
+                            value: Some(symbol_glyph_selected.into()),
+                            on_value_change: move |v: Option<String>| {
+                                if let Some(v) = v {
+                                    form.with_mut(|f| f.symbol_glyph = v);
+                                }
                             },
-                            for glyph in [
+                            for (i, glyph) in [
                                 "lock", "shield", "eye", "eye_off", "user_shield", "fingerprint",
                                 "key", "diamond", "flame", "leaf", "anchor", "compass", "atom",
                                 "bolt", "moon", "sun", "star", "globe", "satellite", "ring", "chain",
                                 "tag", "flag", "scroll", "scale", "hourglass", "spark",
-                            ] {
-                                option { value: "{glyph}", "{glyph}" }
+                            ].iter().enumerate() {
+                                SelectOption::<String> { index: i, value: glyph.to_string(), text_value: "{glyph}", "{glyph}" }
                             }
                         }
                     }
                     label { class: "field",
                         span { class: "field-label", "Directory visibility" }
-                        select {
+                        Select::<String> {
                             class: "select",
                             "data-testid": "create-circle-visibility",
-                            value: "{form.read().directory_visibility}",
-                            onchange: move |evt| {
-                                let value = evt.value();
-                                form.with_mut(|f| f.directory_visibility = value);
+                            value: Some(directory_visibility_selected.into()),
+                            on_value_change: move |v: Option<String>| {
+                                if let Some(v) = v {
+                                    form.with_mut(|f| f.directory_visibility = v);
+                                }
                             },
-                            option { value: "members", "Members only" }
-                            option { value: "realm_members", "Realm members" }
+                            SelectOption::<String> { index: 0usize, value: "members".to_string(), text_value: "Members only", "Members only" }
+                            SelectOption::<String> { index: 1usize, value: "realm_members".to_string(), text_value: "Realm members", "Realm members" }
                         }
                     }
                     label { class: "field",

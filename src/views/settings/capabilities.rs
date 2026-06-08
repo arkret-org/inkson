@@ -19,6 +19,7 @@ use crate::api::CokretApi;
 use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// One row in the user's capability list. Backed by either the user
@@ -245,51 +246,57 @@ pub fn CapabilitiesSettingsCard(
                     {
                         let capability_id_label = short_protocol_id(&row.capability_id);
                         rsx! {
-                            div {
-                                class: "event modal",
+                            Dialog {
+                                open: true,
+                                on_open_change: move |open: bool| {
+                                    if !open {
+                                        detail_for.set(None);
+                                    }
+                                },
                                 "data-testid": "capability-detail-modal",
                                 "data-capability-id": "{row.capability_id}",
-                                role: "dialog",
-                                "aria-modal": "true",
-                                div { class: "event-head",
-                                    span { "Delegation chain" }
-                                    Button {
-                                        variant: ButtonVariant::Ghost,
-                                        size: ButtonSize::Icon,
-                                        class: "btn",
-                                        "data-testid": "capability-detail-close",
-                                        "aria-label": "Close capability detail",
-                                        onclick: move |_| detail_for.set(None),
-                                        "×"
+                                div {
+                                    class: "event modal",
+                                    div { class: "event-head",
+                                        span { "Delegation chain" }
+                                        Button {
+                                            variant: ButtonVariant::Ghost,
+                                            size: ButtonSize::Icon,
+                                            class: "btn",
+                                            "data-testid": "capability-detail-close",
+                                            "aria-label": "Close capability detail",
+                                            onclick: move |_| detail_for.set(None),
+                                            "×"
+                                        }
                                     }
-                                }
-                                div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
-                                if row.chain.is_empty() {
-                                    div {
-                                        class: "muted",
-                                        "data-testid": "capability-chain-empty",
-                                        "No attenuation chain — capability is held directly from the root issuer."
-                                    }
-                                } else {
-                                    ol { class: "settings-list",
-                                        for (idx, step) in row.chain.iter().enumerate() {
-                                            {
-                                                let issuer_did_label = short_protocol_id(&step.issuer_did);
-                                                let subject_did_label = short_protocol_id(&step.subject_did);
-                                                rsx! {
-                                                    li {
-                                                        class: "event",
-                                                        "data-testid": "capability-chain-step",
-                                                        "data-step-index": "{idx}",
-                                                        div { class: "event-head",
-                                                            span { "Step {idx + 1}" }
-                                                            span {
-                                                                class: "mono",
-                                                                title: "{step.issuer_did} → {step.subject_did}",
-                                                                "{issuer_did_label} → {subject_did_label}"
+                                    div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
+                                    if row.chain.is_empty() {
+                                        div {
+                                            class: "muted",
+                                            "data-testid": "capability-chain-empty",
+                                            "No attenuation chain — capability is held directly from the root issuer."
+                                        }
+                                    } else {
+                                        ol { class: "settings-list",
+                                            for (idx, step) in row.chain.iter().enumerate() {
+                                                {
+                                                    let issuer_did_label = short_protocol_id(&step.issuer_did);
+                                                    let subject_did_label = short_protocol_id(&step.subject_did);
+                                                    rsx! {
+                                                        li {
+                                                            class: "event",
+                                                            "data-testid": "capability-chain-step",
+                                                            "data-step-index": "{idx}",
+                                                            div { class: "event-head",
+                                                                span { "Step {idx + 1}" }
+                                                                span {
+                                                                    class: "mono",
+                                                                    title: "{step.issuer_did} → {step.subject_did}",
+                                                                    "{issuer_did_label} → {subject_did_label}"
+                                                                }
                                                             }
+                                                            div { class: "muted mono", "constraints {step.constraints}" }
                                                         }
-                                                        div { class: "muted mono", "constraints {step.constraints}" }
                                                     }
                                                 }
                                             }

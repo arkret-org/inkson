@@ -5,6 +5,7 @@ use chrono::Utc;
 // FormData events; not re-exported via the prelude root.
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use crate::conformance::PlaintextBoundary;
@@ -15,8 +16,8 @@ use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
+use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use dioxus_primitives::checkbox::CheckboxState;
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
     with_authed_api_with_sync,
@@ -432,6 +433,7 @@ pub fn TimelinePanel(
     let mut private_plaintext = use_signal(|| false);
     let mut plaintext_ack = use_signal(|| false);
     let mut incident_priority = use_signal(|| "normal".to_owned());
+    let incident_priority_selected = use_memo(move || Some(incident_priority()));
     let mut public_update_guard = use_signal(|| true);
     let mut public_update_guard_status = use_signal(|| "public update guard ready".to_owned());
     let mut initial_sync_requested = use_signal(|| false);
@@ -1328,14 +1330,18 @@ pub fn TimelinePanel(
                 div { class: "actions",
                     label {
                         span { "Priority" }
-                        select {
+                        Select::<String> {
                             "data-testid": "incident-priority-select",
-                            value: "{incident_priority}",
-                            onchange: move |evt| incident_priority.set(evt.value()),
-                            option { value: "normal", "Normal" }
-                            option { value: "sev3", "SEV-3" }
-                            option { value: "sev2", "SEV-2" }
-                            option { value: "sev1", "SEV-1" }
+                            value: Some(incident_priority_selected.into()),
+                            on_value_change: move |v: Option<String>| {
+                                if let Some(v) = v {
+                                    incident_priority.set(v);
+                                }
+                            },
+                            SelectOption::<String> { index: 0usize, value: "normal".to_string(), text_value: "Normal", "Normal" }
+                            SelectOption::<String> { index: 1usize, value: "sev3".to_string(), text_value: "SEV-3", "SEV-3" }
+                            SelectOption::<String> { index: 2usize, value: "sev2".to_string(), text_value: "SEV-2", "SEV-2" }
+                            SelectOption::<String> { index: 3usize, value: "sev1".to_string(), text_value: "SEV-1", "SEV-1" }
                         }
                     }
                     label {
@@ -1378,12 +1384,15 @@ pub fn TimelinePanel(
                     "Plaintext messages may be visible to the configured server and may feed server-side search, previews, moderation, and notification snippets."
                 }
                 label {
-                    input {
-                        r#type: "checkbox",
+                    Checkbox {
                         "data-testid": "private-plaintext-toggle",
-                        checked: private_plaintext(),
-                        onchange: move |evt| {
-                            private_plaintext.set(evt.value() == "true");
+                        checked: if private_plaintext() {
+                            CheckboxState::Checked
+                        } else {
+                            CheckboxState::Unchecked
+                        },
+                        on_checked_change: move |state: CheckboxState| {
+                            private_plaintext.set(bool::from(state));
                             plaintext_ack.set(false);
                         },
                     }
@@ -1749,11 +1758,14 @@ pub fn TimelinePanel(
 
             div { class: "actions",
                 label {
-                    input {
-                        r#type: "checkbox",
+                    Checkbox {
                         "data-testid": "encrypt-local-button",
-                        checked: encrypt_toggle(),
-                        onchange: move |evt| encrypt_toggle.set(evt.value() == "true"),
+                        checked: if encrypt_toggle() {
+                            CheckboxState::Checked
+                        } else {
+                            CheckboxState::Unchecked
+                        },
+                        on_checked_change: move |state: CheckboxState| encrypt_toggle.set(bool::from(state)),
                     }
                     " Encrypt Local"
                 }

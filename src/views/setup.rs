@@ -11,6 +11,7 @@ use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
+use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{authed_api, persist_config, short_protocol_id};
 
@@ -454,6 +455,20 @@ pub fn SetupPanel(
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
     let mut created_realm_id = use_signal(String::new);
 
+    let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
+    let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
+    let realm_policy_history_visibility_selected =
+        use_memo(move || Some(realm_policy_history_visibility()));
+    let realm_encryption_profile_selected = use_memo(move || Some(realm_encryption_profile()));
+    let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
+    let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
+    let realm_anchor_profile_selected = use_memo(move || Some(realm_anchor_profile()));
+    let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
+    let new_space_realm_id_selected = use_memo(move || Some(new_space_realm_id()));
+    let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
+    let new_space_parent_id_selected = use_memo(move || Some(new_space_parent_id()));
+    let new_space_default_realm_id_selected = use_memo(move || Some(new_space_default_realm_id()));
+
     let selected_realm_value = selected_realm_id();
     let has_selected_realm = !selected_realm_value.trim().is_empty();
     let active_create_step = create_step();
@@ -514,8 +529,8 @@ pub fn SetupPanel(
     let new_space_title_value = new_space_title();
     let new_space_summary_value = new_space_summary();
     let new_space_kind_value = new_space_kind();
-    let new_space_parent_id_value = new_space_parent_id();
-    let new_space_default_realm_id_value = new_space_default_realm_id();
+    let _new_space_parent_id_value = new_space_parent_id();
+    let _new_space_default_realm_id_value = new_space_default_realm_id();
     let new_space_state_value = new_space_state();
     let new_space_created_id_value = new_space_created_id();
     let new_space_created_id_label = short_protocol_id(&new_space_created_id_value);
@@ -762,14 +777,19 @@ pub fn SetupPanel(
                                         strong { "Discoverability" }
                                         div { class: "workflow-form setup-field",
                                             label { "Who can discover that this Realm exists?" }
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "realm-discoverability-input",
-                                                value: "{discoverability_value}",
-                                                onchange: move |event| realm_discoverability.set(event.value()),
-                                                for (option_value, label, _) in DISCOVERABILITY_OPTIONS {
-                                                    option {
-                                                        value: "{option_value}",
-                                                        selected: discoverability_value == option_value,
+                                                value: Some(realm_discoverability_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        realm_discoverability.set(v);
+                                                    }
+                                                },
+                                                for (i, (option_value, label, _)) in DISCOVERABILITY_OPTIONS.iter().enumerate() {
+                                                    SelectOption::<String> {
+                                                        index: i,
+                                                        value: option_value.to_string(),
+                                                        text_value: "{label}",
                                                         "{label}"
                                                     }
                                                 }
@@ -783,14 +803,19 @@ pub fn SetupPanel(
                                         strong { "Join rule" }
                                         div { class: "workflow-form setup-field",
                                             label { "How does a principal become a member?" }
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "realm-policy-join-rule-input",
-                                                value: "{join_rule_value}",
-                                                onchange: move |event| realm_policy_join_rule.set(event.value()),
-                                                for (option_value, label, _) in JOIN_RULE_OPTIONS {
-                                                    option {
-                                                        value: "{option_value}",
-                                                        selected: join_rule_value == option_value,
+                                                value: Some(realm_policy_join_rule_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        realm_policy_join_rule.set(v);
+                                                    }
+                                                },
+                                                for (i, (option_value, label, _)) in JOIN_RULE_OPTIONS.iter().enumerate() {
+                                                    SelectOption::<String> {
+                                                        index: i,
+                                                        value: option_value.to_string(),
+                                                        text_value: "{label}",
                                                         "{label}"
                                                     }
                                                 }
@@ -804,14 +829,19 @@ pub fn SetupPanel(
                                         strong { "History visibility" }
                                         div { class: "workflow-form setup-field",
                                             label { "What history can new members read?" }
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "realm-policy-history-visibility-input",
-                                                value: "{history_visibility_value}",
-                                                onchange: move |event| realm_policy_history_visibility.set(event.value()),
-                                                for (option_value, label, _) in HISTORY_VISIBILITY_OPTIONS {
-                                                    option {
-                                                        value: "{option_value}",
-                                                        selected: history_visibility_value == option_value,
+                                                value: Some(realm_policy_history_visibility_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        realm_policy_history_visibility.set(v);
+                                                    }
+                                                },
+                                                for (i, (option_value, label, _)) in HISTORY_VISIBILITY_OPTIONS.iter().enumerate() {
+                                                    SelectOption::<String> {
+                                                        index: i,
+                                                        value: option_value.to_string(),
+                                                        text_value: "{label}",
                                                         "{label}"
                                                     }
                                                 }
@@ -830,14 +860,19 @@ pub fn SetupPanel(
                                         strong { "Encryption profile" }
                                         div { class: "workflow-form setup-field",
                                             label { "How is content protected at rest and in transit?" }
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "realm-encryption-profile-input",
-                                                value: "{encryption_profile_value}",
-                                                onchange: move |event| realm_encryption_profile.set(event.value()),
-                                                for (option_value, label, _) in ENCRYPTION_PROFILE_OPTIONS {
-                                                    option {
-                                                        value: "{option_value}",
-                                                        selected: encryption_profile_value == option_value,
+                                                value: Some(realm_encryption_profile_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        realm_encryption_profile.set(v);
+                                                    }
+                                                },
+                                                for (i, (option_value, label, _)) in ENCRYPTION_PROFILE_OPTIONS.iter().enumerate() {
+                                                    SelectOption::<String> {
+                                                        index: i,
+                                                        value: option_value.to_string(),
+                                                        text_value: "{label}",
                                                         "{label}"
                                                     }
                                                 }
@@ -854,14 +889,19 @@ pub fn SetupPanel(
                                         strong { "Security class" }
                                         div { class: "workflow-form setup-field",
                                             label { "Posture for federation and audit defaults." }
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "realm-security-class-input",
-                                                value: "{security_class_value}",
-                                                onchange: move |event| realm_security_class.set(event.value()),
-                                                for (option_value, label, _) in SECURITY_CLASS_OPTIONS {
-                                                    option {
-                                                        value: "{option_value}",
-                                                        selected: security_class_value == option_value,
+                                                value: Some(realm_security_class_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        realm_security_class.set(v);
+                                                    }
+                                                },
+                                                for (i, (option_value, label, _)) in SECURITY_CLASS_OPTIONS.iter().enumerate() {
+                                                    SelectOption::<String> {
+                                                        index: i,
+                                                        value: option_value.to_string(),
+                                                        text_value: "{label}",
                                                         "{label}"
                                                     }
                                                 }
@@ -889,15 +929,20 @@ pub fn SetupPanel(
                                             strong { "Federation policy" }
                                             div { class: "workflow-form setup-field",
                                                 label { "How does this Realm interoperate with other deployments?" }
-                                                select {
+                                                Select::<String> {
                                                     "data-testid": "realm-federation-policy-input",
-                                                    value: "{federation_policy_value}",
-                                                    onchange: move |event| realm_federation_policy.set(event.value()),
-                                                    for (option_value, label, _) in FEDERATION_POLICY_OPTIONS {
-                                                        option {
-                                                            value: "{option_value}",
-                                                            selected: federation_policy_value == option_value,
-                                                            disabled: federation_policy_open_forbidden && option_value == "open",
+                                                    value: Some(realm_federation_policy_selected.into()),
+                                                    on_value_change: move |v: Option<String>| {
+                                                        if let Some(v) = v {
+                                                            realm_federation_policy.set(v);
+                                                        }
+                                                    },
+                                                    for (i, (option_value, label, _)) in FEDERATION_POLICY_OPTIONS.iter().enumerate() {
+                                                        SelectOption::<String> {
+                                                            index: i,
+                                                            value: option_value.to_string(),
+                                                            text_value: "{label}",
+                                                            disabled: federation_policy_open_forbidden && *option_value == "open",
                                                             "{label}"
                                                         }
                                                     }
@@ -916,14 +961,19 @@ pub fn SetupPanel(
                                             strong { "Anchor profile" }
                                             div { class: "workflow-form setup-field",
                                                 label { "Who signs durable anchors for this Realm?" }
-                                                select {
+                                                Select::<String> {
                                                     "data-testid": "realm-anchor-profile-input",
-                                                    value: "{anchor_profile_value}",
-                                                    onchange: move |event| realm_anchor_profile.set(event.value()),
-                                                    for (option_value, label, _) in ANCHOR_PROFILE_OPTIONS {
-                                                        option {
-                                                            value: "{option_value}",
-                                                            selected: anchor_profile_value == option_value,
+                                                    value: Some(realm_anchor_profile_selected.into()),
+                                                    on_value_change: move |v: Option<String>| {
+                                                        if let Some(v) = v {
+                                                            realm_anchor_profile.set(v);
+                                                        }
+                                                    },
+                                                    for (i, (option_value, label, _)) in ANCHOR_PROFILE_OPTIONS.iter().enumerate() {
+                                                        SelectOption::<String> {
+                                                            index: i,
+                                                            value: option_value.to_string(),
+                                                            text_value: "{label}",
                                                             "{label}"
                                                         }
                                                     }
@@ -937,14 +987,19 @@ pub fn SetupPanel(
                                             strong { "Hash profile" }
                                             div { class: "workflow-form setup-field",
                                                 label { "Digest algorithm for canonical hashing." }
-                                                select {
+                                                Select::<String> {
                                                     "data-testid": "realm-hash-profile-input",
-                                                    value: "{digest_algorithm_value}",
-                                                    onchange: move |event| realm_digest_algorithm.set(event.value()),
-                                                    for (option_value, label, _) in HASH_PROFILE_OPTIONS {
-                                                        option {
-                                                            value: "{option_value}",
-                                                            selected: digest_algorithm_value == option_value,
+                                                    value: Some(realm_digest_algorithm_selected.into()),
+                                                    on_value_change: move |v: Option<String>| {
+                                                        if let Some(v) = v {
+                                                            realm_digest_algorithm.set(v);
+                                                        }
+                                                    },
+                                                    for (i, (option_value, label, _)) in HASH_PROFILE_OPTIONS.iter().enumerate() {
+                                                        SelectOption::<String> {
+                                                            index: i,
+                                                            value: option_value.to_string(),
+                                                            text_value: "{label}",
                                                             "{label}"
                                                         }
                                                     }
@@ -1494,18 +1549,28 @@ pub fn SetupPanel(
                                             }
                                         }
                                     } else {
-                                        select {
+                                        Select::<String> {
                                             "data-testid": "new-space-realm-input",
-                                            value: "{new_space_realm_id_value}",
-                                            onchange: move |event| new_space_realm_id.set(event.value()),
-                                            option { value: "", "— pick a Realm —" }
-                                            for (id, title) in &available_realms {
+                                            value: Some(new_space_realm_id_selected.into()),
+                                            on_value_change: move |v: Option<String>| {
+                                                if let Some(v) = v {
+                                                    new_space_realm_id.set(v);
+                                                }
+                                            },
+                                            SelectOption::<String> {
+                                                index: 0usize,
+                                                value: "".to_string(),
+                                                text_value: "— pick a Realm —",
+                                                "— pick a Realm —"
+                                            }
+                                            for (i, (id, title)) in available_realms.iter().enumerate() {
                                                 {
                                                     let id_label = short_protocol_id(id);
                                                     rsx! {
-                                                        option {
-                                                            value: "{id}",
-                                                            selected: new_space_realm_id_value == *id,
+                                                        SelectOption::<String> {
+                                                            index: i + 1,
+                                                            value: id.to_string(),
+                                                            text_value: "{title} ({id_label})",
                                                             "{title} ({id_label})"
                                                         }
                                                     }
@@ -1537,14 +1602,19 @@ pub fn SetupPanel(
                                 }
                                 div { class: "setup-field",
                                     label { "Kind" }
-                                    select {
+                                    Select::<String> {
                                         "data-testid": "new-space-kind-input",
-                                        value: "{new_space_kind_value}",
-                                        onchange: move |event| new_space_kind.set(event.value()),
-                                        for (option_value, label, _) in SPACE_KIND_OPTIONS {
-                                            option {
-                                                value: "{option_value}",
-                                                selected: new_space_kind_value == option_value,
+                                        value: Some(new_space_kind_selected.into()),
+                                        on_value_change: move |v: Option<String>| {
+                                            if let Some(v) = v {
+                                                new_space_kind.set(v);
+                                            }
+                                        },
+                                        for (i, (option_value, label, _)) in SPACE_KIND_OPTIONS.iter().enumerate() {
+                                            SelectOption::<String> {
+                                                index: i,
+                                                value: option_value.to_string(),
+                                                text_value: "{label}",
                                                 "{label}"
                                             }
                                         }
@@ -1581,18 +1651,28 @@ pub fn SetupPanel(
                                     } else if parent_candidates.is_empty() {
                                         div { class: "muted", "No sibling Spaces in this Realm yet — leave at root." }
                                     } else {
-                                        select {
+                                        Select::<String> {
                                             "data-testid": "new-space-parent-input",
-                                            value: "{new_space_parent_id_value}",
-                                            onchange: move |event| new_space_parent_id.set(event.value()),
-                                            option { value: "", "(root — no parent)" }
-                                            for (id, title) in &parent_candidates {
+                                            value: Some(new_space_parent_id_selected.into()),
+                                            on_value_change: move |v: Option<String>| {
+                                                if let Some(v) = v {
+                                                    new_space_parent_id.set(v);
+                                                }
+                                            },
+                                            SelectOption::<String> {
+                                                index: 0usize,
+                                                value: "".to_string(),
+                                                text_value: "(root — no parent)",
+                                                "(root — no parent)"
+                                            }
+                                            for (i, (id, title)) in parent_candidates.iter().enumerate() {
                                                 {
                                                     let id_label = short_protocol_id(id);
                                                     rsx! {
-                                                        option {
-                                                            value: "{id}",
-                                                            selected: new_space_parent_id_value == *id,
+                                                        SelectOption::<String> {
+                                                            index: i + 1,
+                                                            value: id.to_string(),
+                                                            text_value: "{title} ({id_label})",
                                                             "{title} ({id_label})"
                                                         }
                                                     }
@@ -1618,18 +1698,28 @@ pub fn SetupPanel(
                                         if available_realms.is_empty() {
                                             div { class: "muted", "Need at least one Realm to point at." }
                                         } else {
-                                            select {
+                                            Select::<String> {
                                                 "data-testid": "new-space-default-realm-ref-input",
-                                                value: "{new_space_default_realm_id_value}",
-                                                onchange: move |event| new_space_default_realm_id.set(event.value()),
-                                                option { value: "", "(inherit — use home Realm)" }
-                                                for (id, title) in &available_realms {
+                                                value: Some(new_space_default_realm_id_selected.into()),
+                                                on_value_change: move |v: Option<String>| {
+                                                    if let Some(v) = v {
+                                                        new_space_default_realm_id.set(v);
+                                                    }
+                                                },
+                                                SelectOption::<String> {
+                                                    index: 0usize,
+                                                    value: "".to_string(),
+                                                    text_value: "(inherit — use home Realm)",
+                                                    "(inherit — use home Realm)"
+                                                }
+                                                for (i, (id, title)) in available_realms.iter().enumerate() {
                                                     {
                                                         let id_label = short_protocol_id(id);
                                                         rsx! {
-                                                            option {
-                                                                value: "{id}",
-                                                                selected: new_space_default_realm_id_value == *id,
+                                                            SelectOption::<String> {
+                                                                index: i + 1,
+                                                                value: id.to_string(),
+                                                                text_value: "{title} ({id_label})",
                                                                 "{title} ({id_label})"
                                                             }
                                                         }

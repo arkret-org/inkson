@@ -79,3 +79,171 @@ Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm,
 - `added_ids`: 为 label 关联而新增的 input id 列表
 - `uncertain`: 任何拿不准/未迁移的点(如 success 变体、动态 class 字符串、非标准结构),带行号
 - `testids_preserved`: true/false(自检:迁移前后 data-testid 集合是否完全一致)
+
+---
+
+# 二期附录:checkbox → dxc Checkbox(绑定翻译)
+
+> ⚠️ 与一期不同:checkbox 不是机械改名,需**重接状态绑定**(dxc 用三态枚举 + 回调)。dxc Checkbox 渲染 `role=checkbox` 元素(Playwright `.check()` 仍可用),但视觉从原生复选框变为样式化复选框。
+
+## 范围
+只迁移 `input { r#type: "checkbox", ... }`(含包裹在 `label { input{} " 文本" }` 里的)。**保留** `label` 包裹与文本。
+
+## import(按字母序加入)
+```rust
+use crate::ui::checkbox::Checkbox;
+use dioxus_primitives::checkbox::CheckboxState;
+```
+
+## 翻译模式(已编译验证的参考:views/timeline.rs 的 public-update-guard-toggle,约 1340 行,已完成,勿重复)
+```rust
+// 前
+input {
+    r#type: "checkbox",
+    "data-testid": "foo-toggle",
+    checked: <bool 表达式>,
+    onchange: move |evt| <signal>.set(evt.value() == "true"),
+}
+// 后
+Checkbox {
+    "data-testid": "foo-toggle",
+    checked: if <bool 表达式> { CheckboxState::Checked } else { CheckboxState::Unchecked },
+    on_checked_change: move |state: CheckboxState| <signal>.set(bool::from(state)),
+}
+```
+
+## 细则
+- 把 `checked: X`(bool)改成 `checked: if X { CheckboxState::Checked } else { CheckboxState::Unchecked }`。
+- 把 `onchange: |evt| ...` 改成 `on_checked_change: move |state: CheckboxState| ...`;闭包体内原来用 `evt.value() == "true"` 取得的 bool,统一改为 `bool::from(state)`(类型注解 `state: CheckboxState` 必写)。若闭包体除了 set 还有其它逻辑(如 `state_store.write()` / `status.set(...)`),先 `let enabled = bool::from(state);` 再保留其余逻辑(把原先的 bool 变量名对齐)。
+- **逐字保留** `data-testid` / `disabled` / `name` / `aria-*`;删除 `r#type: "checkbox"`(dxc Checkbox 不需要)。
+- 不碰 `r#type` 为 file/range/number/text 的 input;不碰 select/dialog/tabs;不碰业务逻辑的其余部分。
+- 不要运行 cargo。
+
+## 报告
+返回:file、replaced(checkbox 数)、testids_preserved、uncertain(任何非标准 onchange 逻辑/拿不准点,带行号)。
+
+---
+
+# 二期附录:select → dxc Select(泛型 + 受控绑定)
+
+> ⚠️ 最复杂:dxc Select 是泛型组件,渲染**自定义弹层**(非原生下拉)。受控 value 需 `use_memo` hook。视觉/交互会变,且会打烂依赖 `selectOption()` 的 e2e(由编排者单独改测试)。
+
+## import(按字母序)
+```rust
+use crate::ui::select::{Select, SelectOption};
+```
+
+## 受控 value:必须在**组件顶层**加 memo
+在该 select 绑定的 `Signal<String>`(如 `let mut x = use_signal(...)`)附近、组件顶层(**不能在 rsx 内、不能在循环/条件里**)加:
+```rust
+let x_selected = use_memo(move || Some(x()));
+```
+
+## 静态选项(已编译验证参考:views/timeline.rs incident-priority-select,~1335 行)
+```rust
+// 前
+select {
+    "data-testid": "foo-select",
+    value: "{x}",
+    onchange: move |evt| x.set(evt.value()),
+    option { value: "a", "A" }
+    option { value: "b", "B" }
+}
+// 后
+Select::<String> {
+    "data-testid": "foo-select",
+    value: Some(x_selected.into()),
+    on_value_change: move |v: Option<String>| { if let Some(v) = v { x.set(v); } },
+    SelectOption::<String> { index: 0usize, value: "a".to_string(), text_value: "A", "A" }
+    SelectOption::<String> { index: 1usize, value: "b".to_string(), text_value: "B", "B" }
+}
+```
+
+## 动态选项(for 循环)
+```rust
+// 前
+select {
+    "data-testid": "foo-select",
+    value: "{x}",
+    onchange: move |event| x.set(event.value()),
+    for (option_value, label, _) in LIST {
+        option { value: "{option_value}", selected: x == option_value, "{label}" }
+    }
+}
+// 后
+Select::<String> {
+    "data-testid": "foo-select",
+    value: Some(x_selected.into()),
+    on_value_change: move |v: Option<String>| { if let Some(v) = v { x.set(v); } },
+    for (i, (option_value, label, _)) in LIST.iter().enumerate() {
+        SelectOption::<String> { index: i, value: option_value.to_string(), text_value: "{label}", "{label}" }
+    }
+}
+```
+- `selected: ...` 属性删除(dxc 由 `value` 表达当前选中)。
+- `index` 用 `.enumerate()` 的 i;`value` 须是 `T`(String→`.to_string()`),`text_value` 给可读文本(typeahead 用)。
+
+## 细则
+- 保留外层 `label { span{} ... }` 包裹与文本(若有)。
+- **逐字保留** `data-testid` / aria-*(放在 `Select` 上,会透传到外层 div)。
+- 选项的 value 都用 `String` 泛型(`Select::<String>` / `SelectOption::<String>`),与原 `value: "..."` 字符串一致。
+- 若 select 的 value 不是 String(少见),用对应类型;拿不准就标 uncertain。
+- **不要运行 cargo**。每个迁移的 select 都要在组件顶层加对应 memo。
+
+## 报告
+返回:file、replaced(select 数)、added_memos(新增的 use_memo 变量名)、testids_preserved、uncertain(动态/非String/拿不准点,带行号)。
+
+---
+
+# 二期附录:独立手写模态 → dxc Dialog(结构性,e2e 敏感)
+
+> ⚠️ 仅迁移**字面写了 `role: "dialog"` 的手写模态**(`div.modal-overlay > div.modal[role=dialog]` 结构)。**不要碰** `DismissiblePopup` 组件及其调用方(它有刻意的防误关逻辑,保留)。e2e 依赖部分 modal 的 testid 与 `role=dialog` 名称、`toHaveCount(0)`,务必按下述保形。
+
+## import(按字母序)
+```rust
+use crate::ui::dialog::Dialog;
+```
+
+## 已编译验证参考:components/create_circle_modal.rs(Dialog{open,on_open_change,...} 包裹 .modal 内容)
+
+## 铁律(保 e2e)
+1. **保留外层条件渲染** `if <signal> { ... }`(若有):关闭时整个 Dialog 不渲染 → `toHaveCount(0)` 成立。若该模态是「父组件条件挂载的独立组件」(无内部 if),则 `open: true`。
+2. **把模态原来的 data-testid 都保留**;尤其把 **overlay(外层)那个 testid 放到 `Dialog` 上**(e2e 常用它做 toBeVisible/toHaveCount)。内层 `.modal` 的 surface testid 保留在内层 div 上。
+3. 保留 `aria-label` / `aria-labelledby`(放到 `Dialog` 上)——`role=dialog` 的可访问名称靠它,e2e `getByRole("dialog",{name})` 依赖。
+4. **删除**手写的 `role: "dialog"`、`"aria-modal": "true"`(dxc DialogContent 自动设)。
+5. 不改任何业务逻辑、关闭按钮、内部 Button/Input/Select。
+
+## 转换模式
+```rust
+// 前(role 在内层 surface 的情形,如 mls_backup_prompt)
+if needs_x() {
+    div { class: "modal-overlay foo-overlay", "data-testid": "foo-modal",
+        div { class: "modal event ...", "data-testid": "foo-banner",
+            role: "dialog", "aria-modal": "true",
+            "aria-labelledby": "foo-title", "aria-label": "...",
+            // ... head/body/foot,含关闭按钮 onclick: x.set(false)
+        }
+    }
+}
+// 后
+if needs_x() {
+    Dialog {
+        open: true,
+        on_open_change: move |open: bool| { if !open { /* 原关闭动作,如 x.set(false) */ } },
+        "data-testid": "foo-modal",          // overlay testid 提到 Dialog(e2e 用)
+        "aria-labelledby": "foo-title",
+        "aria-label": "...",
+        div { class: "modal event ...", "data-testid": "foo-banner",
+            // ... head/body/foot 原样保留(含关闭按钮)
+        }
+    }
+}
+```
+- `on_open_change` 的关闭动作 = 该模态原本「点 backdrop / 关闭按钮」所做的事(set 信号 false / 调 on_cancel 等);若原本无 backdrop 关闭,则写最贴近的关闭动作。
+- 若 role/aria/testid 原本在**外层 overlay**(如 create_circle),则把它们提到 Dialog,内层 `.modal` 保留 class+surface testid。
+
+## 不确定就标注
+若某模态结构特殊(多层、非 modal-overlay 结构、关闭逻辑复杂、role 位置不典型),**跳过并在 uncertain 详述(带行号)**,留给编排者手工处理。**不要运行 cargo**。
+
+## 报告
+返回:file、replaced(模态数)、testids 清单(放到 Dialog 的 / 保留在内层的)、close_action(每个模态的关闭动作)、uncertain(跳过/拿不准点带行号)。

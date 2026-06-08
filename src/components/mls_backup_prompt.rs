@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{generate_recovery_key, normalize_recovery_key_input};
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::with_authed_api;
@@ -506,16 +507,19 @@ pub fn MlsBackupPrompt(
     let generated_now = generated_recovery_key();
 
     rsx! {
-        div {
-            class: "modal-overlay mls-recovery-modal-overlay",
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    needs_mls_backup.set(false);
+                }
+            },
             "data-testid": "mls-backup-modal",
+            "aria-labelledby": "mls-backup-title",
+            "aria-label": crate::i18n::tr("mls_backup.aria_label"),
             div {
                 class: "modal event mls-recovery-modal mls-backup-banner",
                 "data-testid": "mls-backup-banner",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "mls-backup-title",
-                "aria-label": crate::i18n::tr("mls_backup.aria_label"),
                 div { class: "modal-head event-head",
                     h3 { id: "mls-backup-title", {crate::i18n::tr("mls_backup.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_backup.subtitle")} }
