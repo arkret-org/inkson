@@ -566,13 +566,8 @@ pub fn SetupPanel(
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| id.to_owned())
     };
-    let projection_title = |id: &str, body: &Value| -> String {
-        body.get("summary")
-            .and_then(|summary| summary.get("title"))
-            .and_then(|title| title.as_str())
-            .unwrap_or(id)
-            .to_owned()
-    };
+    let projection_title =
+        |id: &str, body: &Value| -> String { crate::realm_tree::projection_title(id, body) };
     let available_realms: Vec<(String, String)> = projections_snapshot
         .iter()
         .filter(|(_, body)| projection_kind(body) == "realm")

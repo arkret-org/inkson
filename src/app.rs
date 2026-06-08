@@ -5521,8 +5521,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             for left_id in &sync.left_realms {
                                 store.forget_realm_tree_projection(left_id);
                             }
+                            let realm_title_hints = invite_notifications
+                                .as_deref()
+                                .map(crate::views::notifications::realm_title_hints_from_values)
+                                .unwrap_or_default();
                             for (id, body) in &sync.realms {
-                                store.save_realm_tree_projection(id.clone(), body.clone());
+                                let projection = crate::realm_tree::projection_with_title_hint(
+                                    id,
+                                    body,
+                                    realm_title_hints.get(id).map(String::as_str),
+                                );
+                                store.save_realm_tree_projection(id.clone(), projection);
                                 // Thread the per-Realm Anchor view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read

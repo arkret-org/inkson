@@ -21,6 +21,19 @@ static MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS: LazyLock<
     Mutex<BTreeMap<String, MlsPrivatePlaintextBackupJob>>,
 > = LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
+// Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
+fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
+    if let Ok(mut slot) = signal.try_write() {
+        *slot = value;
+    }
+}
+
+fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
+    if let Ok(mut slot) = status.try_write() {
+        *slot = value.into();
+    }
+}
+
 #[derive(Clone, Default)]
 struct MlsPrivatePlaintextBackupJob {
     base_url: String,
@@ -316,7 +329,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
     actor_did: String,
-    mut needs_mls_backup: Signal<bool>,
+    needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_did.trim().is_empty() {
         return;
@@ -344,7 +357,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     // already present. This avoids a silent window after creating an encrypted
     // Realm where the app has recoverable material locally but the async
     // backup-list check has not completed yet.
-    needs_mls_backup.set(true);
+    try_set_signal(needs_mls_backup, true);
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the flow — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
@@ -359,15 +372,15 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
                 error = %err.display(),
                 "MLS backup detection could not list key backups after encrypted write"
             );
-            needs_mls_backup.set(true);
+            try_set_signal(needs_mls_backup, true);
             return;
         }
     };
     if crate::mls::account_recovery::select_mls_account_secret_backup(&payload).is_some() {
-        needs_mls_backup.set(false);
+        try_set_signal(needs_mls_backup, false);
         return;
     }
-    needs_mls_backup.set(true);
+    try_set_signal(needs_mls_backup, true);
 }
 
 /// One-time account-MLS-secret BACKUP prompt — the mirror of
@@ -456,14 +469,16 @@ pub fn MlsBackupPrompt(
                 .await
             })
             .await;
-            busy.set(false);
+            try_set_signal(busy, false);
             match result {
                 Ok(backup_id) => {
-                    mark_mls_recovery_backup_configured(
-                        &mut state_store_for_marker.write(),
-                        &actor_for_sidecar,
-                        &backup_id,
-                    );
+                    if let Ok(mut store) = state_store_for_marker.try_write() {
+                        mark_mls_recovery_backup_configured(
+                            &mut store,
+                            &actor_for_sidecar,
+                            &backup_id,
+                        );
+                    }
                     // X5.3 — best-effort: also back up the encrypted sidecar so a
                     // fresh browser recovers the author's own content. Failure
                     // only logs (the account secret backup already succeeded).
@@ -493,12 +508,12 @@ pub fn MlsBackupPrompt(
                         // the kanban write-path trigger will retry the upload).
                         let _ = outcome;
                     }
-                    generated_recovery_key.set(recovery_key_for_display);
-                    status.set(crate::i18n::tr("mls_backup.status.created"));
+                    try_set_signal(generated_recovery_key, recovery_key_for_display);
+                    try_set_status(status, crate::i18n::tr("mls_backup.status.created"));
                 }
                 Err(err) => {
                     // Keep the prompt open so the user can retry.
-                    status.set(err.display());
+                    try_set_status(status, err.display());
                 }
             }
         });

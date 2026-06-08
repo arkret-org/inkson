@@ -8,6 +8,19 @@ use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::views::helpers::{ApiCallError, with_authed_api};
 
+// Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
+fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
+    if let Ok(mut slot) = signal.try_write() {
+        *slot = value;
+    }
+}
+
+fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
+    if let Ok(mut slot) = status.try_write() {
+        *slot = value.into();
+    }
+}
+
 /// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
@@ -81,8 +94,8 @@ pub fn MlsUnlockPrompt(
         let actor = actor_did();
         let device = device_id();
         let mut state_store = state_store;
-        let mut needs_mls_unlock = needs_mls_unlock;
-        let mut restore_payload_cache = restore_payload_cache;
+        let needs_mls_unlock = needs_mls_unlock;
+        let restore_payload_cache = restore_payload_cache;
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
@@ -99,44 +112,56 @@ pub fn MlsUnlockPrompt(
             .await;
             let result = match payload_result {
                 Ok(payload) => {
-                    restore_payload_cache.set(Some(payload.clone()));
+                    try_set_signal(restore_payload_cache, Some(payload.clone()));
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
-                    status.set(format!(
-                        "{} {} {}",
-                        crate::i18n::tr("mls_unlock.status.restoring_prefix"),
-                        history_count,
-                        crate::i18n::tr("mls_unlock.status.restoring_suffix")
-                    ));
+                    try_set_status(
+                        status,
+                        format!(
+                            "{} {} {}",
+                            crate::i18n::tr("mls_unlock.status.restoring_prefix"),
+                            history_count,
+                            crate::i18n::tr("mls_unlock.status.restoring_suffix")
+                        ),
+                    );
                     crate::api::sleep_for(std::time::Duration::from_millis(16)).await;
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-                    let mut store = state_store.write();
-                    crate::mls::account_recovery::restore_mls_history_with_passphrase_from_payload(
-                        &payload,
-                        &mut store,
-                        secure_store.as_ref(),
-                        &actor,
-                        &device,
-                        pass.as_bytes(),
-                    )
-                    .map_err(ApiCallError::Failed)
+                    match state_store.try_write() {
+                        Ok(mut store) => {
+                            crate::mls::account_recovery::restore_mls_history_with_passphrase_from_payload(
+                                &payload,
+                                &mut store,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                                pass.as_bytes(),
+                            )
+                            .map_err(ApiCallError::Failed)
+                        }
+                        Err(_) => Err(ApiCallError::Failed(anyhow::anyhow!(
+                            "recovery prompt closed before restore completed"
+                        ))),
+                    }
                 }
                 Err(err) => Err(err),
             };
-            busy.set(false);
+            try_set_signal(busy, false);
             match result {
                 Ok(report) => {
                     if let Some(err) = report.first_error {
                         // Some backups failed even though the call returned Ok —
                         // keep the prompt open so the user can retry.
-                        status.set(format!(
-                            "{} {} {}; {} {}: {err}",
-                            crate::i18n::tr("mls_unlock.status.restored_prefix"),
-                            report.restored,
-                            crate::i18n::tr("mls_unlock.status.restored_suffix"),
-                            report.failed,
-                            crate::i18n::tr("mls_unlock.status.failed_suffix")
-                        ));
+                        try_set_status(
+                            status,
+                            format!(
+                                "{} {} {}; {} {}: {err}",
+                                crate::i18n::tr("mls_unlock.status.restored_prefix"),
+                                report.restored,
+                                crate::i18n::tr("mls_unlock.status.restored_suffix"),
+                                report.failed,
+                                crate::i18n::tr("mls_unlock.status.failed_suffix")
+                            ),
+                        );
                     } else {
                         let restored_status = format!(
                             "{} {} {}",
@@ -144,16 +169,16 @@ pub fn MlsUnlockPrompt(
                             report.restored,
                             crate::i18n::tr("mls_unlock.status.restored_suffix")
                         );
-                        passphrase.set(String::new());
-                        restore_payload_cache.set(None);
-                        status.set(restored_status);
+                        try_set_signal(passphrase, String::new());
+                        try_set_signal(restore_payload_cache, None);
+                        try_set_status(status, restored_status);
                         crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
-                        needs_mls_unlock.set(false);
+                        try_set_signal(needs_mls_unlock, false);
                     }
                 }
                 Err(err) => {
                     // Wrong passphrase / network: keep prompt open, surface reason.
-                    status.set(err.display());
+                    try_set_status(status, err.display());
                 }
             }
         });
