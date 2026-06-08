@@ -79,10 +79,11 @@
   --nav-label: #9b8c84;
   --nav-input-bg: rgba(255, 250, 245, 0.86);
   --nav-input-border: #d8c7bb;
+
+  color-scheme: light;
 }
 
-[data-theme="dark"],
-[data-theme="night"] {
+[data-theme="dark"] {
   --bg: #101722;
   --bg-elev: #223041;
   --surface: rgba(27, 36, 48, 0.94);
@@ -147,36 +148,19 @@
   --nav-label: #a89389;
   --nav-input-bg: rgba(8, 12, 20, 0.56);
   --nav-input-border: rgba(168, 147, 137, 0.18);
+
+  color-scheme: dark;
 }
 
-/* dioxus-components 主题桥接。
- * 厂商提供的 dx-components-theme.css 只在 `html[data-theme]` 上翻转
- * --light/--dark 开关,而 yougen 把 data-theme 放在 shell 元素(并非
- * <html>)上,且使用自定义的 "night" 值。结果是 dx-select / dx-tabs 等
- * 组件看不到应用主题,退回到 @media(prefers-color-scheme),于是在浅色
- * 应用里渲染成深色(Scope 下拉、Contacts 选项卡发黑)。这里把开关重新
- * 绑定到应用自身的 data-theme,与上面应用 token 的取值逻辑保持一致:
- * light→浅色、night→深色、system→跟随系统。 */
-[data-theme="light"] {
-  --dark: ;
-  --light: initial;
-}
-[data-theme="night"] {
-  --dark: initial;
-  --light: ;
-}
-@media (prefers-color-scheme: dark) {
-  [data-theme="system"] {
-    --dark: initial;
-    --light: ;
-  }
-}
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --dark: ;
-    --light: initial;
-  }
-}
+/* dioxus-components 主题切换说明(无 CSS 可解的桥接)。
+ * 厂商 dx-components-theme.css 把整套调色板(--primary-color 等)声明在
+ * `:root` 上,并用 `var(--light, …) var(--dark, …)` 开关翻转;这些派生变量
+ * 在 `:root` 处一次性求值后向下继承。所以在 shell <div> 上翻 --light/--dark
+ * 不起作用——派生值早已按 <html> 的 @media(prefers-color-scheme) 算成深/浅。
+ * CSS 无法从 <div> 向上影响 :root,因此必须由 JS 把有效主题镜像到 <html>:
+ * 见 app.rs `apply_document_root_theme`,它在 <html> 上写 data-theme=light/dark
+ * (厂商主题与 design.css 都认这两个值),让开关在调色板声明处生效,连
+ * teleport 到 <body> 的弹窗也随之正确。此处不再需要任何 [data-theme] 桥接。 */
 
 .discussion-shell {
   display: grid;
@@ -3581,14 +3565,6 @@
     linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
 }
 
-.shell.app.theme-light {
-  color-scheme: light;
-}
-
-.shell.app.theme-night {
-  color-scheme: dark;
-}
-
 .sidebar {
   background: linear-gradient(180deg, var(--nav-bg), var(--nav-bg-2));
   color: var(--nav-text);
@@ -3717,69 +3693,6 @@
   border-color: color-mix(in srgb, var(--accent) 70%, var(--accent-2));
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   color: var(--text-on-accent);
-}
-
-@media (prefers-color-scheme: dark) {
-  .auth-shell.theme-system,
-  .shell.theme-system {
-    --bg: #101722;
-    --bg-elev: #223041;
-    --surface: rgba(27, 36, 48, 0.94);
-    --surface-solid: #1b2430;
-    --surface-2: #202b39;
-    --surface-3: #283546;
-    --surface-inv: #fffaf6;
-    --hover: rgba(255, 255, 255, 0.04);
-    --hover-strong: rgba(255, 255, 255, 0.08);
-    --border: #3a4454;
-    --border-strong: #4b586b;
-    --border-faint: #202938;
-    --text: #f8f2ee;
-    --text-2: #cbbab1;
-    --text-3: #a89389;
-    --text-on-accent: #2c170b;
-    --text-inv: #1c1e25;
-    --accent: #f59e0b;
-    --accent-strong: #f7ae3a;
-    --accent-soft: rgba(245, 158, 11, 0.12);
-    --accent-2: #fb7185;
-    --accent-ink: #fde7ba;
-    --success: #7bc9b5;
-    --success-soft: rgba(123, 201, 181, 0.16);
-    --success-ink: #d7f5ec;
-    --warning: #f0be78;
-    --warning-soft: rgba(240, 190, 120, 0.16);
-    --warning-ink: #fae7c2;
-    --danger: #ff7a59;
-    --danger-soft: rgba(255, 122, 89, 0.16);
-    --danger-ink: #ffd6cd;
-    --info: #a7b7ff;
-    --info-soft: rgba(167, 183, 255, 0.16);
-    --info-ink: #dce4ff;
-    --neutral-soft: #1f2a38;
-    --proto-bg: #0f1218;
-    --proto-fg: #f1e8e2;
-    --proto-meta: #b7a49c;
-    --proto-accent: #f2c98b;
-    --shadow-xs: 0 1px 1px rgba(4, 8, 14, 0.38);
-    --shadow-sm: 0 1px 2px rgba(4, 8, 14, 0.42);
-    --shadow-md: 0 10px 24px rgba(4, 8, 14, 0.32), 0 1px 2px rgba(4, 8, 14, 0.40);
-    --shadow-lg: 0 28px 64px rgba(4, 8, 14, 0.42);
-    --ring: 0 0 0 3px rgba(245, 158, 11, 0.26);
-    --page-glow-a: rgba(245, 158, 11, 0.14);
-    --page-glow-b: rgba(251, 113, 133, 0.12);
-    --page-glow-c: rgba(123, 201, 181, 0.08);
-    --nav-bg: #111827;
-    --nav-bg-2: #1a2230;
-    --nav-soft: rgba(255, 255, 255, 0.04);
-    --nav-border: rgba(245, 158, 11, 0.18);
-    --nav-text: #f8f2ee;
-    --nav-muted: #cbbab1;
-    --nav-label: #a89389;
-    --nav-input-bg: rgba(8, 12, 20, 0.56);
-    --nav-input-border: rgba(168, 147, 137, 0.18);
-    color-scheme: dark;
-  }
 }
 
 @media (max-width: 1200px) {

@@ -35,6 +35,43 @@ fn invitee_resolution(
     })
 }
 
+/// U3 — derive the `recipient_service_did` (principal-server delivery target)
+/// for a contact DID so the realm-invite "from contacts" path can build an
+/// `InviteDeliveryTarget` without a locator URL.
+///
+/// For materialized user handles (`did:web:<domain>:users:<localpart>` /
+/// `did:webvh:<scid>:<domain>:users:<localpart>`) the hosting principal server
+/// is `did:web:<domain>`, which is what `parse_user_handle` already computes.
+/// For other DID shapes we cannot infer the server, so this returns `None` and
+/// the caller surfaces "暂不可用" for that contact.
+fn contact_recipient_service_did(contact_did: &str) -> Option<String> {
+    let display = crate::views::helpers::handle_display_from_did(contact_did)?;
+    crate::identity_handle::parse_user_handle(&display).map(|handle| handle.principal_server_did)
+}
+
+/// U3 — build the `consent_grant` introduction evidence for a contact-path
+/// invite and return its canonical digest (the value
+/// `cx_ops::invite_create_structured` stamps into the invite event).
+///
+/// We build the evidence object by hand (matching
+/// `IntroductionEvidence::ConsentGrant`'s `{kind, consent_grant_ref}` wire
+/// shape) rather than through the strict typed enum: the consent event ref
+/// comes straight from the contacts projection and the digest is opaque to the
+/// client — soland re-validates the ref server-side. Going through
+/// `EventId::new` here would reject synthetic refs (e.g. e2e fixtures) before
+/// the server ever gets a chance to check them.
+fn contact_consent_evidence_digest(consent_grant_ref: &str) -> anyhow::Result<String> {
+    let consent_grant_ref = consent_grant_ref.trim();
+    if consent_grant_ref.is_empty() {
+        anyhow::bail!("consent_grant_ref is required for the contacts invite path");
+    }
+    let value = serde_json::json!({
+        "kind": "consent_grant",
+        "consent_grant_ref": consent_grant_ref,
+    });
+    crate::canonical::canonical_sha256(&value)
+}
+
 fn invitee_from_principal_locator(
     locator: cokret_sdk::PrincipalLocator,
 ) -> anyhow::Result<InviteeResolution> {
@@ -302,6 +339,54 @@ impl CokretApi {
             .resolve_invitee_for_invite(target, realm_id, actor_id)
             .await?
             .did)
+    }
+
+    /// U3 — pull an existing contact into a Realm using their DID directly,
+    /// with `IntroductionEvidence::ConsentGrant` (no locator URL).
+    ///
+    /// `consent_grant_ref` is the event ref of the `invite`-scope consent the
+    /// contact gave me (read from the contact row via
+    /// [`crate::models::ContactListRow::invite_consent_ref`]). The delivery
+    /// target is derived from the contact DID via
+    /// [`contact_recipient_service_did`]; if it can't be derived this fails
+    /// closed so the UI can fall back to the locator path.
+    ///
+    /// Returns the submitted invite event id on success.
+    pub async fn invite_contact_to_realm(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+        contact_did: &str,
+        consent_grant_ref: &str,
+    ) -> anyhow::Result<String> {
+        let contact_did = contact_did.trim();
+        cokret_sdk::Did::new(contact_did.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
+        let recipient_service_did = contact_recipient_service_did(contact_did).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot derive principal server for contact `{contact_did}`; use the invite link path instead"
+            )
+        })?;
+        let recipient_did = cokret_sdk::Did::new(recipient_service_did)
+            .map_err(|err| anyhow::anyhow!("invalid recipient service DID: {err}"))?;
+        let invite_delivery_target = cokret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
+        invite_delivery_target
+            .validate()
+            .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
+        let introduction_evidence_digest = contact_consent_evidence_digest(consent_grant_ref)?;
+        let invite_id = format!("ck:invite:{}", crate::operation::uuid_v7());
+        let op = crate::operation::cx_ops::invite_create_structured(
+            realm_id,
+            actor_id,
+            &invite_id,
+            contact_did,
+            None,
+            invite_delivery_target,
+            &introduction_evidence_digest,
+        )
+        .build("yougen");
+        let submitted = self.submit_event_envelope(&op).await?;
+        Ok(submitted.event_id)
     }
 
     pub async fn resolve_invitee_for_invite(

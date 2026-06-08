@@ -2,8 +2,10 @@
 //!
 //! `app.rs` already tracks a `theme: Signal<String>` carrying one of
 //! `"light"` / `"night"` / `"system"`, hydrates it from local state on
-//! boot, and applies it to the shell as `theme-light` / `theme-night` /
-//! `theme-system` CSS classes. The existing topbar / mobile toggles only
+//! boot, and exposes the raw mode on the shell's `data-theme`. The
+//! *effective* canonical theme (`light`/`dark`) is mirrored onto `<html>`
+//! by `app.rs::apply_document_root_theme`, which is what all CSS keys off.
+//! The existing topbar / mobile toggles only
 //! flip between two states (light ↔ night) via [`next_manual_theme`];
 //! this component adds a richer three-mode picker that:
 //!

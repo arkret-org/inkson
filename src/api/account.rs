@@ -145,11 +145,47 @@ impl CokretApi {
         target: &str,
         scope: &str,
     ) -> anyhow::Result<ContactOutcome> {
-        self.post_json(
-            "_cokret/self/contacts/request",
-            json!({"target": target, "requested_scopes": [scope]}),
-        )
-        .await
+        self.request_contact_with_message(target, &[scope.to_owned()], None, None)
+            .await
+    }
+
+    /// Send a contact request carrying one or more requested scopes plus an
+    /// optional free-text greeting.
+    ///
+    /// Protocol contract (soland finalized): the `contacts/request` body
+    /// accepts an optional `message` field (1..2000 chars) and an optional
+    /// `recipient_service_did` (the target Principal Server's service DID). The
+    /// latter is required for cross-PS addressing since v1 DIDs do not embed a
+    /// home PS; leave it empty for same-PS contacts. We only emit either field
+    /// when actually populated so same-PS no-greeting requests stay minimal; an
+    /// empty / whitespace-only string is dropped client-side rather than sent
+    /// as `""`.
+    pub async fn request_contact_with_message(
+        &self,
+        target: &str,
+        scopes: &[String],
+        message: Option<&str>,
+        recipient_service_did: Option<&str>,
+    ) -> anyhow::Result<ContactOutcome> {
+        let scopes: Vec<&str> = scopes
+            .iter()
+            .map(|scope| scope.trim())
+            .filter(|scope| !scope.is_empty())
+            .collect();
+        let mut body = json!({"target": target, "requested_scopes": scopes});
+        if let Some(message) = message
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+        {
+            body["message"] = json!(message);
+        }
+        if let Some(service_did) = recipient_service_did
+            .map(str::trim)
+            .filter(|service_did| !service_did.is_empty())
+        {
+            body["recipient_service_did"] = json!(service_did);
+        }
+        self.post_json("_cokret/self/contacts/request", body).await
     }
 
     pub async fn respond_contact(
@@ -157,15 +193,82 @@ impl CokretApi {
         requester: &str,
         action: &str,
     ) -> anyhow::Result<ContactOutcome> {
-        self.post_json(
-            "_cokret/self/contacts/respond",
-            json!({"requester": requester, "action": action}),
-        )
-        .await
+        self.respond_contact_with_service(requester, action, None)
+            .await
+    }
+
+    /// Respond to an incoming contact request, optionally carrying the
+    /// requester's Principal Server service DID for cross-PS reverse delivery.
+    ///
+    /// Protocol contract (soland finalized): the `contacts/respond` body
+    /// accepts an optional `requester_service_did`. Same-PS responses leave it
+    /// empty; cross-PS responses pass the originating PS so soland can route the
+    /// accept/reject back. Empty / whitespace-only values are dropped.
+    pub async fn respond_contact_with_service(
+        &self,
+        requester: &str,
+        action: &str,
+        requester_service_did: Option<&str>,
+    ) -> anyhow::Result<ContactOutcome> {
+        let mut body = json!({"requester": requester, "action": action});
+        if let Some(service_did) = requester_service_did
+            .map(str::trim)
+            .filter(|service_did| !service_did.is_empty())
+        {
+            body["requester_service_did"] = json!(service_did);
+        }
+        self.post_json("_cokret/self/contacts/respond", body).await
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactsOutcome> {
         self.get_json("_cokret/self/contacts").await
+    }
+
+    /// Tombstone a contact relationship via `contacts/tombstone`. When
+    /// `block_peer` is true the protocol additionally records a block so the
+    /// peer can no longer re-request — this is the "拉黑" path (U5).
+    ///
+    /// Protocol contract (soland in-flight): `contacts/tombstone` body carries
+    /// `peer` and an optional `block_peer: true`.
+    pub async fn tombstone_contact(
+        &self,
+        peer: &str,
+        block_peer: bool,
+    ) -> anyhow::Result<ContactOutcome> {
+        let mut body = json!({"peer": peer});
+        if block_peer {
+            body["block_peer"] = json!(true);
+        }
+        self.post_json("_cokret/self/contacts/tombstone", body)
+            .await
+    }
+
+    /// Read the actor's `invite_receive_policy` ("谁可以邀请我", U4).
+    ///
+    /// Protocol contract (soland in-flight): served from the self plane at
+    /// `GET /_cokret/self/invite-receive-policy`. When the deployment does not
+    /// yet wire this surface the caller treats 404/501/405 as "use defaults"
+    /// rather than a hard error (see [`InviteReceivePolicyOutcome::default`]).
+    pub async fn get_invite_receive_policy(
+        &self,
+    ) -> anyhow::Result<crate::models::InviteReceivePolicyOutcome> {
+        self.get_json("_cokret/self/invite-receive-policy").await
+    }
+
+    /// Persist the actor's `invite_receive_policy` (U4).
+    ///
+    /// Protocol contract (soland in-flight):
+    /// `POST /_cokret/self/invite-receive-policy` with the policy object as the
+    /// body. Field set mirrors the spec `invite_receive_policy`.
+    pub async fn set_invite_receive_policy(
+        &self,
+        policy: &crate::models::InviteReceivePolicy,
+    ) -> anyhow::Result<crate::models::InviteReceivePolicyOutcome> {
+        self.post_json(
+            "_cokret/self/invite-receive-policy",
+            serde_json::to_value(policy)?,
+        )
+        .await
     }
 
     pub async fn direct_conversation_resolve(

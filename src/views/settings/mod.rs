@@ -10,6 +10,8 @@ pub mod blocklist;
 pub mod capabilities;
 pub mod consent;
 pub mod devices;
+/// U4 — "谁可以邀请我" invite_receive_policy editor.
+pub mod invite_policy;
 pub mod mls_recovery;
 pub mod recover_restore;
 pub mod recovery;
@@ -676,6 +678,8 @@ enum SettingsSection {
     Mimi,
     Notifications,
     Privacy,
+    /// U4 — "谁可以邀请我" invite_receive_policy (`/settings/invite-policy`).
+    InvitePolicy,
     /// G3.Y3 — consent grants (`/settings/consent`).
     Consent,
     /// G3.Y3 — personal blocklist (`/settings/blocklist`).
@@ -696,6 +700,7 @@ impl SettingsSection {
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
+            "invite-policy" | "invite_policy" => Self::InvitePolicy,
             "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
@@ -715,6 +720,7 @@ impl SettingsSection {
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
+            Self::InvitePolicy => "invite-policy",
             Self::Consent => "consent",
             Self::Blocklist => "blocklist",
             Self::Capabilities => "capabilities",
@@ -733,6 +739,7 @@ impl SettingsSection {
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
+            Self::InvitePolicy => "谁可以邀请我",
             Self::Consent => "Consent grants",
             Self::Blocklist => "Blocked actors",
             Self::Capabilities => "Capabilities",
@@ -761,6 +768,9 @@ const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
+    // U4 — invite_receive_policy ("谁可以邀请我") is an actor-private
+    // disclosure control, so it sits with the other privacy surfaces.
+    SettingsSection::InvitePolicy,
     // G3.Y3 — consent + blocklist sit next to Privacy because both are
     // actor-private disclosure controls (spec
     // identity/consent-model.md §2, governance/content-moderation.md §4).
@@ -3042,6 +3052,16 @@ pub fn SettingsPanel(
                             }
                         }
 
+                        }
+                    }
+
+                    // ── U4 invite_receive_policy ─────────────────────────
+                    if active_section == SettingsSection::InvitePolicy {
+                        div { class: "settings-content-stack",
+                            crate::views::settings::invite_policy::InvitePolicySettingsCard {
+                                base_url,
+                                token,
+                            }
                         }
                     }
 

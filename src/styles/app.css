@@ -2,9 +2,9 @@
 body { margin: 0; font-family: Inter, Segoe UI, sans-serif; background: #eef3ed; color: #162018; }
 button, input, textarea, select { font: inherit; }
 .auth-shell { width: 100vw; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #e7efe6; box-sizing: border-box; }
-.auth-shell.theme-night { background: #0f172a; color: #e5edf7; }
+[data-theme="dark"] .auth-shell { background: #0f172a; color: #e5edf7; }
 .auth-card { width: min(420px, 100%); border: 1px solid #d2ddd2; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12); }
-.auth-shell.theme-night .auth-card { border-color: #2a3a52; background: #172033; }
+[data-theme="dark"] .auth-card { border-color: #2a3a52; background: #172033; }
 .auth-panel { display: grid; gap: 22px; padding: 28px; }
 .auth-brand { display: flex; align-items: center; gap: 12px; }
 .auth-logo { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: #1f5a41; color: #fff; font-weight: 800; }
@@ -13,7 +13,7 @@ button, input, textarea, select { font: inherit; }
 .auth-form { display: grid; gap: 10px; }
 .auth-form label { color: #4a5d51; font-size: 13px; font-weight: 700; }
 .auth-form input { width: 100%; box-sizing: border-box; border: 1px solid #c2d0c3; border-radius: 6px; padding: 11px 12px; background: #fff; color: #142018; }
-.auth-shell.theme-night .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
+[data-theme="dark"] .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
 .auth-primary, .auth-secondary { width: 100%; margin-top: 4px; }
 .auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
 .auth-restore { gap: 16px; }
@@ -292,7 +292,7 @@ body {
   background: linear-gradient(135deg, var(--ck-bg) 0%, var(--ck-bg-soft) 64%, var(--ck-bg-end) 100%);
   color: var(--ck-ink);
 }
-.shell.theme-night {
+[data-theme="dark"] .shell {
   --ck-bg: #0d1511;
   --ck-bg-soft: #111b16;
   --ck-bg-end: #09100d;
@@ -309,26 +309,6 @@ body {
   --ck-nav-soft: #0d1612;
   --ck-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --ck-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
-}
-@media (prefers-color-scheme: dark) {
-  .shell.theme-system {
-    --ck-bg: #0d1511;
-    --ck-bg-soft: #111b16;
-    --ck-bg-end: #09100d;
-    --ck-surface: #15211b;
-    --ck-surface-raised: rgba(21, 33, 27, 0.94);
-    --ck-ink: #e7f0ea;
-    --ck-muted: #9caea2;
-    --ck-line: #2b3d34;
-    --ck-line-strong: #3b5246;
-    --ck-brand: #71b58f;
-    --ck-brand-strong: #4f9870;
-    --ck-teal: #89d0ad;
-    --ck-nav: #08100c;
-    --ck-nav-soft: #0d1612;
-    --ck-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
-    --ck-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
-  }
 }
 .sidebar {
   background: var(--ck-nav);
@@ -2925,4 +2905,68 @@ body {
    default browser margins so the block padding controls spacing. */
 .document-block-text {
   margin: 0;
+}
+
+/* ── Contacts list (U1/U5) + invite-from-contacts (U3) + invite policy (U4) ── */
+
+/* Dimmed presentation for rejected / tombstoned / blocked contact rows. */
+.contact-row.weak {
+  opacity: 0.6;
+}
+
+/* Per-row block-confirm + status sit slightly inset from the row body. */
+.contact-block-confirm {
+  margin-top: 8px;
+}
+
+.contact-message-counter.over {
+  color: var(--danger, #d4504e);
+}
+
+/* U3 — "from contacts" picker vs the locator (stranger) path. The divider
+   makes the two entry points visually distinct; the contacts path is primary. */
+.invite-from-contacts {
+  display: grid;
+  gap: 8px;
+}
+
+.invite-contact-row,
+.invite-policy-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  font-size: 0.85rem;
+}
+
+.invite-divider::before,
+.invite-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default, var(--border, #333));
+}
+
+/* U4 — invite policy section spacing. */
+.settings-subsection {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.settings-subsection-title {
+  font-size: 0.9rem;
+}
+
+.invite-policy-blocked-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }

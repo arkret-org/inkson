@@ -230,6 +230,37 @@ fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -> bool {
     theme == "night" || (theme == "system" && system_theme_is_night)
 }
 
+/// Mirror the effective theme onto the document root (`<html>`).
+///
+/// The vendored dioxus-components theme declares its palette
+/// (`--primary-color`, …) on `:root` and flips it with a
+/// `var(--light, …) var(--dark, …)` switch keyed on `html[data-theme]`.
+/// Those derived custom properties are substituted **once at `:root`**, so
+/// toggling `--light`/`--dark` on the shell `<div>` (where yougen renders
+/// its `data-theme`) has no effect — descendants inherit the already-computed
+/// palette. CSS cannot propagate a `<div>` attribute up to `:root`, so the
+/// switch must live on `<html>` itself. Writing `data-theme` here lets the
+/// vendored switch — and design.css's `[data-theme]` tokens — resolve at the
+/// level the palette is declared, fixing dxc controls (select, tabs, …) and
+/// dialogs teleported under `<body>`. Uses the canonical `light`/`dark`
+/// values understood by both the vendored theme and design.css.
+fn apply_document_root_theme(is_night: bool) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(root) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element())
+        {
+            let _ = root.set_attribute("data-theme", if is_night { "dark" } else { "light" });
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = is_night;
+    }
+}
+
 fn next_manual_theme(theme: &str) -> String {
     let is_night = if theme == "system" {
         browser_shell_color_scheme_is_dark().unwrap_or_else(browser_prefers_dark_theme)
@@ -603,6 +634,13 @@ pub fn RouterView() -> Element {
             }
         });
     }
+    // Mirror the effective theme onto `<html>` so the vendored dxc palette
+    // switch (declared on `:root`) and teleported dialogs resolve correctly.
+    // Re-runs whenever the chosen theme or the OS preference changes.
+    use_effect(move || {
+        let resolved_night = theme_renders_as_night(&theme(), system_theme_is_night());
+        apply_document_root_theme(resolved_night);
+    });
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
     let mut sidebar_collapsed = use_signal(|| false);
@@ -1618,8 +1656,16 @@ pub fn RouterView() -> Element {
     let server_menu_is_open = server_menu_open();
     let server_options = server_options_for(&base_url());
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
-    let theme_attr = active_theme.as_str();
     let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
+    // The shell's `data-theme` carries the *raw* chosen mode
+    // (`light` | `night` | `system`) as an app/diagnostic signal (the e2e theme
+    // assertions read it). All *styling* is driven off the *effective* canonical
+    // `light`/`dark` value that `apply_document_root_theme` mirrors onto `<html>`:
+    // design.css / app_overrides tokens and the vendored dxc palette key on
+    // `:root` / `html[data-theme]`, and app.css's `--ck-*` + auth surfaces key on
+    // `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
+    // depends on this attribute, so it stays the raw mode.
+    let theme_attr = active_theme.as_str();
     let theme_toggle_icon = if theme_is_night { "sun" } else { "moon" };
     let theme_toggle_title = if theme_is_night {
         "Switch to light theme"
@@ -1647,12 +1693,7 @@ pub fn RouterView() -> Element {
         format!("{route_title} | Yougen | Cokret")
     };
     let shell_class = format!(
-        "shell app {}{}{}{}",
-        match active_theme.as_str() {
-            "night" => "theme-night",
-            "light" => "theme-light",
-            _ => "theme-system",
-        },
+        "shell app{}{}{}",
         if active_direction == TextDirection::Rtl {
             " rtl"
         } else {
@@ -1671,12 +1712,7 @@ pub fn RouterView() -> Element {
     );
     if !matches!(auth_surface, AuthSurface::AppShell) {
         let auth_class = format!(
-            "auth-shell {}{}",
-            match active_theme.as_str() {
-                "night" => "theme-night",
-                "light" => "theme-light",
-                _ => "theme-system",
-            },
+            "auth-shell{}",
             if active_direction == TextDirection::Rtl {
                 " rtl"
             } else {

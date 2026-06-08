@@ -978,10 +978,12 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
             state: "accepted",
             request_event_ref: "ck:event:contact-bob-request",
             response_event_ref: "ck:event:contact-bob-response",
-            granted_by_me: ["direct_message"],
-            granted_to_me: ["direct_message"],
-            bidirectional_scopes: ["direct_message"],
-            effective_scopes: ["direct_message"],
+            granted_by_me: ["direct_message", "invite"],
+            granted_to_me: ["direct_message", "invite"],
+            bidirectional_scopes: ["direct_message", "invite"],
+            effective_scopes: ["direct_message", "invite"],
+            // U3 — consent grant the peer gave me for the invite scope.
+            invite_consent_grant_ref: "ck:event:contact-bob-response",
             direct_conversation: {
               realm_id: DIRECT_BOB_REALM,
               main_flow_id: DIRECT_BOB_FLOW,
@@ -991,16 +993,95 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
           },
           {
             peer: "did:web:carol.example",
-            state: "pending",
+            state: "pending_outgoing",
             request_event_ref: "ck:event:contact-carol-request",
             granted_by_me: ["invite"],
             granted_to_me: [],
             bidirectional_scopes: [],
             effective_scopes: ["invite"],
           },
+          {
+            peer: "did:web:dave.example",
+            state: "pending_incoming",
+            request_event_ref: "ck:event:contact-dave-request",
+            granted_by_me: [],
+            granted_to_me: ["direct_message"],
+            bidirectional_scopes: [],
+            effective_scopes: ["direct_message"],
+            // Cross-PS incoming request: respond must reverse-deliver to this PS.
+            peer_service_did: "did:web:ps.dave.example",
+          },
+          {
+            // Accepted contact who granted me `invite` scope but with NO real
+            // consent grant ref — exercises the "对方未授权邀请" disabled row in
+            // the realm-invite-from-contacts picker (no fallback ref).
+            peer: "did:web:erin.example",
+            state: "accepted",
+            request_event_ref: "ck:event:contact-erin-request",
+            response_event_ref: "ck:event:contact-erin-response",
+            granted_by_me: ["direct_message", "invite"],
+            granted_to_me: ["direct_message", "invite"],
+            bidirectional_scopes: ["direct_message", "invite"],
+            effective_scopes: ["direct_message", "invite"],
+          },
         ],
         has_more: false,
         next_cursor: null,
+      });
+    }
+
+    // U2 — contact request (now accepts an optional `message`).
+    if (url.pathname === "/_cokret/self/contacts/request" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        requester: "did:web:alice.example",
+        target: body.target ?? "did:web:unknown.example",
+        consent_scope: (body.requested_scopes ?? ["direct_message"])[0],
+        status: "pending_outgoing",
+        created_at: "2026-04-28T12:00:00Z",
+        updated_at: "2026-04-28T12:00:00Z",
+      });
+    }
+
+    // U1 — accept / reject an incoming contact request.
+    if (url.pathname === "/_cokret/self/contacts/respond" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        requester: body.requester ?? "did:web:dave.example",
+        target: "did:web:alice.example",
+        consent_scope: "direct_message",
+        status: body.action === "accept" ? "accepted" : "rejected",
+        created_at: "2026-04-28T12:00:00Z",
+        updated_at: "2026-04-28T12:05:00Z",
+      });
+    }
+
+    // U5 — tombstone / block a contact.
+    if (url.pathname === "/_cokret/self/contacts/tombstone" && route.request().method() === "POST") {
+      const body = await route.request().postDataJSON();
+      return json(route, {
+        requester: "did:web:alice.example",
+        target: body.peer ?? "did:web:unknown.example",
+        consent_scope: "direct_message",
+        status: body.block_peer ? "blocked" : "tombstoned",
+        created_at: "2026-04-28T12:00:00Z",
+        updated_at: "2026-04-28T12:10:00Z",
+      });
+    }
+
+    // U4 — invite_receive_policy ("谁可以邀请我").
+    if (url.pathname === "/_cokret/self/invite-receive-policy") {
+      if (route.request().method() === "POST") {
+        const body = await route.request().postDataJSON();
+        return json(route, { ok: true, ...body });
+      }
+      return json(route, {
+        ok: true,
+        allowed_introduction_kinds: ["consent_grant", "locator_ref", "shared_realm"],
+        explicit_address_behavior: "quarantine",
+        unknown_invites: "quarantine",
+        blocked_subjects: ["did:web:spammer.example"],
+        disclosure: { high_trust: "outcome", low_trust: "opaque" },
       });
     }
 

@@ -285,6 +285,52 @@ pub fn RealmMembersPanel(
     // actually mount so a 10k-member Realm doesn't render 10k DOM nodes.
     let mut member_filter = use_signal(String::new);
     let mut member_visible = use_signal(|| MEMBER_PAGE_SIZE);
+    // U3 — "从联系人添加" picker state. `invite_contacts` holds the user's
+    // accepted contacts (lazily loaded when the modal opens); `selected_contacts`
+    // is the multi-select set of DIDs to invite via the consent-grant path.
+    let mut invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let mut invite_contacts_loaded = use_signal(|| false);
+    let mut invite_contacts_status = use_signal(String::new);
+    let mut selected_contacts = use_signal(std::collections::BTreeSet::<String>::new);
+
+    // Lazily hydrate the contacts list the first time the invite modal opens.
+    {
+        let base = base_url.clone();
+        use_effect(move || {
+            if !invite_modal_open() || invite_contacts_loaded() {
+                return;
+            }
+            invite_contacts_loaded.set(true);
+            let api_token = token();
+            let base = base.clone();
+            invite_contacts_status.set("正在加载联系人…".to_owned());
+            spawn(async move {
+                match crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+                    api.contacts().await
+                })
+                .await
+                {
+                    Ok(response) => {
+                        let accepted: Vec<crate::models::ContactListRow> = response
+                            .contacts
+                            .into_iter()
+                            .filter(|c| c.state == "accepted")
+                            .collect();
+                        let count = accepted.len();
+                        invite_contacts.set(accepted);
+                        invite_contacts_status.set(if count == 0 {
+                            "还没有可邀请的联系人。".to_owned()
+                        } else {
+                            String::new()
+                        });
+                    }
+                    Err(err) => {
+                        invite_contacts_status.set(format!("加载联系人失败:{}", err.display()))
+                    }
+                }
+            });
+        });
+    }
 
     {
         let selected_realm_for_hydration = selected_realm_id.clone();
@@ -397,6 +443,133 @@ pub fn RealmMembersPanel(
                             }
                         }
                         div { class: "modal-body workflow-form",
+                            // U3 — primary, natural path: pull existing contacts
+                            // into the Realm directly via their consent grant.
+                            div { class: "invite-from-contacts", "data-testid": "realm-invite-from-contacts",
+                                div { class: "event-head",
+                                    span { "从联系人添加" }
+                                    span { "推荐" }
+                                }
+                                if !invite_contacts_status().is_empty() {
+                                    div { class: "muted", "data-testid": "realm-invite-contacts-status", "{invite_contacts_status}" }
+                                }
+                                if !invite_contacts.read().is_empty() {
+                                    div { class: "settings-list",
+                                        for contact in invite_contacts.read().clone() {
+                                            {
+                                                let did = contact.peer.clone();
+                                                let checked = selected_contacts.read().contains(&did);
+                                                let eligible = contact.grants_me_invite();
+                                                let has_ref = contact.invite_consent_ref().is_some();
+                                                let usable = eligible && has_ref;
+                                                // Distinguish "peer never authorised invite" (no real
+                                                // consent grant ref) from other not-yet-usable states so
+                                                // the badge tells the user why the row is disabled.
+                                                let not_authorized = !usable;
+                                                let did_for_toggle = did.clone();
+                                                rsx! {
+                                                    label {
+                                                        class: "metric invite-contact-row",
+                                                        "data-testid": "realm-invite-contact-{did}",
+                                                        "data-eligible": "{usable}",
+                                                        Checkbox {
+                                                            checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                            disabled: !usable,
+                                                            on_checked_change: move |state: CheckboxState| {
+                                                                let mut next = selected_contacts.read().clone();
+                                                                if bool::from(state) {
+                                                                    next.insert(did_for_toggle.clone());
+                                                                } else {
+                                                                    next.remove(&did_for_toggle);
+                                                                }
+                                                                selected_contacts.set(next);
+                                                            },
+                                                        }
+                                                        span { class: "mono", title: "{did}", " {short_protocol_id(&did)}" }
+                                                        if not_authorized {
+                                                            span {
+                                                                class: "badge",
+                                                                "data-testid": "realm-invite-contact-unauthorized-{did}",
+                                                                "对方未授权邀请"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
+                                            "data-testid": "realm-invite-send",
+                                            disabled: selected_contacts.read().is_empty(),
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let actor = account_did.clone();
+                                                let realm = selected_realm_id.clone();
+                                                move |_| {
+                                                    let base = base.clone();
+                                                    let actor = actor.clone();
+                                                    let realm = realm.clone();
+                                                    let api_token = token();
+                                                    // Resolve the (did, consent_ref) pairs up front so the
+                                                    // async task doesn't borrow the rendered rows.
+                                                    let targets: Vec<(String, String)> = invite_contacts
+                                                        .read()
+                                                        .iter()
+                                                        .filter(|c| selected_contacts.read().contains(&c.peer))
+                                                        .filter_map(|c| {
+                                                            c.invite_consent_ref().map(|r| (c.peer.clone(), r.to_owned()))
+                                                        })
+                                                        .collect();
+                                                    if targets.is_empty() {
+                                                        status_msg.set("没有可邀请的联系人(缺少同意凭证)。".to_owned());
+                                                        return;
+                                                    }
+                                                    let total = targets.len();
+                                                    status_msg.set(format!("正在邀请 {total} 位联系人…"));
+                                                    spawn(async move {
+                                                        let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                                            Ok(api) => api,
+                                                            Err(err) => {
+                                                                status_msg.set(format!("无效的服务器地址:{err}"));
+                                                                return;
+                                                            }
+                                                        };
+                                                        let mut ok = 0_usize;
+                                                        let mut last_err = String::new();
+                                                        for (did, consent_ref) in targets {
+                                                            match api
+                                                                .invite_contact_to_realm(&realm, &actor, &did, &consent_ref)
+                                                                .await
+                                                            {
+                                                                Ok(event_id) => {
+                                                                    ok += 1;
+                                                                    frontier_state.set(event_id);
+                                                                }
+                                                                Err(err) => last_err = err.to_string(),
+                                                            }
+                                                        }
+                                                        selected_contacts.set(std::collections::BTreeSet::new());
+                                                        if ok == total {
+                                                            invite_modal_open.set(false);
+                                                            status_msg.set(format!("已邀请 {ok} 位联系人(待接受)。"));
+                                                        } else {
+                                                            status_msg.set(format!(
+                                                                "已邀请 {ok}/{total} 位联系人;部分失败:{last_err}"
+                                                            ));
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "邀请所选联系人"
+                                        }
+                                    }
+                                }
+                            }
+
+                            div { class: "invite-divider muted", "data-testid": "realm-invite-divider", "或邀请陌生人(粘贴邀请链接)" }
+
                             Label { html_for: "invite-target-input", "Invite locator" }
                             Input {
                                 id: "invite-target-input",

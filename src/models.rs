@@ -107,6 +107,53 @@ pub struct ContactListRow {
     pub effective_scopes: Vec<String>,
     #[serde(default)]
     pub direct_conversation: Option<DirectConversationSummary>,
+    /// Cross-PS addressing: the peer's originating Principal Server service DID,
+    /// used to reverse-deliver an accept/reject when the request came from
+    /// another PS. Passed through to `contacts/respond` as
+    /// `requester_service_did`.
+    ///
+    /// `GET /_cokret/self/contacts` now surfaces the peer's originating
+    /// Principal Server on cross-PS rows, so this is populated whenever soland
+    /// learned it from a cross-PS delivery; it stays `None` for same-PS
+    /// contacts, where respond correctly falls back to same-PS behaviour.
+    /// Accepts a couple of likely wire spellings for forward compatibility.
+    #[serde(
+        default,
+        alias = "requester_service_did",
+        alias = "source_service_did"
+    )]
+    pub peer_service_did: Option<String>,
+    /// U3 — event ref of the `ck.consent.grant` this peer gave me for the
+    /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"
+    /// path can build `IntroductionEvidence::ConsentGrant { consent_grant_ref }`
+    /// instead of requiring a locator URL.
+    ///
+    /// soland's `GET /_cokret/self/contacts` now surfaces this field directly
+    /// (a legal `ck:event` ref when the peer granted me invite/any consent,
+    /// otherwise empty/absent). When it is empty the contact has not authorised
+    /// me to invite them, so the UI disables the row rather than guessing a ref.
+    #[serde(default)]
+    pub invite_consent_grant_ref: Option<String>,
+}
+
+impl ContactListRow {
+    /// U3 — the `consent_grant` event ref for the realm-invite "from contacts"
+    /// path. Returns the server-supplied `invite_consent_grant_ref` verbatim
+    /// (filtering empty strings); there is no fallback — if the peer never gave
+    /// me invite/any consent this is `None` and the row is not invitable.
+    pub fn invite_consent_ref(&self) -> Option<&str> {
+        self.invite_consent_grant_ref
+            .as_deref()
+            .filter(|r| !r.trim().is_empty())
+    }
+
+    /// Whether this contact has granted me the `invite` scope (i.e. I'm allowed
+    /// to pull them into a Realm via the contact path).
+    pub fn grants_me_invite(&self) -> bool {
+        self.granted_to_me.iter().any(|s| s == "invite")
+            || self.bidirectional_scopes.iter().any(|s| s == "invite")
+            || self.effective_scopes.iter().any(|s| s == "invite")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,6 +164,116 @@ pub struct ContactsOutcome {
     pub has_more: bool,
     #[serde(default)]
     pub next_cursor: Option<String>,
+}
+
+/// U4 — actor `invite_receive_policy` ("谁可以邀请我"). Mirrors the spec
+/// `invite_receive_policy` field set. Soland's self-plane endpoint is still
+/// being wired, so every field is `#[serde(default)]` and the struct carries a
+/// sensible [`Default`] used both as the form seed and the graceful-degrade
+/// fallback when the server returns 404/501/405.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InviteReceivePolicy {
+    /// Which introduction-evidence kinds are accepted at all. Values match
+    /// `IntroductionEvidence::kind()`:
+    /// `consent_grant` / `locator_ref` / `shared_realm` /
+    /// `same_principal_server` / `explicit_address`.
+    #[serde(default)]
+    pub allowed_introduction_kinds: Vec<String>,
+    /// What to do with an invite that arrives via raw `explicit_address`
+    /// (anyone who knows my address): `drop` / `quarantine` / `notify`.
+    #[serde(default = "default_explicit_address_behavior")]
+    pub explicit_address_behavior: String,
+    /// What to do with invites whose introduction evidence is otherwise
+    /// unknown / unrecognised: `drop` / `quarantine`.
+    #[serde(default = "default_unknown_invites")]
+    pub unknown_invites: String,
+    /// Subjects the actor has explicitly blocked from inviting them.
+    #[serde(default)]
+    pub blocked_subjects: Vec<String>,
+    /// Disclosure (read-receipt-style) behaviour back to the inviter, split by
+    /// trust tier.
+    #[serde(default)]
+    pub disclosure: InviteDisclosurePolicy,
+}
+
+fn default_explicit_address_behavior() -> String {
+    "quarantine".to_owned()
+}
+
+fn default_unknown_invites() -> String {
+    "quarantine".to_owned()
+}
+
+impl Default for InviteReceivePolicy {
+    fn default() -> Self {
+        Self {
+            // Sensible defaults: accept contacts (consent_grant), invite links
+            // (locator_ref) and same-group introductions (shared_realm); hold
+            // everything else for review.
+            allowed_introduction_kinds: vec![
+                "consent_grant".to_owned(),
+                "locator_ref".to_owned(),
+                "shared_realm".to_owned(),
+            ],
+            explicit_address_behavior: default_explicit_address_behavior(),
+            unknown_invites: default_unknown_invites(),
+            blocked_subjects: Vec::new(),
+            disclosure: InviteDisclosurePolicy::default(),
+        }
+    }
+}
+
+/// Disclosure policy nested inside [`InviteReceivePolicy`]. Each tier is one of
+/// `opaque` (tell the inviter nothing) or `outcome` (let the inviter learn the
+/// result). High-trust sources are typically contacts; low-trust sources are
+/// strangers using a locator link.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InviteDisclosurePolicy {
+    #[serde(default = "default_high_trust_disclosure")]
+    pub high_trust: String,
+    #[serde(default = "default_low_trust_disclosure")]
+    pub low_trust: String,
+}
+
+fn default_high_trust_disclosure() -> String {
+    "outcome".to_owned()
+}
+
+fn default_low_trust_disclosure() -> String {
+    "opaque".to_owned()
+}
+
+impl Default for InviteDisclosurePolicy {
+    fn default() -> Self {
+        Self {
+            high_trust: default_high_trust_disclosure(),
+            low_trust: default_low_trust_disclosure(),
+        }
+    }
+}
+
+/// Response wrapper for the get/set `invite_receive_policy` endpoints. The
+/// server may echo the stored policy plus an `ok` flag; we also accept a bare
+/// policy object (no wrapper) for forward-compatibility.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InviteReceivePolicyOutcome {
+    #[serde(default = "default_policy_ok")]
+    pub ok: bool,
+    #[serde(default, flatten)]
+    pub policy: InviteReceivePolicy,
+}
+
+fn default_policy_ok() -> bool {
+    true
+}
+
+impl Default for InviteReceivePolicyOutcome {
+    fn default() -> Self {
+        Self {
+            ok: true,
+            policy: InviteReceivePolicy::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -700,6 +857,64 @@ mod tests {
             projection_realm_id_for_known_node(&[], "ck:space:child"),
             None
         );
+    }
+
+    #[test]
+    fn invite_receive_policy_outcome_decodes_flattened_wire() {
+        // U4 — mirrors the soland/mock wire body: `ok` + the flattened policy
+        // fields. The flatten + per-field defaults must round-trip cleanly.
+        let value = serde_json::json!({
+            "ok": true,
+            "allowed_introduction_kinds": ["consent_grant", "locator_ref"],
+            "explicit_address_behavior": "drop",
+            "unknown_invites": "quarantine",
+            "blocked_subjects": ["did:web:spammer.example"],
+            "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
+        });
+        let outcome: super::InviteReceivePolicyOutcome =
+            serde_json::from_value(value).expect("decode policy outcome");
+        assert!(outcome.ok);
+        assert_eq!(outcome.policy.explicit_address_behavior, "drop");
+        assert_eq!(
+            outcome.policy.allowed_introduction_kinds,
+            vec!["consent_grant".to_owned(), "locator_ref".to_owned()]
+        );
+        assert_eq!(outcome.policy.disclosure.high_trust, "opaque");
+        assert_eq!(
+            outcome.policy.blocked_subjects,
+            vec!["did:web:spammer.example".to_owned()]
+        );
+    }
+
+    #[test]
+    fn invite_receive_policy_partial_wire_uses_defaults() {
+        // A partial body (only `ok`) must fall back to the sensible defaults
+        // rather than failing to deserialize.
+        let outcome: super::InviteReceivePolicyOutcome =
+            serde_json::from_value(serde_json::json!({"ok": true})).expect("decode partial");
+        assert_eq!(outcome.policy.explicit_address_behavior, "quarantine");
+        assert_eq!(outcome.policy.disclosure.low_trust, "opaque");
+    }
+
+    #[test]
+    fn contact_row_invite_consent_ref_uses_real_field_no_fallback() {
+        let mut row = super::ContactListRow {
+            peer: "did:web:bob.example".to_owned(),
+            state: "accepted".to_owned(),
+            response_event_ref: Some("ck:event:resp".to_owned()),
+            granted_to_me: vec!["invite".to_owned()],
+            ..Default::default()
+        };
+        // No fallback: an absent invite_consent_grant_ref yields None even
+        // though response_event_ref is present and the peer granted invite.
+        assert_eq!(row.invite_consent_ref(), None);
+        assert!(row.grants_me_invite());
+        // The real server-supplied consent ref is surfaced verbatim.
+        row.invite_consent_grant_ref = Some("ck:event:consent".to_owned());
+        assert_eq!(row.invite_consent_ref(), Some("ck:event:consent"));
+        // Empty strings are treated as absent.
+        row.invite_consent_grant_ref = Some("  ".to_owned());
+        assert_eq!(row.invite_consent_ref(), None);
     }
 }
 
