@@ -579,6 +579,61 @@ mod tests {
         projection_realm_id_for_node,
     };
 
+    #[test]
+    fn submit_event_outcome_decodes_new_events_submit_wire() {
+        // soland head 37ce729: {status, accepted[], cursor} — no top-level
+        // event_id / sync_token. This is the shape that previously failed to
+        // decode and broke every event submit ("error decoding response body").
+        let value = serde_json::json!({
+            "status": "accepted",
+            "accepted": ["ck:event:0196419b-0000-7000-8000-000000000001"],
+            "duplicate": [],
+            "rejected": [],
+            "actor_frontier": {"seq": 1},
+            "realm_frontier": {},
+            "cursor": "sx:cursor-1",
+        });
+        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            outcome.event_id,
+            "ck:event:0196419b-0000-7000-8000-000000000001"
+        );
+        assert_eq!(outcome.status, "accepted");
+        assert_eq!(outcome.sync_token, "sx:cursor-1");
+    }
+
+    #[test]
+    fn submit_event_outcome_decodes_legacy_flat_wire() {
+        let value = serde_json::json!({
+            "event_id": "ck:event:legacy",
+            "status": "accepted",
+            "sync_token": "sx:legacy",
+            "canonical_digest": "sha256:abc",
+            "receipt": {"k": "v"},
+        });
+        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
+        assert_eq!(outcome.event_id, "ck:event:legacy");
+        assert_eq!(outcome.sync_token, "sx:legacy");
+        assert_eq!(outcome.canonical_digest.as_deref(), Some("sha256:abc"));
+        assert_eq!(outcome.receipt, serde_json::json!({"k": "v"}));
+    }
+
+    #[test]
+    fn submit_event_outcome_accepts_synthetic_fixture_ids() {
+        // e2e mocks emit ids like `ck:event:e2e` that are not strict UUIDv7
+        // EventIds; the lenient mirror must accept them and fall back to the
+        // duplicate id + "duplicate" status when nothing was newly accepted.
+        let value = serde_json::json!({
+            "status": "duplicate",
+            "accepted": [],
+            "duplicate": ["ck:event:e2e"],
+        });
+        let outcome: super::SubmitEventOutcome = serde_json::from_value(value).unwrap();
+        assert_eq!(outcome.event_id, "ck:event:e2e");
+        assert_eq!(outcome.status, "duplicate");
+        assert_eq!(outcome.sync_token, "");
+    }
+
     fn preview(
         id: &str,
         kind: RealmTreeNodeKind,
@@ -953,7 +1008,25 @@ pub struct SolandEventsDescribeResBody {
     pub capabilities: Value,
 }
 
+/// `ck.self.events.submit` response.
+///
+/// soland (head 37ce729 / SDK drift) now returns the canonical
+/// `EventsSubmitOutcome` wire shape — `{status, accepted[], duplicate[],
+/// cursor, …}` — with **no** top-level `event_id` / `sync_token`. The
+/// yougen-facing API (callers read `.event_id` / `.sync_token` / `.status`)
+/// predates that rename, so we keep the flat surface and fold the wire shape
+/// into it on deserialize via [`EventsSubmitWire`]:
+///   * `event_id`   ← first `accepted` (else first `duplicate`)
+///   * `sync_token` ← `cursor`
+///   * `status`     ← the `accepted` / `duplicate` / `partial` discriminant
+///
+/// The mirror is intentionally **lenient** (plain `String` ids, every field
+/// `#[serde(default)]`, and a fallback to the legacy flat fields) so it
+/// decodes both the real soland response and the legacy `{event_id,
+/// sync_token, …}` shape some test mocks still emit — and never trips the
+/// strict `EventId` validator on synthetic fixture ids.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "EventsSubmitWire")]
 pub struct SubmitEventOutcome {
     pub event_id: String,
     pub status: String,
@@ -965,6 +1038,77 @@ pub struct SubmitEventOutcome {
     pub received_at: Option<String>,
     #[serde(default)]
     pub receipt: Value,
+}
+
+/// Lenient deserialization mirror for both the current soland
+/// `EventsSubmitOutcome` wire shape and the legacy flat shape. See
+/// [`SubmitEventOutcome`].
+#[derive(Deserialize)]
+struct EventsSubmitWire {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    accepted: Vec<String>,
+    #[serde(default)]
+    duplicate: Vec<String>,
+    #[serde(default)]
+    rejected: Vec<Value>,
+    #[serde(default)]
+    actor_frontier: Value,
+    #[serde(default)]
+    realm_frontier: Value,
+    #[serde(default)]
+    cursor: Option<String>,
+    // Legacy flat-shape fallbacks (old soland / contract mocks).
+    #[serde(default)]
+    event_id: Option<String>,
+    #[serde(default)]
+    sync_token: Option<String>,
+    #[serde(default)]
+    canonical_digest: Option<String>,
+    #[serde(default)]
+    received_at: Option<String>,
+    #[serde(default)]
+    receipt: Value,
+}
+
+impl From<EventsSubmitWire> for SubmitEventOutcome {
+    fn from(wire: EventsSubmitWire) -> Self {
+        let event_id = wire
+            .accepted
+            .first()
+            .cloned()
+            .or_else(|| wire.duplicate.first().cloned())
+            .or(wire.event_id)
+            .unwrap_or_default();
+        let status = wire.status.unwrap_or_else(|| {
+            if wire.duplicate.is_empty() {
+                "accepted".to_owned()
+            } else {
+                "duplicate".to_owned()
+            }
+        });
+        let sync_token = wire.cursor.or(wire.sync_token).unwrap_or_default();
+        let receipt = if wire.receipt.is_null() {
+            serde_json::json!({
+                "accepted": wire.accepted,
+                "duplicate": wire.duplicate,
+                "rejected": wire.rejected,
+                "actor_frontier": wire.actor_frontier,
+                "realm_frontier": wire.realm_frontier,
+            })
+        } else {
+            wire.receipt
+        };
+        Self {
+            event_id,
+            status,
+            canonical_digest: wire.canonical_digest,
+            sync_token,
+            received_at: wire.received_at,
+            receipt,
+        }
+    }
 }
 
 /// Round R2/R3 (T02) — server response shape for the
