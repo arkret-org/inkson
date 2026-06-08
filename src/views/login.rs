@@ -17,6 +17,10 @@ use crate::config::{LocalConfigStore, normalize_device_id, normalize_server_url}
 use crate::local_state::{LocalStateStore, OidcTokenBundle, PersistedSessionGrant};
 #[cfg(test)]
 use crate::models::DevLoginResponse;
+use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::card::Card;
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{persist_config, short_protocol_id};
 
 #[derive(Clone, Debug)]
@@ -116,7 +120,7 @@ pub fn LoginPanel(
     });
 
     rsx! {
-        section { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
+        Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
             div { class: "auth-brand",
                 div { class: "auth-logo", "C" }
                 div {
@@ -126,13 +130,14 @@ pub fn LoginPanel(
             }
 
             div { class: "auth-form",
-                label { "Principal server" }
-                input {
+                Label { html_for: "login-server-url-input", "Principal server" }
+                Input {
+                    id: "login-server-url-input",
                     "data-testid": "login-server-url",
                     "aria-label": "Principal server URL",
                     value: "{base_url}",
                     disabled: is_busy(),
-                    oninput: move |event| {
+                    oninput: move |event: FormEvent| {
                         let value = normalize_server_url(&event.value());
                         base_url.set(value.clone());
                         token.set(String::new());
@@ -140,7 +145,8 @@ pub fn LoginPanel(
                     },
                 }
 
-                button {
+                Button {
+                    variant: ButtonVariant::Primary,
                     class: "primary auth-primary",
                     "data-testid": "start-server-login-button",
                     disabled: is_busy(),
@@ -225,7 +231,8 @@ pub fn LoginPanel(
                                         "{jkt_label}"
                                     }
                                 }
-                                button {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
                                     class: "ghost",
                                     "data-testid": "refresh-now-button",
                                     disabled: is_busy(),

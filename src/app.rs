@@ -53,6 +53,12 @@ const DESIGN_STYLE: &str = include_str!("styles/design.css");
 
 const APP_OVERRIDES: &str = include_str!("styles/app_overrides.css");
 
+/// dioxus-components 主题变量(`--primary-color` / `--dxc-*` 等),供
+/// `src/ui` 下样式化组件的 `#[css_module]` 样式引用。遵循本仓 CSS idiom
+/// 以 `include_str!` 内联注入,而非 `asset!`/`<link>`;注入顺序排在三段
+/// 现有样式之前,使现有设计系统在任何冲突时取胜(共存、旧样式优先)。
+const DXC_THEME: &str = include_str!("../assets/dx-components-theme.css");
+
 fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
     store
         .realm_remarks()
@@ -1653,6 +1659,7 @@ pub fn RouterView() -> Element {
         let mut callback_session_boot_state = session_boot_state;
 
         return rsx! {
+            style { "{DXC_THEME}" }
             style { "{STYLE}" }
             style { "{DESIGN_STYLE}" }
             style { "{APP_OVERRIDES}" }
@@ -1741,6 +1748,7 @@ pub fn RouterView() -> Element {
         && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
     rsx! {
+        style { "{DXC_THEME}" }
         style { "{STYLE}" }
         style { "{DESIGN_STYLE}" }
         style { "{APP_OVERRIDES}" }

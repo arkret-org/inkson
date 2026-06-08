@@ -104,6 +104,11 @@ pub mod session_refresh;
 pub mod snapshot;
 pub mod sync_engine;
 pub mod telemetry;
+/// dioxus-components(shadcn 式)样式化组件层 — 经 `dx components add
+/// … --module-path src/ui` 生成,基于 `dioxus-primitives` 的无样式
+/// primitive。与现有手写 `components` 模块并存:`ui` 承载逐步迁移到
+/// 该组件库的视图;主题 CSS 见 `assets/dx-components-theme.css`。
+pub mod ui;
 pub mod views;
 pub mod webrtc;
 pub mod workflows;
