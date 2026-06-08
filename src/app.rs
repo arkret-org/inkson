@@ -1252,6 +1252,21 @@ pub fn RouterView() -> Element {
     } else {
         "Refresh server metadata, then sign in".to_owned()
     };
+    // Topbar account avatar — mirror the Account identity avatar from
+    // settings so the menu trigger shows the same uploaded photo (or the
+    // same default letter + tone circle) instead of a generic person glyph.
+    let topbar_avatar_initial =
+        crate::views::settings::default_avatar_initial(&personal_handles_value, &account_did_value);
+    let topbar_avatar_tone =
+        crate::views::settings::default_avatar_tone(&personal_handles_value, &account_did_value);
+    let topbar_avatar_blob_ref = if has_session {
+        state_store
+            .read()
+            .load_private_data(&account_did_value, "avatar_blob_ref")
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let frontier_label = frontier_state();
     let frontier_label_display = short_protocol_id(&frontier_label);
     let push_label = push_state();
@@ -3001,7 +3016,22 @@ pub fn RouterView() -> Element {
                                     server_menu_open.set(false);
                                     account_menu_open.toggle();
                                 },
-                                UiIcon { name: "user" }
+                                if !topbar_avatar_blob_ref.trim().is_empty() {
+                                    span {
+                                        class: "avatar-img topbar-account-avatar",
+                                        key: "{topbar_avatar_blob_ref}",
+                                        crate::content::renderer::AuthenticatedBlobImage {
+                                            blob_ref: topbar_avatar_blob_ref.trim().to_owned(),
+                                            alt_text: crate::i18n::tr("topbar.account_menu"),
+                                        }
+                                    }
+                                } else {
+                                    span {
+                                        class: "avatar-img default-avatar topbar-account-avatar tone-{topbar_avatar_tone}",
+                                        "aria-hidden": "true",
+                                        span { "{topbar_avatar_initial}" }
+                                    }
+                                }
                                 if has_session {
                                     span { class: "dot-online", title: "online" }
                                 }

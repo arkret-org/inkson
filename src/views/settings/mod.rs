@@ -71,7 +71,7 @@ struct PendingAvatarCrop {
     dimensions: (u32, u32),
 }
 
-fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
+pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
     handles
         .iter()
         .map(|handle| handle.trim().trim_start_matches('@'))
@@ -83,7 +83,7 @@ fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
         .unwrap_or_else(|| "?".to_owned())
 }
 
-fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
+pub(crate) fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in handles
         .iter()
