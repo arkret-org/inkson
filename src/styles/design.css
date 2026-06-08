@@ -1117,12 +1117,39 @@ button:disabled:hover,
   gap: 10px;
   min-width: 0;
 }
+/* The "Upload new avatar" control is a <label> bound to a hidden file
+   input. The dioxus-primitives Label ships `.dx-label` (small muted text),
+   which made it read as non-interactive caption text. Style it as a
+   self-contained secondary button so it clearly looks clickable. The
+   `label.` prefix raises specificity above `.dx-label` so the button look
+   wins regardless of stylesheet order. Shared with
+   `components/avatar_uploader.rs`. */
+label.avatar-upload-button,
 .avatar-upload-button {
   width: fit-content;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
   cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 80ms ease;
+}
+label.avatar-upload-button:hover,
+.avatar-upload-button:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+label.avatar-upload-button:active,
+.avatar-upload-button:active {
+  transform: translateY(1px);
 }
 .avatar-uploader-file-input {
   position: absolute;

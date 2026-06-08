@@ -1146,8 +1146,9 @@ pub fn SettingsPanel(
                                         } else {
                                             Label {
                                                 html_for: "settings-avatar-input",
-                                                class: "secondary",
+                                                class: "avatar-upload-button",
                                                 "data-testid": "settings-avatar-upload-label",
+                                                UiIcon { name: "image" }
                                                 {crate::i18n::tr("settings.avatar.upload")}
                                             }
                                         }

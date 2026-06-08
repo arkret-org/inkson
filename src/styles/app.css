@@ -2652,6 +2652,19 @@ body {
 .new-space-shell {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
 }
+.new-realm-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Step panels live inside the single stepper card now, so they read as a
+   continuation of the step list rather than separate cards — a top divider
+   separates each active step from the stepper header above it. */
+.setup-step-panel {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--ck-line);
+}
 .new-space-hero {
   padding: 18px;
 }
@@ -2673,6 +2686,16 @@ body {
   min-width: 0;
   justify-content: flex-start;
   text-align: left;
+}
+/* The dxc Button clamps to a single-row height (`[data-size]` → 2.25rem),
+   which squashes these two-line steps (title + subtitle). `[data-size]`
+   raises specificity above that rule so the box can grow to fit. */
+.setup-step-list button[data-size] {
+  height: auto;
+  min-height: 3.5rem;
+  padding: 10px 14px;
+  align-items: center;
+  gap: 10px;
 }
 .setup-step-index {
   display: inline-grid;

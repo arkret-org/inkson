@@ -4,7 +4,6 @@ use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::api::is_auth_expired_error;
-use crate::components::PermissionPillRow;
 use crate::config::LocalConfigStore;
 use crate::local_state::LocalStateStore;
 use crate::routes::Route;
@@ -686,16 +685,10 @@ pub fn SetupPanel(
                         div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
                             div { class: "event-head",
                                 span { "New Realm" }
-                                span { "security boundary" }
                             }
                             h2 { class: "settings-content-title", "Create a Realm" }
                             div { class: "muted",
                                 "A Realm is the security / sync / E2EE boundary. Discoverability, join rule, history visibility, encryption profile and security class are independent decisions — encryption_profile and security_class are create-locked, so pick deliberately."
-                            }
-                            PermissionPillRow {
-                                discoverability: Some(discoverability_value.clone()),
-                                join_rule: Some(join_rule_value.clone()),
-                                history_visibility: Some(history_visibility_value.clone()),
                             }
                         }
 
@@ -718,10 +711,9 @@ pub fn SetupPanel(
                                     }
                                 }
                             }
-                        }
 
                         if active_create_step == NewRealmStep::Basics {
-                            div { class: "event",
+                            div { class: "setup-step-panel",
                                 div { class: "event-head",
                                     span { "Basics" }
                                     span { "required title" }
@@ -762,7 +754,7 @@ pub fn SetupPanel(
                         }
 
                         if active_create_step == NewRealmStep::Boundary {
-                            div { class: "event",
+                            div { class: "setup-step-panel",
                                 div { class: "event-head",
                                     span { "Boundary" }
                                     span { "three independent axes" }
@@ -1035,7 +1027,7 @@ pub fn SetupPanel(
                         }
 
                         if active_create_step == NewRealmStep::Seed {
-                            div { class: "event",
+                            div { class: "setup-step-panel",
                                 div { class: "event-head",
                                     span { "Seed members" }
                                     span { "optional" }
@@ -1420,7 +1412,7 @@ pub fn SetupPanel(
                         }
 
                         if active_create_step == NewRealmStep::Done {
-                            div { class: "event", "data-testid": "realm-setup-done",
+                            div { class: "setup-step-panel", "data-testid": "realm-setup-done",
                                 div { class: "event-head",
                                     span { "Done" }
                                     span { "next context" }
@@ -1429,7 +1421,7 @@ pub fn SetupPanel(
                                     div { class: "setup-summary-list",
                                         div { class: "setup-summary-row",
                                             strong { "Created Realm" }
-                                            span { class: "mono", title: "{created_realm_id_value}", "{created_realm_id_label}" }
+                                            span { class: "mono", title: "{created_realm_id_value}", "data-testid": "selected-realm-id", "{created_realm_id_label}" }
                                         }
                                         div { class: "setup-summary-row setup-summary-row-stack",
                                             strong { "Bootstrap state" }
@@ -1437,72 +1429,17 @@ pub fn SetupPanel(
                                         }
                                     }
                                     div { class: "actions setup-nav-actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "new-realm-back-button",
-                                            onclick: move |_| create_step.set(active_create_step.previous()),
-                                            "Back"
-                                        }
                                         Link {
                                             class: "primary",
                                             to: Route::Realm { realm_id: created_realm_id_value.clone() },
                                             "Open Realm"
                                         }
-                                        Link {
-                                            class: "secondary",
-                                            to: Route::RealmAdmin { realm_id: created_realm_id_value.clone() },
-                                            "Open Realm Admin"
-                                        }
                                     }
                                 } else {
                                     div { class: "muted", "Create a Realm before opening the next context." }
-                                    div { class: "actions setup-nav-actions",
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "new-realm-back-button",
-                                            onclick: move |_| create_step.set(NewRealmStep::Seed),
-                                            "Back to Seed"
-                                        }
-                                    }
                                 }
                             }
                         }
-                    }
-
-                    div { class: "setup-column setup-review-column",
-                        div { class: "event",
-                            div { class: "event-head",
-                                span { "Review" }
-                                span { "current draft" }
-                            }
-                            div { class: "setup-summary-list",
-                                div { class: "setup-summary-row",
-                                    strong { "Title" }
-                                    span { if title_value.trim().is_empty() { "Required" } else { "{title_value}" } }
-                                }
-                                div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { "Policy" }
-                                    PermissionPillRow {
-                                        discoverability: Some(discoverability_value.clone()),
-                                        join_rule: Some(join_rule_value.clone()),
-                                        history_visibility: Some(history_visibility_value.clone()),
-                                    }
-                                }
-                                div { class: "setup-summary-row",
-                                    strong { "Seed members" }
-                                    span { "{seed_member_count}" }
-                                }
-                                div { class: "setup-summary-row",
-                                    strong { "Created Realm" }
-                                    span { class: "mono", "data-testid": "selected-realm-id",
-                                        if has_created_realm { "{created_realm_id_label}" } else { "not created yet" }
-                                    }
-                                }
-                                div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { "Bootstrap state" }
-                                    span { class: "muted", "{realm_state_value}" }
-                                }
-                            }
                         }
                     }
                 }
