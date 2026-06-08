@@ -112,256 +112,244 @@ pub fn SettingsSecurityPanel(
     let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
 
     rsx! {
-        div { class: "settings", "data-testid": "settings-security-panel",
-            div { class: "settings-shell",
-                section { class: "settings-content-column",
-                    div { class: "event settings-content-hero",
-                        div { class: "event-head",
-                            span { "Security" }
-                            span { if has_session { "authenticated" } else { "not signed in" } }
-                        }
-                        div { class: "settings-content-title-row",
-                            h2 { class: "settings-content-title", "Key backup" }
-                            HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + account MLS history key. The passphrase is the E2E recovery trust root: anyone who learns it can unlock historical encrypted backups, and if you lose it, encrypted history cannot be restored on a fresh device.".to_owned() }
-                        }
-                    }
+        div { class: "settings-content-stack", "data-testid": "settings-security-panel",
+            div { class: "event settings-control-panel",
+                div { class: "event-head",
+                    span { "Recovery vault backup" }
+                    span { if has_session { "authenticated" } else { "not signed in" } }
+                    HelpTip { text: "Encrypted Cloud Vault backup of your signing keys + account MLS history key. The passphrase is the E2E recovery trust root: anyone who learns it can unlock historical encrypted backups, and if you lose it, encrypted history cannot be restored on a fresh device.".to_owned() }
+                }
+            }
 
-                    div { class: "event",
-                        div { class: "event-head",
-                            span { "Backup status" }
-                            span {
-                                "data-testid": "key-backup-status",
-                                "{status_text}"
-                            }
+            div { class: "event",
+                div { class: "event-head",
+                    span { "Backup status" }
+                    span {
+                        "data-testid": "key-backup-status",
+                        "{status_text}"
+                    }
+                }
+                div { class: "metric-grid",
+                    div { class: "metric",
+                        strong { "Last backup" }
+                        span {
+                            "data-testid": "key-backup-last-backup-at",
+                            if last_backup_at().is_empty() { "never" } else { "{last_backup_at}" }
                         }
-                        div { class: "metric-grid",
-                            div { class: "metric",
-                                strong { "Last backup" }
-                                span {
-                                    "data-testid": "key-backup-last-backup-at",
-                                    if last_backup_at().is_empty() { "never" } else { "{last_backup_at}" }
-                                }
-                                div { class: "muted",
-                                    if last_backup_id().is_empty() {
-                                        "Trigger a backup to start protecting your keys."
-                                    } else {
-                                        "backup_id: {last_backup_id_label}"
-                                    }
-                                }
-                            }
-                            div { class: "metric",
-                                strong { "Encryption" }
-                                span { "Argon2id + XChaCha20-Poly1305" }
-                                div { class: "muted", "m=64MiB, t=3, p=4" }
-                            }
-                            div { class: "metric",
-                                strong { "Storage" }
-                                span { "PUT /_cokret/self/keys/backups" }
-                                div { class: "muted", "ciphertext only" }
+                        div { class: "muted",
+                            if last_backup_id().is_empty() {
+                                "Trigger a backup to start protecting your keys."
+                            } else {
+                                "backup_id: {last_backup_id_label}"
                             }
                         }
                     }
+                    div { class: "metric",
+                        strong { "Encryption" }
+                        span { "Argon2id + XChaCha20-Poly1305" }
+                        div { class: "muted", "m=64MiB, t=3, p=4" }
+                    }
+                    div { class: "metric",
+                        strong { "Storage" }
+                        span { "PUT /_cokret/self/keys/backups" }
+                        div { class: "muted", "ciphertext only" }
+                    }
+                }
+            }
 
-                    div { class: "event",
-                        div { class: "event-head",
-                            span { "Actions" }
-                            span { "manual triggers" }
-                        }
-                        p { class: "muted",
-                            "Enter a strong passphrase, then trigger a backup or restore. The passphrase plaintext only lives in this tab's memory during the Argon2id stretch."
-                        }
-                        div { class: "workflow-form",
-                            Label { html_for: "key-backup-passphrase", "Backup passphrase" }
-                            Input {
-                                id: "key-backup-passphrase",
-                                "data-testid": "key-backup-passphrase-input",
-                                r#type: "password",
-                                value: "{passphrase}",
-                                placeholder: "24+ characters or several random words",
-                                autocomplete: "new-password",
-                                oninput: move |event: FormEvent| passphrase.set(event.value()),
-                            }
-                            div { class: "muted", "data-testid": "key-backup-passphrase-strength",
-                                "Strength: {passphrase_strength_label(passphrase_strength)} ({passphrase_strength}/5). Minimum: good ({min_strength}/5)."
-                            }
-                        }
-                        div { class: "actions",
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "key-backup-trigger-button",
-                                disabled: !has_session
-                                    || recovery_passphrase_strength_error(&passphrase()).is_some(),
-                                onclick: {
-                                    let actor = actor_did.clone();
-                                    move |_| {
-                                        let base = base_url();
-                                        let api_token = token();
-                                        let actor_owned = actor.clone();
-                                        let device = device_id();
-                                        let pass = passphrase();
-                                        if let Some(reason) = recovery_passphrase_strength_error(&pass) {
-                                            action_status.set(reason.to_owned());
+            div { class: "event",
+                div { class: "event-head",
+                    span { "Actions" }
+                    span { "manual triggers" }
+                }
+                p { class: "muted",
+                    "Enter a strong passphrase, then trigger a backup or restore. The passphrase plaintext only lives in this tab's memory during the Argon2id stretch."
+                }
+                div { class: "workflow-form",
+                    Label { html_for: "key-backup-passphrase", "Backup passphrase" }
+                    Input {
+                        id: "key-backup-passphrase",
+                        "data-testid": "key-backup-passphrase-input",
+                        r#type: "password",
+                        value: "{passphrase}",
+                        placeholder: "24+ characters or several random words",
+                        autocomplete: "new-password",
+                        oninput: move |event: FormEvent| passphrase.set(event.value()),
+                    }
+                    div { class: "muted", "data-testid": "key-backup-passphrase-strength",
+                        "Strength: {passphrase_strength_label(passphrase_strength)} ({passphrase_strength}/5). Minimum: good ({min_strength}/5)."
+                    }
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "key-backup-trigger-button",
+                        disabled: !has_session
+                            || recovery_passphrase_strength_error(&passphrase()).is_some(),
+                        onclick: {
+                            let actor = actor_did.clone();
+                            move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let actor_owned = actor.clone();
+                                let device = device_id();
+                                let pass = passphrase();
+                                if let Some(reason) = recovery_passphrase_strength_error(&pass) {
+                                    action_status.set(reason.to_owned());
+                                    return;
+                                }
+                                let backup_id = if last_backup_id().is_empty() {
+                                    format!("ck:backup:{}", uuid_v7())
+                                } else {
+                                    last_backup_id()
+                                };
+                                action_status.set(format!(
+                                    "Stretching passphrase + uploading backup {}…",
+                                    short_protocol_id(&backup_id)
+                                ));
+                                let actor_for_payload = actor_owned.clone();
+                                let pass_bytes = pass.into_bytes();
+                                let backup_id_async = backup_id.clone();
+                                let device_for_payload = device.clone();
+                                spawn(async move {
+                                    let payload = serde_json::json!({
+                                        "schema_version": 1,
+                                        "actor_id": actor_for_payload,
+                                        "device_id": device_for_payload,
+                                        "minted_at": chrono::Utc::now().to_rfc3339(),
+                                        "source": "settings.security.trigger_backup",
+                                    })
+                                    .to_string();
+                                    let kek = match derive_vault_kek(&pass_bytes) {
+                                        Ok(k) => k,
+                                        Err(err) => {
+                                            action_status.set(format!(
+                                                "Argon2id stretch failed: {err}"
+                                            ));
                                             return;
                                         }
-                                        let backup_id = if last_backup_id().is_empty() {
-                                            format!("ck:backup:{}", uuid_v7())
-                                        } else {
-                                            last_backup_id()
-                                        };
-                                        action_status.set(format!(
-                                            "Stretching passphrase + uploading backup {}…",
-                                            short_protocol_id(&backup_id)
-                                        ));
-                                        let actor_for_payload = actor_owned.clone();
-                                        let pass_bytes = pass.into_bytes();
-                                        let backup_id_async = backup_id.clone();
-                                        let device_for_payload = device.clone();
-                                        spawn(async move {
-                                            let payload = serde_json::json!({
-                                                "schema_version": 1,
-                                                "actor_id": actor_for_payload,
-                                                "device_id": device_for_payload,
-                                                "minted_at": chrono::Utc::now().to_rfc3339(),
-                                                "source": "settings.security.trigger_backup",
-                                            })
-                                            .to_string();
-                                            let kek = match derive_vault_kek(&pass_bytes) {
-                                                Ok(k) => k,
-                                                Err(err) => {
-                                                    action_status.set(format!(
-                                                        "Argon2id stretch failed: {err}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            let body = match build_recovery_vault_backup_body(
-                                                &backup_id_async,
-                                                &actor_for_payload,
-                                                &device_for_payload,
-                                                &kek,
-                                                payload.as_bytes(),
-                                            ) {
-                                                Ok(b) => b,
-                                                Err(err) => {
-                                                    action_status.set(format!(
-                                                        "AEAD encrypt failed: {err}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            let backup_id_inner = backup_id_async.clone();
-                                            match with_authed_api(&base, api_token, |api| async move {
-                                                api.put_key_backup(&backup_id_inner, body).await
-                                            })
-                                            .await
-                                            {
-                                                Ok(_) => {
-                                                    let now = chrono::Utc::now().to_rfc3339();
-                                                    last_backup_id.set(backup_id_async.clone());
-                                                    last_backup_at.set(now.clone());
-                                                    status_text.set("enabled".to_owned());
-                                                    action_status.set(format!(
-                                                        "Backup {} stored",
-                                                        short_protocol_id(&backup_id_async),
-                                                    ));
-                                                    let next = KeyBackupState {
-                                                        status: "enabled".to_owned(),
-                                                        last_backup_at: now,
-                                                        last_backup_id: backup_id_async,
-                                                    };
-                                                    save_state(
-                                                        &mut state_store.write(),
-                                                        &actor_owned,
-                                                        &next,
-                                                    );
-                                                    passphrase.set(String::new());
-                                                }
-                                                Err(err) => {
-                                                    status_text.set("out-of-date".to_owned());
-                                                    action_status.set(format!(
-                                                        "Backup upload failed: {}",
-                                                        err.display()
-                                                    ));
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                "Trigger backup"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "key-backup-restore-button",
-                                disabled: !has_session || last_backup_id().is_empty(),
-                                onclick: move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    let backup_id = last_backup_id();
-                                    if backup_id.is_empty() {
-                                        action_status.set(
-                                            "No backup_id known — trigger a backup first or paste an id at /recover.".to_owned()
-                                        );
-                                        return;
-                                    }
-                                    action_status.set(format!(
-                                        "Fetching backup {}…",
-                                        short_protocol_id(&backup_id)
-                                    ));
-                                    spawn(async move {
-                                        // TODO(G3.Y1-followup): soland
-                                        // exposes `GET /_cokret/self/keys/backups/{id}`
-                                        // but the MLS-history backup
-                                        // endpoints (spec
-                                        // crypto-media/encryption-and-audit.md
-                                        // §2.4 — epoch backfill) are
-                                        // not yet implemented. The
-                                        // restore path here pulls the
-                                        // recovery-vault payload only;
-                                        // re-deriving MLS epoch keys
-                                        // is gated on that follow-up.
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.list_key_backups().await
-                                        })
-                                        .await
-                                        {
-                                            Ok(response) => {
-                                                let found = response
-                                                    .get("backups")
-                                                    .and_then(serde_json::Value::as_array)
-                                                    .and_then(|backups| {
-                                                        backups.iter().find(|entry| {
-                                                            entry
-                                                                .get("backup_id")
-                                                                .and_then(serde_json::Value::as_str)
-                                                                == Some(backup_id.as_str())
-                                                        })
-                                                    });
-                                                match found {
-                                                    Some(metadata) => action_status.set(format!(
-                                                        "Fetched backup metadata: {metadata}"
-                                                    )),
-                                                    None => action_status.set(format!(
-                                                        "Backup {} is not listed for this account.",
-                                                        short_protocol_id(&backup_id)
-                                                    )),
-                                                }
-                                            }
-                                            Err(err) => {
-                                                action_status.set(format!(
-                                                    "Restore fetch failed: {}",
-                                                    err.display()
-                                                ));
-                                            }
+                                    };
+                                    let body = match build_recovery_vault_backup_body(
+                                        &backup_id_async,
+                                        &actor_for_payload,
+                                        &device_for_payload,
+                                        &kek,
+                                        payload.as_bytes(),
+                                    ) {
+                                        Ok(b) => b,
+                                        Err(err) => {
+                                            action_status.set(format!(
+                                                "AEAD encrypt failed: {err}"
+                                            ));
+                                            return;
                                         }
-                                    });
-                                },
-                                "Restore from backup"
+                                    };
+                                    let backup_id_inner = backup_id_async.clone();
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.put_key_backup(&backup_id_inner, body).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            let now = chrono::Utc::now().to_rfc3339();
+                                            last_backup_id.set(backup_id_async.clone());
+                                            last_backup_at.set(now.clone());
+                                            status_text.set("enabled".to_owned());
+                                            action_status.set(format!(
+                                                "Backup {} stored",
+                                                short_protocol_id(&backup_id_async),
+                                            ));
+                                            let next = KeyBackupState {
+                                                status: "enabled".to_owned(),
+                                                last_backup_at: now,
+                                                last_backup_id: backup_id_async,
+                                            };
+                                            save_state(
+                                                &mut state_store.write(),
+                                                &actor_owned,
+                                                &next,
+                                            );
+                                            passphrase.set(String::new());
+                                        }
+                                        Err(err) => {
+                                            status_text.set("out-of-date".to_owned());
+                                            action_status.set(format!(
+                                                "Backup upload failed: {}",
+                                                err.display()
+                                            ));
+                                        }
+                                    }
+                                });
                             }
-                        }
-                        if !action_status().is_empty() {
-                            div { class: "muted", "data-testid": "key-backup-action-status", "{action_status}" }
-                        }
+                        },
+                        "Trigger backup"
                     }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "key-backup-restore-button",
+                        disabled: !has_session || last_backup_id().is_empty(),
+                        onclick: move |_| {
+                            let base = base_url();
+                            let api_token = token();
+                            let backup_id = last_backup_id();
+                            if backup_id.is_empty() {
+                                action_status.set(
+                                    "No backup_id known — trigger a backup first or paste an id at /recover.".to_owned()
+                                );
+                                return;
+                            }
+                            action_status.set(format!(
+                                "Fetching backup {}…",
+                                short_protocol_id(&backup_id)
+                            ));
+                            spawn(async move {
+                                // TODO(G3.Y1-followup): soland
+                                // exposes `GET /_cokret/self/keys/backups/{id}`
+                                // but the MLS-history backup endpoints (spec
+                                // crypto-media/encryption-and-audit.md §2.4)
+                                // are not yet implemented. The restore path
+                                // here pulls the recovery-vault payload only.
+                                match with_authed_api(&base, api_token, |api| async move {
+                                    api.list_key_backups().await
+                                })
+                                .await
+                                {
+                                    Ok(response) => {
+                                        let found = response
+                                            .get("backups")
+                                            .and_then(serde_json::Value::as_array)
+                                            .and_then(|backups| {
+                                                backups.iter().find(|entry| {
+                                                    entry
+                                                        .get("backup_id")
+                                                        .and_then(serde_json::Value::as_str)
+                                                        == Some(backup_id.as_str())
+                                                })
+                                            });
+                                        match found {
+                                            Some(metadata) => action_status.set(format!(
+                                                "Fetched backup metadata: {metadata}"
+                                            )),
+                                            None => action_status.set(format!(
+                                                "Backup {} is not listed for this account.",
+                                                short_protocol_id(&backup_id)
+                                            )),
+                                        }
+                                    }
+                                    Err(err) => {
+                                        action_status.set(format!(
+                                            "Restore fetch failed: {}",
+                                            err.display()
+                                        ));
+                                    }
+                                }
+                            });
+                        },
+                        "Restore from backup"
+                    }
+                }
+                if !action_status().is_empty() {
+                    div { class: "muted", "data-testid": "key-backup-action-status", "{action_status}" }
                 }
             }
         }

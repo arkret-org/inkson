@@ -1472,7 +1472,9 @@ impl IndexedDbSecureKeyStore {
         open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
         let result = Self::idb_request_result(open_req.as_ref())
             .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}")))?;
+            .map_err(|err| {
+                SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}"))
+            })?;
         // The upgrade handler may fire before success; keep it alive until
         // the open has settled, then relinquish it to JS (fires at most once).
         on_upgrade.forget();

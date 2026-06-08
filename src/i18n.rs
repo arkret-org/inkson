@@ -284,7 +284,7 @@ pub fn english_translations() -> TranslationDict {
 
     // Navigation & Shell
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "Dashboard");
+    dict.set("nav.dashboard", "Home");
     dict.set("nav.timeline", "Timeline");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Forum");
@@ -459,7 +459,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("dashboard.realms_label", "Realms");
     dict.set("dashboard.realms_delta_search", "Search or join a Realm");
     dict.set("dashboard.realms_delta_signin", "Sign in to load realms");
-    dict.set("dashboard.current_realm", "Current Realm");
     dict.set("dashboard.workspace_setup", "Realm Setup");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -483,7 +482,6 @@ pub fn english_translations() -> TranslationDict {
     );
     // F-I18N-CLEAN-1: en strings previously hard-coded in dashboard / chat /
     // kanban / settings / realm_admin views.
-    dict.set("dashboard.resume_context", "Resume in the current context");
     dict.set("dashboard.no_notifications", "No notifications loaded");
     dict.set(
         "dashboard.notifications_signin",
@@ -1220,7 +1218,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "contacts.new.recipient_service_label",
         "Their server (only when adding across servers)",
     );
-    dict.set("contacts.new.recipient_service_placeholder", "did:web:ps.bob.example (leave blank if same server)");
+    dict.set(
+        "contacts.new.recipient_service_placeholder",
+        "did:web:ps.bob.example (leave blank if same server)",
+    );
     dict.set(
         "contacts.new.recipient_service_hint",
         "If they're on a different server (Principal Server), enter its service DID; leave blank if you're on the same server.",
@@ -1233,13 +1234,19 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.new.message_label", "Note (optional)");
     dict.set("contacts.new.message_placeholder", "Say hello…");
     dict.set("contacts.new.sending", "Sending request…");
-    dict.set("contacts.new.sent", "Request sent — waiting for them to accept.");
+    dict.set(
+        "contacts.new.sent",
+        "Request sent — waiting for them to accept.",
+    );
     dict.set("contacts.new.send_failed", "Failed to send: {error}");
     dict.set("contacts.new.submit", "Send request");
     dict.set("contacts.new.submit_busy", "Sending…");
 
     // ── scope_label ───────────────────────────────────────────────────
-    dict.set("contacts.scope.direct_message", "Direct messages (can DM me)");
+    dict.set(
+        "contacts.scope.direct_message",
+        "Direct messages (can DM me)",
+    );
     dict.set("contacts.scope.invite", "Can invite me to groups");
     dict.set("contacts.scope.voice_call", "Voice calls");
     dict.set("contacts.scope.video_call", "Video calls");
@@ -1262,8 +1269,14 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.action.withdrawing", "Withdrawing…");
     dict.set("contacts.action.blocking", "Blocking…");
     dict.set("contacts.dm.opening", "Opening direct chat…");
-    dict.set("contacts.dm.not_ready", "Direct chat isn't ready yet, try again shortly.");
-    dict.set("contacts.dm.open_failed", "Couldn't open direct chat: {error}");
+    dict.set(
+        "contacts.dm.not_ready",
+        "Direct chat isn't ready yet, try again shortly.",
+    );
+    dict.set(
+        "contacts.dm.open_failed",
+        "Couldn't open direct chat: {error}",
+    );
     dict.set("contacts.block.confirm_title", "Block this contact?");
     dict.set(
         "contacts.block.confirm_body",
@@ -1280,23 +1293,44 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "invite_policy.intro",
         "Choose which sources can invite you to groups. Invites outside the allowed range are dropped or held for review per the rules below.",
     );
-    dict.set("invite_policy.load_failed", "Couldn't read your current policy from the server (using defaults): {error}");
+    dict.set(
+        "invite_policy.load_failed",
+        "Couldn't read your current policy from the server (using defaults): {error}",
+    );
     dict.set("invite_policy.kinds_title", "Allowed invite sources");
-    dict.set("invite_policy.kind.consent_grant", "Contacts (friends you've approved)");
+    dict.set(
+        "invite_policy.kind.consent_grant",
+        "Contacts (friends you've approved)",
+    );
     dict.set("invite_policy.kind.locator_ref", "Invite links");
     dict.set("invite_policy.kind.shared_realm", "Members of my groups");
-    dict.set("invite_policy.kind.same_principal_server", "Users on my server");
-    dict.set("invite_policy.kind.explicit_address", "Anyone who knows my address");
-    dict.set("invite_policy.explicit_label", "How to handle \"anyone who knows my address\"");
+    dict.set(
+        "invite_policy.kind.same_principal_server",
+        "Users on my server",
+    );
+    dict.set(
+        "invite_policy.kind.explicit_address",
+        "Anyone who knows my address",
+    );
+    dict.set(
+        "invite_policy.explicit_label",
+        "How to handle \"anyone who knows my address\"",
+    );
     dict.set("invite_policy.explicit.drop", "Drop");
     dict.set("invite_policy.explicit.quarantine", "Hold for review");
     dict.set("invite_policy.explicit.notify", "Notify me");
-    dict.set("invite_policy.unknown_prefix", "Invites from unknown sources will be ");
+    dict.set(
+        "invite_policy.unknown_prefix",
+        "Invites from unknown sources will be ",
+    );
     dict.set("invite_policy.unknown_drop", "dropped");
     dict.set("invite_policy.unknown_quarantine", "held for review");
     dict.set("invite_policy.unknown_suffix", ".");
     dict.set("invite_policy.disclosure_title", "Receipts");
-    dict.set("invite_policy.disclosure_toggle", "Let contacts see the invite outcome");
+    dict.set(
+        "invite_policy.disclosure_toggle",
+        "Let contacts see the invite outcome",
+    );
     dict.set(
         "invite_policy.disclosure_hint",
         "Strangers (low-trust sources) never get a receipt, so you don't reveal whether you're online or accepted the invite.",
@@ -1304,7 +1338,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("invite_policy.blocked_title", "Blocked inviters");
     dict.set("invite_policy.blocked_empty", "No blocked inviters.");
     dict.set("invite_policy.unblock", "Remove");
-    dict.set("invite_policy.unblocked_hint", "Removed from the block list — remember to save.");
+    dict.set(
+        "invite_policy.unblocked_hint",
+        "Removed from the block list — remember to save.",
+    );
     dict.set("invite_policy.saving", "Saving…");
     dict.set("invite_policy.saved", "Saved.");
     dict.set("invite_policy.save_failed", "Save failed: {error}");
@@ -1315,16 +1352,40 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_from_contacts", "Add from contacts");
     dict.set("realm_admin.invite_recommended", "Recommended");
     dict.set("realm_admin.invite_loading_contacts", "Loading contacts…");
-    dict.set("realm_admin.invite_contacts_failed", "Couldn't load contacts: {error}");
-    dict.set("realm_admin.invite_no_contacts", "No contacts available to invite yet.");
-    dict.set("realm_admin.invite_unauthorized", "Hasn't authorized invites");
-    dict.set("realm_admin.invite_none_eligible", "No contacts can be invited (missing consent grant).");
+    dict.set(
+        "realm_admin.invite_contacts_failed",
+        "Couldn't load contacts: {error}",
+    );
+    dict.set(
+        "realm_admin.invite_no_contacts",
+        "No contacts available to invite yet.",
+    );
+    dict.set(
+        "realm_admin.invite_unauthorized",
+        "Hasn't authorized invites",
+    );
+    dict.set(
+        "realm_admin.invite_none_eligible",
+        "No contacts can be invited (missing consent grant).",
+    );
     dict.set("realm_admin.invite_sending", "Inviting {total} contact(s)…");
-    dict.set("realm_admin.invite_sent", "Invited {ok} contact(s) (pending acceptance).");
-    dict.set("realm_admin.invite_partial", "Invited {ok}/{total} contact(s); some failed: {error}");
+    dict.set(
+        "realm_admin.invite_sent",
+        "Invited {ok} contact(s) (pending acceptance).",
+    );
+    dict.set(
+        "realm_admin.invite_partial",
+        "Invited {ok}/{total} contact(s); some failed: {error}",
+    );
     dict.set("realm_admin.invite_selected", "Invite selected contacts");
-    dict.set("realm_admin.invite_divider", "Or invite a stranger (paste an invite link)");
-    dict.set("realm_admin.invite_bad_server", "Invalid server address: {error}");
+    dict.set(
+        "realm_admin.invite_divider",
+        "Or invite a stranger (paste an invite link)",
+    );
+    dict.set(
+        "realm_admin.invite_bad_server",
+        "Invalid server address: {error}",
+    );
 }
 
 /// R3 spec sync (b47ff6ec) — English toast / inline-error strings for
@@ -1545,7 +1606,7 @@ pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Zh);
 
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "仪表盘");
+    dict.set("nav.dashboard", "主页");
     dict.set("nav.timeline", "时间线");
     dict.set("nav.chat", "聊天");
     dict.set("nav.forum", "论坛");
@@ -1639,7 +1700,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.realms_label", "Realm");
     dict.set("dashboard.realms_delta_search", "搜索或加入 Realm");
     dict.set("dashboard.realms_delta_signin", "登录后加载 Realm");
-    dict.set("dashboard.current_realm", "当前 Realm");
     dict.set("dashboard.workspace_setup", "Realm 设置");
     dict.set(
         "dashboard.workspace_setup_delta",
@@ -1653,7 +1713,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.no_realms_help", "服务器尚未返回 Realm 列表。");
     dict.set("dashboard.no_session_help", "客户端不会展示占位 Realm。");
     // F-I18N-CLEAN-1: 与 en dict 同步的新 keys。
-    dict.set("dashboard.resume_context", "回到当前上下文");
     dict.set("dashboard.no_notifications", "暂无通知");
     dict.set("dashboard.notifications_signin", "登录后加载通知");
     dict.set(
@@ -2215,8 +2274,14 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "输入对方的 DID 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
     );
     dict.set("contacts.new.target_label", "对方 DID");
-    dict.set("contacts.new.recipient_service_label", "对方所在服务器(跨服务器添加时填)");
-    dict.set("contacts.new.recipient_service_placeholder", "did:web:ps.bob.example(同服务器留空)");
+    dict.set(
+        "contacts.new.recipient_service_label",
+        "对方所在服务器(跨服务器添加时填)",
+    );
+    dict.set(
+        "contacts.new.recipient_service_placeholder",
+        "did:web:ps.bob.example(同服务器留空)",
+    );
     dict.set(
         "contacts.new.recipient_service_hint",
         "对方在另一台服务器(Principal Server)时填它的 service DID;同服务器留空即可。",
@@ -2273,14 +2338,23 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "invite_policy.intro",
         "选择哪些来源可以邀请你加入群组。不在允许范围内的邀请会按下面的规则丢弃或暂存待审。",
     );
-    dict.set("invite_policy.load_failed", "未能从服务器读取现有策略(将使用默认值):{error}");
+    dict.set(
+        "invite_policy.load_failed",
+        "未能从服务器读取现有策略(将使用默认值):{error}",
+    );
     dict.set("invite_policy.kinds_title", "允许的邀请来源");
     dict.set("invite_policy.kind.consent_grant", "联系人(已同意的好友)");
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
-    dict.set("invite_policy.kind.same_principal_server", "同一服务器的用户");
+    dict.set(
+        "invite_policy.kind.same_principal_server",
+        "同一服务器的用户",
+    );
     dict.set("invite_policy.kind.explicit_address", "任何知道我地址的人");
-    dict.set("invite_policy.explicit_label", "“任何知道我地址的人”的处理方式");
+    dict.set(
+        "invite_policy.explicit_label",
+        "“任何知道我地址的人”的处理方式",
+    );
     dict.set("invite_policy.explicit.drop", "直接丢弃");
     dict.set("invite_policy.explicit.quarantine", "暂存待审");
     dict.set("invite_policy.explicit.notify", "通知我");
@@ -2297,7 +2371,10 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("invite_policy.blocked_title", "已屏蔽的邀请者");
     dict.set("invite_policy.blocked_empty", "没有被屏蔽的邀请者。");
     dict.set("invite_policy.unblock", "移除");
-    dict.set("invite_policy.unblocked_hint", "已从屏蔽列表移除,记得点击保存。");
+    dict.set(
+        "invite_policy.unblocked_hint",
+        "已从屏蔽列表移除,记得点击保存。",
+    );
     dict.set("invite_policy.saving", "正在保存…");
     dict.set("invite_policy.saved", "已保存。");
     dict.set("invite_policy.save_failed", "保存失败:{error}");
@@ -2308,13 +2385,22 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_from_contacts", "从联系人添加");
     dict.set("realm_admin.invite_recommended", "推荐");
     dict.set("realm_admin.invite_loading_contacts", "正在加载联系人…");
-    dict.set("realm_admin.invite_contacts_failed", "加载联系人失败:{error}");
+    dict.set(
+        "realm_admin.invite_contacts_failed",
+        "加载联系人失败:{error}",
+    );
     dict.set("realm_admin.invite_no_contacts", "还没有可邀请的联系人。");
     dict.set("realm_admin.invite_unauthorized", "对方未授权邀请");
-    dict.set("realm_admin.invite_none_eligible", "没有可邀请的联系人(缺少同意凭证)。");
+    dict.set(
+        "realm_admin.invite_none_eligible",
+        "没有可邀请的联系人(缺少同意凭证)。",
+    );
     dict.set("realm_admin.invite_sending", "正在邀请 {total} 位联系人…");
     dict.set("realm_admin.invite_sent", "已邀请 {ok} 位联系人(待接受)。");
-    dict.set("realm_admin.invite_partial", "已邀请 {ok}/{total} 位联系人;部分失败:{error}");
+    dict.set(
+        "realm_admin.invite_partial",
+        "已邀请 {ok}/{total} 位联系人;部分失败:{error}",
+    );
     dict.set("realm_admin.invite_selected", "邀请所选联系人");
     dict.set("realm_admin.invite_divider", "或邀请陌生人(粘贴邀请链接)");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
@@ -2346,17 +2432,29 @@ fn add_circle_ui_keys(dict: &mut TranslationDict) {
         "Members you add join immediately — they do not have to accept.",
     );
     dict.set("circle.add_member_pick_label", "Select Realm members");
-    dict.set("circle.add_member_none", "No Realm members are available to add.");
+    dict.set(
+        "circle.add_member_none",
+        "No Realm members are available to add.",
+    );
     dict.set("circle.add_member_submit", "Add selected");
     dict.set("circle.add_member_cancel", "Cancel");
-    dict.set("circle.add_member_adding", "Adding {count} member(s)\u{2026}");
-    dict.set("circle.add_member_added", "Added {ok} member(s) to the circle.");
+    dict.set(
+        "circle.add_member_adding",
+        "Adding {count} member(s)\u{2026}",
+    );
+    dict.set(
+        "circle.add_member_added",
+        "Added {ok} member(s) to the circle.",
+    );
     dict.set(
         "circle.add_member_partial",
         "Added {ok}/{total} member(s); some failed: {error}",
     );
     dict.set("circle.add_member_failed", "Could not add members: {error}");
-    dict.set("circle.add_member_empty_selection", "Select at least one member first.");
+    dict.set(
+        "circle.add_member_empty_selection",
+        "Select at least one member first.",
+    );
 }
 
 /// CKP-0007 — Circle list / create / add-member UI strings (Chinese).
@@ -2393,7 +2491,10 @@ fn add_circle_ui_keys_zh(dict: &mut TranslationDict) {
         "已添加 {ok}/{total} 名成员;部分失败:{error}",
     );
     dict.set("circle.add_member_failed", "添加成员失败:{error}");
-    dict.set("circle.add_member_empty_selection", "请先至少选择一名成员。");
+    dict.set(
+        "circle.add_member_empty_selection",
+        "请先至少选择一名成员。",
+    );
 }
 
 /// English i18n strings for the 6 CKP-0007 reason / error codes
@@ -2457,7 +2558,7 @@ pub fn arabic_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ar);
 
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "لوحة التحكم");
+    dict.set("nav.dashboard", "Home");
     dict.set("nav.timeline", "الخط الزمني");
     dict.set("nav.chat", "الدردشة");
     dict.set("nav.forum", "المنتدى");
@@ -2512,7 +2613,7 @@ pub fn init_i18n_with_locale(locale: Locale) -> I18nSignal {
 pub fn spanish_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Es);
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "Panel");
+    dict.set("nav.dashboard", "Home");
     dict.set("nav.timeline", "Cronología");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Foro");
@@ -2553,7 +2654,7 @@ pub fn spanish_translations() -> TranslationDict {
 pub fn japanese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ja);
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "ダッシュボード");
+    dict.set("nav.dashboard", "Home");
     dict.set("nav.timeline", "タイムライン");
     dict.set("nav.chat", "チャット");
     dict.set("nav.forum", "フォーラム");
@@ -2594,7 +2695,7 @@ pub fn japanese_translations() -> TranslationDict {
 pub fn french_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Fr);
     dict.set("app.title", "yougen");
-    dict.set("nav.dashboard", "Tableau de bord");
+    dict.set("nav.dashboard", "Home");
     dict.set("nav.timeline", "Chronologie");
     dict.set("nav.chat", "Discussion");
     dict.set("nav.forum", "Forum");

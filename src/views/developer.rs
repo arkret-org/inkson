@@ -6,16 +6,14 @@
 //! product language; admins / operators / developers consult this panel
 //! when they need to see the canonical identifiers.
 //!
-//! The panel is intentionally a thin aggregator: it links to the existing
-//! `AuditPanel`, the conformance helpers in `crate::conformance`, and the
-//! raw operation log already persisted in `LocalStateStore`. Nothing here
-//! emits new events.
+//! The panel is intentionally a thin protocol inspector. Audit rows are
+//! surfaced by the sibling Diagnostics audit tab so the two operator tasks
+//! remain visually distinct.
 
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::local_state::LocalStateStore;
-use crate::views::audit::AuditPanel;
 use crate::views::helpers::short_protocol_id;
 
 /// Default protocol version advertised by yougen — kept here so the
@@ -100,9 +98,6 @@ pub fn DeveloperToolsPanel(state_store: Signal<LocalStateStore>) -> Element {
                     }
                 }
             }
-
-            // Reuse the existing AuditPanel for ck.audit.* rows.
-            AuditPanel { state_store: state_store }
         }
     }
 }

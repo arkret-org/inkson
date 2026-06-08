@@ -173,10 +173,7 @@ impl CokretApi {
             .filter(|scope| !scope.is_empty())
             .collect();
         let mut body = json!({"target": target, "requested_scopes": scopes});
-        if let Some(message) = message
-            .map(str::trim)
-            .filter(|message| !message.is_empty())
-        {
+        if let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) {
             body["message"] = json!(message);
         }
         if let Some(service_did) = recipient_service_did

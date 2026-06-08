@@ -24,7 +24,7 @@ use base64::engine::general_purpose::{
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
-use dioxus_router::hooks::use_route;
+use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::json;
 
 use crate::components::{HelpTip, UiIcon};
@@ -674,11 +674,12 @@ enum SettingsSection {
     Devices,
     Storage,
     Encryption,
+    KeyBackup,
     Recovery,
     Mimi,
     Notifications,
     Privacy,
-    /// U4 — "谁可以邀请我" invite_receive_policy (`/settings/invite-policy`).
+    /// U4 invite_receive_policy (`/settings/invite-policy`).
     InvitePolicy,
     /// G3.Y3 — consent grants (`/settings/consent`).
     Consent,
@@ -696,6 +697,7 @@ impl SettingsSection {
             "devices" => Self::Devices,
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
+            "security" | "key-backup" => Self::KeyBackup,
             "recovery" => Self::Recovery,
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
@@ -704,8 +706,8 @@ impl SettingsSection {
             "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
+            "audit" | "audit-log" | "developer" | "developer-tools" | "release" => Self::Release,
             "theme" => Self::Theme,
-            "release" => Self::Release,
             _ => Self::Server,
         }
     }
@@ -716,6 +718,7 @@ impl SettingsSection {
             Self::Devices => "devices",
             Self::Storage => "storage",
             Self::Encryption => "encryption",
+            Self::KeyBackup => "security",
             Self::Recovery => "recovery",
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
@@ -735,11 +738,12 @@ impl SettingsSection {
             Self::Devices => "Devices",
             Self::Storage => "Data & sync",
             Self::Encryption => "Security",
+            Self::KeyBackup => "Key backup",
             Self::Recovery => "Recovery",
             Self::Mimi => "Integrations",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy & sharing",
-            Self::InvitePolicy => "谁可以邀请我",
+            Self::InvitePolicy => "Who can invite me",
             Self::Consent => "Consent grants",
             Self::Blocklist => "Blocked actors",
             Self::Capabilities => "Capabilities",
@@ -751,6 +755,7 @@ impl SettingsSection {
     fn route(self) -> Route {
         match self {
             Self::Devices => Route::SettingsDevices,
+            Self::KeyBackup => Route::SettingsSecurity,
             Self::Recovery => Route::SettingsRecovery,
             _ => Route::SettingsSection {
                 section: self.slug().to_owned(),
@@ -759,16 +764,43 @@ impl SettingsSection {
     }
 }
 
-const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[SettingsSection::Server];
-const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
-    SettingsSection::Devices,
-    SettingsSection::Encryption,
-    SettingsSection::Recovery,
-];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagnosticsMode {
+    Developer,
+    Audit,
+}
+
+impl DiagnosticsMode {
+    fn from_slug(slug: Option<&str>) -> Option<Self> {
+        match slug {
+            Some("developer" | "developer-tools") => Some(Self::Developer),
+            Some("audit" | "audit-log") => Some(Self::Audit),
+            _ => None,
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Developer => "developer",
+            Self::Audit => "audit",
+        }
+    }
+
+    fn route(self) -> Route {
+        Route::SettingsSection {
+            section: self.slug().to_owned(),
+        }
+    }
+}
+
+const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] =
+    &[SettingsSection::Server, SettingsSection::Devices];
+const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
+    &[SettingsSection::KeyBackup, SettingsSection::Recovery];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
     SettingsSection::Notifications,
     SettingsSection::Privacy,
-    // U4 — invite_receive_policy ("谁可以邀请我") is an actor-private
+    // U4 invite_receive_policy is an actor-private
     // disclosure control, so it sits with the other privacy surfaces.
     SettingsSection::InvitePolicy,
     // G3.Y3 — consent + blocklist sit next to Privacy because both are
@@ -781,18 +813,17 @@ const SETTINGS_CLIENT_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
 const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Capabilities,
     SettingsSection::Storage,
-    SettingsSection::Mimi,
     SettingsSection::Release,
 ];
 const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
     (
         "Account",
-        "Principal identity, profile, and delegated service boundaries.",
+        "Identity, server, and signed-in devices.",
         SETTINGS_ACCOUNT_GROUP,
     ),
     (
-        "Security",
-        "Device identity, recovery, capability grants, and local encryption posture.",
+        "Security & recovery",
+        "Encrypted backup and account recovery.",
         SETTINGS_SECURITY_GROUP,
     ),
     (
@@ -800,10 +831,10 @@ const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         "Notification delivery behavior, actor-private disclosure controls, and consent/blocklist.",
         SETTINGS_DELIVERY_GROUP,
     ),
-    ("Client", "Appearance and locale.", SETTINGS_CLIENT_GROUP),
+    ("App", "Appearance and locale.", SETTINGS_CLIENT_GROUP),
     (
         "Advanced",
-        "Capabilities, storage, integrations, diagnostics, and protocol health checks.",
+        "Capability, storage, and protocol diagnostics.",
         SETTINGS_ADVANCED_GROUP,
     ),
 ];
@@ -825,7 +856,12 @@ pub fn SettingsPanel(
     status: Signal<String>,
 ) -> Element {
     let route = use_route::<Route>();
+    let navigator = use_navigator();
     let active_section = SettingsSection::from_slug(route.settings_section());
+    let route_diagnostics_mode = DiagnosticsMode::from_slug(route.settings_section());
+    let mut diagnostics_mode =
+        use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
+    let active_diagnostics_mode = route_diagnostics_mode.unwrap_or_else(|| diagnostics_mode());
     let mut presence_visible = use_signal(|| true);
     let mut notification_realm_input = use_signal(String::new);
     let mut notification_realm_muted = use_signal(|| false);
@@ -979,8 +1015,9 @@ pub fn SettingsPanel(
         div { class: "settings", "data-testid": "settings-panel",
             div { class: "settings-shell",
                 aside { class: "settings-sidebar-column",
-                    for (group_index, (_, _, sections)) in SETTINGS_NAV_GROUPS.iter().copied().enumerate() {
+                    for (group_index, (group_label, _, sections)) in SETTINGS_NAV_GROUPS.iter().copied().enumerate() {
                         div { class: "settings-nav-cluster",
+                            div { class: "settings-nav-group-label", "{group_label}" }
                             for section in sections.iter().copied() {
                                 Link {
                                     class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
@@ -1033,11 +1070,11 @@ pub fn SettingsPanel(
                             // avatar is also published to soland's
                             // `ck.self.account.update_profile` so the
                             // directory + member lists pick it up.
-                            div { class: "event settings-card-span-2", "data-testid": "settings-avatar-card",
+                            div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
                                     span { "Account identity" }
                                 }
-                                div { class: "actions settings-avatar-actions",
+                                div { class: "settings-avatar-actions",
                                     {
                                         let blob_ref = profile_avatar_blob_ref();
                                         rsx! {
@@ -1437,45 +1474,137 @@ pub fn SettingsPanel(
                                     }
                                 }
                                 div { class: "metric-grid settings-account-identity-grid",
-                                    div { class: "metric",
+                                    div { class: "metric settings-identity-row",
                                         strong { "DID" }
-                                        span {
-                                            class: "mono",
-                                            "data-testid": "settings-account-did",
-                                            title: "{principal_label}",
-                                            "{principal_short_label}"
+                                        div { class: "settings-identity-value",
+                                            span {
+                                                class: "mono",
+                                                "data-testid": "settings-account-did",
+                                                title: "{principal_label}",
+                                                "{principal_short_label}"
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Ghost,
+                                                size: ButtonSize::IconSm,
+                                                class: "btn icon settings-identity-copy",
+                                                "data-testid": "settings-account-copy-did",
+                                                title: "Copy DID",
+                                                "aria-label": "Copy DID",
+                                                onclick: {
+                                                    let value = principal_label.clone();
+                                                    move |_| {
+                                                        copy_text_to_clipboard(&value);
+                                                        status.set("DID copied".to_owned());
+                                                    }
+                                                },
+                                                UiIcon { name: "copy" }
+                                            }
                                         }
                                     }
-                                    div { class: "metric",
+                                    div { class: "metric settings-identity-row",
                                         strong { "Handles" }
-                                        span {
-                                            class: "mono",
-                                            "data-testid": "settings-account-handles",
-                                            title: "{account_handles_title}",
-                                            "{account_handles_label}"
+                                        div { class: "settings-identity-value",
+                                            span {
+                                                class: "mono",
+                                                "data-testid": "settings-account-handles",
+                                                title: "{account_handles_title}",
+                                                "{account_handles_label}"
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Ghost,
+                                                size: ButtonSize::IconSm,
+                                                class: "btn icon settings-identity-copy",
+                                                "data-testid": "settings-account-copy-handles",
+                                                title: "Copy handles",
+                                                "aria-label": "Copy handles",
+                                                onclick: {
+                                                    let value = account_handles_title.clone();
+                                                    move |_| {
+                                                        copy_text_to_clipboard(&value);
+                                                        status.set("Handles copied".to_owned());
+                                                    }
+                                                },
+                                                UiIcon { name: "copy" }
+                                            }
                                         }
                                     }
-                                    div { class: "metric",
+                                    div { class: "metric settings-identity-row",
                                         strong { "Current device" }
-                                        span {
-                                            class: "mono",
-                                            "data-testid": "settings-account-device",
-                                            title: "{device_label}",
-                                            "{device_short_label}"
+                                        div { class: "settings-identity-value",
+                                            span {
+                                                class: "mono",
+                                                "data-testid": "settings-account-device",
+                                                title: "{device_label}",
+                                                "{device_short_label}"
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Ghost,
+                                                size: ButtonSize::IconSm,
+                                                class: "btn icon settings-identity-copy",
+                                                "data-testid": "settings-account-copy-device",
+                                                title: "Copy device ID",
+                                                "aria-label": "Copy device ID",
+                                                onclick: {
+                                                    let value = device_label.clone();
+                                                    move |_| {
+                                                        copy_text_to_clipboard(&value);
+                                                        status.set("Device ID copied".to_owned());
+                                                    }
+                                                },
+                                                UiIcon { name: "copy" }
+                                            }
                                         }
                                     }
                                 }
                             }
 
-                            div { class: "event settings-card-span-2", "data-testid": "settings-invite-locator-card",
-                                div { class: "event-head",
+                            div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
+                                div { class: "event-head invite-locator-head",
                                     span { "Invite locator" }
-                                    span { if has_session { "15 min" } else { "offline" } }
+                                    if has_session {
+                                        div { class: "invite-locator-head-actions",
+                                            span { class: "invite-locator-expiry", "15 min" }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                size: ButtonSize::Sm,
+                                                class: "btn invite-locator-action",
+                                                "data-testid": "settings-invite-locator-copy",
+                                                onclick: {
+                                                    let invite_url = invite_locator_url.clone();
+                                                    move |_| {
+                                                        copy_text_to_clipboard(&invite_url);
+                                                        status.set("Invite locator URL copied".to_owned());
+                                                    }
+                                                },
+                                                UiIcon { name: "copy" }
+                                                span { "Copy URL" }
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                size: ButtonSize::Sm,
+                                                class: "btn invite-locator-action",
+                                                "data-testid": "settings-invite-locator-refresh",
+                                                onclick: move |_| {
+                                                    let did = account_did();
+                                                    invite_locator_token.set(if did.trim().is_empty() {
+                                                        String::new()
+                                                    } else {
+                                                        build_invite_locator_token(&did)
+                                                    });
+                                                    status.set("Invite locator refreshed".to_owned());
+                                                },
+                                                UiIcon { name: "refresh" }
+                                                span { "Refresh" }
+                                            }
+                                        }
+                                    } else {
+                                        span { "offline" }
+                                    }
                                 }
                                 if has_session {
-                                    div { class: "metric-grid",
-                                        div { class: "metric",
-                                            strong { "QR" }
+                                    div { class: "invite-locator-panel",
+                                        div { class: "invite-locator-qr-pane",
+                                            strong { class: "invite-locator-pane-label", "QR" }
                                             if invite_locator_qr_svg.is_empty() {
                                                 div {
                                                     class: "muted",
@@ -1492,42 +1621,15 @@ pub fn SettingsPanel(
                                                 }
                                             }
                                         }
-                                        div { class: "metric",
-                                            strong { "URL" }
+                                        div { class: "invite-locator-url-pane",
+                                            strong { class: "invite-locator-pane-label", "URL" }
                                             Textarea {
-                                                class: "mono",
+                                                id: "settings-invite-locator-url-input",
+                                                class: "mono invite-locator-url-field",
                                                 "data-testid": "settings-invite-locator-url",
                                                 readonly: true,
-                                                rows: "4",
+                                                rows: "7",
                                                 value: "{invite_locator_url}",
-                                            }
-                                            div { class: "actions",
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "settings-invite-locator-copy",
-                                                    onclick: {
-                                                        let invite_url = invite_locator_url.clone();
-                                                        move |_| {
-                                                            copy_text_to_clipboard(&invite_url);
-                                                            status.set("Invite locator URL copied".to_owned());
-                                                        }
-                                                    },
-                                                    "Copy URL"
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "settings-invite-locator-refresh",
-                                                    onclick: move |_| {
-                                                        let did = account_did();
-                                                        invite_locator_token.set(if did.trim().is_empty() {
-                                                            String::new()
-                                                        } else {
-                                                            build_invite_locator_token(&did)
-                                                        });
-                                                        status.set("Invite locator refreshed".to_owned());
-                                                    },
-                                                    "Refresh"
-                                                }
                                             }
                                         }
                                     }
@@ -1540,6 +1642,26 @@ pub fn SettingsPanel(
                                 }
                             }
 
+                        }
+                    }
+
+                    if active_section == SettingsSection::Devices {
+                        crate::views::settings::devices::SettingsDevicesPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            state_store,
+                        }
+                    }
+
+                    if active_section == SettingsSection::KeyBackup {
+                        crate::views::settings::security::SettingsSecurityPanel {
+                            base_url,
+                            account_did,
+                            device_id,
+                            token,
+                            state_store,
                         }
                     }
 
@@ -3264,26 +3386,42 @@ pub fn SettingsPanel(
                             // surfaces (raw event log, audit rows, schema /
                             // profile / event-kind references) which used to
                             // leak into the main flow.
-                            div { class: "event", "data-testid": "developer-tools-entry",
+                            div { class: "event settings-diagnostics-switcher", "data-testid": "settings-diagnostics-switcher",
                                 div { class: "event-head",
-                                    span { {crate::i18n::tr("developer.title")} }
+                                    span { "Diagnostics explorer" }
                                     span { class: "badge blue", {crate::i18n::tr("developer.subtitle")} }
                                 }
                                 div { class: "muted", {crate::i18n::tr("developer.hint")} }
                                 div { class: "actions",
-                                    a {
-                                        class: "secondary",
-                                        href: "/developer",
+                                    Button {
+                                        variant: if active_diagnostics_mode == DiagnosticsMode::Developer { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                        size: ButtonSize::Sm,
                                         "data-testid": "open-developer-tools",
-                                        {crate::i18n::tr("developer.title")}
+                                        "aria-pressed": if active_diagnostics_mode == DiagnosticsMode::Developer { "true" } else { "false" },
+                                        onclick: move |_| {
+                                            diagnostics_mode.set(DiagnosticsMode::Developer);
+                                            let _ = navigator.push(DiagnosticsMode::Developer.route());
+                                        },
+                                        "Developer Tools"
                                     }
-                                    a {
-                                        class: "secondary",
-                                        href: "/audit",
+                                    Button {
+                                        variant: if active_diagnostics_mode == DiagnosticsMode::Audit { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                        size: ButtonSize::Sm,
                                         "data-testid": "open-audit-from-settings",
+                                        "aria-pressed": if active_diagnostics_mode == DiagnosticsMode::Audit { "true" } else { "false" },
+                                        onclick: move |_| {
+                                            diagnostics_mode.set(DiagnosticsMode::Audit);
+                                            let _ = navigator.push(DiagnosticsMode::Audit.route());
+                                        },
                                         "Audit log"
                                     }
                                 }
+                            }
+                            if active_diagnostics_mode == DiagnosticsMode::Developer {
+                                crate::views::developer::DeveloperToolsPanel { state_store }
+                            }
+                            if active_diagnostics_mode == DiagnosticsMode::Audit {
+                                crate::views::audit::AuditPanel { state_store }
                             }
                         }
                     }

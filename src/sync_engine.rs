@@ -177,7 +177,14 @@ pub async fn run_sync_engine(
             return;
         }
 
-        match run_iteration(start_generation, generation, &ctx, &mut deltas_since_invites).await {
+        match run_iteration(
+            start_generation,
+            generation,
+            &ctx,
+            &mut deltas_since_invites,
+        )
+        .await
+        {
             IterationOutcome::Ok => {
                 backoff_secs = MIN_BACKOFF_SECS;
                 // Recovery: clear any stale error the user has been

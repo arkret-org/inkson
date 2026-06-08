@@ -490,18 +490,16 @@ fn run_contact_action(
                 requester,
                 verb,
                 requester_service_did,
-            } => {
-                with_authed_api(&base, api_token, |api| async move {
-                    api.respond_contact_with_service(
-                        &requester,
-                        &verb,
-                        requester_service_did.as_deref(),
-                    )
-                    .await
-                })
+            } => with_authed_api(&base, api_token, |api| async move {
+                api.respond_contact_with_service(
+                    &requester,
+                    &verb,
+                    requester_service_did.as_deref(),
+                )
                 .await
-                .map(|_| ())
-            }
+            })
+            .await
+            .map(|_| ()),
             ContactRowAction::Tombstone { peer, block } => {
                 with_authed_api(&base, api_token, |api| async move {
                     api.tombstone_contact(&peer, block).await

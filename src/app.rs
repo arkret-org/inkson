@@ -3140,11 +3140,29 @@ pub fn RouterView() -> Element {
                                         }
                                         div { class: "account-menu__row",
                                             strong { "Handles" }
-                                            span {
-                                                class: "mono",
-                                                "data-testid": "account-menu-handles",
-                                                title: "{account_handles_title}",
-                                                "{account_handles_label}"
+                                            div { class: "account-menu__value",
+                                                span {
+                                                    class: "mono",
+                                                    "data-testid": "account-menu-handles",
+                                                    title: "{account_handles_title}",
+                                                    "{account_handles_label}"
+                                                }
+                                                Button {
+                                                    variant: ButtonVariant::Ghost,
+                                                    size: ButtonSize::Sm,
+                                                    class: "btn icon account-menu__copy",
+                                                    "data-testid": "account-menu-copy-handles",
+                                                    title: "Copy handles",
+                                                    "aria-label": "Copy handles",
+                                                    onclick: {
+                                                        let value = account_handles_title.clone();
+                                                        move |_| {
+                                                            copy_text_to_clipboard(&value);
+                                                            account_session_state.set("Handles copied".to_owned());
+                                                        }
+                                                    },
+                                                    UiIcon { name: "copy" }
+                                                }
                                             }
                                         }
                                         div { class: "account-menu__row",
@@ -3660,8 +3678,13 @@ pub fn RouterView() -> Element {
                     Route::Settings
                     | Route::SettingsSection { .. }
                     | Route::NotificationsSettings
+                    | Route::SettingsDevices
+                    | Route::SettingsDevicesPair
                     | Route::SettingsRecovery
-                    | Route::Recovery => rsx! {
+                    | Route::SettingsSecurity
+                    | Route::Recovery
+                    | Route::Audit
+                    | Route::Developer => rsx! {
                         crate::views::settings::SettingsPanel {
                             base_url,
                             account_did,
@@ -3676,28 +3699,6 @@ pub fn RouterView() -> Element {
                             locale,
                             theme,
                             status,
-                        }
-                    },
-                    // G3.Y1 — device management + QR pairing live on
-                    // their own routes so the e2e harness can deep-link
-                    // into them without scrolling past unrelated
-                    // settings sections.
-                    Route::SettingsDevices | Route::SettingsDevicesPair => rsx! {
-                        crate::views::settings::devices::SettingsDevicesPanel {
-                            base_url,
-                            account_did,
-                            device_id,
-                            token,
-                            state_store,
-                        }
-                    },
-                    Route::SettingsSecurity => rsx! {
-                        crate::views::settings::security::SettingsSecurityPanel {
-                            base_url,
-                            account_did,
-                            device_id,
-                            token,
-                            state_store,
                         }
                     },
                     Route::Recover => rsx! {
@@ -3770,12 +3771,6 @@ pub fn RouterView() -> Element {
                         } else {
                             rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
-                    },
-                    Route::Audit => rsx! {
-                        crate::views::audit::AuditPanel { state_store }
-                    },
-                    Route::Developer => rsx! {
-                        crate::views::developer::DeveloperToolsPanel { state_store }
                     },
                     Route::Kanban
                     | Route::KanbanRealm { .. }
@@ -4140,7 +4135,7 @@ fn RealmContextBar(
 /// listed.
 fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
-        ("Home", "dashboard, recent activity", Route::Dashboard),
+        ("Home", "overview, recent activity", Route::Dashboard),
         ("Files", "private file transfer", Route::FileTransfer),
         (
             "Notifications",
@@ -4549,9 +4544,9 @@ fn route_label(route: &Route) -> &'static str {
             "new-space" => "New Space",
             _ => "Setup",
         },
-        Route::Settings | Route::SettingsSection { .. } | Route::NotificationsSettings => {
-            "Settings"
-        }
+        Route::Settings => "Settings",
+        Route::SettingsSection { section } => settings_route_label(section),
+        Route::NotificationsSettings => "Notifications",
         Route::VerifyDevice => "Verify Device",
         Route::RealmMembers { .. } => "Members",
         Route::RealmAdmin { .. } => "Realm Settings",
@@ -4563,8 +4558,7 @@ fn route_label(route: &Route) -> &'static str {
             "repair" => "Repair & Danger",
             _ => "Realm Settings",
         },
-        Route::Audit => "Audit",
-        Route::Developer => "Developer Tools",
+        Route::Audit | Route::Developer => "Diagnostics",
         Route::Kanban
         | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
@@ -4584,6 +4578,28 @@ fn route_label(route: &Route) -> &'static str {
         Route::Applets => "Applets",
         Route::Agents => "Agents",
         Route::Search => "Search",
+    }
+}
+
+fn settings_route_label(section: &str) -> &'static str {
+    match section {
+        "server" => "Account & server",
+        "devices" => "Devices",
+        "storage" => "Data & sync",
+        "encryption" => "Security",
+        "security" | "key-backup" => "Key backup",
+        "recovery" => "Recovery",
+        "mimi" => "Integrations",
+        "push" | "notifications" => "Notifications",
+        "privacy" => "Privacy & sharing",
+        "invite-policy" | "invite_policy" => "Who can invite me",
+        "consent" => "Consent grants",
+        "blocklist" | "blocked-users" => "Blocked actors",
+        "capabilities" => "Capabilities",
+        "audit" | "audit-log" | "developer" | "developer-tools" => "Diagnostics",
+        "theme" => "Appearance & locale",
+        "release" => "Diagnostics",
+        _ => "Settings",
     }
 }
 

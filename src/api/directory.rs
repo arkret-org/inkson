@@ -369,7 +369,8 @@ impl CokretApi {
         })?;
         let recipient_did = cokret_sdk::Did::new(recipient_service_did)
             .map_err(|err| anyhow::anyhow!("invalid recipient service DID: {err}"))?;
-        let invite_delivery_target = cokret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
+        let invite_delivery_target =
+            cokret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
         invite_delivery_target
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;

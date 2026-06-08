@@ -296,25 +296,21 @@ impl Route {
             Route::Settings
             | Route::SettingsSection { .. }
             | Route::NotificationsSettings
+            | Route::SettingsDevices
+            | Route::SettingsDevicesPair
             | Route::SettingsRecovery
-            | Route::Recovery => View::Settings,
-            // G3.Y1 — device / security panels keep distinct View
-            // variants; recovery now lives inside the generic Settings
-            // shell so the Settings sidebar stays visible.
-            Route::SettingsDevices | Route::SettingsDevicesPair => View::SettingsDevices,
-            Route::SettingsSecurity => View::SettingsSecurity,
+            | Route::SettingsSecurity
+            | Route::Recovery
+            | Route::Audit
+            | Route::Developer => View::Settings,
             Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. } => View::RealmAdmin,
-            // Audit / Call / Applets routes still render their own panels
-            // (see `Route::Audit`/`Route::Call`/`Route::Applets` arms in
-            // `app.rs`) but no longer have dedicated `View` enum variants —
-            // the variants were unreferenced anywhere except this mapping,
-            // and nothing in the UI dispatches on them. Map to Dashboard so
-            // `view` signal stays consistent for sidebar / palette state.
-            Route::Audit | Route::Call | Route::Applets | Route::Developer => View::Dashboard,
+            // Call / Applets routes still render their own panels but no
+            // longer have dedicated `View` enum variants.
+            Route::Call | Route::Applets => View::Dashboard,
             Route::Kanban
             | Route::KanbanRealm { .. }
             | Route::KanbanBoard { .. }
@@ -364,7 +360,11 @@ impl Route {
         match self {
             Route::SettingsSection { section } => Some(section.as_str()),
             Route::NotificationsSettings => Some("notifications"),
+            Route::SettingsDevices | Route::SettingsDevicesPair => Some("devices"),
             Route::SettingsRecovery | Route::Recovery => Some("recovery"),
+            Route::SettingsSecurity => Some("security"),
+            Route::Audit => Some("audit"),
+            Route::Developer => Some("developer"),
             _ => None,
         }
     }
@@ -448,12 +448,11 @@ mod tests {
             Route::RealmMembers {
                 realm_id: "ck:realm:roundtrip".to_owned(),
             },
-            // NOTE: Route::Audit / Route::Call / Route::Applets are
-            // intentionally omitted — their `View` enum variants were
-            // removed (zombie-variant cleanup A6.7), so they map to
-            // `View::Dashboard` and would not roundtrip. The routes still
-            // exist and still render their panels via the `Route::*` match
-            // in `app.rs`; just the View-enum roundtrip no longer applies.
+            Route::Audit,
+            Route::Developer,
+            // NOTE: Route::Call / Route::Applets are intentionally omitted.
+            // Their dedicated `View` enum variants were removed, so they map
+            // to `View::Dashboard` and would not roundtrip.
             Route::Kanban,
             Route::Notifications,
             Route::Document,
@@ -461,8 +460,7 @@ mod tests {
             Route::Recovery,
             Route::Onboarding,
             Route::Quarantine,
-            // G3.Y1 — device / security panels keep dedicated View
-            // variants; recovery round-trips through View::Settings.
+            // G3.Y1 settings subroutes all round-trip through View::Settings.
             Route::SettingsDevices,
             Route::SettingsDevicesPair,
             Route::SettingsRecovery,
@@ -533,6 +531,10 @@ mod tests {
             .settings_section(),
             Some("encryption")
         );
+        assert_eq!(Route::SettingsDevices.settings_section(), Some("devices"));
+        assert_eq!(Route::SettingsSecurity.settings_section(), Some("security"));
+        assert_eq!(Route::Audit.settings_section(), Some("audit"));
+        assert_eq!(Route::Developer.settings_section(), Some("developer"));
         assert_eq!(Route::Settings.settings_section(), None);
     }
 

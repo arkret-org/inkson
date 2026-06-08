@@ -240,70 +240,63 @@ pub fn SettingsDevicesPanel(
     }
 
     rsx! {
-        div { class: "settings", "data-testid": "settings-devices-panel",
-            div { class: "settings-shell",
-                section { class: "settings-content-column",
-                    div { class: "event settings-content-hero",
-                        div { class: "event-head",
-                            span { "Security" }
-                            span { if has_session { "authenticated" } else { "not signed in" } }
-                        }
-                        div { class: "settings-content-title-row",
-                            h2 { class: "settings-content-title", "Devices" }
-                            HelpTip { text: "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.".to_owned() }
-                        }
-                        div { class: "actions",
-                            Link {
-                                class: "secondary",
-                                to: Route::SettingsDevices,
-                                "Devices"
-                            }
-                            Link {
-                                class: if pair_mode { "primary" } else { "secondary" },
-                                to: Route::SettingsDevicesPair,
-                                "Pair new device"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "device-list-refresh",
-                                onclick: refresh_devices,
-                                "Refresh"
-                            }
-                        }
+        div { class: "settings-content-stack", "data-testid": "settings-devices-panel",
+            div { class: "event settings-control-panel",
+                div { class: "event-head",
+                    span { "Device access" }
+                    span { if has_session { "authenticated" } else { "not signed in" } }
+                    HelpTip { text: "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.".to_owned() }
+                }
+                div { class: "actions",
+                    Link {
+                        class: if !pair_mode { "primary" } else { "secondary" },
+                        to: Route::SettingsDevices,
+                        "Devices"
                     }
-
-                    if pair_mode {
-                        {render_pair_flow(
-                            account_did,
-                            device_id,
-                            base_url,
-                            token,
-                            state_store,
-                            pair_payload,
-                            pair_status,
-                            accept_input,
-                            accept_status,
-                        )}
-                    } else {
-                        {render_device_list(
-                            devices,
-                            current_device,
-                            local_device_id.clone(),
-                            load_status,
-                            revoke_target,
-                            revoke_status,
-                            base_url,
-                            account_did,
-                            device_id,
-                            token,
-                            state_store,
-                            revoke_passphrase,
-                            rename_target,
-                            rename_input,
-                            rename_status,
-                        )}
+                    Link {
+                        class: if pair_mode { "primary" } else { "secondary" },
+                        to: Route::SettingsDevicesPair,
+                        "Pair new device"
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "device-list-refresh",
+                        onclick: refresh_devices,
+                        "Refresh"
                     }
                 }
+            }
+
+            if pair_mode {
+                {render_pair_flow(
+                    account_did,
+                    device_id,
+                    base_url,
+                    token,
+                    state_store,
+                    pair_payload,
+                    pair_status,
+                    accept_input,
+                    accept_status,
+                )}
+            } else {
+                {render_device_list(
+                    devices,
+                    current_device,
+                    local_device_id.clone(),
+                    load_status,
+                    revoke_target,
+                    revoke_status,
+                    base_url,
+                    account_did,
+                    device_id,
+                    token,
+                    state_store,
+                    revoke_passphrase,
+                    rename_target,
+                    rename_input,
+                    rename_status,
+                )}
             }
         }
     }

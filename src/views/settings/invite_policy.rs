@@ -1,11 +1,9 @@
 //! U4 — "谁可以邀请我" 接收策略设置 (`/settings/invite-policy`).
 //!
 //! Edits the actor `invite_receive_policy` (spec `invite_receive_policy`):
-//! - `allowed_introduction_kinds` — which introduction-evidence kinds are
-//!   accepted at all (consent_grant / locator_ref / shared_realm /
-//!   same_principal_server / explicit_address).
-//! - `explicit_address_behavior` — drop / quarantine / notify for raw-address
-//!   invites.
+//! - `allowed_introduction_kinds` — which introduction-evidence kinds are accepted at all
+//!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
+//! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
 //! - `blocked_subjects` — list of subjects barred from inviting, with removal.
 //!
@@ -40,15 +38,15 @@ const INTRODUCTION_KINDS: &[(&str, &str)] = &[
     ("consent_grant", "invite_policy.kind.consent_grant"),
     ("locator_ref", "invite_policy.kind.locator_ref"),
     ("shared_realm", "invite_policy.kind.shared_realm"),
-    ("same_principal_server", "invite_policy.kind.same_principal_server"),
+    (
+        "same_principal_server",
+        "invite_policy.kind.same_principal_server",
+    ),
     ("explicit_address", "invite_policy.kind.explicit_address"),
 ];
 
 #[component]
-pub fn InvitePolicySettingsCard(
-    base_url: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>) -> Element {
     let mut policy = use_signal(InviteReceivePolicy::default);
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);
@@ -88,7 +86,8 @@ pub fn InvitePolicySettingsCard(
     }
 
     let current = policy.read().clone();
-    let explicit_behavior_selected = use_memo(move || Some(policy.read().explicit_address_behavior.clone()));
+    let explicit_behavior_selected =
+        use_memo(move || Some(policy.read().explicit_address_behavior.clone()));
     let high_trust_outcome = current.disclosure.high_trust == "outcome";
 
     rsx! {

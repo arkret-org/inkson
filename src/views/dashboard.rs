@@ -19,6 +19,20 @@ struct DashboardNotificationSummary {
     read: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+struct DashboardContactsSummary {
+    accepted: usize,
+    pending_incoming: usize,
+    pending_outgoing: usize,
+    direct_ready: usize,
+}
+
+impl DashboardContactsSummary {
+    fn pending(&self) -> usize {
+        self.pending_incoming + self.pending_outgoing
+    }
+}
+
 #[component]
 #[allow(clippy::redundant_closure)] // `|| signal()` is not equivalent to `&signal` here.
 pub fn DashboardPanel(
@@ -37,6 +51,9 @@ pub fn DashboardPanel(
     let mut recent_flows = use_signal(Vec::<crate::api::FlowProjectionView>::new);
     let mut recent_flows_loaded_for = use_signal(String::new);
     let mut recent_flows_status = use_signal(String::new);
+    let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
+    let mut contacts_loaded_for = use_signal(String::new);
+    let mut contacts_status = use_signal(String::new);
     let has_session = !token().trim().is_empty();
     let sync_cursor_label = short_protocol_id(&sync_cursor);
     let frontier_state_label = short_protocol_id(&frontier_state);
@@ -76,10 +93,6 @@ pub fn DashboardPanel(
         .find(|node| node.id == selected_realm_id())
         .cloned()
         .or_else(|| realm_tree_snapshot.first().cloned());
-    let active_projection_kind_label = active_node
-        .as_ref()
-        .map(|node| projection_kind_label(node.kind))
-        .unwrap_or("Realm");
 
     let notification_summaries = {
         let snapshot = state_store.read().load();
@@ -97,6 +110,37 @@ pub fn DashboardPanel(
     let active_projection_realm_id =
         projection_realm_id_for_known_node(&realm_tree_snapshot, &active_node_id)
             .unwrap_or_default();
+    if has_session {
+        let api_token = token();
+        let contacts_load_key = format!("{}|{}", base_url, api_token);
+        if contacts_loaded_for() != contacts_load_key {
+            contacts_loaded_for.set(contacts_load_key);
+            contacts_summary.set(None);
+            contacts_status.set("Loading contacts".to_owned());
+            let base = base_url.clone();
+            spawn(async move {
+                match with_authed_api(&base, api_token, |api| async move { api.contacts().await })
+                    .await
+                {
+                    Ok(response) => {
+                        contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
+                        contacts_status.set(String::new());
+                    }
+                    Err(_) => {
+                        contacts_summary.set(None);
+                        contacts_status.set("Contacts unavailable".to_owned());
+                    }
+                }
+            });
+        }
+    } else if !contacts_loaded_for().is_empty()
+        || contacts_summary().is_some()
+        || !contacts_status().is_empty()
+    {
+        contacts_loaded_for.set(String::new());
+        contacts_summary.set(None);
+        contacts_status.set(String::new());
+    }
     if has_session
         && !active_node_id.trim().is_empty()
         && !active_projection_realm_id.trim().is_empty()
@@ -141,6 +185,26 @@ pub fn DashboardPanel(
         .take(3)
         .cloned()
         .collect::<Vec<_>>();
+    let contacts_summary_snapshot = contacts_summary();
+    let contacts_metric_value = contacts_summary_snapshot
+        .as_ref()
+        .map(|summary| summary.accepted.to_string())
+        .unwrap_or_else(|| {
+            if has_session && contacts_status() == "Loading contacts" {
+                "...".to_owned()
+            } else {
+                "0".to_owned()
+            }
+        });
+    let contacts_metric_delta = if !has_session {
+        tr("contacts.sign_in")
+    } else if let Some(summary) = contacts_summary_snapshot.as_ref() {
+        contact_summary_delta(summary)
+    } else if contacts_status().is_empty() {
+        tr("contacts.empty")
+    } else {
+        contacts_status()
+    };
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
             div { class: "mb-24", "data-testid": "dashboard-hero",
@@ -164,21 +228,16 @@ pub fn DashboardPanel(
                     div { class: "val", "{realm_tree_snapshot.len()}" }
                     div { class: "delta", if has_session { "{projection_browse_label}" } else { "{projection_signin_label}" } }
                 }
+                Link {
+                    class: "metric",
+                    "data-testid": "dashboard-contacts-card",
+                    to: Route::Contacts,
+                    onclick: move |_| view.set(super::View::Contacts),
+                    div { class: "lbl", {tr("nav.contacts")} }
+                    div { class: "val", "data-testid": "dashboard-contacts-count", "{contacts_metric_value}" }
+                    div { class: "delta", "{contacts_metric_delta}" }
+                }
                 if let Some(space) = active_node.as_ref() {
-                    Link {
-                        class: "metric",
-                        to: Route::Realm { realm_id: space.id.clone() },
-                        onclick: {
-                            let id = space.id.clone();
-                            move |_| {
-                                selected_realm_id.set(id.clone());
-                                view.set(super::View::Timeline);
-                            }
-                        },
-                        div { class: "lbl", "Current {active_projection_kind_label}" }
-                        div { class: "val", "{space.title}" }
-                        div { class: "delta", {crate::i18n::tr("dashboard.resume_context")} }
-                    }
                     Link {
                         class: "metric",
                         to: Route::KanbanRealm { realm_id: space.id.clone() },
@@ -191,7 +250,7 @@ pub fn DashboardPanel(
                         },
                         div { class: "lbl", "Active flows" }
                         div { class: "val", "{visible_recent_flows.len()}" }
-                        div { class: "delta", "Open the current Board" }
+                        div { class: "delta", "Open Board view" }
                     }
                 } else {
                     Link {
@@ -569,6 +628,43 @@ fn dashboard_notification_summaries(
     notifications
 }
 
+fn dashboard_contacts_summary(
+    contacts: &[crate::models::ContactListRow],
+) -> DashboardContactsSummary {
+    let mut summary = DashboardContactsSummary::default();
+    for contact in contacts {
+        match contact.state.as_str() {
+            "accepted" => {
+                summary.accepted += 1;
+                if contact.direct_conversation.is_some()
+                    || contact
+                        .bidirectional_scopes
+                        .iter()
+                        .any(|scope| scope == "direct_message")
+                    || contact
+                        .effective_scopes
+                        .iter()
+                        .any(|scope| scope == "direct_message")
+                {
+                    summary.direct_ready += 1;
+                }
+            }
+            "pending_incoming" => summary.pending_incoming += 1,
+            "pending_outgoing" | "pending" => summary.pending_outgoing += 1,
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
+    format!(
+        "Pending {} · Direct {}",
+        summary.pending(),
+        summary.direct_ready
+    )
+}
+
 fn value_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         value
@@ -648,9 +744,10 @@ fn projection_collection_empty_help_label(
 #[cfg(test)]
 mod tests {
     use super::{
-        projection_collection_label, projection_kind_label, recent_projection_collection_label,
+        contact_summary_delta, dashboard_contacts_summary, projection_collection_label,
+        projection_kind_label, recent_projection_collection_label,
     };
-    use crate::models::RealmTreeNodeKind;
+    use crate::models::{ContactListRow, DirectConversationSummary, RealmTreeNodeKind};
 
     #[test]
     fn projection_labels_follow_realm_space_kind() {
@@ -665,5 +762,40 @@ mod tests {
             recent_projection_collection_label(true, true),
             "Recent Realms & Spaces"
         );
+    }
+
+    #[test]
+    fn contact_summary_counts_actionable_rows() {
+        let rows = vec![
+            ContactListRow {
+                peer: "did:example:alice".to_owned(),
+                state: "accepted".to_owned(),
+                bidirectional_scopes: vec!["direct_message".to_owned()],
+                ..Default::default()
+            },
+            ContactListRow {
+                peer: "did:example:bob".to_owned(),
+                state: "accepted".to_owned(),
+                direct_conversation: Some(DirectConversationSummary::default()),
+                ..Default::default()
+            },
+            ContactListRow {
+                peer: "did:example:casey".to_owned(),
+                state: "pending_incoming".to_owned(),
+                ..Default::default()
+            },
+            ContactListRow {
+                peer: "did:example:drew".to_owned(),
+                state: "blocked".to_owned(),
+                ..Default::default()
+            },
+        ];
+
+        let summary = dashboard_contacts_summary(&rows);
+
+        assert_eq!(summary.accepted, 2);
+        assert_eq!(summary.pending(), 1);
+        assert_eq!(summary.direct_ready, 2);
+        assert_eq!(contact_summary_delta(&summary), "Pending 1 · Direct 2");
     }
 }

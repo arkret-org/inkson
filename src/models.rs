@@ -117,11 +117,7 @@ pub struct ContactListRow {
     /// learned it from a cross-PS delivery; it stays `None` for same-PS
     /// contacts, where respond correctly falls back to same-PS behaviour.
     /// Accepts a couple of likely wire spellings for forward compatibility.
-    #[serde(
-        default,
-        alias = "requester_service_did",
-        alias = "source_service_did"
-    )]
+    #[serde(default, alias = "requester_service_did", alias = "source_service_did")]
     pub peer_service_did: Option<String>,
     /// U3 — event ref of the `ck.consent.grant` this peer gave me for the
     /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"

@@ -281,11 +281,8 @@ impl CokretApi {
             ));
         }
         let body = json!({ "actor_id": actor_id, "state": "active" });
-        self.post_json(
-            &format!("/_soland/self/circles/{circle_id}/members"),
-            body,
-        )
-        .await
+        self.post_json(&format!("/_soland/self/circles/{circle_id}/members"), body)
+            .await
     }
 
     /// CKP-0007 P3B.2.6 — remove a member from a Circle via
