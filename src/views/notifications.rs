@@ -26,7 +26,11 @@ enum NotificationGroup {
 
 #[derive(Clone, Debug, PartialEq)]
 enum NotificationAction {
-    AcceptInvite { realm_id: String, invite_id: String },
+    AcceptInvite {
+        realm_id: String,
+        invite_id: String,
+        realm_label: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -587,6 +591,7 @@ fn run_notification_action(
         NotificationAction::AcceptInvite {
             realm_id,
             invite_id,
+            realm_label,
         } => accept_invite_notification(
             base_url,
             access_token,
@@ -596,6 +601,7 @@ fn run_notification_action(
             notification_id,
             realm_id,
             invite_id,
+            realm_label,
         ),
     }
 }
@@ -610,6 +616,7 @@ fn accept_invite_notification(
     notification_id: String,
     realm_id: String,
     invite_id: String,
+    realm_label: Option<String>,
 ) {
     let accepted_realm = realm_id;
     status_msg.set(format!(
@@ -639,9 +646,23 @@ fn accept_invite_notification(
                 let dnd = dnd_settings_from_account_data(&sync.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
+                let mut realm_title_hints = BTreeMap::new();
+                if let Some(label) = realm_label
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    realm_title_hints.insert(accepted_realm.clone(), label.to_owned());
+                }
 
                 let mut raw_notifications =
                     raw_notifications_from_sources(Some(&sync.notifications), &sync.account_data);
+                for (realm_id, title) in realm_title_hints_from_values(&raw_notifications) {
+                    realm_title_hints.entry(realm_id).or_insert(title);
+                }
+                for (realm_id, title) in realm_title_hints_from_values(&invite_notifications) {
+                    realm_title_hints.entry(realm_id).or_insert(title);
+                }
                 drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
                 append_invite_notifications(
                     &mut raw_notifications,
@@ -657,7 +678,7 @@ fn accept_invite_notification(
                 }
                 let hydrated = {
                     let mut store = state_store.write();
-                    apply_sync_projection_to_store(&mut store, &sync);
+                    apply_sync_projection_to_store(&mut store, &sync, &realm_title_hints);
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
                     hydrate_notifications(
@@ -787,8 +808,7 @@ pub(crate) fn merge_invite_notifications(
 fn invite_notification_from_value(invite: &Value) -> Option<Value> {
     let invite_id = value_string(invite, &["invite_id"])?;
     let realm_id = value_string(invite, &["realm_id"])?;
-    let realm_title = value_string(invite, &["realm_title", "title"])
-        .or_else(|| nested_value_string(invite, &["summary"], "title"));
+    let realm_title = realm_title_from_value(invite);
     let created_at = value_string(invite, &["created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     let body = if let Some(title) = realm_title.as_deref() {
@@ -827,6 +847,27 @@ fn invite_realm_id_from_value(value: &Value) -> Option<String> {
     value_string(value, &["realm_id", "target_realm_id"])
 }
 
+fn realm_title_from_value(value: &Value) -> Option<String> {
+    value_string(value, &["realm_label", "realm_title", "title", "name"])
+        .or_else(|| nested_value_string(value, &["summary"], "title"))
+        .or_else(|| nested_value_string(value, &["summary"], "name"))
+        .or_else(|| nested_value_string(value, &["realm_preview"], "title"))
+        .or_else(|| nested_value_string(value, &["preview"], "title"))
+        .map(|title| title.trim().to_owned())
+        .filter(|title| !title.is_empty())
+}
+
+pub(crate) fn realm_title_hints_from_values(values: &[Value]) -> BTreeMap<String, String> {
+    values
+        .iter()
+        .filter_map(|value| {
+            let realm_id = invite_realm_id_from_value(value)?;
+            let title = realm_title_from_value(value)?;
+            Some((realm_id, title))
+        })
+        .collect()
+}
+
 fn notification_is_invite(value: &Value) -> bool {
     ["notification_kind", "notification_type", "type", "kind"]
         .iter()
@@ -850,13 +891,22 @@ fn joined_realm_ids(response: &ClientSyncOutcome) -> BTreeSet<String> {
     response.realms.keys().cloned().collect()
 }
 
-fn apply_sync_projection_to_store(store: &mut LocalStateStore, response: &ClientSyncOutcome) {
+fn apply_sync_projection_to_store(
+    store: &mut LocalStateStore,
+    response: &ClientSyncOutcome,
+    realm_title_hints: &BTreeMap<String, String>,
+) {
     store.save_sync_cursor(response.cursor.clone());
     for left_id in &response.left_realms {
         store.forget_realm_tree_projection(left_id);
     }
     for (id, body) in &response.realms {
-        store.save_realm_tree_projection(id.clone(), body.clone());
+        let projection = crate::realm_tree::projection_with_title_hint(
+            id,
+            body,
+            realm_title_hints.get(id).map(String::as_str),
+        );
+        store.save_realm_tree_projection(id.clone(), projection);
         let view = LocalAnchorView::from_sync_body(body);
         store.set_realm_anchor_view(id.clone(), view);
         store.ingest_move_event_states(id, body);
@@ -949,6 +999,7 @@ fn notification_from_value(
         .unwrap_or_else(|| "Notification".to_owned());
     let realm_id = value_string(&value, &["realm_id"]).unwrap_or_default();
     let invite_id = value_string(&value, &["invite_id"]);
+    let realm_label = value_string(&value, &["realm_label", "realm_title"]);
     let action = if kind == "invite" {
         invite_id.clone().and_then(|invite_id| {
             if realm_id.is_empty() {
@@ -957,6 +1008,7 @@ fn notification_from_value(
                 Some(NotificationAction::AcceptInvite {
                     realm_id: realm_id.clone(),
                     invite_id,
+                    realm_label: realm_label.clone(),
                 })
             }
         })
@@ -973,7 +1025,7 @@ fn notification_from_value(
         body,
         realm_id,
         flow_id,
-        realm_label: value_string(&value, &["realm_label", "realm_title"]),
+        realm_label,
         kind: kind.clone(),
         read: value_bool(&value, "read").unwrap_or(client_state.read),
         archived: value_bool(&value, "archived").unwrap_or(client_state.archived),
@@ -1216,7 +1268,7 @@ mod tests {
         assert_eq!(notifications[0].body, "You were invited to join a Realm.");
         assert_eq!(notifications[0].action_label.as_deref(), Some("Accept"));
         assert!(matches!(
-            notifications[0].action,
+            notifications[0].action.as_ref(),
             Some(NotificationAction::AcceptInvite { .. })
         ));
 
@@ -1225,6 +1277,38 @@ mod tests {
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
+    }
+
+    #[test]
+    fn invite_title_is_preserved_for_accept_projection_hint() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
+        let invite = json!({
+            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000011",
+            "realm_id": realm_id,
+            "realm_title": "Partner Launch",
+            "created_at": "2026-05-29T00:00:00Z",
+        });
+        let mut raw = Vec::new();
+        append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
+
+        let hints = realm_title_hints_from_values(&raw);
+        let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
+
+        assert_eq!(
+            hints.get(realm_id).map(String::as_str),
+            Some("Partner Launch")
+        );
+        assert_eq!(
+            notifications[0].body,
+            "You were invited to join Partner Launch."
+        );
+        assert!(matches!(
+            notifications[0].action.as_ref(),
+            Some(NotificationAction::AcceptInvite {
+                realm_label: Some(label),
+                ..
+            }) if label == "Partner Launch"
+        ));
     }
 
     #[test]

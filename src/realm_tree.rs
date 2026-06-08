@@ -34,6 +34,68 @@ pub(crate) fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
         .find_map(|key| non_empty_string(value.get(*key)))
 }
 
+fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
+    value
+        .get(parent)
+        .and_then(|nested| string_field(nested, keys))
+}
+
+fn explicit_realm_title(body: &Value) -> Option<String> {
+    nested_string_field(
+        body,
+        "summary",
+        &["title", "realm_title", "realm_label", "name"],
+    )
+    .or_else(|| string_field(body, &["title", "realm_title", "realm_label", "name"]))
+    .or_else(|| nested_string_field(body, "realm_preview", &["title", "name"]))
+    .or_else(|| nested_string_field(body, "preview", &["title", "name"]))
+    .or_else(|| nested_string_field(body, "realm", &["title", "name"]))
+}
+
+pub(crate) fn projection_title(id: &str, body: &Value) -> String {
+    explicit_realm_title(body)
+        .or_else(|| {
+            body.get("summary")
+                .and_then(|summary| nested_string_field(summary, "flow", &["title", "name"]))
+        })
+        .unwrap_or_else(|| id.to_owned())
+}
+
+pub(crate) fn projection_with_title_hint(
+    id: &str,
+    body: &Value,
+    title_hint: Option<&str>,
+) -> Value {
+    let Some(title) = title_hint.map(str::trim).filter(|title| !title.is_empty()) else {
+        return body.clone();
+    };
+    if explicit_realm_title(body).is_some() {
+        return body.clone();
+    }
+
+    let mut next = body.clone();
+    if !next.is_object() {
+        next = serde_json::json!({});
+    }
+    let object = next
+        .as_object_mut()
+        .expect("projection body was normalized to an object");
+    let summary = object
+        .entry("summary".to_owned())
+        .or_insert_with(|| serde_json::json!({}));
+    if !summary.is_object() {
+        *summary = serde_json::json!({});
+    }
+    let summary_object = summary
+        .as_object_mut()
+        .expect("projection summary was normalized to an object");
+    summary_object.insert("title".to_owned(), Value::String(title.to_owned()));
+    object
+        .entry("__title_hint_source".to_owned())
+        .or_insert_with(|| Value::String(format!("invite:{id}")));
+    next
+}
+
 pub(crate) fn string_array_field(value: &Value, keys: &[&str]) -> Vec<String> {
     keys.iter()
         .filter_map(|key| value.get(*key))
@@ -502,17 +564,7 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
         })
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
-            let title = summary
-                .get("title")
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    summary
-                        .get("flow")
-                        .and_then(|flow| flow.get("title"))
-                        .and_then(Value::as_str)
-                })
-                .unwrap_or(id)
-                .to_owned();
+            let title = projection_title(id, body);
             let description = summary
                 .get("summary")
                 .and_then(Value::as_str)
@@ -674,6 +726,48 @@ mod tests {
                 "ck:realm:root".to_owned()
             },
         }
+    }
+
+    #[test]
+    fn sync_projection_title_accepts_invite_title_aliases() {
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+            "ck:realm:01904100-0000-7000-8000-000000000002".to_owned(),
+            json!({
+                "realm_title": "Launch Planning",
+                "summary": {}
+            }),
+        )]));
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].title, "Launch Planning");
+    }
+
+    #[test]
+    fn projection_title_hint_fills_missing_summary_title() {
+        let id = "ck:realm:01904100-0000-7000-8000-000000000003";
+        let body = json!({
+            "summary": {
+                "flow": {"title": "General flow"}
+            }
+        });
+
+        let patched = projection_with_title_hint(id, &body, Some("Invited Realm"));
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(id.to_owned(), patched)]));
+
+        assert_eq!(nodes[0].title, "Invited Realm");
+    }
+
+    #[test]
+    fn projection_title_hint_does_not_override_server_title() {
+        let id = "ck:realm:01904100-0000-7000-8000-000000000004";
+        let body = json!({
+            "summary": {"title": "Server Realm"}
+        });
+
+        let patched = projection_with_title_hint(id, &body, Some("Invite Label"));
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(id.to_owned(), patched)]));
+
+        assert_eq!(nodes[0].title, "Server Realm");
     }
 
     #[test]
