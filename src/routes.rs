@@ -43,9 +43,6 @@ pub enum Route {
     #[route("/contacts", crate::app::RouterView)]
     Contacts,
 
-    #[route("/contacts/new", crate::app::RouterView)]
-    ContactsNew,
-
     #[route("/files", crate::app::RouterView)]
     FileTransfer,
 
@@ -292,7 +289,7 @@ impl Route {
                 View::Timeline
             }
             Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
-            Route::Contacts | Route::ContactsNew => View::Contacts,
+            Route::Contacts => View::Contacts,
             Route::FileTransfer => View::FileTransfer,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,

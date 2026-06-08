@@ -11,6 +11,8 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 
+use crate::components::DismissiblePopup;
+use crate::i18n::tr;
 use crate::models::ContactListRow;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -24,21 +26,30 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 /// `message` is `1..2000`).
 const CONTACT_MESSAGE_MAX: usize = 2000;
 
-/// Human-readable label for a contact scope token. Keeps the dropdown values
-/// canonical (`direct_message`, `invite`, …) while the option text stays
-/// natural Chinese.
-fn scope_label(scope: &str) -> &'static str {
-    match scope {
-        "direct_message" => "私聊(可以给我发私信)",
-        "invite" => "可邀请我入群",
-        "voice_call" => "语音通话",
-        "video_call" => "视频通话",
-        _ => "私聊(可以给我发私信)",
-    }
+/// i18n key for a contact scope token. Keeps the dropdown values canonical
+/// (`direct_message`, `invite`, …) while the option text is looked up via the
+/// active locale (en is the authoritative default).
+fn scope_label(scope: &str) -> String {
+    let key = match scope {
+        "direct_message" => "contacts.scope.direct_message",
+        "invite" => "contacts.scope.invite",
+        "voice_call" => "contacts.scope.voice_call",
+        "video_call" => "contacts.scope.video_call",
+        _ => "contacts.scope.direct_message",
+    };
+    tr(key)
 }
 
+/// Embeddable contact-request form. Used both as the modal body inside
+/// [`ContactsPanel`] and (historically) as a standalone panel. `on_submitted`
+/// fires after a request is accepted by the server so the host can close the
+/// modal and reload the list.
 #[component]
-pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
+pub fn ContactNewPanel(
+    base_url: String,
+    token: Signal<String>,
+    #[props(default)] on_submitted: Option<EventHandler<()>>,
+) -> Element {
     let mut target = use_signal(String::new);
     // "普通好友" 预设:成为好友默认既能私聊、也默认允许对方拉我入群(微信式)。
     // 两个 scope 默认都勾选;用户可取消其一做高级细选。
@@ -57,149 +68,140 @@ pub fn ContactNewPanel(base_url: String, token: Signal<String>) -> Element {
     let no_scope = !scope_direct_message() && !scope_invite();
 
     rsx! {
-        div { class: "settings", "data-testid": "contact-request-panel",
-            div { class: "settings-shell",
-                section { class: "settings-content-stack",
-                    div { class: "event",
-                        div { class: "event-head",
-                            span { "添加联系人" }
-                            span { "需对方同意" }
-                        }
-                        div { class: "muted",
-                            "输入对方的 DID 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。"
-                        }
-                        Label { html_for: "contact-target-input-input", "对方 DID" }
-                        Input {
-                            id: "contact-target-input-input",
-                            "data-testid": "contact-target-input",
-                            value: "{target}",
-                            placeholder: "did:web:alice.example",
-                            oninput: move |event: FormEvent| target.set(event.value()),
-                        }
-                        Label { html_for: "contact-recipient-service-input", "对方所在服务器(跨服务器添加时填)" }
-                        Input {
-                            id: "contact-recipient-service-input",
-                            "data-testid": "contact-recipient-service-input",
-                            value: "{recipient_service}",
-                            placeholder: "did:web:ps.bob.example(同服务器留空)",
-                            oninput: move |event: FormEvent| recipient_service.set(event.value()),
-                        }
-                        div { class: "muted",
-                            "对方在另一台服务器(Principal Server)时填它的 service DID;同服务器留空即可。"
-                        }
-                        Label { html_for: "contact-scope-checkboxes", "好友权限(普通好友默认两项都开)" }
-                        div { id: "contact-scope-checkboxes", class: "settings-list",
-                            label {
-                                class: "metric",
-                                "data-testid": "contact-scope-direct_message-row",
-                                Checkbox {
-                                    "data-testid": "contact-scope-direct_message",
-                                    checked: if scope_direct_message() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                    on_checked_change: move |state: CheckboxState| scope_direct_message.set(bool::from(state)),
-                                }
-                                span { {scope_label("direct_message")} }
-                            }
-                            label {
-                                class: "metric",
-                                "data-testid": "contact-scope-invite-row",
-                                Checkbox {
-                                    "data-testid": "contact-scope-invite",
-                                    checked: if scope_invite() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                    on_checked_change: move |state: CheckboxState| scope_invite.set(bool::from(state)),
-                                }
-                                span { {scope_label("invite")} }
-                            }
-                        }
-                        if no_scope {
-                            div {
-                                class: "muted",
-                                "data-testid": "contact-scope-empty-hint",
-                                "至少需要选择一项权限。"
-                            }
-                        }
-                        Label { html_for: "contact-message-input", "附言(可选)" }
-                        Textarea {
-                            id: "contact-message-input",
-                            "data-testid": "contact-message-input",
-                            value: "{message}",
-                            placeholder: "打个招呼…",
-                            rows: "3",
-                            oninput: move |event: FormEvent| message.set(event.value()),
-                        }
-                        div {
-                            class: if message_over { "muted contact-message-counter over" } else { "muted contact-message-counter" },
-                            "data-testid": "contact-message-counter",
-                            "{message_len} / {CONTACT_MESSAGE_MAX}"
-                        }
-                        div { class: "actions",
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "send-contact-request-button",
-                                disabled: target_empty || message_over || no_scope || sending(),
-                                onclick: {
-                                    let base = base_url.clone();
-                                    move |_| {
-                                        let api_token = token();
-                                        let base = base.clone();
-                                        let target_did = target().trim().to_owned();
-                                        let mut scopes = Vec::new();
-                                        if scope_direct_message() {
-                                            scopes.push("direct_message".to_owned());
-                                        }
-                                        if scope_invite() {
-                                            scopes.push("invite".to_owned());
-                                        }
-                                        let service_did = recipient_service().trim().to_owned();
-                                        let greeting = message().trim().to_owned();
-                                        sending.set(true);
-                                        status.set("正在发送请求…".to_owned());
-                                        spawn(async move {
-                                            let greeting_opt = if greeting.is_empty() {
-                                                None
-                                            } else {
-                                                Some(greeting.as_str())
-                                            };
-                                            let service_opt = if service_did.is_empty() {
-                                                None
-                                            } else {
-                                                Some(service_did.as_str())
-                                            };
-                                            match with_authed_api(&base, api_token, |api| async move {
-                                                api.request_contact_with_message(
-                                                    &target_did,
-                                                    &scopes,
-                                                    greeting_opt,
-                                                    service_opt,
-                                                )
-                                                .await
-                                            })
-                                            .await
-                                            {
-                                                Ok(_) => {
-                                                    status.set(
-                                                        "请求已发送,等待对方接受。".to_owned(),
-                                                    );
-                                                    message.set(String::new());
-                                                }
-                                                Err(err) => {
-                                                    status.set(format!("发送失败:{}", err.display()))
-                                                }
-                                            }
-                                            sending.set(false);
-                                        });
-                                    }
-                                },
-                                if sending() { "发送中…" } else { "发送请求" }
-                            }
-                        }
-                        if !status.read().is_empty() {
-                            div {
-                                class: "muted",
-                                "data-testid": "contact-request-status",
-                                "{status}"
-                            }
-                        }
+        div { class: "event", "data-testid": "contact-request-panel",
+            div { class: "event-head",
+                span { {tr("contacts.new.title")} }
+                span { {tr("contacts.new.subtitle")} }
+            }
+            div { class: "muted", {tr("contacts.new.intro")} }
+            Label { html_for: "contact-target-input-input", {tr("contacts.new.target_label")} }
+            Input {
+                id: "contact-target-input-input",
+                "data-testid": "contact-target-input",
+                value: "{target}",
+                placeholder: "did:web:alice.example",
+                oninput: move |event: FormEvent| target.set(event.value()),
+            }
+            Label { html_for: "contact-recipient-service-input", {tr("contacts.new.recipient_service_label")} }
+            Input {
+                id: "contact-recipient-service-input",
+                "data-testid": "contact-recipient-service-input",
+                value: "{recipient_service}",
+                placeholder: tr("contacts.new.recipient_service_placeholder"),
+                oninput: move |event: FormEvent| recipient_service.set(event.value()),
+            }
+            div { class: "muted", {tr("contacts.new.recipient_service_hint")} }
+            Label { html_for: "contact-scope-checkboxes", {tr("contacts.new.scope_label")} }
+            div { id: "contact-scope-checkboxes", class: "settings-list",
+                label {
+                    class: "metric",
+                    "data-testid": "contact-scope-direct_message-row",
+                    Checkbox {
+                        "data-testid": "contact-scope-direct_message",
+                        checked: if scope_direct_message() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                        on_checked_change: move |state: CheckboxState| scope_direct_message.set(bool::from(state)),
                     }
+                    span { {scope_label("direct_message")} }
+                }
+                label {
+                    class: "metric",
+                    "data-testid": "contact-scope-invite-row",
+                    Checkbox {
+                        "data-testid": "contact-scope-invite",
+                        checked: if scope_invite() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                        on_checked_change: move |state: CheckboxState| scope_invite.set(bool::from(state)),
+                    }
+                    span { {scope_label("invite")} }
+                }
+            }
+            if no_scope {
+                div {
+                    class: "muted",
+                    "data-testid": "contact-scope-empty-hint",
+                    {tr("contacts.new.scope_empty")}
+                }
+            }
+            Label { html_for: "contact-message-input", {tr("contacts.new.message_label")} }
+            Textarea {
+                id: "contact-message-input",
+                "data-testid": "contact-message-input",
+                value: "{message}",
+                placeholder: tr("contacts.new.message_placeholder"),
+                rows: "3",
+                oninput: move |event: FormEvent| message.set(event.value()),
+            }
+            div {
+                class: if message_over { "muted contact-message-counter over" } else { "muted contact-message-counter" },
+                "data-testid": "contact-message-counter",
+                "{message_len} / {CONTACT_MESSAGE_MAX}"
+            }
+            div { class: "actions",
+                Button {
+                    variant: ButtonVariant::Primary,
+                    "data-testid": "send-contact-request-button",
+                    disabled: target_empty || message_over || no_scope || sending(),
+                    onclick: {
+                        let base = base_url.clone();
+                        move |_| {
+                            let api_token = token();
+                            let base = base.clone();
+                            let target_did = target().trim().to_owned();
+                            let mut scopes = Vec::new();
+                            if scope_direct_message() {
+                                scopes.push("direct_message".to_owned());
+                            }
+                            if scope_invite() {
+                                scopes.push("invite".to_owned());
+                            }
+                            let service_did = recipient_service().trim().to_owned();
+                            let greeting = message().trim().to_owned();
+                            sending.set(true);
+                            status.set(tr("contacts.new.sending"));
+                            spawn(async move {
+                                let greeting_opt = if greeting.is_empty() {
+                                    None
+                                } else {
+                                    Some(greeting.as_str())
+                                };
+                                let service_opt = if service_did.is_empty() {
+                                    None
+                                } else {
+                                    Some(service_did.as_str())
+                                };
+                                match with_authed_api(&base, api_token, |api| async move {
+                                    api.request_contact_with_message(
+                                        &target_did,
+                                        &scopes,
+                                        greeting_opt,
+                                        service_opt,
+                                    )
+                                    .await
+                                })
+                                .await
+                                {
+                                    Ok(_) => {
+                                        status.set(tr("contacts.new.sent"));
+                                        message.set(String::new());
+                                        if let Some(cb) = on_submitted {
+                                            cb.call(());
+                                        }
+                                    }
+                                    Err(err) => status.set(
+                                        tr("contacts.new.send_failed").replace("{error}", &err.display()),
+                                    ),
+                                }
+                                sending.set(false);
+                            });
+                        }
+                    },
+                    if sending() { {tr("contacts.new.submit_busy")} } else { {tr("contacts.new.submit")} }
+                }
+            }
+            if !status.read().is_empty() {
+                div {
+                    class: "muted",
+                    "data-testid": "contact-request-status",
+                    "{status}"
                 }
             }
         }
@@ -235,13 +237,13 @@ fn ContactRow(
 
     // Human-readable state label.
     let state_label = match state.as_str() {
-        "pending_incoming" => "等待你处理",
-        "pending_outgoing" | "pending" => "等待对方接受",
-        "accepted" => "已是联系人",
-        "rejected" => "已拒绝",
-        "tombstoned" => "已删除",
-        "blocked" => "已拉黑",
-        other => other,
+        "pending_incoming" => tr("contacts.state.pending_incoming"),
+        "pending_outgoing" | "pending" => tr("contacts.state.pending_outgoing"),
+        "accepted" => tr("contacts.state.accepted"),
+        "rejected" => tr("contacts.state.rejected"),
+        "tombstoned" => tr("contacts.state.tombstoned"),
+        "blocked" => tr("contacts.state.blocked"),
+        other => other.to_owned(),
     };
 
     let row_class = if is_weak {
@@ -262,13 +264,13 @@ fn ContactRow(
             }
             if !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
-                    "共享权限:"
+                    {tr("contacts.shared_scopes")}
                     {contact.bidirectional_scopes.iter().map(|s| scope_label(s)).collect::<Vec<_>>().join("、")}
                 }
             }
             if let Some(summary) = &contact.direct_conversation {
                 div { class: "muted mono",
-                    "私聊 {short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_flow_id)}"
+                    "{short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_flow_id)}"
                 }
             }
 
@@ -287,14 +289,14 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Respond { requester: peer.clone(), verb: "accept".to_owned(), requester_service_did: service.clone() },
-                                    "正在接受…".to_owned(),
+                                    tr("contacts.action.accepting"),
                                     busy,
                                     row_status,
                                     on_changed,
                                 );
                             }
                         },
-                        "接受"
+                        {tr("contacts.action.accept")}
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
@@ -309,14 +311,14 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Respond { requester: peer.clone(), verb: "reject".to_owned(), requester_service_did: service.clone() },
-                                    "正在拒绝…".to_owned(),
+                                    tr("contacts.action.rejecting"),
                                     busy,
                                     row_status,
                                     on_changed,
                                 );
                             }
                         },
-                        "拒绝"
+                        {tr("contacts.action.reject")}
                     }
                 }
 
@@ -324,7 +326,7 @@ fn ContactRow(
                     span {
                         class: "muted",
                         "data-testid": "contact-pending-outgoing-{peer}",
-                        "等待对方接受"
+                        {tr("contacts.state.pending_outgoing")}
                     }
                     Button {
                         variant: ButtonVariant::Ghost,
@@ -338,14 +340,14 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Tombstone { peer: peer.clone(), block: false },
-                                    "正在撤回…".to_owned(),
+                                    tr("contacts.action.withdrawing"),
                                     busy,
                                     row_status,
                                     on_changed,
                                 );
                             }
                         },
-                        "撤回"
+                        {tr("contacts.action.withdraw")}
                     }
                 }
 
@@ -362,7 +364,7 @@ fn ContactRow(
                                 let peer = peer.clone();
                                 let api_token = token();
                                 busy.set(true);
-                                row_status.set("正在打开私聊…".to_owned());
+                                row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.direct_conversation_resolve(&peer, true).await
@@ -375,27 +377,27 @@ fn ContactRow(
                                                     row_status.set(String::new());
                                                     nav.push(Route::DirectConversation { realm_id, flow_id });
                                                 }
-                                                _ => row_status.set(
-                                                    "私聊尚未就绪,请稍后再试。".to_owned(),
-                                                ),
+                                                _ => row_status.set(tr("contacts.dm.not_ready")),
                                             }
                                         }
                                         Err(err) => {
-                                            row_status.set(format!("打开私聊失败:{}", err.display()))
+                                            row_status.set(
+                                                tr("contacts.dm.open_failed").replace("{error}", &err.display()),
+                                            )
                                         }
                                     }
                                     busy.set(false);
                                 });
                             }
                         },
-                        "发消息"
+                        {tr("contacts.action.message")}
                     }
                     Button {
                         variant: ButtonVariant::Destructive,
                         "data-testid": "contact-block-{peer}",
                         disabled: busy(),
                         onclick: move |_| confirm_block.set(true),
-                        "拉黑"
+                        {tr("contacts.action.block")}
                     }
                 }
             }
@@ -405,11 +407,9 @@ fn ContactRow(
                 div {
                     class: "event contact-block-confirm",
                     "data-testid": "contact-block-confirm-{peer}",
-                    div { class: "entity-title", "确定拉黑该联系人?" }
+                    div { class: "entity-title", {tr("contacts.block.confirm_title")} }
                     div { class: "muted", title: "{peer}", "{peer_label}" }
-                    div { class: "muted",
-                        "拉黑后会删除该联系人,并阻止对方再次向你发送请求或邀请。"
-                    }
+                    div { class: "muted", {tr("contacts.block.confirm_body")} }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Destructive,
@@ -424,20 +424,20 @@ fn ContactRow(
                                         base.clone(),
                                         token(),
                                         ContactRowAction::Tombstone { peer: peer.clone(), block: true },
-                                        "正在拉黑…".to_owned(),
+                                        tr("contacts.action.blocking"),
                                         busy,
                                         row_status,
                                         on_changed,
                                     );
                                 }
                             },
-                            "确认拉黑"
+                            {tr("contacts.block.confirm_button")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "contact-block-cancel-button-{peer}",
                             onclick: move |_| confirm_block.set(false),
-                            "取消"
+                            {tr("contacts.block.cancel")}
                         }
                     }
                 }
@@ -515,7 +515,9 @@ fn run_contact_action(
                 row_status.set(String::new());
                 on_changed.call(());
             }
-            Err(err) => row_status.set(format!("操作失败:{}", err.display())),
+            Err(err) => {
+                row_status.set(tr("contacts.action_failed").replace("{error}", &err.display()))
+            }
         }
         busy.set(false);
     });
@@ -528,6 +530,8 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
     let mut error = use_signal(|| Option::<String>::None);
     let mut reload = use_signal(|| 0_u32);
     let mut loaded_generation = use_signal(|| u32::MAX);
+    // M0.2 — "添加联系人" is a popup modal, not a standalone /contacts/new page.
+    let mut add_modal_open = use_signal(|| false);
 
     {
         let base = base_url.clone();
@@ -568,31 +572,44 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                 section { class: "settings-content-stack",
                     div { class: "event",
                         div { class: "event-head",
-                            span { "联系人" }
-                            span { "{status}" }
+                            span { {tr("contacts.title")} }
+                            div { class: "actions",
+                                Button {
+                                    variant: ButtonVariant::Primary,
+                                    "data-testid": "add-contact-button",
+                                    onclick: move |_| add_modal_open.set(true),
+                                    {tr("contacts.add_button")}
+                                }
+                            }
                         }
 
                         if let Some(message) = error.read().clone() {
                             div {
                                 class: "event error-banner",
                                 "data-testid": "contacts-error",
-                                div { class: "muted", "加载联系人失败:{message}" }
+                                div { class: "muted", {tr("contacts.load_error").replace("{error}", &message)} }
                                 div { class: "actions",
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "contacts-retry-button",
                                         onclick: move |_| reload.set(reload() + 1),
-                                        "重试"
+                                        {tr("contacts.retry")}
                                     }
                                 }
                             }
                         } else if is_loading {
-                            div { class: "muted", "data-testid": "contacts-loading", "正在加载联系人…" }
+                            div { class: "muted", "data-testid": "contacts-loading", {tr("contacts.loading")} }
                         } else if contact_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "contacts-empty-state",
-                                div { class: "members-empty-title", "还没有联系人" }
-                                div { class: "muted members-empty-hint",
-                                    "去“添加联系人”发送一个好友请求,对方接受后就会出现在这里。"
+                                div { class: "members-empty-title", {tr("contacts.empty_title")} }
+                                div { class: "muted members-empty-hint", {tr("contacts.empty_hint")} }
+                                div { class: "actions",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        "data-testid": "contacts-empty-add-button",
+                                        onclick: move |_| add_modal_open.set(true),
+                                        {tr("contacts.empty_add")}
+                                    }
                                 }
                             }
                         } else {
@@ -608,6 +625,37 @@ pub fn ContactsPanel(base_url: String, token: Signal<String>) -> Element {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        if add_modal_open() {
+            DismissiblePopup {
+                overlay_class: "modal-backdrop".to_owned(),
+                surface_class: "modal contact-new-modal".to_owned(),
+                overlay_test_id: Some("add-contact-modal".to_owned()),
+                aria_label: tr("contacts.new.title"),
+                on_dismiss: move |_| add_modal_open.set(false),
+                div { class: "modal-head",
+                    h3 { {tr("contacts.new.title")} }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        class: "icon-button close",
+                        "aria-label": tr("common.close"),
+                        "data-testid": "add-contact-modal-close",
+                        onclick: move |_| add_modal_open.set(false),
+                        "\u{2715}"
+                    }
+                }
+                div { class: "modal-body",
+                    ContactNewPanel {
+                        base_url: base_url.clone(),
+                        token,
+                        on_submitted: move |_| {
+                            add_modal_open.set(false);
+                            reload.set(reload() + 1);
+                        },
                     }
                 }
             }

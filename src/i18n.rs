@@ -1179,7 +1179,152 @@ pub fn english_translations() -> TranslationDict {
     // keys. zh translations follow in `chinese_translations()`.
     add_r3_error_keys(&mut dict);
 
+    // Contacts UI, invite-receive policy, and the realm "invite from
+    // contacts" picker. English is the authoritative default; zh follows
+    // in `chinese_translations()`.
+    add_contacts_keys(&mut dict);
+
+    // CKP-0007 — Circle list / create / add-member UI strings.
+    add_circle_ui_keys(&mut dict);
+
     dict
+}
+
+/// English strings for the contacts surfaces (contact-request panel, contact
+/// rows, contacts list), the invite-receive policy settings card, and the
+/// realm-admin "invite from contacts" block. zh follows in
+/// [`add_contacts_keys_zh`].
+fn add_contacts_keys(dict: &mut TranslationDict) {
+    // ── ContactsPanel ─────────────────────────────────────────────────
+    dict.set("contacts.title", "Contacts");
+    dict.set("contacts.add_button", "Add contact");
+    dict.set("contacts.load_error", "Couldn't load contacts: {error}");
+    dict.set("contacts.retry", "Retry");
+    dict.set("contacts.loading", "Loading contacts…");
+    dict.set("contacts.empty_title", "No contacts yet");
+    dict.set(
+        "contacts.empty_hint",
+        "Add a contact to send a friend request — they'll show up here once it's accepted.",
+    );
+    dict.set("contacts.empty_add", "Add a contact");
+
+    // ── ContactNewPanel ───────────────────────────────────────────────
+    dict.set("contacts.new.title", "Add contact");
+    dict.set("contacts.new.subtitle", "Needs their approval");
+    dict.set(
+        "contacts.new.intro",
+        "Enter the other person's DID to send a friend request. By default contacts can both message you and invite you to groups (just like a regular friend). For tighter control, uncheck options below.",
+    );
+    dict.set("contacts.new.target_label", "Their DID");
+    dict.set(
+        "contacts.new.recipient_service_label",
+        "Their server (only when adding across servers)",
+    );
+    dict.set("contacts.new.recipient_service_placeholder", "did:web:ps.bob.example (leave blank if same server)");
+    dict.set(
+        "contacts.new.recipient_service_hint",
+        "If they're on a different server (Principal Server), enter its service DID; leave blank if you're on the same server.",
+    );
+    dict.set(
+        "contacts.new.scope_label",
+        "Friend permissions (both on by default for a regular contact)",
+    );
+    dict.set("contacts.new.scope_empty", "Pick at least one permission.");
+    dict.set("contacts.new.message_label", "Note (optional)");
+    dict.set("contacts.new.message_placeholder", "Say hello…");
+    dict.set("contacts.new.sending", "Sending request…");
+    dict.set("contacts.new.sent", "Request sent — waiting for them to accept.");
+    dict.set("contacts.new.send_failed", "Failed to send: {error}");
+    dict.set("contacts.new.submit", "Send request");
+    dict.set("contacts.new.submit_busy", "Sending…");
+
+    // ── scope_label ───────────────────────────────────────────────────
+    dict.set("contacts.scope.direct_message", "Direct messages (can DM me)");
+    dict.set("contacts.scope.invite", "Can invite me to groups");
+    dict.set("contacts.scope.voice_call", "Voice calls");
+    dict.set("contacts.scope.video_call", "Video calls");
+    dict.set("contacts.shared_scopes", "Shared permissions: ");
+
+    // ── ContactRow ────────────────────────────────────────────────────
+    dict.set("contacts.state.pending_incoming", "Waiting on you");
+    dict.set("contacts.state.pending_outgoing", "Waiting for them");
+    dict.set("contacts.state.accepted", "Contact");
+    dict.set("contacts.state.rejected", "Declined");
+    dict.set("contacts.state.tombstoned", "Removed");
+    dict.set("contacts.state.blocked", "Blocked");
+    dict.set("contacts.action.accept", "Accept");
+    dict.set("contacts.action.reject", "Decline");
+    dict.set("contacts.action.withdraw", "Withdraw");
+    dict.set("contacts.action.message", "Message");
+    dict.set("contacts.action.block", "Block");
+    dict.set("contacts.action.accepting", "Accepting…");
+    dict.set("contacts.action.rejecting", "Declining…");
+    dict.set("contacts.action.withdrawing", "Withdrawing…");
+    dict.set("contacts.action.blocking", "Blocking…");
+    dict.set("contacts.dm.opening", "Opening direct chat…");
+    dict.set("contacts.dm.not_ready", "Direct chat isn't ready yet, try again shortly.");
+    dict.set("contacts.dm.open_failed", "Couldn't open direct chat: {error}");
+    dict.set("contacts.block.confirm_title", "Block this contact?");
+    dict.set(
+        "contacts.block.confirm_body",
+        "Blocking removes this contact and stops them from sending you requests or invites again.",
+    );
+    dict.set("contacts.block.confirm_button", "Confirm block");
+    dict.set("contacts.block.cancel", "Cancel");
+    dict.set("contacts.action_failed", "Action failed: {error}");
+
+    // ── InvitePolicySettingsCard ──────────────────────────────────────
+    dict.set("invite_policy.title", "Who can invite me");
+    dict.set("invite_policy.loading", "Loading…");
+    dict.set(
+        "invite_policy.intro",
+        "Choose which sources can invite you to groups. Invites outside the allowed range are dropped or held for review per the rules below.",
+    );
+    dict.set("invite_policy.load_failed", "Couldn't read your current policy from the server (using defaults): {error}");
+    dict.set("invite_policy.kinds_title", "Allowed invite sources");
+    dict.set("invite_policy.kind.consent_grant", "Contacts (friends you've approved)");
+    dict.set("invite_policy.kind.locator_ref", "Invite links");
+    dict.set("invite_policy.kind.shared_realm", "Members of my groups");
+    dict.set("invite_policy.kind.same_principal_server", "Users on my server");
+    dict.set("invite_policy.kind.explicit_address", "Anyone who knows my address");
+    dict.set("invite_policy.explicit_label", "How to handle \"anyone who knows my address\"");
+    dict.set("invite_policy.explicit.drop", "Drop");
+    dict.set("invite_policy.explicit.quarantine", "Hold for review");
+    dict.set("invite_policy.explicit.notify", "Notify me");
+    dict.set("invite_policy.unknown_prefix", "Invites from unknown sources will be ");
+    dict.set("invite_policy.unknown_drop", "dropped");
+    dict.set("invite_policy.unknown_quarantine", "held for review");
+    dict.set("invite_policy.unknown_suffix", ".");
+    dict.set("invite_policy.disclosure_title", "Receipts");
+    dict.set("invite_policy.disclosure_toggle", "Let contacts see the invite outcome");
+    dict.set(
+        "invite_policy.disclosure_hint",
+        "Strangers (low-trust sources) never get a receipt, so you don't reveal whether you're online or accepted the invite.",
+    );
+    dict.set("invite_policy.blocked_title", "Blocked inviters");
+    dict.set("invite_policy.blocked_empty", "No blocked inviters.");
+    dict.set("invite_policy.unblock", "Remove");
+    dict.set("invite_policy.unblocked_hint", "Removed from the block list — remember to save.");
+    dict.set("invite_policy.saving", "Saving…");
+    dict.set("invite_policy.saved", "Saved.");
+    dict.set("invite_policy.save_failed", "Save failed: {error}");
+    dict.set("invite_policy.save", "Save");
+    dict.set("invite_policy.save_busy", "Saving…");
+
+    // ── realm-admin: invite from contacts ─────────────────────────────
+    dict.set("realm_admin.invite_from_contacts", "Add from contacts");
+    dict.set("realm_admin.invite_recommended", "Recommended");
+    dict.set("realm_admin.invite_loading_contacts", "Loading contacts…");
+    dict.set("realm_admin.invite_contacts_failed", "Couldn't load contacts: {error}");
+    dict.set("realm_admin.invite_no_contacts", "No contacts available to invite yet.");
+    dict.set("realm_admin.invite_unauthorized", "Hasn't authorized invites");
+    dict.set("realm_admin.invite_none_eligible", "No contacts can be invited (missing consent grant).");
+    dict.set("realm_admin.invite_sending", "Inviting {total} contact(s)…");
+    dict.set("realm_admin.invite_sent", "Invited {ok} contact(s) (pending acceptance).");
+    dict.set("realm_admin.invite_partial", "Invited {ok}/{total} contact(s); some failed: {error}");
+    dict.set("realm_admin.invite_selected", "Invite selected contacts");
+    dict.set("realm_admin.invite_divider", "Or invite a stranger (paste an invite link)");
+    dict.set("realm_admin.invite_bad_server", "Invalid server address: {error}");
 }
 
 /// R3 spec sync (b47ff6ec) — English toast / inline-error strings for
@@ -2037,7 +2182,218 @@ pub fn chinese_translations() -> TranslationDict {
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
     add_r3_error_keys_zh(&mut dict);
 
+    // Contacts / invite-receive policy / realm invite-from-contacts.
+    add_contacts_keys_zh(&mut dict);
+
+    // CKP-0007 — Circle list / create / add-member UI strings.
+    add_circle_ui_keys_zh(&mut dict);
+
     dict
+}
+
+/// Chinese translations for the contacts surfaces — mirrors
+/// [`add_contacts_keys`].
+fn add_contacts_keys_zh(dict: &mut TranslationDict) {
+    // ── ContactsPanel ─────────────────────────────────────────────────
+    dict.set("contacts.title", "联系人");
+    dict.set("contacts.add_button", "添加联系人");
+    dict.set("contacts.load_error", "加载联系人失败:{error}");
+    dict.set("contacts.retry", "重试");
+    dict.set("contacts.loading", "正在加载联系人…");
+    dict.set("contacts.empty_title", "还没有联系人");
+    dict.set(
+        "contacts.empty_hint",
+        "点击“添加联系人”发送一个好友请求,对方接受后就会出现在这里。",
+    );
+    dict.set("contacts.empty_add", "添加联系人");
+
+    // ── ContactNewPanel ───────────────────────────────────────────────
+    dict.set("contacts.new.title", "添加联系人");
+    dict.set("contacts.new.subtitle", "需对方同意");
+    dict.set(
+        "contacts.new.intro",
+        "输入对方的 DID 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
+    );
+    dict.set("contacts.new.target_label", "对方 DID");
+    dict.set("contacts.new.recipient_service_label", "对方所在服务器(跨服务器添加时填)");
+    dict.set("contacts.new.recipient_service_placeholder", "did:web:ps.bob.example(同服务器留空)");
+    dict.set(
+        "contacts.new.recipient_service_hint",
+        "对方在另一台服务器(Principal Server)时填它的 service DID;同服务器留空即可。",
+    );
+    dict.set("contacts.new.scope_label", "好友权限(普通好友默认两项都开)");
+    dict.set("contacts.new.scope_empty", "至少需要选择一项权限。");
+    dict.set("contacts.new.message_label", "附言(可选)");
+    dict.set("contacts.new.message_placeholder", "打个招呼…");
+    dict.set("contacts.new.sending", "正在发送请求…");
+    dict.set("contacts.new.sent", "请求已发送,等待对方接受。");
+    dict.set("contacts.new.send_failed", "发送失败:{error}");
+    dict.set("contacts.new.submit", "发送请求");
+    dict.set("contacts.new.submit_busy", "发送中…");
+
+    // ── scope_label ───────────────────────────────────────────────────
+    dict.set("contacts.scope.direct_message", "私聊(可以给我发私信)");
+    dict.set("contacts.scope.invite", "可邀请我入群");
+    dict.set("contacts.scope.voice_call", "语音通话");
+    dict.set("contacts.scope.video_call", "视频通话");
+    dict.set("contacts.shared_scopes", "共享权限:");
+
+    // ── ContactRow ────────────────────────────────────────────────────
+    dict.set("contacts.state.pending_incoming", "等待你处理");
+    dict.set("contacts.state.pending_outgoing", "等待对方接受");
+    dict.set("contacts.state.accepted", "已是联系人");
+    dict.set("contacts.state.rejected", "已拒绝");
+    dict.set("contacts.state.tombstoned", "已删除");
+    dict.set("contacts.state.blocked", "已拉黑");
+    dict.set("contacts.action.accept", "接受");
+    dict.set("contacts.action.reject", "拒绝");
+    dict.set("contacts.action.withdraw", "撤回");
+    dict.set("contacts.action.message", "发消息");
+    dict.set("contacts.action.block", "拉黑");
+    dict.set("contacts.action.accepting", "正在接受…");
+    dict.set("contacts.action.rejecting", "正在拒绝…");
+    dict.set("contacts.action.withdrawing", "正在撤回…");
+    dict.set("contacts.action.blocking", "正在拉黑…");
+    dict.set("contacts.dm.opening", "正在打开私聊…");
+    dict.set("contacts.dm.not_ready", "私聊尚未就绪,请稍后再试。");
+    dict.set("contacts.dm.open_failed", "打开私聊失败:{error}");
+    dict.set("contacts.block.confirm_title", "确定拉黑该联系人?");
+    dict.set(
+        "contacts.block.confirm_body",
+        "拉黑后会删除该联系人,并阻止对方再次向你发送请求或邀请。",
+    );
+    dict.set("contacts.block.confirm_button", "确认拉黑");
+    dict.set("contacts.block.cancel", "取消");
+    dict.set("contacts.action_failed", "操作失败:{error}");
+
+    // ── InvitePolicySettingsCard ──────────────────────────────────────
+    dict.set("invite_policy.title", "谁可以邀请我");
+    dict.set("invite_policy.loading", "加载中…");
+    dict.set(
+        "invite_policy.intro",
+        "选择哪些来源可以邀请你加入群组。不在允许范围内的邀请会按下面的规则丢弃或暂存待审。",
+    );
+    dict.set("invite_policy.load_failed", "未能从服务器读取现有策略(将使用默认值):{error}");
+    dict.set("invite_policy.kinds_title", "允许的邀请来源");
+    dict.set("invite_policy.kind.consent_grant", "联系人(已同意的好友)");
+    dict.set("invite_policy.kind.locator_ref", "邀请链接");
+    dict.set("invite_policy.kind.shared_realm", "同群成员");
+    dict.set("invite_policy.kind.same_principal_server", "同一服务器的用户");
+    dict.set("invite_policy.kind.explicit_address", "任何知道我地址的人");
+    dict.set("invite_policy.explicit_label", "“任何知道我地址的人”的处理方式");
+    dict.set("invite_policy.explicit.drop", "直接丢弃");
+    dict.set("invite_policy.explicit.quarantine", "暂存待审");
+    dict.set("invite_policy.explicit.notify", "通知我");
+    dict.set("invite_policy.unknown_prefix", "未知来源的邀请将被");
+    dict.set("invite_policy.unknown_drop", "直接丢弃");
+    dict.set("invite_policy.unknown_quarantine", "暂存待审");
+    dict.set("invite_policy.unknown_suffix", "。");
+    dict.set("invite_policy.disclosure_title", "回执");
+    dict.set("invite_policy.disclosure_toggle", "让联系人知道邀请结果");
+    dict.set(
+        "invite_policy.disclosure_hint",
+        "对陌生人(低信任来源)始终不回执,避免暴露你是否在线或是否接受邀请。",
+    );
+    dict.set("invite_policy.blocked_title", "已屏蔽的邀请者");
+    dict.set("invite_policy.blocked_empty", "没有被屏蔽的邀请者。");
+    dict.set("invite_policy.unblock", "移除");
+    dict.set("invite_policy.unblocked_hint", "已从屏蔽列表移除,记得点击保存。");
+    dict.set("invite_policy.saving", "正在保存…");
+    dict.set("invite_policy.saved", "已保存。");
+    dict.set("invite_policy.save_failed", "保存失败:{error}");
+    dict.set("invite_policy.save", "保存");
+    dict.set("invite_policy.save_busy", "保存中…");
+
+    // ── realm-admin: invite from contacts ─────────────────────────────
+    dict.set("realm_admin.invite_from_contacts", "从联系人添加");
+    dict.set("realm_admin.invite_recommended", "推荐");
+    dict.set("realm_admin.invite_loading_contacts", "正在加载联系人…");
+    dict.set("realm_admin.invite_contacts_failed", "加载联系人失败:{error}");
+    dict.set("realm_admin.invite_no_contacts", "还没有可邀请的联系人。");
+    dict.set("realm_admin.invite_unauthorized", "对方未授权邀请");
+    dict.set("realm_admin.invite_none_eligible", "没有可邀请的联系人(缺少同意凭证)。");
+    dict.set("realm_admin.invite_sending", "正在邀请 {total} 位联系人…");
+    dict.set("realm_admin.invite_sent", "已邀请 {ok} 位联系人(待接受)。");
+    dict.set("realm_admin.invite_partial", "已邀请 {ok}/{total} 位联系人;部分失败:{error}");
+    dict.set("realm_admin.invite_selected", "邀请所选联系人");
+    dict.set("realm_admin.invite_divider", "或邀请陌生人(粘贴邀请链接)");
+    dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
+}
+
+/// CKP-0007 — Circle list / create / add-member UI strings (English,
+/// authoritative). The `circle.*` prefix groups every string the
+/// RealmMembersPanel Circles section renders.
+fn add_circle_ui_keys(dict: &mut TranslationDict) {
+    dict.set("circle.section_title", "Circles");
+    dict.set(
+        "circle.section_hint",
+        "Circles are sub-groups inside this Realm. Members you add join immediately — no approval needed from them.",
+    );
+    dict.set("circle.new_button", "New circle");
+    dict.set("circle.loading", "Loading circles\u{2026}");
+    dict.set("circle.load_failed", "Could not load circles: {error}");
+    dict.set("circle.empty", "No circles in this Realm yet.");
+    dict.set("circle.member_count", "{count} members");
+    dict.set("circle.creating", "Creating circle\u{2026}");
+    dict.set("circle.create_failed", "Could not create circle: {error}");
+    dict.set("circle.created", "Circle \u{201c}{title}\u{201d} created.");
+
+    // Add-to-circle flow.
+    dict.set("circle.add_member_button", "Add to circle");
+    dict.set("circle.add_member_title", "Add Realm members to {circle}");
+    dict.set(
+        "circle.add_member_hint",
+        "Members you add join immediately — they do not have to accept.",
+    );
+    dict.set("circle.add_member_pick_label", "Select Realm members");
+    dict.set("circle.add_member_none", "No Realm members are available to add.");
+    dict.set("circle.add_member_submit", "Add selected");
+    dict.set("circle.add_member_cancel", "Cancel");
+    dict.set("circle.add_member_adding", "Adding {count} member(s)\u{2026}");
+    dict.set("circle.add_member_added", "Added {ok} member(s) to the circle.");
+    dict.set(
+        "circle.add_member_partial",
+        "Added {ok}/{total} member(s); some failed: {error}",
+    );
+    dict.set("circle.add_member_failed", "Could not add members: {error}");
+    dict.set("circle.add_member_empty_selection", "Select at least one member first.");
+}
+
+/// CKP-0007 — Circle list / create / add-member UI strings (Chinese).
+fn add_circle_ui_keys_zh(dict: &mut TranslationDict) {
+    dict.set("circle.section_title", "圈子");
+    dict.set(
+        "circle.section_hint",
+        "圈子是该领域内的子分组。你添加的成员会立即加入,无需对方同意。",
+    );
+    dict.set("circle.new_button", "新建圈子");
+    dict.set("circle.loading", "正在加载圈子…");
+    dict.set("circle.load_failed", "加载圈子失败:{error}");
+    dict.set("circle.empty", "该领域还没有圈子。");
+    dict.set("circle.member_count", "{count} 名成员");
+    dict.set("circle.creating", "正在创建圈子…");
+    dict.set("circle.create_failed", "创建圈子失败:{error}");
+    dict.set("circle.created", "圈子“{title}”已创建。");
+
+    // 拉成员入圈
+    dict.set("circle.add_member_button", "拉入圈子");
+    dict.set("circle.add_member_title", "把领域成员拉进 {circle}");
+    dict.set(
+        "circle.add_member_hint",
+        "你添加的成员会立即加入,无需对方接受。",
+    );
+    dict.set("circle.add_member_pick_label", "选择领域成员");
+    dict.set("circle.add_member_none", "没有可添加的领域成员。");
+    dict.set("circle.add_member_submit", "添加所选");
+    dict.set("circle.add_member_cancel", "取消");
+    dict.set("circle.add_member_adding", "正在添加 {count} 名成员…");
+    dict.set("circle.add_member_added", "已将 {ok} 名成员加入圈子。");
+    dict.set(
+        "circle.add_member_partial",
+        "已添加 {ok}/{total} 名成员;部分失败:{error}",
+    );
+    dict.set("circle.add_member_failed", "添加成员失败:{error}");
+    dict.set("circle.add_member_empty_selection", "请先至少选择一名成员。");
 }
 
 /// English i18n strings for the 6 CKP-0007 reason / error codes

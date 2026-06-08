@@ -2331,7 +2331,7 @@ pub fn RouterView() -> Element {
                                 "data-testid": "sidebar-new-contact-cta",
                                 title: "Add a contact. Accepted contacts with direct-message consent can open a private chat.",
                                 "aria-label": "Add a contact",
-                                to: Route::ContactsNew,
+                                to: Route::Contacts,
                                 UiIcon { name: "user-plus" }
                                 span { class: "sidebar-header-action-label", {crate::i18n::tr("nav.add_contact_short")} }
                             }
@@ -3636,12 +3636,6 @@ pub fn RouterView() -> Element {
                             token,
                         }
                     },
-                    Route::ContactsNew => rsx! {
-                        crate::views::contacts::ContactNewPanel {
-                            base_url: base_url(),
-                            token,
-                        }
-                    },
                     Route::Setup | Route::SetupSection { .. } => {
                         if full_ready {
                             rsx! {
@@ -4546,7 +4540,7 @@ fn route_label(route: &Route) -> &'static str {
         }
         Route::Chat { .. } => "Discussion",
         Route::DirectConversation { .. } => "Direct",
-        Route::Contacts | Route::ContactsNew => "Contacts",
+        Route::Contacts => "Contacts",
         Route::FileTransfer => "Files",
         Route::Directory => "Search",
         Route::Setup => "New Realm",

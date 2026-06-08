@@ -293,6 +293,55 @@ pub fn RealmMembersPanel(
     let mut invite_contacts_status = use_signal(String::new);
     let mut selected_contacts = use_signal(std::collections::BTreeSet::<String>::new);
 
+    // CKP-0007 Circles section state.
+    let mut circles = use_signal(Vec::<crate::circle::CircleSummary>::new);
+    let mut circles_status = use_signal(String::new);
+    let mut circles_reload = use_signal(|| 0_u32);
+    let mut create_circle_open = use_signal(|| false);
+    // Add-to-circle picker: the target circle + the multi-selected DIDs.
+    let mut add_circle_target = use_signal(|| Option::<crate::circle::CircleSummary>::None);
+    let mut add_circle_selected = use_signal(std::collections::BTreeSet::<String>::new);
+
+    // Hydrate the Realm's Circle directory whenever the Realm changes or a
+    // create / add-member action bumps `circles_reload`.
+    {
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        use_effect(move || {
+            // Subscribe to the reload counter so create/add refresh the list.
+            let _ = circles_reload();
+            let realm = realm.clone();
+            if realm.trim().is_empty() {
+                circles.set(Vec::new());
+                return;
+            }
+            let api_token = token();
+            let base = base.clone();
+            circles_status.set(crate::i18n::tr("circle.loading"));
+            spawn(async move {
+                match crate::views::helpers::with_authed_api(&base, api_token, |api| {
+                    let realm = realm.clone();
+                    async move { api.list_circles(&realm).await }
+                })
+                .await
+                {
+                    Ok(value) => {
+                        let rows = crate::circle::circle_summaries_from_json(&value);
+                        circles.set(rows);
+                        circles_status.set(String::new());
+                    }
+                    Err(err) => {
+                        circles.set(Vec::new());
+                        circles_status.set(
+                            crate::i18n::tr("circle.load_failed")
+                                .replace("{error}", &err.display()),
+                        );
+                    }
+                }
+            });
+        });
+    }
+
     // Lazily hydrate the contacts list the first time the invite modal opens.
     {
         let base = base_url.clone();
@@ -303,7 +352,7 @@ pub fn RealmMembersPanel(
             invite_contacts_loaded.set(true);
             let api_token = token();
             let base = base.clone();
-            invite_contacts_status.set("正在加载联系人…".to_owned());
+            invite_contacts_status.set(crate::i18n::tr("realm_admin.invite_loading_contacts"));
             spawn(async move {
                 match crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
                     api.contacts().await
@@ -319,14 +368,15 @@ pub fn RealmMembersPanel(
                         let count = accepted.len();
                         invite_contacts.set(accepted);
                         invite_contacts_status.set(if count == 0 {
-                            "还没有可邀请的联系人。".to_owned()
+                            crate::i18n::tr("realm_admin.invite_no_contacts")
                         } else {
                             String::new()
                         });
                     }
-                    Err(err) => {
-                        invite_contacts_status.set(format!("加载联系人失败:{}", err.display()))
-                    }
+                    Err(err) => invite_contacts_status.set(
+                        crate::i18n::tr("realm_admin.invite_contacts_failed")
+                            .replace("{error}", &err.display()),
+                    ),
                 }
             });
         });
@@ -447,8 +497,8 @@ pub fn RealmMembersPanel(
                             // into the Realm directly via their consent grant.
                             div { class: "invite-from-contacts", "data-testid": "realm-invite-from-contacts",
                                 div { class: "event-head",
-                                    span { "从联系人添加" }
-                                    span { "推荐" }
+                                    span { {crate::i18n::tr("realm_admin.invite_from_contacts")} }
+                                    span { {crate::i18n::tr("realm_admin.invite_recommended")} }
                                 }
                                 if !invite_contacts_status().is_empty() {
                                     div { class: "muted", "data-testid": "realm-invite-contacts-status", "{invite_contacts_status}" }
@@ -490,7 +540,7 @@ pub fn RealmMembersPanel(
                                                             span {
                                                                 class: "badge",
                                                                 "data-testid": "realm-invite-contact-unauthorized-{did}",
-                                                                "对方未授权邀请"
+                                                                {crate::i18n::tr("realm_admin.invite_unauthorized")}
                                                             }
                                                         }
                                                     }
@@ -523,16 +573,22 @@ pub fn RealmMembersPanel(
                                                         })
                                                         .collect();
                                                     if targets.is_empty() {
-                                                        status_msg.set("没有可邀请的联系人(缺少同意凭证)。".to_owned());
+                                                        status_msg.set(crate::i18n::tr("realm_admin.invite_none_eligible"));
                                                         return;
                                                     }
                                                     let total = targets.len();
-                                                    status_msg.set(format!("正在邀请 {total} 位联系人…"));
+                                                    status_msg.set(
+                                                        crate::i18n::tr("realm_admin.invite_sending")
+                                                            .replace("{total}", &total.to_string()),
+                                                    );
                                                     spawn(async move {
                                                         let api = match crate::views::helpers::authed_api(&base, api_token) {
                                                             Ok(api) => api,
                                                             Err(err) => {
-                                                                status_msg.set(format!("无效的服务器地址:{err}"));
+                                                                status_msg.set(
+                                                                    crate::i18n::tr("realm_admin.invite_bad_server")
+                                                                        .replace("{error}", &err.to_string()),
+                                                                );
                                                                 return;
                                                             }
                                                         };
@@ -553,22 +609,28 @@ pub fn RealmMembersPanel(
                                                         selected_contacts.set(std::collections::BTreeSet::new());
                                                         if ok == total {
                                                             invite_modal_open.set(false);
-                                                            status_msg.set(format!("已邀请 {ok} 位联系人(待接受)。"));
+                                                            status_msg.set(
+                                                                crate::i18n::tr("realm_admin.invite_sent")
+                                                                    .replace("{ok}", &ok.to_string()),
+                                                            );
                                                         } else {
-                                                            status_msg.set(format!(
-                                                                "已邀请 {ok}/{total} 位联系人;部分失败:{last_err}"
-                                                            ));
+                                                            status_msg.set(
+                                                                crate::i18n::tr("realm_admin.invite_partial")
+                                                                    .replace("{ok}", &ok.to_string())
+                                                                    .replace("{total}", &total.to_string())
+                                                                    .replace("{error}", &last_err),
+                                                            );
                                                         }
                                                     });
                                                 }
                                             },
-                                            "邀请所选联系人"
+                                            {crate::i18n::tr("realm_admin.invite_selected")}
                                         }
                                     }
                                 }
                             }
 
-                            div { class: "invite-divider muted", "data-testid": "realm-invite-divider", "或邀请陌生人(粘贴邀请链接)" }
+                            div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
 
                             Label { html_for: "invite-target-input", "Invite locator" }
                             Input {
@@ -1036,6 +1098,249 @@ pub fn RealmMembersPanel(
                             },
                             "Load more — showing {visible} of {filtered_count}"
                         }
+                    }
+                }
+            }
+
+            // ── CKP-0007 Circles section ──────────────────────────────
+            div { class: "event circles-card", "data-testid": "realm-circles-panel",
+                div { class: "event-head",
+                    h3 { {crate::i18n::tr("circle.section_title")} }
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "circle-new-button",
+                        onclick: move |_| create_circle_open.set(true),
+                        {crate::i18n::tr("circle.new_button")}
+                    }
+                }
+                div { class: "muted circles-hint", {crate::i18n::tr("circle.section_hint")} }
+                if !circles_status().is_empty() {
+                    div { class: "muted", "data-testid": "realm-circles-status", "{circles_status}" }
+                }
+                if circles.read().is_empty() && circles_status().is_empty() {
+                    div { class: "muted", "data-testid": "circles-empty-state",
+                        {crate::i18n::tr("circle.empty")}
+                    }
+                } else {
+                    ul { class: "circle-list",
+                        for circle in circles.read().clone() {
+                            li {
+                                key: "{circle.id}",
+                                class: "circle-row",
+                                "data-testid": "circle-row-{circle.id}",
+                                "data-circle-id": "{circle.id}",
+                                span { class: "circle-chip color-{circle.color_token}", "{circle.symbol} {circle.short_name}" }
+                                span { class: "circle-row-title", "{circle.title}" }
+                                span { class: "muted circle-row-count",
+                                    {crate::i18n::tr("circle.member_count").replace("{count}", &circle.member_count.to_string())}
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "circle-add-member-button",
+                                    onclick: {
+                                        let circle = circle.clone();
+                                        move |_| {
+                                            add_circle_selected.set(std::collections::BTreeSet::new());
+                                            add_circle_target.set(Some(circle.clone()));
+                                        }
+                                    },
+                                    {crate::i18n::tr("circle.add_member_button")}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // New-circle modal (reuses the shared CreateCircleModal component).
+        if create_circle_open() {
+            crate::components::CreateCircleModal {
+                realm_id: selected_realm_id.clone(),
+                realm_members: members(),
+                on_cancel: move |_| create_circle_open.set(false),
+                on_submit: {
+                    let base = base_url.clone();
+                    let actor = account_did.clone();
+                    let realm = selected_realm_id.clone();
+                    move |form: crate::components::CircleCreateForm| {
+                        let base = base.clone();
+                        let actor = actor.clone();
+                        let realm = realm.clone();
+                        let api_token = token();
+                        create_circle_open.set(false);
+                        circles_status.set(crate::i18n::tr("circle.creating"));
+                        spawn(async move {
+                            let title = form.title.clone();
+                            let result = crate::views::helpers::with_authed_api(&base, api_token, |api| {
+                                let realm = realm.clone();
+                                async move {
+                                    api.create_circle(
+                                        &realm,
+                                        &actor,
+                                        &form.title,
+                                        &form.short_name,
+                                        &form.color_token,
+                                        &form.symbol_glyph,
+                                        &form.directory_visibility,
+                                        &form.initial_members,
+                                    )
+                                    .await
+                                }
+                            })
+                            .await;
+                            match result {
+                                Ok(_) => {
+                                    circles_status.set(
+                                        crate::i18n::tr("circle.created").replace("{title}", &title),
+                                    );
+                                    circles_reload.set(circles_reload() + 1);
+                                }
+                                Err(err) => circles_status.set(
+                                    crate::i18n::tr("circle.create_failed")
+                                        .replace("{error}", &err.display()),
+                                ),
+                            }
+                        });
+                    }
+                },
+            }
+        }
+
+        // Add-to-circle modal: pick Realm members to pull into the circle.
+        if let Some(target) = add_circle_target() {
+            crate::components::DismissiblePopup {
+                overlay_class: "modal-backdrop",
+                surface_class: "modal add-circle-modal",
+                overlay_test_id: Some("circle-add-member-modal".to_owned()),
+                aria_label: "Add members to circle",
+                on_dismiss: move |_| add_circle_target.set(None),
+                div { class: "modal-head",
+                    h3 { {crate::i18n::tr("circle.add_member_title").replace("{circle}", &target.title)} }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        class: "icon-button close",
+                        "aria-label": "Close",
+                        onclick: move |_| add_circle_target.set(None),
+                        "\u{2715}"
+                    }
+                }
+                div { class: "modal-body workflow-form",
+                    div { class: "muted", {crate::i18n::tr("circle.add_member_hint")} }
+                    span { class: "field-label", {crate::i18n::tr("circle.add_member_pick_label")} }
+                    {
+                        // Only Realm members who are not already in the circle's
+                        // strict subset matter; the reducer rejects non-members
+                        // anyway, so the picker just lists the Realm roster.
+                        let roster = members();
+                        if roster.is_empty() {
+                            rsx! {
+                                div { class: "muted", "data-testid": "circle-add-member-none",
+                                    {crate::i18n::tr("circle.add_member_none")}
+                                }
+                            }
+                        } else {
+                            rsx! {
+                                div { class: "settings-list",
+                                    for did in roster {
+                                        {
+                                            let checked = add_circle_selected.read().contains(&did);
+                                            let did_for_toggle = did.clone();
+                                            rsx! {
+                                                label {
+                                                    class: "metric",
+                                                    "data-testid": "circle-member-pick-{did}",
+                                                    Checkbox {
+                                                        checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                        on_checked_change: move |state: CheckboxState| {
+                                                            let mut next = add_circle_selected.read().clone();
+                                                            if bool::from(state) {
+                                                                next.insert(did_for_toggle.clone());
+                                                            } else {
+                                                                next.remove(&did_for_toggle);
+                                                            }
+                                                            add_circle_selected.set(next);
+                                                        },
+                                                    }
+                                                    span { class: "mono", title: "{did}", " {short_protocol_id(&did)}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                div { class: "modal-foot",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        onclick: move |_| add_circle_target.set(None),
+                        {crate::i18n::tr("circle.add_member_cancel")}
+                    }
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "circle-add-member-submit",
+                        disabled: add_circle_selected.read().is_empty(),
+                        onclick: {
+                            let base = base_url.clone();
+                            let circle_id = target.id.clone();
+                            move |_| {
+                                let base = base.clone();
+                                let circle_id = circle_id.clone();
+                                let api_token = token();
+                                let targets: Vec<String> =
+                                    add_circle_selected.read().iter().cloned().collect();
+                                if targets.is_empty() {
+                                    circles_status.set(
+                                        crate::i18n::tr("circle.add_member_empty_selection"),
+                                    );
+                                    return;
+                                }
+                                let total = targets.len();
+                                circles_status.set(
+                                    crate::i18n::tr("circle.add_member_adding")
+                                        .replace("{count}", &total.to_string()),
+                                );
+                                spawn(async move {
+                                    let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                        Ok(api) => api,
+                                        Err(err) => {
+                                            circles_status.set(
+                                                crate::i18n::tr("circle.add_member_failed")
+                                                    .replace("{error}", &err.to_string()),
+                                            );
+                                            return;
+                                        }
+                                    };
+                                    let mut ok = 0_usize;
+                                    let mut last_err = String::new();
+                                    for did in targets {
+                                        match api.add_circle_member(&circle_id, &did).await {
+                                            Ok(_) => ok += 1,
+                                            Err(err) => last_err = err.to_string(),
+                                        }
+                                    }
+                                    add_circle_selected.set(std::collections::BTreeSet::new());
+                                    add_circle_target.set(None);
+                                    if ok == total {
+                                        circles_status.set(
+                                            crate::i18n::tr("circle.add_member_added")
+                                                .replace("{ok}", &ok.to_string()),
+                                        );
+                                    } else {
+                                        circles_status.set(
+                                            crate::i18n::tr("circle.add_member_partial")
+                                                .replace("{ok}", &ok.to_string())
+                                                .replace("{total}", &total.to_string())
+                                                .replace("{error}", &last_err),
+                                        );
+                                    }
+                                    circles_reload.set(circles_reload() + 1);
+                                });
+                            }
+                        },
+                        {crate::i18n::tr("circle.add_member_submit")}
                     }
                 }
             }

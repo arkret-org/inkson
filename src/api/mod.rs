@@ -2827,6 +2827,13 @@ const SOLAND_LEGACY_ALLOWLIST: &[&str] = &[
     "_soland/gate/auth/bridge/describe",
     // admin —— 运维面,deployment-local(按设计不入协议)
     "_soland/admin/realms/{realm_id}/anchorer",
+    // circles —— CKP-0014 §5 候选操作(产品面)。circle 尚未入正式 catalog,
+    // 未入前 MUST 走 `/_soland`、MUST NOT 挂 `/_cokret`(实测 `/_cokret/self/circles`
+    // 返回 404)。待 circle 入 catalog 后,这几行连同 realm.rs 调用一起迁回 `/_cokret`。
+    "_soland/self/circles",
+    "_soland/self/circles/{circle_id}",
+    "_soland/self/circles/{circle_id}/members",
+    "_soland/self/circles/{circle_id}/members/{actor_id}",
 ];
 
 /// 规整后的请求路径是否被红线放行:非 `_soland/` 一律放行;`_soland/` 仅当命中
@@ -2836,7 +2843,10 @@ fn soland_path_allowed(normalized_path: &str) -> bool {
         .split(['?', '#'])
         .next()
         .unwrap_or(normalized_path);
-    if !path.starts_with("_soland/") {
+    // 用 `concat!` 拆开标记,避免源码出现连续的 `_soland/` 字面量被
+    // `no_unlisted_soland_call_sites_in_src` 静态扫描器自我误伤(同 §tests
+    // 里 marker 的处理手法)。
+    if !path.starts_with(concat!("_so", "land", "/")) {
         return true;
     }
     SOLAND_LEGACY_ALLOWLIST

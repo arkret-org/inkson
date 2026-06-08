@@ -156,7 +156,9 @@ impl CokretApi {
     }
 
     /// CKP-0007 P3B.2.6 — POST a new Circle to soland's
-    /// `/_cokret/self/circles` administrative surface. The strict-subset
+    /// `/_soland/self/circles` administrative surface. Circle 是 CKP-0014 §5
+    /// 的候选操作,未入正式 catalog 前 MUST 走 `/_soland`(实测 `/_cokret`
+    /// 端点 404),待 circle 入 catalog 后迁回 `/_cokret`。The strict-subset
     /// invariant (`Circle.members ⊆ Realm.members`) is enforced by the
     /// reducer; this client also runs
     /// [`crate::components::validate_strict_subset`] before sending so
@@ -223,7 +225,7 @@ impl CokretApi {
             "directory_visibility": serde_json::to_value(visibility)?,
             "initial_members": initial_members,
         });
-        self.post_json("/_cokret/self/circles", body).await
+        self.post_json("/_soland/self/circles", body).await
     }
 
     /// CKP-0007 P3B.2.1 — fetch the Circle directory for a Realm. The
@@ -235,11 +237,76 @@ impl CokretApi {
         let realm_id = realm_id.trim();
         if realm_id.is_empty() {
             return Err(anyhow::anyhow!(
-                "realm_id is required for /_cokret/self/circles"
+                "realm_id is required for /_soland/self/circles"
             ));
         }
-        let path = format!("/_cokret/self/circles?realm_id={}", realm_id);
+        let path = format!("/_soland/self/circles?realm_id={}", realm_id);
         self.get_json(&path).await
+    }
+
+    /// CKP-0007 P3B.2.6 — fetch a single Circle's detail (metadata +
+    /// member roster) from `GET /_soland/self/circles/{id}`. Returns the
+    /// raw JSON shape; the caller decodes the summary via
+    /// [`crate::circle::circle_summary_from_json`] and the roster via
+    /// [`crate::circle::circle_members_from_json`].
+    pub async fn get_circle(&self, circle_id: &str) -> anyhow::Result<serde_json::Value> {
+        let circle_id = circle_id.trim();
+        if circle_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "circle_id is required for /_soland/self/circles/{{id}}"
+            ));
+        }
+        self.get_json(&format!("/_soland/self/circles/{circle_id}"))
+            .await
+    }
+
+    /// CKP-0007 P3B.2.6 — add a Realm member to a Circle via
+    /// `POST /_soland/self/circles/{id}/members`.
+    ///
+    /// This is a **one-way pull**: the added member joins the Circle
+    /// immediately (`state: "active"`) with no consent / acceptance step
+    /// from their side. The reducer still enforces the strict-subset
+    /// invariant (`circle_member_must_be_realm_member`) — the target DID
+    /// MUST already be an active member of the parent Realm.
+    pub async fn add_circle_member(
+        &self,
+        circle_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let circle_id = circle_id.trim();
+        let actor_id = actor_id.trim();
+        if circle_id.is_empty() || actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "circle_id and actor_id are required to add a Circle member"
+            ));
+        }
+        let body = json!({ "actor_id": actor_id, "state": "active" });
+        self.post_json(
+            &format!("/_soland/self/circles/{circle_id}/members"),
+            body,
+        )
+        .await
+    }
+
+    /// CKP-0007 P3B.2.6 — remove a member from a Circle via
+    /// `DELETE /_soland/self/circles/{id}/members/{actor_id}`. Leaving the
+    /// Circle does not affect the actor's parent-Realm membership.
+    pub async fn remove_circle_member(
+        &self,
+        circle_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let circle_id = circle_id.trim();
+        let actor_id = actor_id.trim();
+        if circle_id.is_empty() || actor_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "circle_id and actor_id are required to remove a Circle member"
+            ));
+        }
+        self.delete_json(&format!(
+            "/_soland/self/circles/{circle_id}/members/{actor_id}"
+        ))
+        .await
     }
 
     /// Send a Space lifecycle action (`archive` / `restore` /

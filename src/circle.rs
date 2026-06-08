@@ -108,6 +108,111 @@ impl CircleSummary {
     }
 }
 
+/// Decode one Circle projection row (as returned by
+/// `GET /_cokret/self/circles` / `/circles/{id}`) into a
+/// [`CircleSummary`]. Tolerant of the symbol being either a bare glyph
+/// string or the canonical `{ "glyph": "shield" }` object, and of the
+/// display fields living either at the row root or nested under
+/// `display`. Returns `None` when the row carries no usable `id`.
+pub fn circle_summary_from_json(value: &serde_json::Value) -> Option<CircleSummary> {
+    let id = value
+        .get("id")
+        .or_else(|| value.get("circle_id"))
+        .and_then(serde_json::Value::as_str)?
+        .to_owned();
+    if id.is_empty() {
+        return None;
+    }
+    let display = value.get("display");
+    let pick_str = |key: &str| -> String {
+        value
+            .get(key)
+            .or_else(|| display.and_then(|d| d.get(key)))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let symbol = value
+        .get("symbol")
+        .or_else(|| display.and_then(|d| d.get("symbol")))
+        .map(|symbol| match symbol {
+            serde_json::Value::String(glyph) => glyph.clone(),
+            other => other
+                .get("glyph")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        })
+        .unwrap_or_default();
+    let member_count = value
+        .get("member_count")
+        .or_else(|| value.get("members_count"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as u32;
+    let viewer_is_member = value
+        .get("viewer_is_member")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    Some(CircleSummary {
+        id,
+        realm_id: pick_str("realm_id"),
+        title: pick_str("title"),
+        short_name: pick_str("short_name"),
+        color_token: pick_str("color_token"),
+        symbol,
+        member_count,
+        viewer_is_member,
+    })
+}
+
+/// Decode the `GET /_cokret/self/circles?realm_id=…` directory response
+/// into a list of [`CircleSummary`]. Accepts either a bare JSON array or
+/// an object wrapping the rows under `circles` / `items`.
+pub fn circle_summaries_from_json(value: &serde_json::Value) -> Vec<CircleSummary> {
+    let rows = value
+        .as_array()
+        .or_else(|| value.get("circles").and_then(serde_json::Value::as_array))
+        .or_else(|| value.get("items").and_then(serde_json::Value::as_array));
+    match rows {
+        Some(rows) => rows.iter().filter_map(circle_summary_from_json).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Decode a Circle's member roster (the `members` collection on the
+/// `GET /_cokret/self/circles/{id}` response) into `(actor_did, role)`
+/// pairs. The view layer wraps these into its own row struct so this
+/// model module stays free of any UI dependency.
+pub fn circle_members_from_json(value: &serde_json::Value) -> Vec<(String, String)> {
+    let rows = value
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array());
+    let Some(rows) = rows else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let did = row
+                .get("actor_id")
+                .or_else(|| row.get("actor_did"))
+                .or_else(|| row.get("did"))
+                .and_then(serde_json::Value::as_str)?
+                .to_owned();
+            if did.is_empty() {
+                return None;
+            }
+            let role = row
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("member")
+                .to_owned();
+            Some((did, role))
+        })
+        .collect()
+}
+
 /// CKP-0007 reason / error codes surfaced to the user via the Toast
 /// layer. Maps from the wire `reason_code` (a `failed_precondition` /
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
@@ -355,6 +460,54 @@ mod tests {
         let scope = summary.into_scope();
         assert_eq!(scope.circle_id(), Some("ck:circle:opsroom"));
         assert_eq!(scope.label(), "Ops Room");
+    }
+
+    #[test]
+    fn decodes_circle_directory_with_nested_display() {
+        let value = serde_json::json!({
+            "circles": [{
+                "id": "ck:circle:ops",
+                "realm_id": "ck:realm:home",
+                "title": "Ops",
+                "display": { "short_name": "Ops", "color_token": "indigo", "symbol": { "glyph": "shield" } },
+                "member_count": 3,
+                "viewer_is_member": true
+            }]
+        });
+        let summaries = circle_summaries_from_json(&value);
+        assert_eq!(summaries.len(), 1);
+        let circle = &summaries[0];
+        assert_eq!(circle.id, "ck:circle:ops");
+        assert_eq!(circle.short_name, "Ops");
+        assert_eq!(circle.color_token, "indigo");
+        assert_eq!(circle.symbol, "shield");
+        assert_eq!(circle.member_count, 3);
+        assert!(circle.viewer_is_member);
+    }
+
+    #[test]
+    fn decodes_flat_circle_and_string_symbol() {
+        let value = serde_json::json!({
+            "id": "ck:circle:a", "realm_id": "ck:realm:r", "title": "A",
+            "short_name": "A", "color_token": "amber", "symbol": "flame"
+        });
+        let summary = circle_summary_from_json(&value).unwrap();
+        assert_eq!(summary.symbol, "flame");
+        assert_eq!(summary.color_token, "amber");
+    }
+
+    #[test]
+    fn decodes_circle_members() {
+        let value = serde_json::json!({
+            "members": [
+                { "actor_id": "did:web:alice", "role": "admin" },
+                { "actor_id": "did:web:bob" }
+            ]
+        });
+        let members = circle_members_from_json(&value);
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0], ("did:web:alice".to_owned(), "admin".to_owned()));
+        assert_eq!(members[1], ("did:web:bob".to_owned(), "member".to_owned()));
     }
 
     #[test]

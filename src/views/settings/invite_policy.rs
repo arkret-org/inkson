@@ -25,6 +25,7 @@
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
+use crate::i18n::tr;
 use crate::models::InviteReceivePolicy;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -33,13 +34,14 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::switch::Switch;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
-/// Introduction-evidence kinds offered in the UI, with natural-language labels.
+/// Introduction-evidence kinds offered in the UI, paired with the i18n key for
+/// their natural-language label (looked up via the active locale).
 const INTRODUCTION_KINDS: &[(&str, &str)] = &[
-    ("consent_grant", "联系人(已同意的好友)"),
-    ("locator_ref", "邀请链接"),
-    ("shared_realm", "同群成员"),
-    ("same_principal_server", "同一服务器的用户"),
-    ("explicit_address", "任何知道我地址的人"),
+    ("consent_grant", "invite_policy.kind.consent_grant"),
+    ("locator_ref", "invite_policy.kind.locator_ref"),
+    ("shared_realm", "invite_policy.kind.shared_realm"),
+    ("same_principal_server", "invite_policy.kind.same_principal_server"),
+    ("explicit_address", "invite_policy.kind.explicit_address"),
 ];
 
 #[component]
@@ -75,10 +77,9 @@ pub fn InvitePolicySettingsCard(
                     }
                     Err(err) => {
                         // Graceful-degrade message; defaults stay in the form.
-                        status.set(format!(
-                            "未能从服务器读取现有策略(将使用默认值):{}",
-                            err.display()
-                        ));
+                        status.set(
+                            tr("invite_policy.load_failed").replace("{error}", &err.display()),
+                        );
                     }
                 }
                 loading.set(false);
@@ -93,18 +94,16 @@ pub fn InvitePolicySettingsCard(
     rsx! {
         div { class: "event", "data-testid": "invite-policy-panel",
             div { class: "event-head",
-                span { "谁可以邀请我" }
-                if loading() { span { "加载中…" } }
+                span { {tr("invite_policy.title")} }
+                if loading() { span { {tr("invite_policy.loading")} } }
             }
-            div { class: "muted",
-                "选择哪些来源可以邀请你加入群组。不在允许范围内的邀请会按下面的规则丢弃或暂存待审。"
-            }
+            div { class: "muted", {tr("invite_policy.intro")} }
 
             // ── allowed_introduction_kinds ───────────────────────────────
             div { class: "settings-subsection",
-                strong { class: "settings-subsection-title", "允许的邀请来源" }
+                strong { class: "settings-subsection-title", {tr("invite_policy.kinds_title")} }
                 div { class: "settings-list",
-                    for (kind, label) in INTRODUCTION_KINDS.iter().copied() {
+                    for (kind, label_key) in INTRODUCTION_KINDS.iter().copied() {
                         {
                             let checked = current.allowed_introduction_kinds.iter().any(|k| k == kind);
                             rsx! {
@@ -122,7 +121,7 @@ pub fn InvitePolicySettingsCard(
                                             policy.set(next);
                                         },
                                     }
-                                    span { " {label}" }
+                                    span { " {tr(label_key)}" }
                                 }
                             }
                         }
@@ -132,7 +131,7 @@ pub fn InvitePolicySettingsCard(
 
             // ── explicit_address_behavior ────────────────────────────────
             div { class: "settings-subsection",
-                Label { html_for: "invite-policy-explicit-behavior", "“任何知道我地址的人”的处理方式" }
+                Label { html_for: "invite-policy-explicit-behavior", {tr("invite_policy.explicit_label")} }
                 Select::<String> {
                     id: "invite-policy-explicit-behavior",
                     "data-testid": "invite-policy-explicit-behavior",
@@ -144,20 +143,20 @@ pub fn InvitePolicySettingsCard(
                             policy.set(next);
                         }
                     },
-                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: "drop", "直接丢弃" }
-                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: "quarantine", "暂存待审" }
-                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: "notify", "通知我" }
+                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: "drop", {tr("invite_policy.explicit.drop")} }
+                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: "quarantine", {tr("invite_policy.explicit.quarantine")} }
+                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: "notify", {tr("invite_policy.explicit.notify")} }
                 }
                 div { class: "muted",
-                    "未知来源的邀请将被"
-                    if current.unknown_invites == "drop" { "直接丢弃" } else { "暂存待审" }
-                    "。"
+                    {tr("invite_policy.unknown_prefix")}
+                    if current.unknown_invites == "drop" { {tr("invite_policy.unknown_drop")} } else { {tr("invite_policy.unknown_quarantine")} }
+                    {tr("invite_policy.unknown_suffix")}
                 }
             }
 
             // ── disclosure ───────────────────────────────────────────────
             div { class: "settings-subsection",
-                strong { class: "settings-subsection-title", "回执" }
+                strong { class: "settings-subsection-title", {tr("invite_policy.disclosure_title")} }
                 label { class: "metric",
                     Switch {
                         "data-testid": "invite-policy-disclosure-high-trust",
@@ -168,18 +167,16 @@ pub fn InvitePolicySettingsCard(
                             policy.set(next);
                         },
                     }
-                    span { " 让联系人知道邀请结果" }
+                    span { " {tr(\"invite_policy.disclosure_toggle\")}" }
                 }
-                div { class: "muted",
-                    "对陌生人(低信任来源)始终不回执,避免暴露你是否在线或是否接受邀请。"
-                }
+                div { class: "muted", {tr("invite_policy.disclosure_hint")} }
             }
 
             // ── blocked_subjects ─────────────────────────────────────────
             div { class: "settings-subsection",
-                strong { class: "settings-subsection-title", "已屏蔽的邀请者" }
+                strong { class: "settings-subsection-title", {tr("invite_policy.blocked_title")} }
                 if current.blocked_subjects.is_empty() {
-                    div { class: "muted", "data-testid": "invite-policy-blocked-empty", "没有被屏蔽的邀请者。" }
+                    div { class: "muted", "data-testid": "invite-policy-blocked-empty", {tr("invite_policy.blocked_empty")} }
                 } else {
                     div { class: "settings-list",
                         for subject in current.blocked_subjects.iter().cloned() {
@@ -197,10 +194,10 @@ pub fn InvitePolicySettingsCard(
                                             let mut next = policy.read().clone();
                                             next.blocked_subjects.retain(|s| s != &subject);
                                             policy.set(next);
-                                            status.set("已从屏蔽列表移除,记得点击保存。".to_owned());
+                                            status.set(tr("invite_policy.unblocked_hint"));
                                         }
                                     },
-                                    "移除"
+                                    {tr("invite_policy.unblock")}
                                 }
                             }
                         }
@@ -218,7 +215,7 @@ pub fn InvitePolicySettingsCard(
                         let api_token = token();
                         let to_save = policy.read().clone();
                         saving.set(true);
-                        status.set("正在保存…".to_owned());
+                        status.set(tr("invite_policy.saving"));
                         spawn(async move {
                             match with_authed_api(&base, api_token, |api| async move {
                                 api.set_invite_receive_policy(&to_save).await
@@ -227,14 +224,16 @@ pub fn InvitePolicySettingsCard(
                             {
                                 Ok(outcome) => {
                                     policy.set(outcome.policy);
-                                    status.set("已保存。".to_owned());
+                                    status.set(tr("invite_policy.saved"));
                                 }
-                                Err(err) => status.set(format!("保存失败:{}", err.display())),
+                                Err(err) => status.set(
+                                    tr("invite_policy.save_failed").replace("{error}", &err.display()),
+                                ),
                             }
                             saving.set(false);
                         });
                     },
-                    if saving() { "保存中…" } else { "保存" }
+                    if saving() { {tr("invite_policy.save_busy")} } else { {tr("invite_policy.save")} }
                 }
             }
 
