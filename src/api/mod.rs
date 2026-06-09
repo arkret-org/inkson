@@ -1606,31 +1606,51 @@ pub fn build_space_create_event(
     default_realm_id: Option<&str>,
 ) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
-    let mut object = json!({
-        "id": space_id,
-        "schema": "ck.schema.space.v1",
-        "realm_id": trim_realm_id(realm_id),
-        "kind": kind,
-        "title": title,
-        "state": "active",
-        "created_by": actor_id,
-        "created_at": created_at,
-    });
+    // Build the canonical Space object via the SDK strong type so that
+    // field names / shape stay aligned with `space_create_payload`
+    // (`object`, additionalProperties:false). `created_at` is overridden
+    // below with the envelope timestamp to keep wire identity with the
+    // effects copy.
+    let space_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+        .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
+    let space_object_id = cokret_sdk::SpaceId::new(space_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid space_id for space.create: {e:?}"))?;
+    let space_created_by = cokret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid created_by DID for space.create: {e:?}"))?;
+    let mut space_object = cokret_sdk::SpaceCreateObject::new(
+        space_object_id,
+        space_realm_id,
+        kind,
+        title,
+        space_created_by,
+    );
+    space_object.state = Some(cokret_sdk::SpaceState::Active);
     if let Some(summary) = summary
         && !summary.trim().is_empty()
     {
-        object["summary"] = Value::String(summary.trim().to_owned());
+        space_object.summary = Some(summary.trim().to_owned());
     }
     if let Some(parent) = parent_space_id
         && !parent.trim().is_empty()
     {
-        object["parent_space_id"] = Value::String(parent.trim().to_owned());
+        space_object.parent_space_id = Some(
+            cokret_sdk::SpaceId::new(parent.trim().to_owned())
+                .map_err(|e| anyhow::anyhow!("invalid parent_space_id: {e:?}"))?,
+        );
     }
     if let Some(default_realm) = default_realm_id
         && !default_realm.trim().is_empty()
     {
-        object["default_realm_id"] = Value::String(trim_realm_id(default_realm.trim()));
+        space_object.default_realm_id = Some(
+            cokret_sdk::RealmId::new(trim_realm_id(default_realm.trim()))
+                .map_err(|e| anyhow::anyhow!("invalid default_realm_id: {e:?}"))?,
+        );
     }
+    let mut object = serde_json::to_value(&space_object)
+        .map_err(|e| anyhow::anyhow!("ck.space.create object serialize: {e}"))?;
+    // Preserve the envelope timestamp on the wire object (SDK defaults
+    // `created_at` to construction time).
+    object["created_at"] = Value::String(created_at.clone());
 
     let cell = space_cell("ck.component.space.create.v1", space_id);
     let preconditions = vec![Precondition {
@@ -1656,9 +1676,12 @@ pub fn build_space_create_event(
             predecessor: None,
         },
     }];
+    let space_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
+        .to_value()
+        .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
     let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.space.create")
         .target_ref(space_id)
-        .body(json!({ "object": object }))
+        .body(space_body)
         .preconditions(preconditions)
         .effects(effects)
         .requirements(EventRequirements {
