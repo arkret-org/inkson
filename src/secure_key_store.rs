@@ -2187,14 +2187,17 @@ pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 #[derive(Clone)]
 pub struct SigningSeedMaterial {
     pub seed: [u8; 32],
-    pub device_did: String,
+    /// `did:key:z<multibase>` 编码的本地签名公钥(设备签名密钥的自描述
+    /// 编码),**非设备 DID、非 actor 身份**。设备不是独立 DID 主体;
+    /// 事件 `actor_id` 用 account/principal DID。见 spec models/actor.md §2。
+    pub local_signing_did: String,
 }
 
 impl std::fmt::Debug for SigningSeedMaterial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SigningSeedMaterial")
             .field("seed", &"<redacted>")
-            .field("device_did", &self.device_did)
+            .field("local_signing_did", &self.local_signing_did)
             .finish()
     }
 }
@@ -2227,7 +2230,7 @@ pub fn load_signing_seed(
     let did = ed25519_seed_to_did_key(&seed);
     Ok(Some(SigningSeedMaterial {
         seed,
-        device_did: did,
+        local_signing_did: did,
     }))
 }
 
@@ -2243,7 +2246,7 @@ pub fn store_signing_seed(
     store.store_secret(SIGNING_SEED_KEY, &encoded)?;
     Ok(SigningSeedMaterial {
         seed: *seed,
-        device_did: ed25519_seed_to_did_key(seed),
+        local_signing_did: ed25519_seed_to_did_key(seed),
     })
 }
 
@@ -2291,13 +2294,13 @@ mod tests {
         let seed = [11u8; 32];
         let saved = store_signing_seed(&store, &seed).expect("store");
         assert_eq!(saved.seed, seed);
-        assert!(saved.device_did.starts_with("did:key:z"));
+        assert!(saved.local_signing_did.starts_with("did:key:z"));
 
         let loaded = load_signing_seed(&store)
             .expect("load")
             .expect("seed present");
         assert_eq!(loaded.seed, seed);
-        assert_eq!(loaded.device_did, saved.device_did);
+        assert_eq!(loaded.local_signing_did, saved.local_signing_did);
     }
 
     /// `ensure_signing_seed` generates a fresh seed when none exists
@@ -2310,7 +2313,7 @@ mod tests {
         assert!(first.seed.iter().any(|b| *b != 0));
         let second = ensure_signing_seed(&store).expect("second");
         assert_eq!(first.seed, second.seed);
-        assert_eq!(first.device_did, second.device_did);
+        assert_eq!(first.local_signing_did, second.local_signing_did);
     }
 
     /// Corrupt entry → backend error so the boot path surfaces a

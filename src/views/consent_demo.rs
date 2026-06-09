@@ -44,6 +44,7 @@ pub fn ConsentGrantDemoCard(
     base_url: Signal<String>,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
+    account_did: Signal<String>,
 ) -> Element {
     let mut consent_id = use_signal(|| "cnt.demo-01".to_owned());
     let mut tag = use_signal(|| "scope:contacts".to_owned());
@@ -98,13 +99,14 @@ pub fn ConsentGrantDemoCard(
                             );
                             return;
                         }
-                        let actor_did = match state_store.write().ensure_local_identity() {
-                            Ok(id) => id.device_did.as_str().to_owned(),
-                            Err(err) => {
-                                status.set(format!("Identity unavailable: {err}"));
-                                return;
-                            }
-                        };
+                        // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
+                        // (设备不是 actor 主体;device 的 did:key 仅用于本地签名,
+                        // 不能作为 actor_id —— soland 会拒。见 spec actor.md §2。)
+                        let actor_did = account_did().trim().to_owned();
+                        if actor_did.is_empty() {
+                            status.set("Account identity unavailable; sign in first".to_owned());
+                            return;
+                        }
                         let envelope = crate::operation::cx_ops::consent_grant(
                             &realm_val,
                             &actor_did,
@@ -150,13 +152,14 @@ pub fn ConsentGrantDemoCard(
                             );
                             return;
                         }
-                        let actor_did = match state_store.write().ensure_local_identity() {
-                            Ok(id) => id.device_did.as_str().to_owned(),
-                            Err(err) => {
-                                status.set(format!("Identity unavailable: {err}"));
-                                return;
-                            }
-                        };
+                        // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
+                        // (设备不是 actor 主体;device 的 did:key 仅用于本地签名,
+                        // 不能作为 actor_id —— soland 会拒。见 spec actor.md §2。)
+                        let actor_did = account_did().trim().to_owned();
+                        if actor_did.is_empty() {
+                            status.set("Account identity unavailable; sign in first".to_owned());
+                            return;
+                        }
                         let envelope = crate::operation::cx_ops::consent_revoke(
                             &realm_val,
                             &actor_did,
@@ -218,6 +221,7 @@ pub fn ConsentGrantDemoCard(
                 base_url: base_url,
                 token: token,
                 state_store: state_store,
+                account_did: account_did,
             }
         }
     }
@@ -290,6 +294,7 @@ pub fn RevokeAllConsentCard(
     base_url: Signal<String>,
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
+    account_did: Signal<String>,
 ) -> Element {
     let mut confirming = use_signal(|| false);
     let mut status = use_signal(String::new);
@@ -384,13 +389,14 @@ pub fn RevokeAllConsentCard(
                                     status.set("Fill realm_id and consent_id first".to_owned());
                                     return;
                                 }
-                                let actor_did = match state_store.write().ensure_local_identity() {
-                                    Ok(id) => id.device_did.as_str().to_owned(),
-                                    Err(err) => {
-                                        status.set(format!("Identity unavailable: {err}"));
-                                        return;
-                                    }
-                                };
+                                // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
+                                let actor_did = account_did().trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status.set(
+                                        "Account identity unavailable; sign in first".to_owned(),
+                                    );
+                                    return;
+                                }
                                 // Build one ck.consent.revoke event per
                                 // subscope. The server-side reducer collapses
                                 // these into a single OrSet fanout under

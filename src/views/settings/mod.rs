@@ -3520,6 +3520,7 @@ pub fn SettingsPanel(
                                 base_url,
                                 token,
                                 state_store,
+                                account_did,
                             }
                         }
 

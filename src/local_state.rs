@@ -232,7 +232,12 @@ impl Drop for LocalIdentityRecord {
 /// here and the `<redacted>` Debug formatting below is preserved.
 #[derive(Clone)]
 pub struct LocalIdentity {
-    pub device_did: String,
+    /// `did:key:z<multibase>` 编码的本地签名公钥。这是设备本地 ed25519
+    /// 签名密钥的自描述编码,**不是设备 DID、也不是 actor 身份**——
+    /// 设备不是独立 DID 主体。事件 `actor_id` 必须用 account/principal
+    /// DID(见 spec models/actor.md §2),本字段只用于本地签名 / key
+    /// store 索引。
+    pub local_signing_did: String,
     pub signing_key: SigningKey,
 }
 
@@ -240,7 +245,7 @@ impl std::fmt::Debug for LocalIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Never log the private bytes.
         f.debug_struct("LocalIdentity")
-            .field("device_did", &self.device_did)
+            .field("local_signing_did", &self.local_signing_did)
             .field("signing_key", &"<redacted>")
             .finish()
     }
@@ -248,7 +253,7 @@ impl std::fmt::Debug for LocalIdentity {
 
 impl PartialEq for LocalIdentity {
     fn eq(&self, other: &Self) -> bool {
-        self.device_did == other.device_did
+        self.local_signing_did == other.local_signing_did
             && self.signing_key.to_bytes() == other.signing_key.to_bytes()
     }
 }
@@ -262,9 +267,9 @@ impl LocalIdentity {
         let mut seed = [0u8; 32];
         getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
         let signing_key = SigningKey::from_bytes(&seed);
-        let device_did = encode_did_key(&signing_key);
+        let local_signing_did = encode_did_key(&signing_key);
         Ok(Self {
-            device_did,
+            local_signing_did,
             signing_key,
         })
     }
@@ -292,7 +297,7 @@ impl LocalIdentity {
             ));
         }
         Ok(Self {
-            device_did: derived,
+            local_signing_did: derived,
             signing_key,
         })
     }
@@ -307,7 +312,7 @@ impl LocalIdentity {
             .collect();
         LocalIdentityRecord {
             seed_hex,
-            did_key: self.device_did.clone(),
+            did_key: self.local_signing_did.clone(),
         }
     }
 }
@@ -4836,7 +4841,7 @@ mod tests {
         );
         assert_eq!(
             state.local_identity.as_ref().unwrap().did_key,
-            identity.device_did,
+            identity.local_signing_did,
         );
         assert!(
             state.oidc_tokens.is_some(),
@@ -4922,7 +4927,7 @@ mod tests {
         // Device-level identity survives the account-scope swap.
         assert_eq!(
             state.local_identity.as_ref().unwrap().did_key,
-            identity.device_did,
+            identity.local_signing_did,
         );
     }
 
@@ -5462,7 +5467,7 @@ mod tests {
             assert!(store.local_identity_record().is_none());
             assert!(store.local_identity().is_none());
             let id = store.ensure_local_identity().expect("first generate");
-            assert!(id.device_did.starts_with("did:key:z"));
+            assert!(id.local_signing_did.starts_with("did:key:z"));
             // Idempotent on the same store instance.
             let again = store.ensure_local_identity().expect("idempotent");
             assert_eq!(id, again);
@@ -5471,7 +5476,7 @@ mod tests {
         // Round-trip across store instances.
         let reader = LocalStateStore::with_path(path);
         let loaded = reader.local_identity().expect("persisted identity loads");
-        assert_eq!(loaded.device_did, id.device_did);
+        assert_eq!(loaded.local_signing_did, id.local_signing_did);
         assert_eq!(loaded.signing_key.to_bytes(), id.signing_key.to_bytes());
     }
 
@@ -5497,7 +5502,7 @@ mod tests {
             .expect("secure read")
             .expect("identity secret");
         let record: LocalIdentityRecord = serde_json::from_str(&stored).unwrap();
-        assert_eq!(record.did_key, id.device_did);
+        assert_eq!(record.did_key, id.local_signing_did);
         assert_eq!(
             LocalIdentity::from_record(&record)
                 .unwrap()
@@ -5523,7 +5528,7 @@ mod tests {
                 .ensure_local_identity_with_secure_store(&secure)
                 .expect("secure migration")
         };
-        assert_eq!(migrated.device_did, existing.device_did);
+        assert_eq!(migrated.local_signing_did, existing.local_signing_did);
         assert!(
             LocalStateStore::with_path(path)
                 .load()
@@ -5545,7 +5550,7 @@ mod tests {
         // regression to the deterministic [42; 32] seed.
         let one = LocalIdentity::generate().unwrap();
         let two = LocalIdentity::generate().unwrap();
-        assert_ne!(one.device_did, two.device_did);
+        assert_ne!(one.local_signing_did, two.local_signing_did);
         assert_ne!(one.signing_key.to_bytes(), two.signing_key.to_bytes());
         assert_ne!(one.signing_key.to_bytes(), [42u8; 32]);
         assert_ne!(two.signing_key.to_bytes(), [42u8; 32]);
@@ -5564,7 +5569,7 @@ mod tests {
         });
         let _ = store.flush();
         let regenerated = store.ensure_local_identity().unwrap();
-        assert_ne!(regenerated.device_did, "did:key:zTAMPERED");
+        assert_ne!(regenerated.local_signing_did, "did:key:zTAMPERED");
         assert_ne!(
             regenerated.signing_key.to_bytes(),
             original.signing_key.to_bytes(),

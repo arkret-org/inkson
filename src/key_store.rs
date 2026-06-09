@@ -46,7 +46,7 @@ pub enum KeyStoreError {
 }
 
 /// Pluggable signing-key store. Loaders are keyed by an opaque DID-style
-/// string (the `device_did` for now); future revisions may key by
+/// string (the `local_signing_did` for now); future revisions may key by
 /// arbitrary string so we can store multiple identities per device.
 ///
 /// All methods take `&self` so a [`KeyStore`] can be cheaply cloned /
@@ -54,23 +54,23 @@ pub enum KeyStoreError {
 /// guard it with their own lock (e.g. [`InMemoryKeyStore`] uses a
 /// `Mutex`).
 pub trait KeyStore: Send + Sync {
-    /// Read the persisted identity record for `device_did`. `None` means
+    /// Read the persisted identity record for `local_signing_did`. `None` means
     /// "no record yet" — callers typically follow up with
     /// [`Self::save_identity`] after generating a fresh seed.
-    fn load_identity(&self, device_did: &str)
+    fn load_identity(&self, local_signing_did: &str)
     -> Result<Option<LocalIdentityRecord>, KeyStoreError>;
 
     /// Persist (or overwrite) the identity record for the device. The
-    /// `device_did` argument is redundant with `record.did_key` but lets
+    /// `local_signing_did` argument is redundant with `record.did_key` but lets
     /// the backend index without parsing the record.
     fn save_identity(
         &self,
-        device_did: &str,
+        local_signing_did: &str,
         record: &LocalIdentityRecord,
     ) -> Result<(), KeyStoreError>;
 
     /// Optional: return the *primary* identity without a known
-    /// `device_did`. Used at boot to find the local device's identity
+    /// `local_signing_did`. Used at boot to find the local device's identity
     /// before any UI surface has resolved a DID. Default impl returns
     /// `None` (caller must know the DID up front).
     fn primary_identity(&self) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
@@ -83,9 +83,9 @@ pub trait KeyStore: Send + Sync {
     /// [`Self::load_identity`].
     fn load_local_identity(
         &self,
-        device_did: &str,
+        local_signing_did: &str,
     ) -> Result<Option<LocalIdentity>, KeyStoreError> {
-        let Some(record) = self.load_identity(device_did)? else {
+        let Some(record) = self.load_identity(local_signing_did)? else {
             return Ok(None);
         };
         match LocalIdentity::from_record(&record) {
@@ -150,10 +150,10 @@ impl InMemoryKeyStore {
 impl KeyStore for InMemoryKeyStore {
     fn load_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
     ) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
         // The default in-memory backend stores at most one identity per
-        // device — `device_did` is logged for future use but
+        // device — `local_signing_did` is logged for future use but
         // not used as a lookup key.
         let guard = self
             .inner
@@ -164,7 +164,7 @@ impl KeyStore for InMemoryKeyStore {
 
     fn save_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
         record: &LocalIdentityRecord,
     ) -> Result<(), KeyStoreError> {
         let mut guard = self
@@ -203,14 +203,14 @@ impl MacOsKeychainKeyStore {
 impl KeyStore for MacOsKeychainKeyStore {
     fn load_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
     ) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
         Err(KeyStoreError::Unsupported("macos-keychain"))
     }
 
     fn save_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
         _record: &LocalIdentityRecord,
     ) -> Result<(), KeyStoreError> {
         Err(KeyStoreError::Unsupported("macos-keychain"))
@@ -237,14 +237,14 @@ impl LinuxSecretServiceKeyStore {
 impl KeyStore for LinuxSecretServiceKeyStore {
     fn load_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
     ) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
         Err(KeyStoreError::Unsupported("linux-secret-service"))
     }
 
     fn save_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
         _record: &LocalIdentityRecord,
     ) -> Result<(), KeyStoreError> {
         Err(KeyStoreError::Unsupported("linux-secret-service"))
@@ -270,14 +270,14 @@ impl WindowsCredentialKeyStore {
 impl KeyStore for WindowsCredentialKeyStore {
     fn load_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
     ) -> Result<Option<LocalIdentityRecord>, KeyStoreError> {
         Err(KeyStoreError::Unsupported("windows-credential"))
     }
 
     fn save_identity(
         &self,
-        _device_did: &str,
+        _local_signing_did: &str,
         _record: &LocalIdentityRecord,
     ) -> Result<(), KeyStoreError> {
         Err(KeyStoreError::Unsupported("windows-credential"))
@@ -313,21 +313,21 @@ mod tests {
 
         // ensure_identity generates + persists.
         let identity = store.ensure_identity().expect("generate identity");
-        assert!(identity.device_did.starts_with("did:key:z"));
+        assert!(identity.local_signing_did.starts_with("did:key:z"));
 
         // Reading via the trait surface returns the same record.
         let record = store
-            .load_identity(&identity.device_did)
+            .load_identity(&identity.local_signing_did)
             .unwrap()
             .expect("identity present");
-        assert_eq!(record.did_key, identity.device_did);
+        assert_eq!(record.did_key, identity.local_signing_did);
 
         // load_local_identity matches.
         let loaded = store
-            .load_local_identity(&identity.device_did)
+            .load_local_identity(&identity.local_signing_did)
             .unwrap()
             .expect("identity loads");
-        assert_eq!(loaded.device_did, identity.device_did);
+        assert_eq!(loaded.local_signing_did, identity.local_signing_did);
         assert_eq!(
             loaded.signing_key.to_bytes(),
             identity.signing_key.to_bytes()
@@ -341,22 +341,22 @@ mod tests {
         let id_two = LocalIdentity::generate().unwrap();
 
         store
-            .save_identity(&id_one.device_did, &id_one.to_record())
+            .save_identity(&id_one.local_signing_did, &id_one.to_record())
             .unwrap();
         let loaded = store
-            .load_local_identity(&id_one.device_did)
+            .load_local_identity(&id_one.local_signing_did)
             .unwrap()
             .expect("first identity");
-        assert_eq!(loaded.device_did, id_one.device_did);
+        assert_eq!(loaded.local_signing_did, id_one.local_signing_did);
 
         store
-            .save_identity(&id_two.device_did, &id_two.to_record())
+            .save_identity(&id_two.local_signing_did, &id_two.to_record())
             .unwrap();
         let loaded = store
-            .load_local_identity(&id_two.device_did)
+            .load_local_identity(&id_two.local_signing_did)
             .unwrap()
             .expect("second identity");
-        assert_eq!(loaded.device_did, id_two.device_did);
+        assert_eq!(loaded.local_signing_did, id_two.local_signing_did);
     }
 
     #[test]

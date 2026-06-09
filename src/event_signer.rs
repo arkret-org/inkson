@@ -42,7 +42,7 @@
 //! let material = crate::secure_key_store::ensure_signing_seed(&*store)?;
 //! let signer = crate::event_signer::build_ed25519_signer(
 //!     material.seed,
-//!     material.device_did.clone(),
+//!     material.local_signing_did.clone(),
 //! );
 //! crate::event_signer::install_active_signer(std::sync::Arc::new(signer));
 //! crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
@@ -504,7 +504,7 @@ pub fn bootstrap_default_signer(
     let store = crate::secure_key_store::default_secure_key_store(service_name);
     let material = crate::secure_key_store::ensure_signing_seed(&*store)
         .map_err(|err| anyhow::anyhow!("ensure_signing_seed failed: {err}"))?;
-    let signer = Arc::new(build_ed25519_signer(material.seed, material.device_did));
+    let signer = Arc::new(build_ed25519_signer(material.seed, material.local_signing_did));
     install_active_signer(signer.clone());
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     Ok(signer)
