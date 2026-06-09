@@ -670,6 +670,8 @@ fn render_notification_kind_toggle(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
+    Account,
+    Agents,
     Server,
     Devices,
     Storage,
@@ -693,7 +695,9 @@ enum SettingsSection {
 
 impl SettingsSection {
     fn from_slug(slug: Option<&str>) -> Self {
-        match slug.unwrap_or("server") {
+        match slug.unwrap_or("account") {
+            "account" => Self::Account,
+            "agents" => Self::Agents,
             "devices" => Self::Devices,
             "storage" => Self::Storage,
             "encryption" => Self::Encryption,
@@ -714,6 +718,8 @@ impl SettingsSection {
 
     fn slug(self) -> &'static str {
         match self {
+            Self::Account => "account",
+            Self::Agents => "agents",
             Self::Server => "server",
             Self::Devices => "devices",
             Self::Storage => "storage",
@@ -734,7 +740,9 @@ impl SettingsSection {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Server => "Account & server",
+            Self::Account => "Account information",
+            Self::Agents => "My Agents",
+            Self::Server => "Server information",
             Self::Devices => "Devices",
             Self::Storage => "Data & sync",
             Self::Encryption => "Security",
@@ -793,8 +801,12 @@ impl DiagnosticsMode {
     }
 }
 
-const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] =
-    &[SettingsSection::Server, SettingsSection::Devices];
+const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[
+    SettingsSection::Account,
+    SettingsSection::Agents,
+    SettingsSection::Server,
+    SettingsSection::Devices,
+];
 const SETTINGS_SECURITY_GROUP: &[SettingsSection] =
     &[SettingsSection::KeyBackup, SettingsSection::Recovery];
 const SETTINGS_DELIVERY_GROUP: &[SettingsSection] = &[
@@ -1062,7 +1074,12 @@ pub fn SettingsPanel(
                                     }
                                 }
                             }
+                        }
+                    }
 
+                    // ── Account information ──────────────────────────────
+                    if active_section == SettingsSection::Account {
+                        div { class: "settings-card-grid",
                             // A4b — Profile / avatar card. Renders the
                             // current avatar (resolved via the blob URL
                             // helper when a blob_ref is present), an
@@ -1642,6 +1659,15 @@ pub fn SettingsPanel(
                                 }
                             }
 
+                        }
+                    }
+
+                    // ── My Agents (CKP-0008 native personal agents) ──────
+                    if active_section == SettingsSection::Agents {
+                        crate::views::agents::PersonalAgentAdminPanel {
+                            base_url: base_url(),
+                            token,
+                            controller_did: account_did(),
                         }
                     }
 

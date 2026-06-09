@@ -127,6 +127,46 @@ pub fn verify_principal(
     Ok(doc)
 }
 
+/// Y1:以缓存为先的 authority 解析辅助。
+///
+/// 这是 authority 调用点(`verify_principal` 之前)应当走的入口:
+/// 1. 先查 `cache`:命中且 [`Freshness::Fresh`] —— 直接返回缓存文档, 跳过 resolver
+///    链(省掉重复网络/链上解析)。
+/// 2. miss 或 `Stale` —— 调 [`verify_principal`] 走完整 resolver 链 (内含 policy 校验 + 文档 id
+///    比对),成功后按 policy 的 `ttl` 回填 `cache` 再返回。
+///
+/// 注意边界:
+/// - 缓存命中**不重做** policy 校验。这是有意为之 —— 能进缓存的条目 必然是此前 `verify_principal`
+///   成功(policy 已通过 + id 已比对) 的产物;`invalidate` / `clear`(Y2 失效钩子)负责在密钥轮换 /
+///   撤销时把陈旧条目清掉,使下一次解析重新走链。
+/// - policy 未配置 `ttl` 时退化为一个保守的 15 分钟默认,与 `policy_for`
+///   的取值一致,避免把无限期文档塞进缓存。
+///
+/// TRUST-AUTHORITY:本函数仍是 authority 面 —— 缓存只是省去重复解析,
+/// 不改变 "server 断言的 binding_state 仅作提示" 这一原则。展示面的
+/// `cached` / `stale` 降级在 `components::verify_badges` /
+/// `views::contacts`(TRUST-CACHE)单独处理,不复用此路径。
+pub fn resolve_with_cache(
+    resolver: &CompositeDidResolver,
+    cache: &mut DidResolutionCache,
+    principal: &Did,
+    now: DateTime<Utc>,
+) -> Result<DidDocument, VerifyError> {
+    // 1) 缓存命中且未过期 —— 直接复用。`get` 会顺带惰性淘汰过期项。
+    if let Some(doc) = cache.get(principal, now) {
+        return Ok(doc);
+    }
+    // 2) miss / 过期 —— 走完整 resolver 链(policy 校验 + id 比对)。
+    let doc = verify_principal(resolver, principal)?;
+    // 3) 回填缓存,TTL 取 policy 配置,缺省回落到 15 分钟。
+    let ttl = resolver
+        .policy()
+        .ttl
+        .unwrap_or_else(|| Duration::minutes(15));
+    cache.insert(principal.clone(), doc.clone(), now, ttl);
+    Ok(doc)
+}
+
 /// F-DID-CACHE-1: in-memory LRU + TTL cache for resolved DID documents.
 ///
 /// Spec `identity/did-resolution.md §4` says clients SHOULD cache
@@ -157,6 +197,31 @@ pub struct CachedDidEntry {
     pub document: DidDocument,
     pub cached_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+}
+
+/// Y1:缓存条目相对某个 `now` 的新鲜度。
+///
+/// 本仓库内自定义,**刻意不引入任何 SDK 新符号**(SDK 正被并发修改)。
+/// 仅区分两态:
+/// - `Fresh`:`now < expires_at`,缓存命中可直接复用。
+/// - `Stale`:`now >= expires_at`,已过期 —— 展示层据此降级到 `stale` 标记,authority
+///   解析路径据此放弃缓存改走 resolver 链。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Freshness {
+    Fresh,
+    Stale,
+}
+
+impl CachedDidEntry {
+    /// 返回该条目在 `now` 时刻的新鲜度。过期点(`expires_at`)本身视为已过期,
+    /// 与 [`DidResolutionCache::get`] 的 `expires_at > now` 判定保持一致。
+    pub fn freshness(&self, now: DateTime<Utc>) -> Freshness {
+        if self.expires_at > now {
+            Freshness::Fresh
+        } else {
+            Freshness::Stale
+        }
+    }
 }
 
 impl DidResolutionCache {
@@ -217,6 +282,16 @@ impl DidResolutionCache {
             }
         }
         self.entries.insert(key, entry);
+    }
+
+    /// Y3:只读探查缓存条目,**不触发任何过期淘汰**。展示层(verify_badges /
+    /// contacts)用它来读取 `binding_state` 与 [`Freshness`],从而渲染
+    /// `cached` / `stale` / `degraded` 标记。与 `get` 不同:`get` 是
+    /// authority 解析路径用的、会惰性淘汰过期项的可变借用;`peek` 是
+    /// 纯 UX 面、对过期项也照常返回(返回值里带 `Freshness::Stale`),
+    /// 这样 UI 才能区分 "miss" 与 "stale"。
+    pub fn peek<'a>(&'a self, did: &Did) -> Option<&'a CachedDidEntry> {
+        self.entries.get(did.as_str())
     }
 
     /// Drop the cached entry (if any) for `did`. Called by
@@ -366,6 +441,77 @@ mod tests {
         cache.insert(did.clone(), doc, t0, Duration::seconds(60));
         assert_eq!(cache.len(), 0);
         assert!(cache.get(&did, t0).is_none());
+    }
+
+    // ── Y1 freshness / resolve_with_cache ────────────────────────────
+
+    #[test]
+    fn freshness_reports_fresh_before_expiry_and_stale_after() {
+        let (_did, doc) = sample_document("did:web:alice.example");
+        let t0 = Utc::now();
+        let entry = CachedDidEntry {
+            document: doc,
+            cached_at: t0,
+            expires_at: t0 + Duration::seconds(60),
+        };
+        assert_eq!(
+            entry.freshness(t0 + Duration::seconds(30)),
+            Freshness::Fresh
+        );
+        // 过期点本身即视为 Stale,与 get 的 `expires_at > now` 判定一致。
+        assert_eq!(
+            entry.freshness(t0 + Duration::seconds(60)),
+            Freshness::Stale
+        );
+        assert_eq!(
+            entry.freshness(t0 + Duration::seconds(61)),
+            Freshness::Stale
+        );
+    }
+
+    #[test]
+    fn resolve_with_cache_returns_fresh_cached_document_without_resolver() {
+        // 预填一条新鲜缓存:resolve_with_cache 应直接命中,不去碰 resolver
+        // (resolver 没有任何证据,若真去解析必然 Unresolved)。
+        let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
+        let mut cache = DidResolutionCache::new(8);
+        let (did, doc) = sample_document("did:web:alice.example");
+        let t0 = Utc::now();
+        cache.insert(did.clone(), doc, t0, Duration::seconds(600));
+
+        let out = resolve_with_cache(&resolver, &mut cache, &did, t0 + Duration::seconds(1))
+            .expect("fresh cache hit must succeed without touching resolver");
+        assert_eq!(out.id.as_str(), did.as_str());
+    }
+
+    #[test]
+    fn resolve_with_cache_miss_falls_through_to_resolver_and_fails_closed() {
+        // 缓存为空 + resolver 无证据 -> 走链解析 -> Unresolved(fail-closed)。
+        let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
+        let mut cache = DidResolutionCache::new(8);
+        let did = parse("did:web:alice.example");
+        let t0 = Utc::now();
+        match resolve_with_cache(&resolver, &mut cache, &did, t0) {
+            Err(VerifyError::Unresolved(_)) => {}
+            other => panic!("expected Unresolved on cache miss, got {other:?}"),
+        }
+        // 解析失败不应回填缓存。
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn resolve_with_cache_treats_expired_entry_as_miss() {
+        // 过期条目应被当作 miss:get 惰性淘汰后走 resolver(无证据 -> Unresolved)。
+        let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
+        let mut cache = DidResolutionCache::new(8);
+        let (did, doc) = sample_document("did:web:alice.example");
+        let t0 = Utc::now();
+        cache.insert(did.clone(), doc, t0, Duration::seconds(60));
+        match resolve_with_cache(&resolver, &mut cache, &did, t0 + Duration::seconds(61)) {
+            Err(VerifyError::Unresolved(_)) => {}
+            other => panic!("expected Unresolved after expiry, got {other:?}"),
+        }
+        assert_eq!(cache.len(), 0, "expired entry should be evicted on miss");
     }
 
     #[test]

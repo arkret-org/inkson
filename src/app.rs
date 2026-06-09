@@ -290,7 +290,10 @@ fn ensure_sidebar_row_perms(
                     .await;
                 SidebarRowRealmPerms {
                     can_add_member: invite.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
-                    can_settings: settings.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
+                    can_settings: settings
+                        .as_ref()
+                        .map(sidebar_authz_allowed)
+                        .unwrap_or(false),
                 }
             }
             Err(_) => SidebarRowRealmPerms::default(),
@@ -842,6 +845,20 @@ pub fn RouterView() -> Element {
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
         Signal::new(crate::capability::CapabilityEngine::new())
     });
+    // Y1 —— 会话级 DID 解析缓存句柄。
+    //
+    // 挂载点说明:yougen 的 app 态是一堆分散的 `use_signal`,没有单一
+    // 聚合 struct,因此选择与上面的 `CapabilityEngine` 完全相同的最小
+    // 侵入模式 —— 用 `use_context_provider` 提供一个共享
+    // `Signal<DidResolutionCache>`。这样:
+    //   * authority 解析点可经 `use_context::<Signal<DidResolutionCache>>()` 取用,配合
+    //     `did_resolver::resolve_with_cache` 走缓存优先解析;
+    //   * 同一句柄被复制进下面的 `SyncEngineContext.did_cache`,让 Y2 失效钩子在摄入投影时能
+    //     `invalidate` / `clear`。
+    // 缓存是纯内存态(非持久化),只活在单个登录会话里,语义与
+    // `DidResolutionCache` 的文档一致。
+    let mut did_cache =
+        use_context_provider(|| Signal::new(crate::did_resolver::DidResolutionCache::default()));
     let mut theme = use_signal(move || initial_theme);
     let system_theme_is_night = use_signal(browser_prefers_dark_theme);
     {
@@ -895,8 +912,7 @@ pub fn RouterView() -> Element {
     // keyed by realm_id. Filled lazily when a row kebab opens (see
     // `ensure_sidebar_row_perms`) so we never probe authz for Realms whose
     // menu the user never touches.
-    let sidebar_row_perms =
-        use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
+    let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
     // Step 3 of the account-MLS-secret auto-unlock flow: set by the bootstrap
     // effect when this device has no local account secret yet but the server
@@ -1216,6 +1232,9 @@ pub fn RouterView() -> Element {
             account_did,
             selected_realm_id,
             profiles: profiles_signal,
+            // Y1/Y2 —— 把上面 provide 的会话级缓存句柄交给同步引擎,
+            // 供 Y2 失效钩子在摄入投影时 invalidate/clear。
+            did_cache,
         };
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
@@ -3986,6 +4005,11 @@ pub fn RouterView() -> Element {
                                                 sync_cursor.set("-".to_owned());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
+                                                // Y2 —— logout 属于 trust-bundle 全清场景:
+                                                // 整盘清空会话级 DID 解析缓存,确保下一位
+                                                // 在本浏览器登录的用户不会命中上一会话的
+                                                // 解析结果(陈旧文档 / 旧密钥集)。
+                                                did_cache.write().clear();
                                                 personal_handles.set(Vec::new());
                                                 personal_handles_status.set("Not published".to_owned());
                                                 personal_handles_lookup_key.set(String::new());

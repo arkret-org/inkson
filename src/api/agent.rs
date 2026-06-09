@@ -1,3 +1,5 @@
+use cokret_sdk::model::{AgentParticipationResBody, AgentParticipationSetReqBody};
+
 use super::*;
 
 impl CokretApi {
@@ -137,6 +139,37 @@ impl CokretApi {
         let grant_id = path_component(grant_id);
         self.delete_json(&format!(
             "_cokret/self/agents/{agent_principal_id}/grants/{grant_id}"
+        ))
+        .await
+    }
+
+    /// `PUT /_cokret/self/agents/{id}/participation` —
+    /// `ck.self.agent.participation.set` (CKP-0010). Sets the
+    /// controller's participation selection for one scope; soland
+    /// rejects selections that exceed the effective ceiling.
+    pub async fn agent_participation_set(
+        &self,
+        agent_principal_id: &str,
+        body: &AgentParticipationSetReqBody,
+    ) -> anyhow::Result<AgentParticipationResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
+        self.put_json(
+            &format!("_cokret/self/agents/{agent_principal_id}/participation"),
+            serde_json::to_value(body)?,
+        )
+        .await
+    }
+
+    /// `GET /_cokret/self/agents/{id}/participation` —
+    /// `ck.self.agent.participation.get` (CKP-0010). Returns the
+    /// resolved per-scope selection / ceiling / effective triples.
+    pub async fn agent_participation_get(
+        &self,
+        agent_principal_id: &str,
+    ) -> anyhow::Result<AgentParticipationResBody> {
+        let agent_principal_id = path_component(agent_principal_id);
+        self.get_json(&format!(
+            "_cokret/self/agents/{agent_principal_id}/participation"
         ))
         .await
     }

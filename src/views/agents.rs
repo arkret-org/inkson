@@ -27,7 +27,13 @@
 //!   * `agent-protocol-audit-verify-button` verifies the full chain (start → status* → result) and
 //!     surfaces the outcome via `agent-protocol-audit-verify-result`'s `data-state` attribute.
 
+use cokret_sdk::RealmId;
+use cokret_sdk::model::{
+    AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+    AgentParticipationSetReqBody,
+};
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
@@ -36,6 +42,7 @@ use crate::models::{
     AgentRotateKeyReqBody, AgentSidecarThreadEnsureReqBody,
 };
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
@@ -1155,6 +1162,12 @@ pub fn PersonalAgentAdminPanel(
     let mut sidecar_realm = use_signal(String::new);
     let mut deactivate_confirm = use_signal(String::new);
     let mut last_op_status = use_signal(String::new);
+    // CKP-0010 — participation editor (Realm-scope selection + resolved view).
+    let mut participation_realm = use_signal(String::new);
+    let mut participation_reply = use_signal(|| false);
+    let mut participation_mention = use_signal(|| false);
+    let mut participation_aob = use_signal(|| false);
+    let mut participation_entries = use_signal(Vec::<AgentParticipationEntry>::new);
 
     rsx! {
         div { class: "timeline", "data-testid": "personal-agent-admin",
@@ -1765,6 +1778,174 @@ pub fn PersonalAgentAdminPanel(
             // CKP-0008 §4.5). UI scaffold only — backend projection
             // is TODO(P3-impl).
             // ───────────────────────────────────────────────────────
+            // ───────────────────────────────────────────────────────
+            // CKP-0010 — participation policy. Per Realm scope, choose
+            // whether the agent may reply as itself, accept @mentions
+            // from other users, and act on the controller's behalf.
+            // Each bit is capped by the deployment ⊇ Realm ⊇ Circle ⊇
+            // Flow ceiling; soland rejects selections above it.
+            // ───────────────────────────────────────────────────────
+            div { class: "event", "data-testid": "agent-admin-participation",
+                div { class: "event-head",
+                    span { "Participation policy" }
+                    span { class: "badge blue", "ck.self.agent.participation.set" }
+                }
+                div { class: "muted",
+                    "Per Realm: let the selected agent reply as itself, accept @mentions from other users, or act on your behalf. Each switch is capped by the Realm / Circle / Flow ceiling."
+                }
+                div { class: "workflow-form",
+                    Input {
+                        "data-testid": "agent-admin-participation-realm-input",
+                        placeholder: "realm_id (ck:realm:...)",
+                        value: "{participation_realm}",
+                        oninput: move |event: FormEvent| participation_realm.set(event.value()),
+                    }
+                    label { class: "metric", "data-testid": "agent-admin-participation-reply-row",
+                        Checkbox {
+                            "data-testid": "agent-admin-participation-reply",
+                            checked: if participation_reply() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |s: CheckboxState| participation_reply.set(bool::from(s)),
+                        }
+                        span { "reply (post as agent)" }
+                    }
+                    label { class: "metric", "data-testid": "agent-admin-participation-mention-row",
+                        Checkbox {
+                            "data-testid": "agent-admin-participation-mention",
+                            checked: if participation_mention() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |s: CheckboxState| participation_mention.set(bool::from(s)),
+                        }
+                        span { "accept @mentions from other users" }
+                    }
+                    label { class: "metric", "data-testid": "agent-admin-participation-aob-row",
+                        Checkbox {
+                            "data-testid": "agent-admin-participation-aob",
+                            checked: if participation_aob() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |s: CheckboxState| participation_aob.set(bool::from(s)),
+                        }
+                        span { "act on my behalf" }
+                    }
+                    div { class: "actions",
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "agent-admin-participation-save-button",
+                            disabled: selected_agent_id().is_empty() || participation_realm().trim().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let realm = participation_realm();
+                                    let realm_id = match RealmId::new(realm.trim()) {
+                                        Ok(r) => r,
+                                        Err(_) => {
+                                            last_op_status.set("participation: invalid realm_id".to_owned());
+                                            return;
+                                        }
+                                    };
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let body = AgentParticipationSetReqBody {
+                                        scope: AgentParticipationScope::Realm { realm_id },
+                                        selection: AgentParticipation {
+                                            reply: participation_reply(),
+                                            accept_third_party_mention: participation_mention(),
+                                            act_on_behalf: participation_aob(),
+                                        },
+                                    };
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            let body = body.clone();
+                                            async move {
+                                                api.agent_participation_set(&id, &body).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => {
+                                                last_op_status.set(format!(
+                                                    "participation.set ok ({} scope(s))",
+                                                    r.entries.len()
+                                                ));
+                                                participation_entries.set(r.entries);
+                                            }
+                                            Err(err) => last_op_status.set(format!(
+                                                "participation.set failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Save participation"
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "agent-admin-participation-load-button",
+                            disabled: selected_agent_id().is_empty(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let id = selected_agent_id();
+                                    if id.is_empty() { return; }
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        match with_authed_api(&base, api_token, move |api| {
+                                            let id = id.clone();
+                                            async move {
+                                                api.agent_participation_get(&id).await
+                                            }
+                                        })
+                                        .await
+                                        {
+                                            Ok(r) => {
+                                                last_op_status.set(format!(
+                                                    "participation.get ok ({} scope(s))",
+                                                    r.entries.len()
+                                                ));
+                                                participation_entries.set(r.entries);
+                                            }
+                                            Err(err) => last_op_status.set(format!(
+                                                "participation.get failed: {}", err.display()
+                                            )),
+                                        }
+                                    });
+                                }
+                            },
+                            "Load resolved"
+                        }
+                    }
+                    if !participation_entries.read().is_empty() {
+                        div { class: "timeline", "data-testid": "agent-admin-participation-entries",
+                            for entry in participation_entries.read().iter() {
+                                {
+                                    let key = entry.scope.scope_key();
+                                    let sel = entry.selection;
+                                    let eff = entry.effective;
+                                    let ceil = entry.ceiling;
+                                    rsx! {
+                                        div {
+                                            class: "event",
+                                            "data-testid": "agent-admin-participation-entry",
+                                            "data-scope-key": "{key}",
+                                            div { class: "event-head",
+                                                span { class: "mono", "{key}" }
+                                            }
+                                            div { class: "muted",
+                                                "effective: reply={eff.reply} mention={eff.accept_third_party_mention} act_on_behalf={eff.act_on_behalf}"
+                                            }
+                                            div { class: "muted",
+                                                "ceiling: reply={ceil.reply} mention={ceil.accept_third_party_mention} act_on_behalf={ceil.act_on_behalf} · selection: reply={sel.reply} mention={sel.accept_third_party_mention} act_on_behalf={sel.act_on_behalf}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             SidecarExposureDisclosure {
                 controller_did: controller_did.clone(),
             }

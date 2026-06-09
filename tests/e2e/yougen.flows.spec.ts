@@ -910,6 +910,32 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute("data-feature", "experimental-webrtc");
 });
 
+test("account settings split account/server info and surface personal agents", async ({ page }) => {
+  await refreshServer(page);
+
+  // Account information is its own section (identity + invite locator).
+  await page.goto("/settings/account", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
+  await expect(page.getByTestId("settings-account-did")).toBeVisible();
+
+  // Server information is a separate section (transport context).
+  await page.getByTestId("settings-nav-item-server").click();
+  await expect(page).toHaveURL(/\/settings\/server$/);
+  await expect(page.getByTestId("transport-invariant")).toBeVisible();
+
+  // My Agents lives inside account settings — no feature flag — and
+  // exposes the CKP-0010 participation policy editor.
+  await page.getByTestId("settings-nav-item-agents").click();
+  await expect(page).toHaveURL(/\/settings\/agents$/);
+  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-participation")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-participation-realm-input")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-participation-reply")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-participation-mention")).toBeVisible();
+});
+
 test("setup realm form stays in the main workspace layout", async ({ page }) => {
   await refreshServer(page);
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });

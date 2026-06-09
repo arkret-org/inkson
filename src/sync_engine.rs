@@ -105,6 +105,12 @@ pub struct SyncEngineContext {
     /// the engine kept syncing under the prior profile while the UI
     /// already rendered the new one.
     pub profiles: Signal<MultiProfileConfig>,
+    /// Y1/Y2 —— 会话级 DID 解析缓存句柄(由 `app.rs` 经
+    /// `use_context_provider` 提供,见那里的注释)。摄入投影时,Y2
+    /// 失效钩子用它在 `ck.cross_signing.reset` / `ck.device.revoke`
+    /// 到达时对相关 actor DID 调 `invalidate`,在 logout / trust-bundle
+    /// reset 时调 `clear`。`Signal<T>` 是 `Copy`,放进这里零成本。
+    pub did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -400,7 +406,21 @@ pub fn apply_response(
     let mut device_queue = ctx.device_queue;
     let mut theme = ctx.theme;
     let mut selected_realm_id = ctx.selected_realm_id;
+    let mut did_cache = ctx.did_cache;
     let account_did = ctx.account_did.read().clone();
+
+    // Y2 失效钩子:在写入投影之前先扫描本次响应里的身份事件,遇到
+    // `ck.cross_signing.reset` / `ck.device.revoke` 就对相关 actor DID
+    // 调 `invalidate`,使下一次 authority 解析(`resolve_with_cache`)
+    // 重新走 resolver 链,而不是被陈旧缓存(旧密钥集)蒙蔽。
+    // 单独成一段、不在 `state_store.write()` 借用期内动 `did_cache`,
+    // 避免两个 Signal 的借用相互纠缠。
+    {
+        let mut cache = did_cache.write();
+        for body in response.realms.values() {
+            invalidate_cache_for_revocation_events(&mut cache, body);
+        }
+    }
 
     {
         let mut store = state_store.write();
@@ -585,6 +605,97 @@ fn ingest_member_identity_events_from_projection(
                 if !resolved.is_empty() {
                     store.ingest_member_identity_events(realm_id, actor_id, &resolved);
                 }
+            }
+        }
+    }
+}
+
+/// Y2 失效钩子的核心扫描器。
+///
+/// 在一个 Realm 投影 `body` 里找出 `ck.cross_signing.reset` /
+/// `ck.device.revoke` 事件,对其关联的 actor DID 调
+/// [`crate::did_resolver::DidResolutionCache::invalidate`]。事件可能出现在:
+/// - 每个 member roster 条目的内联 `identity_events[]`;
+/// - 投影顶层的 `state.events[]` / `events[]` 事件日志。
+///
+/// actor DID 的取法是宽松的:依次尝试事件自身的 `actor` / `actor_id` /
+/// `sender` / `did`,取不到再回落到该 roster 条目的 `actor_id` / `did`。
+/// 取到的字符串经 `Did::new` 校验,非法的(不是合法 DID 语法)直接跳过 ——
+/// 失效钩子是 best-effort,宁可漏失效也不 panic。
+///
+/// TRUST-CACHE 边界说明:这里只清缓存(让下次解析重新走 authority 链),
+/// 并不替代任何 authority 校验本身。
+fn invalidate_cache_for_revocation_events(
+    cache: &mut crate::did_resolver::DidResolutionCache,
+    body: &Value,
+) {
+    /// 判断事件 kind 是否为撤销/重置类(reset / revoke)。
+    fn is_revocation_kind(event: &Value) -> bool {
+        let kind = event
+            .get("kind")
+            .and_then(Value::as_str)
+            .or_else(|| event.get("type").and_then(Value::as_str))
+            .unwrap_or("");
+        kind == "ck.cross_signing.reset" || kind == "ck.device.revoke"
+    }
+
+    /// 从事件(可回落到 roster 条目)里取 actor DID 字符串。
+    fn actor_did_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
+        let from = |v: &'a Value| {
+            v.get("actor")
+                .or_else(|| v.get("actor_id"))
+                .or_else(|| v.get("sender"))
+                .or_else(|| v.get("did"))
+                .and_then(Value::as_str)
+        };
+        from(event).or_else(|| fallback.and_then(from))
+    }
+
+    /// 对一组事件做失效:命中撤销/重置 kind 且能解析出合法 DID 就 invalidate。
+    fn invalidate_from_events(
+        cache: &mut crate::did_resolver::DidResolutionCache,
+        events: &[Value],
+        fallback: Option<&Value>,
+    ) {
+        for event in events {
+            if !is_revocation_kind(event) {
+                continue;
+            }
+            if let Some(did_str) = actor_did_str(event, fallback)
+                && let Ok(did) = cokret_sdk::Did::new(did_str.to_owned())
+            {
+                cache.invalidate(&did);
+            }
+        }
+    }
+
+    // 顶层事件日志:`state.events[]` 与 `events[]` 两种形态都扫。
+    for events in [
+        body.get("state").and_then(|s| s.get("events")),
+        body.get("events"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(arr) = events.as_array() {
+            invalidate_from_events(cache, arr, None);
+        }
+    }
+
+    // 每个 member roster 条目的内联 `identity_events[]`。
+    for source in [
+        body.get("members"),
+        body.get("summary").and_then(|s| s.get("members")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(items) = source.as_array() else {
+            continue;
+        };
+        for entry in items {
+            if let Some(events) = entry.get("identity_events").and_then(Value::as_array) {
+                invalidate_from_events(cache, events, Some(entry));
             }
         }
     }
@@ -818,7 +929,10 @@ mod tests {
         store.save_draft("ck:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
-        response.left_realms = vec!["ck:realm:b".to_owned()];
+        // 预存笔误修正:被遗忘的投影 id 必须与上面 save 的 `ck:space:b`
+        // 对齐(`forget_realm_tree_projection` 按精确 id 删除,不做前缀
+        // 归一),否则断言 `!contains_key("ck:space:b")` 恒为假。
+        response.left_realms = vec!["ck:space:b".to_owned()];
 
         // Mirror the engine's left_realms step.
         for id in &response.left_realms {
@@ -829,5 +943,90 @@ mod tests {
         assert!(state.realm_tree_projections.contains_key("ck:space:a"));
         assert!(!state.realm_tree_projections.contains_key("ck:space:b"));
         assert!(!state.drafts.contains_key("ck:space:b"));
+    }
+
+    // ── Y2 失效钩子 ──────────────────────────────────────────────────
+
+    use cokret_sdk::{Did, DidDocument};
+
+    use crate::did_resolver::DidResolutionCache;
+
+    fn seed_cache(did_str: &str) -> (DidResolutionCache, Did) {
+        let mut cache = DidResolutionCache::new(8);
+        let did = Did::new(did_str.to_owned()).expect("valid did");
+        let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
+        cache.insert(
+            did.clone(),
+            doc,
+            chrono::Utc::now(),
+            chrono::Duration::seconds(600),
+        );
+        (cache, did)
+    }
+
+    #[test]
+    fn cross_signing_reset_event_invalidates_actor_in_inline_member_events() {
+        let (mut cache, did) = seed_cache("did:web:alice.example");
+        let body = json!({
+            "members": [{
+                "actor_id": "did:web:alice.example",
+                "identity_events": [
+                    { "event_id": "e1", "kind": "ck.cross_signing.reset" }
+                ]
+            }]
+        });
+        invalidate_cache_for_revocation_events(&mut cache, &body);
+        assert!(
+            cache.get(&did, chrono::Utc::now()).is_none(),
+            "reset event must drop the cached actor entry"
+        );
+    }
+
+    #[test]
+    fn device_revoke_event_in_state_events_invalidates_actor() {
+        // 事件在顶层 state.events[],actor 字段用 `actor`。
+        let (mut cache, did) = seed_cache("did:web:bob.example");
+        let body = json!({
+            "state": { "events": [
+                { "event_id": "e9", "kind": "ck.device.revoke", "actor": "did:web:bob.example" }
+            ]}
+        });
+        invalidate_cache_for_revocation_events(&mut cache, &body);
+        assert!(cache.get(&did, chrono::Utc::now()).is_none());
+    }
+
+    #[test]
+    fn non_revocation_events_do_not_invalidate() {
+        // 普通身份更新事件不应清缓存。
+        let (mut cache, did) = seed_cache("did:web:carol.example");
+        let body = json!({
+            "members": [{
+                "actor_id": "did:web:carol.example",
+                "identity_events": [
+                    { "event_id": "e2", "kind": "ck.member.identity.update" }
+                ]
+            }]
+        });
+        invalidate_cache_for_revocation_events(&mut cache, &body);
+        assert!(
+            cache.get(&did, chrono::Utc::now()).is_some(),
+            "unrelated event must leave the cache intact"
+        );
+    }
+
+    #[test]
+    fn revocation_for_other_actor_leaves_unrelated_entry() {
+        // alice 被缓存,但事件是针对 mallory 的撤销 -> alice 不应受影响。
+        let (mut cache, alice) = seed_cache("did:web:alice.example");
+        let body = json!({
+            "members": [{
+                "actor_id": "did:web:mallory.example",
+                "identity_events": [
+                    { "event_id": "e3", "kind": "ck.device.revoke" }
+                ]
+            }]
+        });
+        invalidate_cache_for_revocation_events(&mut cache, &body);
+        assert!(cache.get(&alice, chrono::Utc::now()).is_some());
     }
 }

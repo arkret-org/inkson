@@ -11,7 +11,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 
-use crate::components::DismissiblePopup;
+use crate::components::{DismissiblePopup, TrustCacheBadge};
 use crate::i18n::tr;
 use crate::models::ContactListRow;
 use crate::routes::Route;
@@ -261,6 +261,10 @@ fn ContactRow(
             div { class: "event-head",
                 span { "{state_label}" }
                 span { class: "mono", title: "{peer}", "{peer_label}" }
+                // Y3 TRUST-CACHE:根据 peer DID 在会话级解析缓存里的状态,
+                // 展示 cached / stale / degraded 标记。仅 UX 提示,不替代
+                // authority 校验(见文件顶部 TRUST-CACHE 注释)。
+                TrustCacheBadge { peer: peer.clone() }
             }
             if !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
