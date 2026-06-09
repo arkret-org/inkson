@@ -500,12 +500,23 @@ pub mod cx_ops {
 
     use super::{
         Effect, LatticeOp, OperationBuilder, Precondition, Predicate, SemanticRef, trim_realm_id,
-        uuid_v7,
     };
 
     fn did_id(value: &str) -> cokret_sdk::Did {
         cokret_sdk::Did::new(value.to_owned())
             .unwrap_or_else(|err| panic!("invalid DID {value:?}: {err:?}"))
+    }
+
+    /// Build a spec `invite_payload` (invite_id-ref anyOf branch) value for
+    /// `ck.invite.accept` / `ck.invite.cancel` via the SDK strong type.
+    fn invite_ref_payload_value(invite_id: &str, reason: Option<&str>) -> Value {
+        let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
+            .unwrap_or_else(|err| panic!("invite_id not canonical {invite_id:?}: {err}"));
+        let mut payload = cokret_sdk::model::InviteRefPayload::new(invite_id_typed);
+        if let Some(reason) = reason {
+            payload = payload.with_reason(reason);
+        }
+        payload.to_value().unwrap_or_else(|err| panic!("invite ref payload: {err}"))
     }
 
     fn realm_id_value(value: &str) -> cokret_sdk::RealmId {
@@ -1255,32 +1266,37 @@ pub mod cx_ops {
         invite_delivery_target: cokret_sdk::InviteDeliveryTarget,
         introduction_evidence_digest: &str,
     ) -> OperationBuilder {
-        let mut body = serde_json::Map::new();
-        body.insert("invite_id".to_owned(), json!(invite_id));
-        body.insert("invitee".to_owned(), json!(invitee));
-        body.insert(
-            "invite_delivery_target".to_owned(),
-            serde_json::to_value(invite_delivery_target)
-                .unwrap_or_else(|err| panic!("invite_delivery_target serialize: {err}")),
-        );
-        body.insert(
-            "introduction_evidence_digest".to_owned(),
-            json!(introduction_evidence_digest),
-        );
-        let expires_at = cokret_sdk::canonical::format_timestamp_canonical(
+        // Strong `invite_payload` (directed-create anyOf branch). The id /
+        // digest strings are parsed into SDK newtypes so malformed wire is a
+        // build-time error, and `x_role` is carried via the typed extension
+        // map (re-prefixed on serialize).
+        let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
+            .unwrap_or_else(|err| panic!("invite_id not canonical {invite_id:?}: {err}"));
+        let invitee_did = cokret_sdk::Did::new(invitee.to_owned())
+            .unwrap_or_else(|err| panic!("invitee not a DID {invitee:?}: {err}"));
+        let digest = cokret_sdk::Hash::new(introduction_evidence_digest.to_owned())
+            .unwrap_or_else(|err| panic!("introduction_evidence_digest invalid: {err}"));
+        let mut payload = cokret_sdk::model::InviteCreatePayload::new(
+            invite_id_typed,
+            invitee_did,
+            invite_delivery_target,
+            digest,
             chrono::Utc::now() + chrono::Duration::days(7),
         );
-        body.insert("expires_at".to_owned(), json!(expires_at));
         if let Some(role) = role {
-            body.insert("x_role".to_owned(), json!(role));
+            payload = payload.with_extension("role", json!(role));
         }
-        OperationBuilder::new(realm_id, actor, "ck.invite.create").body(Value::Object(body))
+        let body = payload
+            .to_value()
+            .unwrap_or_else(|err| panic!("invite create payload: {err}"));
+        OperationBuilder::new(realm_id, actor, "ck.invite.create").body(body)
     }
 
     pub fn invite_accept(realm_id: &str, actor: &str, invite_id: &str) -> OperationBuilder {
+        let body = invite_ref_payload_value(invite_id, None);
         OperationBuilder::new(realm_id, actor, "ck.invite.accept")
             .target_ref(invite_id)
-            .body(json!({"invite_id": invite_id}))
+            .body(body)
     }
 
     pub fn invite_cancel(
@@ -1289,9 +1305,10 @@ pub mod cx_ops {
         invite_id: &str,
         reason: Option<&str>,
     ) -> OperationBuilder {
+        let body = invite_ref_payload_value(invite_id, reason);
         OperationBuilder::new(realm_id, actor, "ck.invite.cancel")
             .target_ref(invite_id)
-            .body(json!({"invite_id": invite_id, "reason": reason}))
+            .body(body)
     }
 
     /// Build a `ck.space.archive` operation against a container Space. The
@@ -1428,36 +1445,6 @@ pub mod cx_ops {
         }
         OperationBuilder::new(realm_id, actor, "ck.capability.revoke")
             .target_ref(grant_id)
-            .body(body)
-    }
-
-    // ── Member state FSM (Realm `ck.component.member.state.v1`) ─────
-
-    /// `ck.member.state` FSM transition (kick / ban / unban / leave).
-    /// Pass `from_state` to express an explicit FSM precondition (the
-    /// server reducer rejects with `state_mismatch` if the current
-    /// state doesn't match).
-    pub fn member_state_transition(
-        realm_id: &str,
-        actor: &str,
-        member: &str,
-        from_state: Option<&str>,
-        to_state: &str,
-        reason: &str,
-    ) -> OperationBuilder {
-        let mut body = json!({
-            "actor_id": member,
-            "membership": to_state,
-            "reason": reason,
-        });
-        if to_state == "join" {
-            body["delivery_status"] = json!("unroutable");
-        }
-        if let Some(from_state) = from_state {
-            body["from"] = json!(from_state);
-        }
-        OperationBuilder::new(realm_id, actor, "ck.member.state")
-            .target_ref(member)
             .body(body)
     }
 

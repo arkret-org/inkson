@@ -1292,7 +1292,11 @@ fn canonical_blob_ref(blob_ref: &str) -> &str {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RealmBootstrapMember {
     actor_id: String,
-    handle: Option<String>,
+    // NOTE: the parsed handle is intentionally NOT stored on the membership
+    // event — `membership_payload` is additionalProperties:false with no
+    // `handle` property. Handle evidence belongs on the signed HandleClaim /
+    // roster path, not the durable membership event. The handle is still used
+    // transiently to derive `delivery_binding.recipient_service_did`.
     delivery_binding: Option<Value>,
 }
 
@@ -1300,7 +1304,6 @@ impl RealmBootstrapMember {
     fn from_did(did: &str) -> Self {
         Self {
             actor_id: did.trim().to_owned(),
-            handle: None,
             delivery_binding: None,
         }
     }
@@ -1309,7 +1312,6 @@ impl RealmBootstrapMember {
         let resolved_at = event_timestamp();
         Self {
             actor_id: handle.subject_did,
-            handle: Some(handle.handle),
             delivery_binding: Some(json!({
                 "recipient_service_did": handle.principal_server_did,
                 "recipient_service_type": "principal_server",
@@ -2053,7 +2055,6 @@ fn build_member_state_event(
         None,
         membership,
         "space_create",
-        member.handle.as_deref(),
         member.delivery_binding.clone(),
     )
 }
@@ -2077,7 +2078,6 @@ pub fn build_member_state_transition_event(
         from_state,
         to_state,
         reason,
-        None,
         None,
     )
 }
@@ -2110,36 +2110,49 @@ fn build_member_state_transition_event_with_binding(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-    handle: Option<&str>,
     delivery_binding: Option<Value>,
 ) -> anyhow::Result<EventEnvelope> {
+    use cokret_sdk::model::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
-    // Spec `event-payload.schema.json` `membership_payload`: the `allOf`
-    // if/then makes `realm_id` REQUIRED in the payload body whenever
-    // `membership == "join"` (alongside `actor_id` + `delivery_status`).
-    // `realm_id` is a valid property for every membership transition, so we
-    // always carry it. Omitting it made soland reject invite-accept with
-    // `schema_violation … membership_payload … requires field 'realm_id'`.
-    let mut payload = json!({
-        "realm_id": realm_id_wire,
-        "actor_id": member_actor_id,
-        "membership": to_state,
-        "reason": reason,
-    });
-    if to_state == "join" {
-        payload["delivery_status"] = json!("unroutable");
-    }
-    // R3.1: spec field is `handle` (`<localpart>:<domain>`); the prior
-    // `handle_uri` (`cokret://`) form has been retired @ 7157ee8.
-    if let Some(handle) = handle
-        && !handle.trim().is_empty()
-    {
-        payload["handle"] = json!(handle);
-    }
+    let membership = match to_state {
+        "join" => MembershipPayloadState::Join,
+        "invite" => MembershipPayloadState::Invite,
+        "knock" => MembershipPayloadState::Knock,
+        "leave" => MembershipPayloadState::Leave,
+        "ban" => MembershipPayloadState::Ban,
+        other => return Err(anyhow::anyhow!("unknown membership state {other}")),
+    };
+    let member_did = cokret_sdk::Did::new(member_actor_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("member actor_id not a valid DID: {err}"))?;
+    // Strong `membership_payload` (`event-payload.schema.json`). The schema's
+    // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
+    // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
+    // transition (it is a valid property). Omitting it had made soland reject
+    // invite-accept with `schema_violation … requires field 'realm_id'`.
+    //
+    // NOTE: membership_payload is `additionalProperties:false` and has NO
+    // `handle` property — the prior `handle` write was an illegal field that
+    // soland's schema validator rejects. The member identity is carried by
+    // `actor_id`; handle evidence lives in signed HandleClaim objects on the
+    // roster, not the durable membership event. The `handle` param has been
+    // dropped accordingly (spec is the source of truth).
+    let realm_value = cokret_sdk::RealmId::new(realm_id_wire.clone())
+        .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
+    let mut membership_payload = if membership == MembershipPayloadState::Join {
+        MembershipPayload::join(
+            realm_value,
+            member_did,
+            DeliveryStatus::Unroutable,
+            reason,
+        )
+    } else {
+        MembershipPayload::transition(membership, member_did, reason).with_realm_id(realm_value)
+    };
     if let Some(delivery_binding) = delivery_binding {
-        payload["delivery_binding"] = delivery_binding;
+        membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
+    let payload = membership_payload.to_value()?;
     let cell = format!(
         "{}:{}",
         space_cell("ck.component.member.state.v1", &realm_id_wire),
@@ -3548,7 +3561,11 @@ mod tests {
             .expect("member state invite");
 
         assert_eq!(member.payload["actor_id"], "did:web:example.com:users:bob");
-        assert_eq!(member.payload["handle"], "bob:example.com");
+        // `membership_payload` is additionalProperties:false with NO `handle`
+        // property — the member identity is carried by `actor_id`, and handle
+        // evidence lives on the signed HandleClaim / roster path. The prior
+        // `handle` field was an illegal property soland's schema rejected.
+        assert!(member.payload.get("handle").is_none());
         assert_eq!(
             member.payload["delivery_binding"]["recipient_service_did"],
             "did:web:example.com"
