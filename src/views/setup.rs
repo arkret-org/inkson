@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use crate::api::is_auth_expired_error;
 use crate::config::LocalConfigStore;
 use crate::local_state::LocalStateStore;
+use crate::models::{RealmTreeNode, RealmTreeNodeKind};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -407,6 +408,7 @@ pub fn SetupPanel(
     device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     state_store: Signal<LocalStateStore>,
+    realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
     new_space_context_node: Signal<String>,
     mut status: Signal<String>,
@@ -437,8 +439,8 @@ pub fn SetupPanel(
     let mut realm_anchor_profile = use_signal(|| "single_did".to_owned());
     let mut realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     // Phase 3 — `ck.space.create` form state. The Space inherits all
-    // security from its home Realm, so the only choices are which
-    // Realm to live in, the human-visible metadata, and `kind`.
+    // security from its home Realm. The home Realm is supplied by the
+    // sidebar row that opened this flow, not by an in-form picker.
     let mut new_space_realm_id = use_signal(String::new);
     let mut new_space_title = use_signal(String::new);
     let mut new_space_summary = use_signal(String::new);
@@ -449,6 +451,7 @@ pub fn SetupPanel(
     // "inherit from parent / home Realm".
     let mut new_space_parent_id = use_signal(String::new);
     let mut new_space_default_realm_id = use_signal(String::new);
+    let mut new_space_context_seen = use_signal(String::new);
     let mut new_space_state = use_signal(|| "Draft not created yet".to_owned());
     let mut new_space_created_id = use_signal(String::new);
     let mut realm_state = use_signal(|| "Draft not created yet".to_owned());
@@ -463,7 +466,6 @@ pub fn SetupPanel(
     let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
     let realm_anchor_profile_selected = use_memo(move || Some(realm_anchor_profile()));
     let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
-    let new_space_realm_id_selected = use_memo(move || Some(new_space_realm_id()));
     let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
     let new_space_parent_id_selected = use_memo(move || Some(new_space_parent_id()));
     let new_space_default_realm_id_selected = use_memo(move || Some(new_space_default_realm_id()));
@@ -484,42 +486,84 @@ pub fn SetupPanel(
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
     // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
     // `new_space_context_node` to the clicked Realm / Space and routes
-    // to the NewSpace section. When the user lands here with an empty
-    // form AND a selected row, pre-fill realm_id (always) and
-    // parent_space_id (when the source row is a Space). Guarded by
-    // "form realm_id is empty" so subsequent edits aren't clobbered.
-    if active_section == SetupSection::NewSpace && new_space_realm_id().is_empty() {
-        let selected = new_space_context_node();
-        let selected = selected.trim();
-        if !selected.is_empty()
-            && let Some(body) = state_store
+    // to the NewSpace section. The form no longer exposes a Realm
+    // picker, so every explicit sidebar context change must update the
+    // hidden realm_id / parent_space_id used by submission.
+    if active_section == SetupSection::NewSpace {
+        let selected_context = new_space_context_node();
+        let selected_context = selected_context.trim().to_owned();
+        let selected_fallback = selected_realm_id();
+        let selected_fallback = selected_fallback.trim().to_owned();
+        let context_key = if selected_context.is_empty() {
+            selected_fallback.clone()
+        } else {
+            selected_context.clone()
+        };
+        if !context_key.is_empty() && new_space_context_seen() != context_key {
+            if let Some(node) = realm_tree_nodes()
+                .into_iter()
+                .find(|node| node.id == context_key)
+            {
+                new_space_context_seen.set(context_key);
+                new_space_created_id.set(String::new());
+                new_space_state.set("Draft not created yet".to_owned());
+
+                match node.kind {
+                    RealmTreeNodeKind::Realm => {
+                        new_space_realm_id.set(node.id);
+                        new_space_parent_id.set(String::new());
+                    }
+                    RealmTreeNodeKind::Space => {
+                        new_space_realm_id.set(node.projection_realm_id().to_owned());
+                        new_space_parent_id.set(node.id);
+                    }
+                }
+            } else if let Some(body) = state_store
                 .read()
                 .load()
                 .realm_tree_projections
-                .get(selected)
+                .get(&context_key)
                 .cloned()
-        {
-            let kind = match body
-                .get("__kind")
-                .and_then(|kind| kind.as_str())
-                .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
             {
-                Some("space") | Some("ck.schema.space.v1") => "space",
-                _ => "realm",
-            };
-            if kind == "realm" {
-                new_space_realm_id.set(selected.to_owned());
-            } else {
-                // For a Space row, the new sibling/child lives in
-                // the same home Realm; the clicked Space becomes
-                // the parent.
-                let realm = body
-                    .get("realm_id")
-                    .and_then(|realm| realm.as_str())
-                    .unwrap_or(selected)
-                    .to_owned();
-                new_space_realm_id.set(realm);
-                new_space_parent_id.set(selected.to_owned());
+                new_space_context_seen.set(context_key.clone());
+                new_space_created_id.set(String::new());
+                new_space_state.set("Draft not created yet".to_owned());
+
+                let kind = match body
+                    .get("__kind")
+                    .and_then(|kind| kind.as_str())
+                    .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
+                {
+                    Some("space") | Some("ck.schema.space.v1") => "space",
+                    _ => "realm",
+                };
+                if kind == "realm" {
+                    new_space_realm_id.set(context_key);
+                    new_space_parent_id.set(String::new());
+                } else {
+                    // For a Space row, the new child lives in the
+                    // same home Realm; the clicked Space becomes
+                    // the parent.
+                    let realm = body
+                        .get("realm_id")
+                        .and_then(|realm| realm.as_str())
+                        .unwrap_or(&selected_fallback)
+                        .to_owned();
+                    new_space_realm_id.set(realm);
+                    new_space_parent_id.set(context_key);
+                }
+            } else if context_key.starts_with("ck:realm:") {
+                new_space_context_seen.set(context_key.clone());
+                new_space_created_id.set(String::new());
+                new_space_state.set("Draft not created yet".to_owned());
+                new_space_realm_id.set(context_key);
+                new_space_parent_id.set(String::new());
+            } else if context_key.starts_with("ck:space:") && !selected_fallback.is_empty() {
+                new_space_context_seen.set(context_key.clone());
+                new_space_created_id.set(String::new());
+                new_space_state.set("Draft not created yet".to_owned());
+                new_space_realm_id.set(selected_fallback);
+                new_space_parent_id.set(context_key);
             }
         }
     }
@@ -1462,60 +1506,6 @@ pub fn SetupPanel(
 
                         div { class: "event",
                             div { class: "event-head",
-                                span { "Home Realm" }
-                                span { "required" }
-                            }
-                            div { class: "workflow-form setup-form-grid",
-                                div { class: "setup-field setup-field-span-2",
-                                    label { "Pick which Realm this Space lives in" }
-                                    if available_realms.is_empty() {
-                                        div { class: "inline-warn",
-                                            span { class: "body",
-                                                strong { "No Realms yet — create one first" }
-                                                " Use "
-                                                Link {
-                                                    to: Route::SetupSection { section: SetupSection::Realms.slug().to_owned() },
-                                                    "New Realm"
-                                                }
-                                                " then come back."
-                                            }
-                                        }
-                                    } else {
-                                        Select::<String> {
-                                            "data-testid": "new-space-realm-input",
-                                            value: Some(new_space_realm_id_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(v) = v {
-                                                    new_space_realm_id.set(v);
-                                                }
-                                            },
-                                            SelectOption::<String> {
-                                                index: 0usize,
-                                                value: "".to_string(),
-                                                text_value: "— pick a Realm —",
-                                                "— pick a Realm —"
-                                            }
-                                            for (i, (id, title)) in available_realms.iter().enumerate() {
-                                                {
-                                                    let id_label = short_protocol_id(id);
-                                                    rsx! {
-                                                        SelectOption::<String> {
-                                                            index: i + 1,
-                                                            value: id.to_string(),
-                                                            text_value: "{title} ({id_label})",
-                                                            "{title} ({id_label})"
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        div { class: "event",
-                            div { class: "event-head",
                                 span { "Basics" }
                                 span { "title + kind" }
                             }
@@ -1579,7 +1569,7 @@ pub fn SetupPanel(
                                 div { class: "setup-field setup-field-span-2",
                                     label { "Parent Space (optional)" }
                                     if new_space_realm_id_value.trim().is_empty() {
-                                        div { class: "muted", "Pick a Realm above to see candidate parents." }
+                                        div { class: "muted", "Choose New Space from a Realm or Space row in the sidebar to set the home Realm." }
                                     } else if parent_candidates.is_empty() {
                                         div { class: "muted", "No sibling Spaces in this Realm yet — leave at root." }
                                     } else {

@@ -612,6 +612,12 @@ fn wasm_secure_key_store_upgrade_window_is_documented_and_boot_wired() {
         "app startup must invoke the wasm secure-key-store upgrade"
     );
     assert!(
+        app.contains("secure_store_bootstrap_ready")
+            && app.contains("secure_store_ready_for_detection")
+            && app.contains("secure_store_ready_for_bootstrap"),
+        "MLS unlock/backup detection must wait until the wasm secure-key-store upgrade or fallback decision is complete"
+    );
+    assert!(
         security.contains("first-paint localStorage tier")
             && security.contains("XSS, extension, or browser profile")
             && security.contains("dump during that window")

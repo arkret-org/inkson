@@ -407,7 +407,6 @@ pub fn TimelinePanel(
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
-    selected_navigation_scope: Vec<String>,
     timeline: Signal<Vec<TimelineEvent>>,
     draft: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -479,11 +478,11 @@ pub fn TimelinePanel(
         .iter()
         .enumerate()
         .filter(|(_, event)| {
-            selected_navigation_scope.is_empty()
+            selected_realm_id.trim().is_empty()
                 || event
                     .realm_id
                     .as_deref()
-                    .map(|realm_id| selected_navigation_scope.iter().any(|id| id == realm_id))
+                    .map(|realm_id| realm_id == selected_realm_id)
                     .unwrap_or(true)
         })
         .map(|(i, event)| (i, event.clone()))

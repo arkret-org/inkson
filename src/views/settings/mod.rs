@@ -586,7 +586,7 @@ fn push_realm_remark_account_data_impl(
     });
 }
 
-fn push_contact_remark_account_data(
+pub(crate) fn push_contact_remark_account_data(
     base_url: String,
     api_token: String,
     actor_did: String,

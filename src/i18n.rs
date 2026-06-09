@@ -297,11 +297,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.collaboration", "Collaboration");
     dict.set("nav.contacts", "Contacts");
     dict.set("nav.direct_messages", "Direct");
-    dict.set("nav.filter", "Filter");
     dict.set("nav.new_realm_short", "Realm");
     dict.set("nav.add_contact_short", "Contact");
-    dict.set("nav.scope_current", "Current");
-    dict.set("nav.scope_descendants", "With children");
     dict.set("direct.empty", "No direct conversations");
     dict.set("direct.sign_in", "Sign in to load direct conversations");
     dict.set("direct.open", "Open direct conversation");
@@ -840,6 +837,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm.unpin", "Unpin Realm");
     dict.set("realm.pinned", "Pinned Realm");
     dict.set("realm.pin_failed", "Realm pin account-data save failed");
+    dict.set("realm.add_member", "Add Member");
+    dict.set("realm.settings", "Settings");
     dict.set("chat.empty.title", "No discussion track available");
     dict.set(
         "chat.empty.description",
@@ -1619,11 +1618,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.collaboration", "协作");
     dict.set("nav.contacts", "联系人");
     dict.set("nav.direct_messages", "私聊");
-    dict.set("nav.filter", "筛选");
     dict.set("nav.new_realm_short", "领域");
     dict.set("nav.add_contact_short", "联系人");
-    dict.set("nav.scope_current", "当前");
-    dict.set("nav.scope_descendants", "含子项");
     dict.set("direct.empty", "暂无私聊");
     dict.set("direct.sign_in", "登录后加载私聊");
     dict.set("direct.open", "打开私聊");
@@ -2031,6 +2027,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm.pin", "置顶 Realm");
     dict.set("realm.unpin", "取消置顶 Realm");
     dict.set("realm.pinned", "已置顶 Realm");
+    dict.set("realm.add_member", "添加成员");
+    dict.set("realm.settings", "设置");
     dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
     dict.set("chat.empty.title", "暂无可用讨论 track");
     dict.set(

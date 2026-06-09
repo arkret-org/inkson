@@ -116,7 +116,6 @@ pub fn ChatPanel(
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
-    selected_navigation_scope: Vec<String>,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
@@ -323,10 +322,7 @@ pub fn ChatPanel(
         .iter()
         .filter(|msg| {
             msg.flow_id == selected_channel_value
-                && (selected_navigation_scope.is_empty()
-                    || selected_navigation_scope
-                        .iter()
-                        .any(|realm| realm == &msg.realm_id))
+                && (selected_realm_id.trim().is_empty() || msg.realm_id == selected_realm_id)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -490,7 +486,6 @@ pub fn ChatPanel(
         let api_token = token();
         let wait_for = active_sync_token(sync_cursor());
         let selected_realm_for_load = selected_realm_id.clone();
-        let selected_navigation_scope_for_load = selected_navigation_scope.clone();
         let account_did_for_load = account_did.clone();
         // P0 decrypt-on-read identity: this device's actor + device id let the
         // message projection decrypt remote members' canonical encrypted_content
@@ -567,34 +562,21 @@ pub fn ChatPanel(
                     decrypt_identity,
                 ));
                 loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realms));
-                let default_realm_ids = if selected_navigation_scope_for_load.is_empty() {
-                    vec![selected_realm_for_load.clone()]
-                } else {
-                    selected_navigation_scope_for_load.clone()
-                };
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_sync_realms(&sync.realms, &default_realm_ids),
+                    channels_from_sync_realms(&sync.realms, &[selected_realm_for_load.clone()]),
                 );
                 sync_cursor.set(sync.cursor);
             }
 
-            let realms_to_backfill = if selected_navigation_scope_for_load.is_empty() {
-                vec![selected_realm_for_load]
-            } else {
-                selected_navigation_scope_for_load
-            };
-            for realm_id in realms_to_backfill {
-                if realm_id.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(backfill) = api.backfill(&realm_id).await {
+            if !selected_realm_for_load.trim().is_empty() {
+                if let Ok(backfill) = api.backfill(&selected_realm_for_load).await {
                     merge_channels(
                         &mut channels.write(),
-                        channels_from_events(&realm_id, &backfill.events),
+                        channels_from_events(&selected_realm_for_load, &backfill.events),
                     );
                     loaded_messages.extend(chat_messages_from_events_with_sidecar(
-                        &realm_id,
+                        &selected_realm_for_load,
                         &backfill.events,
                         Some(&state_store.read()),
                         decrypt_identity,

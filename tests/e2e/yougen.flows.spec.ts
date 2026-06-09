@@ -9,12 +9,13 @@ function latestTestId(page: import("@playwright/test").Page, testId: string) {
 }
 
 async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
-  const modal = latestTestId(page, "mls-recovery-missing-modal");
+  const modal = page.getByRole("dialog", { name: "Recovery backup is missing" }).last();
   await modal.waitFor({ state: "visible", timeout: 1_000 }).catch(() => undefined);
   if (!(await modal.isVisible())) {
     return;
   }
   await modal.getByRole("button", { name: "Dismiss" }).click();
+  await expect(modal).toBeHidden({ timeout: 5_000 });
 }
 
 async function openServerSwitcher(page: import("@playwright/test").Page) {
@@ -168,7 +169,6 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
   await page.keyboard.press("Escape");
-  await page.getByTestId("navigation-scope-descendants").click();
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms & Spaces");
   await expect(
@@ -180,30 +180,62 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await page.getByTestId("realm-tree-node-button").first().click();
   await expect(page.getByTestId("timeline")).toBeVisible();
-  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Current + descendants");
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Space views");
   await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
   await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Timeline" })).toBeVisible();
   await expect(page.getByTestId("timeline")).toContainText("Shared demo Realm served by mocked server");
 });
 
-test("workspace sidebar separates filters and contact-based direct chats", async ({ page }) => {
-  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
-  await expect(page.getByTestId("sidebar-new-realm-cta")).toContainText("Realm");
-  await expect(page.getByTestId("navigation-scope-filter")).toContainText("Filter");
-  await expect(page.getByTestId("navigation-scope-filter")).toContainText("With children");
-
+test("workspace sidebar separates contact-based direct chats", async ({ page }) => {
+  const shell = latestTestId(page, "client-shell");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(shell.getByTestId("realm-sidebar-toolbar")).toBeVisible();
+  await expect(shell.getByTestId("realm-sidebar-search-input")).toBeVisible();
+  await expect(shell.getByTestId("sidebar-new-realm-cta")).toBeVisible();
+  await expect(shell.getByTestId("realm-sidebar-manage-home-button")).toBeVisible();
   await dismissBlockingRecoveryModal(page);
-  await page.getByTestId("realm-sidebar-tab-direct").click();
+  await shell.getByTestId("realm-sidebar-manage-home-button").click();
+  await expect(page).toHaveURL(/\/realms\/manage$/);
+  await expect(shell.getByTestId("realms-manage-page")).toBeVisible();
+  await expect(shell.getByTestId("realms-manage-page")).toContainText("Cokret Demo Realm");
 
-  await expect(page.getByTestId("sidebar-new-contact-cta")).toContainText("Contact");
-  await expect(page.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
-  await expect(page.getByTestId("direct-conversation-row").filter({ hasText: "did:web:bob.example" })).toContainText(
+  await shell.getByTestId("realm-sidebar-tab-direct").click();
+
+  await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
+  await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
+  await expect(shell.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
+  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "did:web:bob.example" })).toContainText(
     "DM",
   );
-  await expect(page.getByTestId("direct-conversation-row").filter({ hasText: "did:web:carol.example" })).toContainText(
+  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "did:web:carol.example" })).toContainText(
     "pending",
   );
+  await shell.getByTestId("realm-sidebar-manage-home-button").click();
+  await expect(page).toHaveURL(/\/contacts\/manage$/);
+  await expect(shell.getByTestId("contacts-manage-page")).toBeVisible();
+  await expect(shell.getByTestId("contacts-manage-page")).toContainText("did:web:bob.example");
+});
+
+test("new space flow uses sidebar realm context without home realm picker", async ({ page }) => {
+  await refreshServer(page);
+  const shell = latestTestId(page, "client-shell");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await dismissBlockingRecoveryModal(page);
+
+  const demoRealmRow = shell.locator(".sidebar-row").filter({ hasText: "Cokret Demo Realm" }).first();
+  await expect(demoRealmRow).toBeVisible();
+  await demoRealmRow.hover();
+  await demoRealmRow.getByTestId("realm-tree-row-menu-button").click();
+  await demoRealmRow.getByTestId("realm-tree-row-add-action").click();
+
+  await expect(page).toHaveURL(/\/setup\/new-space$/);
+  const setupPanel = page.getByTestId("setup-panel");
+  await expect(setupPanel.getByTestId("space-create-flow")).toBeVisible();
+  await expect(setupPanel).not.toContainText("Home Realm");
+  await expect(setupPanel.getByTestId("new-space-realm-input")).toHaveCount(0);
+
+  await setupPanel.getByTestId("new-space-title-input").fill("Scoped Space");
+  await expect(setupPanel.getByTestId("new-space-submit-button")).toBeEnabled();
 });
 
 test("authenticated login route returns to the workspace", async ({ page }) => {

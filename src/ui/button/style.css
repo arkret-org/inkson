@@ -119,16 +119,8 @@
   height: 1rem;
 }
 
-.dx-button:disabled {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-/* yougen CTA 主题对齐:还原 `.primary` 的 accent→accent-2 渐变 + 发光。
-   dxc 默认 primary 是纯色 `var(--secondary-color-2)`,迁移后会让所有
-   `variant: Primary` 按钮(如登录页 Continue)丢失渐变,在浅色卡片上显示为
-   白块。`--accent` 随上下文主题切换(app 内为绿、auth 内为橙→粉),与裸
-   `.primary` 保持同一观感。见 src/styles/app_overrides.css 的 `.primary`。 */
+/* Match the app CTA treatment: restore the accent-to-accent-2 gradient and
+   glow that the default dioxus-components primary button does not provide. */
 .dx-button[data-style="primary"] {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   border-color: transparent;
@@ -224,4 +216,29 @@
   box-shadow: 0 0 0 3px
     var(--light, color-mix(in oklab, var(--primary-error-color) 20%, transparent))
     var(--dark, color-mix(in oklab, var(--primary-error-color) 40%, transparent));
+}
+
+.dx-button:disabled,
+.dx-button:disabled:hover {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+  color: color-mix(in srgb, var(--text-2) 74%, var(--text-3) 26%) !important;
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--border-strong) 78%, var(--surface-inv) 22%),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-inv) 18%, transparent) !important;
+  opacity: 1 !important;
+  filter: none !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+.dx-button[data-style="link"]:disabled,
+.dx-button[data-style="link"]:disabled:hover {
+  background: transparent !important;
+  color: var(--text-3) !important;
+  box-shadow: none !important;
 }

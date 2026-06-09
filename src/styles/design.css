@@ -666,17 +666,38 @@ button[disabled],
 button:disabled,
 .primary[disabled],
 .secondary[disabled] {
-  opacity: 0.5 !important;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+  color: color-mix(in srgb, var(--text-2) 74%, var(--text-3) 26%) !important;
+  opacity: 1 !important;
   cursor: not-allowed !important;
-  filter: grayscale(0.4);
-  box-shadow: none !important;
+  filter: none;
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--border-strong) 78%, var(--surface-inv) 22%),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-inv) 18%, transparent) !important;
 }
 button[disabled]:hover,
 button:disabled:hover,
 .primary[disabled]:hover,
 .secondary[disabled]:hover {
   /* Neutralise hover so a disabled button never brightens on mouseover. */
-  background: var(--surface-2) !important;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+}
+button[data-style="link"][disabled],
+button[data-style="link"]:disabled,
+button[data-style="link"][disabled]:hover,
+button[data-style="link"]:disabled:hover {
+  background: transparent !important;
+  color: var(--text-3) !important;
+  box-shadow: none !important;
 }
 /* Inline form-validation hint that must NOT read as muted secondary text —
    used for "passphrase too weak" / mismatch. */

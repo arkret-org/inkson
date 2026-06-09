@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
 use dioxus::prelude::*;
+use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Router};
 use serde_json::Value;
@@ -35,6 +36,7 @@ pub(crate) use crate::realm_tree::{
 };
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
@@ -42,11 +44,10 @@ use crate::views::timeline::TimelineEvent;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
-const NAVIGATION_SCOPE_PREFERENCE_KEY: &str = "layout.realm_tree.scope";
 const BOOT_ACCESS_TOKEN_SKEW_SECS: i64 = 30;
-const DEFAULT_SIDEBAR_WIDTH: f64 = 272.0;
+const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
 const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.list_handles_for_subject";
-const MIN_SIDEBAR_WIDTH: f64 = 220.0;
+const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
 const STYLE: &str = include_str!("styles/app.css");
@@ -67,6 +68,270 @@ fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
         .into_iter()
         .filter_map(|(realm_id, remark)| remark.pinned.then_some(realm_id))
         .collect()
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RealmManageRow {
+    realm_id: String,
+    display_name: String,
+    title: String,
+    encrypted: bool,
+    space_count: usize,
+}
+
+fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]) -> bool {
+    normalized_query.is_empty()
+        || values
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains(normalized_query))
+}
+
+fn load_direct_contacts_for_sidebar(
+    base: String,
+    api_token: String,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contacts_loaded: Signal<bool>,
+    mut status: Signal<String>,
+) {
+    if api_token.trim().is_empty() {
+        direct_contact_rows.set(Vec::new());
+        direct_contacts_loaded.set(false);
+        return;
+    }
+
+    direct_contacts_loaded.set(true);
+    spawn(async move {
+        match crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
+            api.contacts().await
+        })
+        .await
+        {
+            Ok(response) => direct_contact_rows.set(response.contacts),
+            Err(err) => {
+                direct_contacts_loaded.set(false);
+                status.set(format!("direct conversations: {}", err.display()));
+            }
+        }
+    });
+}
+
+fn toggle_sidebar_realm_pin(
+    realm_id: String,
+    existing: Option<crate::account_data::RealmRemark>,
+    next_pinned: bool,
+    mut state_store: Signal<LocalStateStore>,
+    base_url: String,
+    api_token: String,
+    mut status: Signal<String>,
+) {
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
+        realm_id.clone(),
+        existing.as_ref(),
+        next_pinned,
+        Some(now_rfc3339),
+    );
+    state_store
+        .write()
+        .set_realm_remark(realm_id.clone(), next.clone());
+    let action_status = if next_pinned {
+        crate::i18n::tr("realm.pinned")
+    } else {
+        crate::i18n::tr("realm.unpin")
+    };
+    status.set(format!("{action_status}: {}", short_protocol_id(&realm_id)));
+    crate::views::settings::push_realm_remark_account_data_with_failure_status(
+        base_url, api_token, realm_id, next, status,
+    );
+}
+
+fn toggle_sidebar_contact_pin(
+    actor_id: String,
+    existing: Option<crate::account_data::ContactRemark>,
+    next_pinned: bool,
+    mut state_store: Signal<LocalStateStore>,
+    base_url: String,
+    api_token: String,
+    mut status: Signal<String>,
+) {
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(
+        actor_id.clone(),
+        existing.as_ref(),
+        next_pinned,
+        Some(now_rfc3339),
+    );
+    state_store
+        .write()
+        .set_contact_remark(actor_id.clone(), next.clone());
+    let action_status = if next_pinned {
+        "Pinned Contact"
+    } else {
+        "Unpinned Contact"
+    };
+    status.set(format!("{action_status}: {}", short_protocol_id(&actor_id)));
+    crate::views::settings::push_contact_remark_account_data(base_url, api_token, actor_id, next);
+}
+
+fn leave_sidebar_realm(
+    base_url: String,
+    api_token: String,
+    realm_id: String,
+    mut state_store: Signal<LocalStateStore>,
+    mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
+    mut selected_realm_id: Signal<String>,
+    mut sync_cursor: Signal<String>,
+    mut status: Signal<String>,
+) {
+    let actor_did = match state_store.write().ensure_local_identity() {
+        Ok(id) => id.device_did.as_str().to_owned(),
+        Err(err) => {
+            status.set(format!("identity unavailable: {err}"));
+            return;
+        }
+    };
+    let current_nodes = realm_tree_nodes();
+    let mut ids_to_forget = descendant_node_ids(&current_nodes, &realm_id);
+    if ids_to_forget.is_empty() {
+        ids_to_forget.push(realm_id.clone());
+    }
+    let realm_label = short_protocol_id(&realm_id);
+    status.set(format!("Leaving Realm: {realm_label}"));
+    spawn(async move {
+        let realm_for_api = realm_id.clone();
+        match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
+            api.leave_realm(&realm_for_api, &actor_did).await
+        })
+        .await
+        {
+            Ok(_) => {
+                let forgotten_ids = ids_to_forget.into_iter().collect::<BTreeSet<_>>();
+                for id in &forgotten_ids {
+                    state_store.write().forget_realm_tree_projection(id);
+                }
+                realm_tree_nodes.set(
+                    realm_tree_nodes()
+                        .into_iter()
+                        .filter(|node| !forgotten_ids.contains(&node.id))
+                        .collect(),
+                );
+                if forgotten_ids.contains(&selected_realm_id()) {
+                    selected_realm_id.set(String::new());
+                }
+                sync_cursor.set("-".to_owned());
+                status.set(format!("Left Realm: {realm_label}"));
+            }
+            Err(err) => status.set(format!(
+                "Leave Realm failed for {realm_label}: {}",
+                err.display()
+            )),
+        }
+    });
+}
+
+/// Per-Realm UI pre-gate for the sidebar row menu's write actions
+/// (Add Member / Settings). Presence of a `realm_id` key in the cache means
+/// the authz probe has completed; the booleans mirror the server's
+/// authoritative decision so the row menu can hide entries the actor cannot
+/// use. This is advisory only — the server still makes the real call.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SidebarRowRealmPerms {
+    can_add_member: bool,
+    can_settings: bool,
+}
+
+/// Parse a `_cokret/self/authz/check` body into a simple allow boolean.
+/// Mirrors `realm_admin::authz_json_allowed`. Fail-closed: any shape we do
+/// not recognise reads as denied.
+fn sidebar_authz_allowed(value: &Value) -> bool {
+    value
+        .get("allowed")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            value
+                .get("decision")
+                .and_then(Value::as_str)
+                .map(|decision| matches!(decision, "allow" | "allowed"))
+                .unwrap_or(false)
+        })
+}
+
+/// Lazily probe whether `actor` may add members (`ck.invite.create`) or edit
+/// settings (`ck.realm.update`) on `realm_id`, caching the verdict in
+/// `perms_cache`.
+///
+/// Triggered when a sidebar row's kebab menu opens, so at most two authz
+/// requests are issued for the single Realm whose menu is open — never the
+/// `2·N` that eager per-row probing on every sidebar render would cost.
+/// Fail-closed: a transport error or a non-allow body both leave the write
+/// actions hidden, and we still cache that verdict so we don't re-probe a
+/// Realm the actor plainly cannot manage on every menu open.
+fn ensure_sidebar_row_perms(
+    base_url: String,
+    api_token: String,
+    actor: String,
+    realm_id: String,
+    mut perms_cache: Signal<BTreeMap<String, SidebarRowRealmPerms>>,
+) {
+    if api_token.trim().is_empty() || actor.trim().is_empty() || realm_id.trim().is_empty() {
+        return;
+    }
+    if perms_cache.read().contains_key(&realm_id) {
+        return;
+    }
+    spawn(async move {
+        let perms = match crate::views::helpers::authed_api_with_sync(&base_url, api_token, None) {
+            Ok(api) => {
+                let invite = api
+                    .authz_check_raw(&actor, "ck.invite.create", &realm_id)
+                    .await;
+                let settings = api
+                    .authz_check_raw(&actor, "ck.realm.update", &realm_id)
+                    .await;
+                SidebarRowRealmPerms {
+                    can_add_member: invite.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
+                    can_settings: settings.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
+                }
+            }
+            Err(_) => SidebarRowRealmPerms::default(),
+        };
+        perms_cache.write().insert(realm_id, perms);
+    });
+}
+
+fn delete_sidebar_contact(
+    base_url: String,
+    api_token: String,
+    peer: String,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contacts_loaded: Signal<bool>,
+    mut status: Signal<String>,
+) {
+    let peer_label = short_protocol_id(&peer);
+    status.set(format!("Deleting contact: {peer_label}"));
+    spawn(async move {
+        let peer_for_api = peer.clone();
+        match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
+            api.tombstone_contact(&peer_for_api, false).await
+        })
+        .await
+        {
+            Ok(_) => {
+                direct_contact_rows.set(
+                    direct_contact_rows()
+                        .into_iter()
+                        .filter(|row| row.peer != peer)
+                        .collect(),
+                );
+                direct_contacts_loaded.set(true);
+                status.set(format!("Deleted contact: {peer_label}"));
+            }
+            Err(err) => status.set(format!(
+                "Delete contact failed for {peer_label}: {}",
+                err.display()
+            )),
+        }
+    });
 }
 
 /// One-shot push-token provider bootstrap.
@@ -123,53 +388,6 @@ pub fn App() -> Element {
     ensure_default_push_token_provider();
     rsx! {
         Router::<Route> {}
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NavigationScopeMode {
-    Exact,
-    IncludeDescendants,
-}
-
-impl NavigationScopeMode {
-    fn includes_descendants(self) -> bool {
-        matches!(self, Self::IncludeDescendants)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Exact => "Current item only",
-            Self::IncludeDescendants => "Current + descendants",
-        }
-    }
-
-    fn preference_value(self) -> &'static str {
-        match self {
-            Self::Exact => "exact",
-            Self::IncludeDescendants => "descendants",
-        }
-    }
-
-    fn from_preference(value: &str) -> Self {
-        match value {
-            "descendants" => Self::IncludeDescendants,
-            _ => Self::Exact,
-        }
-    }
-}
-
-fn scoped_navigation_ids(
-    nodes: &[RealmTreeNode],
-    root_node_id: &str,
-    scope_mode: NavigationScopeMode,
-) -> Vec<String> {
-    if root_node_id.trim().is_empty() {
-        Vec::new()
-    } else if scope_mode.includes_descendants() {
-        descendant_node_ids(nodes, root_node_id)
-    } else {
-        vec![root_node_id.to_owned()]
     }
 }
 
@@ -458,7 +676,6 @@ pub fn RouterView() -> Element {
     let initial_realm_tree_nodes =
         realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
-    let initial_navigation_scope_mode = load_navigation_scope_preference(&initial_state_store);
     let initial_locale = initial_state_store
         .load_private_data(&initial_config.account_did, "locale")
         .map(|code| Locale::from_code(&code))
@@ -553,9 +770,11 @@ pub fn RouterView() -> Element {
     let server_description = use_signal(|| Option::<ServerDescription>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
+    let secure_store_bootstrap_ready = use_signal(|| !cfg!(target_arch = "wasm32"));
     #[cfg(target_arch = "wasm32")]
     {
         let mut state_store_for_secure_upgrade = state_store;
+        let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         use_future(move || async move {
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
                 Ok(Some(secure_store)) => {
@@ -597,6 +816,7 @@ pub fn RouterView() -> Element {
                     tracing::warn!(?error, "IndexedDB secure-key-store upgrade failed");
                 }
             }
+            secure_store_ready_for_upgrade.set(true);
         });
     }
     // Provide i18n context for views that call `crate::i18n::tr(key)`.
@@ -659,10 +879,24 @@ pub fn RouterView() -> Element {
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
-    let mut navigation_scope_mode = use_signal(move || initial_navigation_scope_mode);
     let mut realm_sidebar_tab = use_signal(|| "collaboration".to_owned());
-    let mut direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
-    let mut direct_contacts_loaded = use_signal(|| false);
+    let mut collaboration_sidebar_query = use_signal(String::new);
+    let mut direct_sidebar_query = use_signal(String::new);
+    let realm_manage_query = use_signal(String::new);
+    let contact_manage_query = use_signal(String::new);
+    let manage_realm_selection = use_signal(BTreeSet::<String>::new);
+    let manage_contact_selection = use_signal(BTreeSet::<String>::new);
+    let manage_bulk_busy = use_signal(|| false);
+    let manage_bulk_status = use_signal(String::new);
+    let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let direct_contacts_loaded = use_signal(|| false);
+    let mut sidebar_row_menu_open = use_signal(|| Option::<String>::None);
+    // UI pre-gate cache for the row menu's Add Member / Settings entries,
+    // keyed by realm_id. Filled lazily when a row kebab opens (see
+    // `ensure_sidebar_row_perms`) so we never probe authz for Realms whose
+    // menu the user never touches.
+    let sidebar_row_perms =
+        use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
     // Step 3 of the account-MLS-secret auto-unlock flow: set by the bootstrap
     // effect when this device has no local account secret yet but the server
@@ -1002,7 +1236,11 @@ pub fn RouterView() -> Element {
         let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
         let mut restore_payload_cache = mls_restore_payload_cache;
         let mut state_store_for_detection = state_store;
+        let secure_store_ready_for_detection = secure_store_bootstrap_ready;
         use_effect(move || {
+            if !secure_store_ready_for_detection() {
+                return;
+            }
             let base = base_url();
             let session = token();
             let actor = account_did();
@@ -1341,7 +1579,11 @@ pub fn RouterView() -> Element {
         let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
         let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
+        let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
         use_effect(move || {
+            if !secure_store_ready_for_bootstrap() {
+                return;
+            }
             let selected = selected_realm_id();
             if !bootstrap_route_uses_realm_context {
                 return;
@@ -1600,27 +1842,9 @@ pub fn RouterView() -> Element {
         .iter()
         .find(|node| context_realm_id.as_deref() == Some(node.id.as_str()))
         .cloned();
-    let active_scope_mode = navigation_scope_mode();
-    let active_navigation_scope_ids = scoped_navigation_ids(
-        &loaded_realm_tree_nodes,
-        &active_realm_id,
-        active_scope_mode,
-    );
     let active_projection_realm_id =
         projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
             .unwrap_or_default();
-    let active_navigation_scope_set: BTreeSet<String> =
-        active_navigation_scope_ids.iter().cloned().collect();
-    let active_navigation_scope_count = active_navigation_scope_ids.len();
-    let active_navigation_scope_label = if active_navigation_scope_count <= 1 {
-        active_scope_mode.label().to_owned()
-    } else {
-        format!(
-            "{} · {} items",
-            active_scope_mode.label(),
-            active_navigation_scope_count
-        )
-    };
     let direct_contact_count = direct_contact_rows.read().len();
     let pinned_realm_ids = {
         let store = state_store.read();
@@ -1629,6 +1853,95 @@ pub fn RouterView() -> Element {
     let realm_tree =
         realm_tree_items_with_pinned_realms(&collaboration_realm_tree_nodes, &pinned_realm_ids);
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
+    let collaboration_sidebar_query_value =
+        collaboration_sidebar_query().trim().to_ascii_lowercase();
+    let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
+    let realm_remarks_for_sidebar = state_store.read().realm_remarks();
+    let contact_remarks_for_sidebar = state_store.read().contact_remarks();
+    let filtered_realm_tree: Vec<_> = realm_tree
+        .iter()
+        .filter(|item| {
+            let display_name = realm_remarks_for_sidebar
+                .get(&item.node.id)
+                .map(|remark| remark.display_name(&item.node.title).to_owned())
+                .unwrap_or_else(|| item.node.title.clone());
+            let kind_label = match item.node.kind {
+                RealmTreeNodeKind::Realm => "realm",
+                RealmTreeNodeKind::Space => "space",
+            };
+            sidebar_text_matches_query(
+                &collaboration_sidebar_query_value,
+                &[&item.node.id, &item.node.title, &display_name, kind_label],
+            )
+        })
+        .cloned()
+        .collect();
+    let manage_realm_rows: Vec<_> = collaboration_realm_tree_nodes
+        .iter()
+        .filter(|node| node.kind == RealmTreeNodeKind::Realm)
+        .map(|node| {
+            let display_name = realm_remarks_for_sidebar
+                .get(&node.id)
+                .map(|remark| remark.display_name(&node.title).to_owned())
+                .unwrap_or_else(|| node.title.clone());
+            let encrypted = realm_tree_projections
+                .get(&node.id)
+                .is_some_and(realm_projection_is_encrypted);
+            let space_count = descendant_node_ids(&collaboration_realm_tree_nodes, &node.id)
+                .len()
+                .saturating_sub(1);
+            RealmManageRow {
+                realm_id: node.id.clone(),
+                display_name,
+                title: node.title.clone(),
+                encrypted,
+                space_count,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut filtered_direct_contact_rows: Vec<_> = direct_contact_rows
+        .read()
+        .iter()
+        .filter(|contact| {
+            let fallback_name = short_protocol_id(&contact.peer);
+            let display_name = contact_remarks_for_sidebar
+                .get(&contact.peer)
+                .map(|remark| remark.display_name(&fallback_name).to_owned())
+                .unwrap_or(fallback_name);
+            let scopes = contact
+                .bidirectional_scopes
+                .iter()
+                .chain(contact.effective_scopes.iter())
+                .chain(contact.granted_by_me.iter())
+                .chain(contact.granted_to_me.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            sidebar_text_matches_query(
+                &direct_sidebar_query_value,
+                &[&contact.peer, &contact.state, &display_name, &scopes],
+            )
+        })
+        .cloned()
+        .collect();
+    filtered_direct_contact_rows.sort_by(|left, right| {
+        let left_remark = contact_remarks_for_sidebar.get(&left.peer);
+        let right_remark = contact_remarks_for_sidebar.get(&right.peer);
+        let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
+        let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
+        let left_fallback = short_protocol_id(&left.peer);
+        let right_fallback = short_protocol_id(&right.peer);
+        let left_label = left_remark
+            .map(|remark| remark.display_name(&left_fallback).to_ascii_lowercase())
+            .unwrap_or_else(|| left_fallback.to_ascii_lowercase());
+        let right_label = right_remark
+            .map(|remark| remark.display_name(&right_fallback).to_ascii_lowercase())
+            .unwrap_or_else(|| right_fallback.to_ascii_lowercase());
+        right_pinned
+            .cmp(&left_pinned)
+            .then_with(|| left_label.cmp(&right_label))
+            .then_with(|| left.peer.cmp(&right.peer))
+    });
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()
     } else {
@@ -2305,40 +2618,9 @@ pub fn RouterView() -> Element {
                     }
                 }
 
-                div { class: "sidebar-nav-group", "data-testid": "realm-tree-list",
-                    h4 { class: "sidebar-nav-group-title",
-                        span {
-                            title: "Collaboration Realms/Spaces and contact-based direct conversations.",
-                            "Workspace"
-                        }
-                        if realm_sidebar_tab() == "collaboration" {
-                            // Header action creates a top-level Realm
-                            // security boundary. Child Space creation
-                            // stays on each tree row so the parent
-                            // context is explicit.
-                            Link {
-                                class: "sidebar-header-action add-realm-cta",
-                                "data-testid": "sidebar-new-realm-cta",
-                                title: "Create a new Realm (security boundary). For a new Space, hover a Realm or Space row and click the + on that row.",
-                                "aria-label": "Create a new Realm",
-                                to: Route::SetupSection { section: "realms".to_owned() },
-                                UiIcon { name: "plus" }
-                                span { class: "sidebar-header-action-label", {crate::i18n::tr("nav.new_realm_short")} }
-                            }
-                        } else {
-                            Link {
-                                class: "sidebar-header-action add-contact-cta",
-                                "data-testid": "sidebar-new-contact-cta",
-                                title: "Add a contact. Accepted contacts with direct-message consent can open a private chat.",
-                                "aria-label": "Add a contact",
-                                to: Route::Contacts,
-                                UiIcon { name: "user-plus" }
-                                span { class: "sidebar-header-action-label", {crate::i18n::tr("nav.add_contact_short")} }
-                            }
-                        }
-                    }
+                div { class: "sidebar-nav-group workspace-tab-group", "data-testid": "realm-tree-list",
                     if !sidebar_is_collapsed {
-                        div { class: "sidebar-scope-toggle", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Workspace section",
+                        div { class: "sidebar-scope-toggle workspace-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
@@ -2361,57 +2643,111 @@ pub fn RouterView() -> Element {
                                         if direct_contacts_loaded() || token().trim().is_empty() {
                                             return;
                                         }
-                                        direct_contacts_loaded.set(true);
-                                        let api_token = token();
-                                        let base = base.clone();
-                                        spawn(async move {
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move { api.contacts().await },
-                                            )
-                                            .await
-                                            {
-                                                Ok(response) => direct_contact_rows.set(response.contacts),
-                                                Err(err) => {
-                                                    direct_contacts_loaded.set(false);
-                                                    status.set(format!("direct conversations: {}", err.display()));
-                                                }
-                                            }
-                                        });
+                                        load_direct_contacts_for_sidebar(
+                                            base.clone(),
+                                            token(),
+                                            direct_contact_rows,
+                                            direct_contacts_loaded,
+                                            status,
+                                        );
                                     }
                                 },
                                 {crate::i18n::tr("nav.contacts")}
                             }
                         }
-                    }
-                    if realm_sidebar_tab() == "collaboration" && !collaboration_realm_tree_nodes.is_empty() && !sidebar_is_collapsed {
-                        div { class: "sidebar-scope-filter", "data-testid": "navigation-scope-filter",
-                            div { class: "sidebar-scope-filter-label", {crate::i18n::tr("nav.filter")} }
-                            div { class: "sidebar-scope-toggle sidebar-scope-toggle--child", "data-testid": "navigation-scope-toggle", role: "group", "aria-label": "Navigation selection scope",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    class: if active_scope_mode == NavigationScopeMode::Exact { "scope-chip active" } else { "scope-chip" },
-                                    "data-testid": "navigation-scope-exact",
-                                    title: "Select only the current item",
-                                    "aria-pressed": if active_scope_mode == NavigationScopeMode::Exact { "true" } else { "false" },
-                                    onclick: move |_| {
-                                        navigation_scope_mode.set(NavigationScopeMode::Exact);
-                                        save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::Exact);
-                                    },
-                                    {crate::i18n::tr("nav.scope_current")}
+                        div { class: "sidebar-tab-toolbar", "data-testid": "realm-sidebar-toolbar",
+                            div { class: "sidebar-tab-search",
+                                if realm_sidebar_tab() == "collaboration" {
+                                    Input {
+                                        "data-testid": "realm-sidebar-search-input",
+                                        value: "{collaboration_sidebar_query}",
+                                        placeholder: "Search Realms",
+                                        oninput: move |event: FormEvent| collaboration_sidebar_query.set(event.value()),
+                                    }
+                                } else {
+                                    Input {
+                                        "data-testid": "contacts-sidebar-search-input",
+                                        value: "{direct_sidebar_query}",
+                                        placeholder: "Search Contacts",
+                                        oninput: move |event: FormEvent| direct_sidebar_query.set(event.value()),
+                                    }
                                 }
                                 Button {
                                     variant: ButtonVariant::Secondary,
-                                    class: if active_scope_mode == NavigationScopeMode::IncludeDescendants { "scope-chip active" } else { "scope-chip" },
-                                    "data-testid": "navigation-scope-descendants",
-                                    title: "Select the current item and all descendants",
-                                    "aria-pressed": if active_scope_mode == NavigationScopeMode::IncludeDescendants { "true" } else { "false" },
-                                    onclick: move |_| {
-                                        navigation_scope_mode.set(NavigationScopeMode::IncludeDescendants);
-                                        save_navigation_scope_preference(&mut state_store.write(), NavigationScopeMode::IncludeDescendants);
+                                    size: ButtonSize::IconXs,
+                                    class: "sidebar-toolbar-action sidebar-tab-search-submit",
+                                    r#type: "button",
+                                    "data-testid": "realm-sidebar-search-button",
+                                    title: "Search",
+                                    "aria-label": "Search",
+                                    onclick: {
+                                        let base = base_url();
+                                        move |_| {
+                                            if realm_sidebar_tab() == "direct" && !direct_contacts_loaded() {
+                                                load_direct_contacts_for_sidebar(
+                                                    base.clone(),
+                                                    token(),
+                                                    direct_contact_rows,
+                                                    direct_contacts_loaded,
+                                                    status,
+                                                );
+                                            }
+                                        }
                                     },
-                                    {crate::i18n::tr("nav.scope_descendants")}
+                                    UiIcon { name: "search" }
+                                }
+                            }
+                            if realm_sidebar_tab() == "collaboration" {
+                                Link {
+                                    class: "sidebar-toolbar-action sidebar-toolbar-link add-realm-cta",
+                                    "data-testid": "sidebar-new-realm-cta",
+                                    title: "Create a new Realm",
+                                    "aria-label": "Create a new Realm",
+                                    to: Route::SetupSection { section: "realms".to_owned() },
+                                    UiIcon { name: "plus" }
+                                }
+                            } else {
+                                Link {
+                                    class: "sidebar-toolbar-action sidebar-toolbar-link add-contact-cta",
+                                    "data-testid": "sidebar-new-contact-cta",
+                                    title: "Add a contact",
+                                    "aria-label": "Add a contact",
+                                    to: Route::Contacts,
+                                    UiIcon { name: "user-plus" }
+                                }
+                            }
+                            if realm_sidebar_tab() == "collaboration" {
+                                Link {
+                                    class: if matches!(content_route, Route::RealmsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
+                                    "data-testid": "realm-sidebar-manage-home-button",
+                                    title: "Manage Realms",
+                                    "aria-label": "Manage Realms",
+                                    to: Route::RealmsManage,
+                                    UiIcon { name: "home" }
+                                }
+                            } else {
+                                Link {
+                                    class: if matches!(content_route, Route::ContactsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
+                                    "data-testid": "realm-sidebar-manage-home-button",
+                                    title: "Manage Contacts",
+                                    "aria-label": "Manage Contacts",
+                                    to: Route::ContactsManage,
+                                    onclick: {
+                                        let base = base_url();
+                                        move |_| {
+                                            if direct_contacts_loaded() || token().trim().is_empty() {
+                                                return;
+                                            }
+                                            load_direct_contacts_for_sidebar(
+                                                base.clone(),
+                                                token(),
+                                                direct_contact_rows,
+                                                direct_contacts_loaded,
+                                                status,
+                                            );
+                                        }
+                                    },
+                                    UiIcon { name: "home" }
                                 }
                             }
                         }
@@ -2435,8 +2771,13 @@ pub fn RouterView() -> Element {
                                     {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
                                 }
                             }
+                        } else if filtered_direct_contact_rows.is_empty() {
+                            div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-no-results",
+                                span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
+                                span { class: "grow truncate", "No matching contacts" }
+                            }
                         } else {
-                            for contact in direct_contact_rows.read().iter() {
+                            for contact in filtered_direct_contact_rows.iter() {
                                 {
                                     let peer = contact.peer.clone();
                                     let state_label = contact.state.clone();
@@ -2462,65 +2803,199 @@ pub fn RouterView() -> Element {
                                     } else {
                                         crate::i18n::tr("direct.unavailable")
                                     };
+                                    let contact_remark =
+                                        contact_remarks_for_sidebar.get(&peer).cloned();
+                                    let fallback_name = short_protocol_id(&peer);
+                                    let display_name = contact_remark
+                                        .as_ref()
+                                        .map(|remark| remark.display_name(&fallback_name).to_owned())
+                                        .unwrap_or(fallback_name);
+                                    let has_contact_remark = contact_remark
+                                        .as_ref()
+                                        .is_some_and(|remark| !remark.local_name.trim().is_empty());
+                                    let is_pinned_contact =
+                                        contact_remark.as_ref().is_some_and(|remark| remark.pinned);
+                                    let pin_contact_label = if is_pinned_contact {
+                                        "Unpin Contact"
+                                    } else {
+                                        "Pin Contact"
+                                    };
+                                    let contact_menu_key = format!("contact:{peer}");
+                                    let contact_menu_is_open =
+                                        sidebar_row_menu_open().as_deref()
+                                            == Some(contact_menu_key.as_str());
                                     rsx! {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: if can_resolve { "sidebar-nav-item contact-sidebar-row" } else { "sidebar-nav-item contact-sidebar-row is-dim" },
-                                            r#type: "button",
-                                            "data-testid": "direct-conversation-row",
-                                            "data-peer": "{peer}",
-                                            "data-state": "{state_label}",
-                                            title: "{row_title}",
-                                            onclick: {
-                                                let peer = peer.clone();
-                                                let direct = direct.clone();
-                                                let base = base_url();
-                                                move |_| {
-                                                    if !can_resolve {
-                                                        status.set(format!("{}: {}", crate::i18n::tr("direct.unavailable"), peer));
-                                                        return;
-                                                    }
-                                                    if let Some(summary) = direct.clone()
-                                                        && summary.state == "active"
-                                                    {
-                                                        let _ = navigator.push(Route::DirectConversation {
-                                                            realm_id: summary.realm_id,
-                                                            flow_id: summary.main_flow_id,
-                                                        });
-                                                        return;
-                                                    }
-                                                    let api_token = token();
-                                                    let base = base.clone();
-                                                    let peer_for_task = peer.clone();
-                                                    spawn(async move {
-                                                        match crate::views::helpers::with_authed_api(
-                                                            &base,
-                                                            api_token,
-                                                            |api| async move {
-                                                                api.direct_conversation_resolve(&peer_for_task, true).await
-                                                            },
-                                                        )
-                                                        .await
-                                                        {
-                                                            Ok(response) => {
-                                                                if matches!(response.state.as_str(), "found" | "created")
-                                                                    && let (Some(realm_id), Some(flow_id)) = (response.realm_id, response.main_flow_id)
-                                                                {
-                                                                    let _ = navigator.push(Route::DirectConversation { realm_id, flow_id });
-                                                                } else {
-                                                                    status.set(format!("direct conversation: {}", response.state));
-                                                                }
-                                                            }
-                                                            Err(err) => status.set(format!("direct conversation: {}", err.display())),
+                                        div { class: "sidebar-row contact-sidebar-action-row",
+                                            key: "{peer}",
+                                            button {
+                                                class: if can_resolve { "sidebar-nav-item contact-sidebar-row sidebar-row-main" } else { "sidebar-nav-item contact-sidebar-row sidebar-row-main is-dim" },
+                                                r#type: "button",
+                                                "data-testid": "direct-conversation-row",
+                                                "data-peer": "{peer}",
+                                                "data-state": "{state_label}",
+                                                title: "{row_title}",
+                                                onclick: {
+                                                    let peer = peer.clone();
+                                                    let direct = direct.clone();
+                                                    let base = base_url();
+                                                    move |event: dioxus::events::MouseEvent| {
+                                                        event.prevent_default();
+                                                        event.stop_propagation();
+                                                        if !can_resolve {
+                                                            status.set(format!("{}: {}", crate::i18n::tr("direct.unavailable"), peer));
+                                                            return;
                                                         }
-                                                    });
+                                                        if let Some(summary) = direct.clone()
+                                                            && summary.state == "active"
+                                                        {
+                                                            let _ = navigator.push(Route::DirectConversation {
+                                                                realm_id: summary.realm_id,
+                                                                flow_id: summary.main_flow_id,
+                                                            });
+                                                            return;
+                                                        }
+                                                        let api_token = token();
+                                                        let base = base.clone();
+                                                        let peer_for_task = peer.clone();
+                                                        spawn(async move {
+                                                            match crate::views::helpers::with_authed_api(
+                                                                &base,
+                                                                api_token,
+                                                                |api| async move {
+                                                                    api.direct_conversation_resolve(&peer_for_task, true).await
+                                                                },
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(response) => {
+                                                                    if matches!(response.state.as_str(), "found" | "created")
+                                                                        && let (Some(realm_id), Some(flow_id)) = (response.realm_id, response.main_flow_id)
+                                                                    {
+                                                                        let _ = navigator.push(Route::DirectConversation { realm_id, flow_id });
+                                                                    } else {
+                                                                        status.set(format!("direct conversation: {}", response.state));
+                                                                    }
+                                                                }
+                                                                Err(err) => status.set(format!("direct conversation: {}", err.display())),
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                span { class: "sidebar-nav-icon", UiIcon { name: icon_name.to_owned() } }
+                                                span { class: "grow truncate", "{display_name}" }
+                                                if has_contact_remark {
+                                                    span {
+                                                        class: "pill muted xs",
+                                                        "data-testid": "contact-sidebar-remark-badge",
+                                                        title: "Local remark (private to this account)",
+                                                        "Remark"
+                                                    }
                                                 }
-                                            },
-                                            span { class: "sidebar-nav-icon", UiIcon { name: icon_name.to_owned() } }
-                                            span { class: "grow truncate", "{short_protocol_id(&peer)}" }
-                                            span { class: "pill muted xs", "{state_label}" }
-                                            if has_direct_scope {
-                                                span { class: "pill muted xs", title: "{scopes_label}", "DM" }
+                                                if is_pinned_contact {
+                                                    span {
+                                                        class: "pill muted xs realm-pin-badge",
+                                                        "data-testid": "contact-sidebar-pinned-badge",
+                                                        title: "Pinned Contact",
+                                                        UiIcon { name: "pin" }
+                                                    }
+                                                }
+                                                span { class: "pill muted xs", "{state_label}" }
+                                                if has_direct_scope {
+                                                    span { class: "pill muted xs", title: "{scopes_label}", "DM" }
+                                                }
+                                            }
+                                            div {
+                                                class: if contact_menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
+                                                button {
+                                                    class: "sidebar-row-menu-button",
+                                                    r#type: "button",
+                                                    "data-testid": "direct-conversation-row-menu-button",
+                                                    title: "Contact actions",
+                                                    "aria-label": "Contact actions",
+                                                    "aria-haspopup": "menu",
+                                                    "aria-expanded": if contact_menu_is_open { "true" } else { "false" },
+                                                    onclick: {
+                                                        let key = contact_menu_key.clone();
+                                                        move |event: dioxus::events::MouseEvent| {
+                                                            event.prevent_default();
+                                                            event.stop_propagation();
+                                                            if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
+                                                                sidebar_row_menu_open.set(None);
+                                                            } else {
+                                                                sidebar_row_menu_open.set(Some(key.clone()));
+                                                            }
+                                                        }
+                                                    },
+                                                    UiIcon { name: "more-horizontal" }
+                                                }
+                                                if contact_menu_is_open {
+                                                    div {
+                                                        class: "sidebar-row-menu-scrim",
+                                                        "aria-label": "Close row actions",
+                                                        onclick: move |_| sidebar_row_menu_open.set(None),
+                                                    }
+                                                    div {
+                                                        class: "sidebar-row-menu-panel",
+                                                        role: "menu",
+                                                        "aria-label": "Contact actions",
+                                                        button {
+                                                            class: "sidebar-row-menu-item",
+                                                            r#type: "button",
+                                                            role: "menuitem",
+                                                            "data-testid": "direct-conversation-row-pin-action",
+                                                            title: "{pin_contact_label}",
+                                                            "aria-label": "{pin_contact_label}",
+                                                            onclick: {
+                                                                let peer = peer.clone();
+                                                                let existing = contact_remark.clone();
+                                                                let next_pinned = !is_pinned_contact;
+                                                                move |event: dioxus::events::MouseEvent| {
+                                                                    event.prevent_default();
+                                                                    event.stop_propagation();
+                                                                    toggle_sidebar_contact_pin(
+                                                                        peer.clone(),
+                                                                        existing.clone(),
+                                                                        next_pinned,
+                                                                        state_store,
+                                                                        base_url(),
+                                                                        token(),
+                                                                        status,
+                                                                    );
+                                                                    sidebar_row_menu_open.set(None);
+                                                                }
+                                                            },
+                                                            UiIcon { name: "pin" }
+                                                            span { "{pin_contact_label}" }
+                                                        }
+                                                        button {
+                                                            class: "sidebar-row-menu-item danger",
+                                                            r#type: "button",
+                                                            role: "menuitem",
+                                                            "data-testid": "direct-conversation-row-delete-action",
+                                                            title: "Delete Contact",
+                                                            "aria-label": "Delete Contact",
+                                                            disabled: !has_session,
+                                                            onclick: {
+                                                                let peer = peer.clone();
+                                                                move |event: dioxus::events::MouseEvent| {
+                                                                    event.prevent_default();
+                                                                    event.stop_propagation();
+                                                                    delete_sidebar_contact(
+                                                                        base_url(),
+                                                                        token(),
+                                                                        peer.clone(),
+                                                                        direct_contact_rows,
+                                                                        direct_contacts_loaded,
+                                                                        status,
+                                                                    );
+                                                                    sidebar_row_menu_open.set(None);
+                                                                }
+                                                            },
+                                                            UiIcon { name: "x" }
+                                                            span { "Delete" }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2571,19 +3046,21 @@ pub fn RouterView() -> Element {
                                 }
                             }
                         }
+                    } else if filtered_realm_tree.is_empty() {
+                        div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-no-results",
+                            span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
+                            span { class: "grow truncate", "No matching Realms" }
+                        }
                     } else {
-                        for item in realm_tree.iter() {
+                        for item in filtered_realm_tree.iter() {
                             {
                                 let item_node = item.node.clone();
                                 let depth_px = item.depth * 14;
-                                let in_scope = active_navigation_scope_set.contains(&item_node.id);
                                 let target_realm_id = item_node.projection_realm_id().to_owned();
                                 let is_active = item_node.kind == RealmTreeNodeKind::Realm
                                     && effective_realm_id.as_deref() == Some(item_node.id.as_str());
                                 let item_class = if is_active {
                                     "sidebar-nav-item realm-tree-item is-active"
-                                } else if in_scope {
-                                    "sidebar-nav-item realm-tree-item is-scope-member"
                                 } else {
                                     "sidebar-nav-item realm-tree-item"
                                 };
@@ -2618,6 +3095,29 @@ pub fn RouterView() -> Element {
                                     RealmTreeNodeKind::Realm => "Create a new Space at the root of this Realm",
                                     RealmTreeNodeKind::Space => "Create a new Space under this one (this Space becomes the parent)",
                                 };
+                                let menu_key = format!("realm:{}", item_node.id);
+                                let menu_is_open =
+                                    sidebar_row_menu_open().as_deref() == Some(menu_key.as_str());
+                                // Add Member / Settings are Realm-scoped write
+                                // actions: only surface them once the lazy authz
+                                // probe (fired on menu open) has confirmed the
+                                // actor may perform them. Absent / pending / denied
+                                // all read as hidden (fail-closed).
+                                let row_perms = if item_node.kind == RealmTreeNodeKind::Realm {
+                                    sidebar_row_perms.read().get(&item_node.id).copied()
+                                } else {
+                                    None
+                                };
+                                let can_add_member =
+                                    row_perms.map(|p| p.can_add_member).unwrap_or(false);
+                                let can_open_settings =
+                                    row_perms.map(|p| p.can_settings).unwrap_or(false);
+                                let add_member_label = crate::i18n::tr("realm.add_member");
+                                let settings_label = crate::i18n::tr("realm.settings");
+                                let actions_title = match item_node.kind {
+                                    RealmTreeNodeKind::Realm => "Realm actions",
+                                    RealmTreeNodeKind::Space => "Space actions",
+                                };
                                 let (icon_name, icon_class, icon_title) = match item_node.kind {
                                     RealmTreeNodeKind::Realm => {
                                         let is_encrypted = realm_tree_projections
@@ -2645,6 +3145,7 @@ pub fn RouterView() -> Element {
                                 };
                                 rsx! {
                             div { class: "sidebar-row",
+                            key: "{item_node.id}",
                             Link {
                                 class: "{item_class} sidebar-row-main",
                                 "data-testid": "realm-tree-node-button",
@@ -2666,7 +3167,7 @@ pub fn RouterView() -> Element {
                                         class: "pill muted xs",
                                         "data-testid": "realm-tree-realm-remark-badge",
                                         title: "Local remark (private to this account)",
-                                        "备注"
+                                        "Remark"
                                     }
                                 }
                                 if is_pinned_realm {
@@ -2706,71 +3207,175 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
-                            // Contextual "+" — creates a new Space
-                            // scoped to this row. For Realms this is
-                            // "Space at the Realm root"; for Spaces
-                            // this is "child Space under this one".
-                            // Sets `new_space_context_node` first so the
-                            // NewSpace form can derive the prefilled
-                            // realm_id + parent_space_id from it.
-                            if can_pin_realm {
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    class: if is_pinned_realm { "sidebar-row-pin-action is-active" } else { "sidebar-row-pin-action" },
+                            div {
+                                class: if menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
+                                button {
+                                    class: "sidebar-row-menu-button",
                                     r#type: "button",
-                                    "data-testid": "realm-tree-row-pin-action",
-                                    title: "{pin_action_label}",
-                                    "aria-label": "{pin_action_label}",
-                                    "aria-pressed": if is_pinned_realm { "true" } else { "false" },
+                                    "data-testid": "realm-tree-row-menu-button",
+                                    title: "{actions_title}",
+                                    "aria-label": "{actions_title}",
+                                    "aria-haspopup": "menu",
+                                    "aria-expanded": if menu_is_open { "true" } else { "false" },
                                     onclick: {
-                                        let id = item_node.id.clone();
-                                        let existing = remark.clone();
-                                        let next_pinned = !is_pinned_realm;
-                                        move |_| {
-                                            let id = id.clone();
-                                            let now_rfc3339 = chrono::Utc::now()
-                                                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                                            let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
-                                                id.clone(),
-                                                existing.as_ref(),
-                                                next_pinned,
-                                                Some(now_rfc3339),
-                                            );
-                                            state_store
-                                                .write()
-                                                .set_realm_remark(id.clone(), next.clone());
-                                            let action_status = if next_pinned {
-                                                crate::i18n::tr("realm.pinned")
+                                        let key = menu_key.clone();
+                                        let perms_realm_id = item_node.id.clone();
+                                        let probe_perms = item_node.kind == RealmTreeNodeKind::Realm;
+                                        move |event: dioxus::events::MouseEvent| {
+                                            event.prevent_default();
+                                            event.stop_propagation();
+                                            if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
+                                                sidebar_row_menu_open.set(None);
                                             } else {
-                                                crate::i18n::tr("realm.unpin")
-                                            };
-                                            status.set(format!(
-                                                "{action_status}: {}",
-                                                short_protocol_id(&id)
-                                            ));
-                                            crate::views::settings::push_realm_remark_account_data_with_failure_status(
-                                                base_url(),
-                                                token(),
-                                                id,
-                                                next,
-                                                status,
-                                            );
+                                                sidebar_row_menu_open.set(Some(key.clone()));
+                                                // Lazily resolve Add Member / Settings
+                                                // visibility for just this Realm the
+                                                // moment its menu opens.
+                                                if probe_perms {
+                                                    ensure_sidebar_row_perms(
+                                                        base_url(),
+                                                        token(),
+                                                        account_did(),
+                                                        perms_realm_id.clone(),
+                                                        sidebar_row_perms,
+                                                    );
+                                                }
+                                            }
                                         }
                                     },
-                                    UiIcon { name: "pin" }
+                                    UiIcon { name: "more-horizontal" }
                                 }
-                            }
-                            Link {
-                                class: "sidebar-row-add-action",
-                                "data-testid": "realm-tree-row-add-action",
-                                title: "{add_child_title}",
-                                "aria-label": "{add_child_title}",
-                                to: Route::SetupSection { section: "new-space".to_owned() },
-                                onclick: {
-                                    let id = item_node.id.clone();
-                                    move |_| new_space_context_node.set(id.clone())
-                                },
-                                UiIcon { name: "plus" }
+                                if menu_is_open {
+                                    div {
+                                        class: "sidebar-row-menu-scrim",
+                                        "aria-label": "Close row actions",
+                                        onclick: move |_| sidebar_row_menu_open.set(None),
+                                    }
+                                    div {
+                                        class: "sidebar-row-menu-panel",
+                                        role: "menu",
+                                        "aria-label": "{actions_title}",
+                                        if can_pin_realm {
+                                            button {
+                                                class: "sidebar-row-menu-item",
+                                                r#type: "button",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-pin-action",
+                                                title: "{pin_action_label}",
+                                                "aria-label": "{pin_action_label}",
+                                                onclick: {
+                                                    let id = item_node.id.clone();
+                                                    let existing = remark.clone();
+                                                    let next_pinned = !is_pinned_realm;
+                                                    move |event: dioxus::events::MouseEvent| {
+                                                        event.prevent_default();
+                                                        event.stop_propagation();
+                                                        toggle_sidebar_realm_pin(
+                                                            id.clone(),
+                                                            existing.clone(),
+                                                            next_pinned,
+                                                            state_store,
+                                                            base_url(),
+                                                            token(),
+                                                            status,
+                                                        );
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "pin" }
+                                                span { "{pin_action_label}" }
+                                            }
+                                        }
+                                        Link {
+                                            class: "sidebar-row-menu-item",
+                                            role: "menuitem",
+                                            "data-testid": "realm-tree-row-add-action",
+                                            title: "{add_child_title}",
+                                            "aria-label": "{add_child_title}",
+                                            to: Route::SetupSection { section: "new-space".to_owned() },
+                                            onclick: {
+                                                let id = item_node.id.clone();
+                                                let home_realm_id = target_realm_id.clone();
+                                                move |_| {
+                                                    selected_realm_id.set(home_realm_id.clone());
+                                                    new_space_context_node.set(id.clone());
+                                                    sidebar_row_menu_open.set(None);
+                                                }
+                                            },
+                                            UiIcon { name: "plus" }
+                                            span { "New Space" }
+                                        }
+                                        if can_add_member {
+                                            Link {
+                                                class: "sidebar-row-menu-item",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-add-member-action",
+                                                title: "{add_member_label}",
+                                                "aria-label": "{add_member_label}",
+                                                to: Route::RealmMembers { realm_id: target_realm_id.clone() },
+                                                onclick: {
+                                                    let home_realm_id = target_realm_id.clone();
+                                                    move |_| {
+                                                        selected_realm_id.set(home_realm_id.clone());
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "user-plus" }
+                                                span { "{add_member_label}" }
+                                            }
+                                        }
+                                        if can_open_settings {
+                                            Link {
+                                                class: "sidebar-row-menu-item",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-settings-action",
+                                                title: "{settings_label}",
+                                                "aria-label": "{settings_label}",
+                                                to: Route::RealmAdmin { realm_id: target_realm_id.clone() },
+                                                onclick: {
+                                                    let home_realm_id = target_realm_id.clone();
+                                                    move |_| {
+                                                        selected_realm_id.set(home_realm_id.clone());
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "settings" }
+                                                span { "{settings_label}" }
+                                            }
+                                        }
+                                        if item_node.kind == RealmTreeNodeKind::Realm {
+                                            button {
+                                                class: "sidebar-row-menu-item danger",
+                                                r#type: "button",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-leave-action",
+                                                title: "Leave Realm",
+                                                "aria-label": "Leave Realm",
+                                                disabled: !has_session,
+                                                onclick: {
+                                                    let id = item_node.id.clone();
+                                                    move |event: dioxus::events::MouseEvent| {
+                                                        event.prevent_default();
+                                                        event.stop_propagation();
+                                                        leave_sidebar_realm(
+                                                            base_url(),
+                                                            token(),
+                                                            id.clone(),
+                                                            state_store,
+                                                            realm_tree_nodes,
+                                                            selected_realm_id,
+                                                            sync_cursor,
+                                                            status,
+                                                        );
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "x" }
+                                                span { "Leave" }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             }
                                 }
@@ -2843,9 +3448,6 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
-                            if route_uses_realm_context && active_navigation_scope_count > 1 {
-                                span { class: "topbar-context-pill muted", "{active_navigation_scope_label}" }
-                            }
                             if !active_realm_id.is_empty() {
                                 span { class: "sr-only mono", "data-testid": "selected-realm-id", "{active_realm_id}" }
                             }
@@ -2854,8 +3456,6 @@ pub fn RouterView() -> Element {
                     if route_uses_realm_context && !active_realm_id.is_empty() {
                         RealmContextBar {
                             realm_id: active_realm_id.clone(),
-                            scope_label: active_navigation_scope_label.clone(),
-                            scope_count: active_navigation_scope_count,
                             current_surface: resolved_realm_surface,
                             account_did: account_did(),
                             state_store,
@@ -3502,7 +4102,6 @@ pub fn RouterView() -> Element {
                                             device_id: device_id(),
                                             token,
                                             selected_realm_id: active_realm_id.clone(),
-                                            selected_navigation_scope: active_navigation_scope_ids.clone(),
                                             timeline,
                                             draft,
                                             state_store,
@@ -3527,7 +4126,6 @@ pub fn RouterView() -> Element {
                                             device_id: device_id(),
                                             selected_realm_id: active_realm_id.clone(),
                                             projection_realm_id: active_projection_realm_id.clone(),
-                                            selected_navigation_scope: active_navigation_scope_ids.clone(),
                                             sync_cursor,
                                             frontier_state,
                                             state_store,
@@ -3570,7 +4168,6 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
-                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     timeline,
                                     draft,
                                     state_store,
@@ -3597,7 +4194,6 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: realm_id.clone(),
-                                    selected_navigation_scope: vec![realm_id.clone()],
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3625,7 +4221,6 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
-                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3648,6 +4243,36 @@ pub fn RouterView() -> Element {
                             state_store,
                         }
                     },
+                    Route::RealmsManage => rsx! {
+                        RealmsManagePage {
+                            base_url: base_url(),
+                            token,
+                            has_session,
+                            realm_rows: manage_realm_rows.clone(),
+                            realm_tree_nodes,
+                            selected_realm_id,
+                            sync_cursor,
+                            state_store,
+                            query: realm_manage_query,
+                            selection: manage_realm_selection,
+                            busy: manage_bulk_busy,
+                            status: manage_bulk_status,
+                        }
+                    },
+                    Route::ContactsManage => rsx! {
+                        ContactsManagePage {
+                            base_url: base_url(),
+                            token,
+                            has_session,
+                            contact_rows: direct_contact_rows,
+                            contacts_loaded: direct_contacts_loaded,
+                            app_status: status,
+                            query: contact_manage_query,
+                            selection: manage_contact_selection,
+                            busy: manage_bulk_busy,
+                            status: manage_bulk_status,
+                        }
+                    },
                     Route::Contacts => rsx! {
                         crate::views::contacts::ContactsPanel {
                             base_url: base_url(),
@@ -3665,6 +4290,7 @@ pub fn RouterView() -> Element {
                                     device_id,
                                     config_store,
                                     state_store,
+                                    realm_tree_nodes,
                                     selected_realm_id,
                                     new_space_context_node,
                                     status,
@@ -3792,7 +4418,6 @@ pub fn RouterView() -> Element {
                                     device_id: device_id(),
                                     selected_realm_id: active_realm_id.clone(),
                                     projection_realm_id: active_projection_realm_id.clone(),
-                                    selected_navigation_scope: active_navigation_scope_ids.clone(),
                                     sync_cursor,
                                     frontier_state,
                                     state_store,
@@ -3984,11 +4609,569 @@ pub fn RouterView() -> Element {
     }
 }
 
+fn contact_manage_scope_summary(contact: &crate::models::ContactListRow) -> String {
+    let mut seen = BTreeSet::<String>::new();
+    for scope in contact
+        .bidirectional_scopes
+        .iter()
+        .chain(contact.effective_scopes.iter())
+        .chain(contact.granted_by_me.iter())
+        .chain(contact.granted_to_me.iter())
+    {
+        if !scope.trim().is_empty() {
+            seen.insert(scope.clone());
+        }
+    }
+    if seen.is_empty() {
+        "No shared scopes".to_owned()
+    } else {
+        seen.into_iter().collect::<Vec<_>>().join(", ")
+    }
+}
+
+#[component]
+fn RealmsManagePage(
+    base_url: String,
+    token: Signal<String>,
+    has_session: bool,
+    realm_rows: Vec<RealmManageRow>,
+    mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
+    mut selected_realm_id: Signal<String>,
+    mut sync_cursor: Signal<String>,
+    mut state_store: Signal<LocalStateStore>,
+    mut query: Signal<String>,
+    mut selection: Signal<BTreeSet<String>>,
+    mut busy: Signal<bool>,
+    mut status: Signal<String>,
+) -> Element {
+    let normalized_query = query().trim().to_ascii_lowercase();
+    let filtered_rows = realm_rows
+        .iter()
+        .filter(|row| {
+            sidebar_text_matches_query(
+                &normalized_query,
+                &[&row.realm_id, &row.title, &row.display_name],
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_ids = selection.read().clone();
+    let selection_count = selected_ids.len();
+
+    rsx! {
+        div { class: "settings workspace-manage-page", "data-testid": "realms-manage-page",
+            div { class: "settings-shell workspace-manage-shell",
+                section { class: "settings-content-stack workspace-manage-main",
+                    div { class: "event workspace-manage-hero",
+                        div { class: "workspace-manage-title-block",
+                            span { class: "workspace-manage-icon", UiIcon { name: "home" } }
+                            div {
+                                h2 { class: "settings-content-title", "Manage Realms" }
+                                div { class: "muted", "Bulk leave Realms and remove their local tree projections after the server confirms." }
+                            }
+                        }
+                        div { class: "workspace-manage-stats",
+                            span { class: "pill muted xs", "{filtered_rows.len()} shown" }
+                            span { class: "pill muted xs", "{realm_rows.len()} total" }
+                            span { class: "pill muted xs", "{selection_count} selected" }
+                        }
+                    }
+
+                    div { class: "event workspace-manage-toolbar", "data-testid": "realms-manage-toolbar",
+                        div { class: "workspace-manage-search",
+                            span { class: "workspace-manage-search-icon", UiIcon { name: "search" } }
+                            Input {
+                                "data-testid": "realms-manage-search-input",
+                                value: "{query}",
+                                placeholder: "Search Realms",
+                                oninput: move |event: FormEvent| query.set(event.value()),
+                            }
+                        }
+                        div { class: "actions workspace-manage-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "realms-manage-select-all",
+                                disabled: filtered_rows.is_empty() || busy(),
+                                onclick: {
+                                    let realm_ids = filtered_rows
+                                        .iter()
+                                        .map(|row| row.realm_id.clone())
+                                        .collect::<BTreeSet<_>>();
+                                    move |_| selection.set(realm_ids.clone())
+                                },
+                                "Select shown"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "realms-manage-clear",
+                                disabled: selection_count == 0 || busy(),
+                                onclick: move |_| selection.set(BTreeSet::new()),
+                                "Clear"
+                            }
+                            Button {
+                                variant: ButtonVariant::Destructive,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "realms-manage-leave-selected",
+                                disabled: selection_count == 0 || busy() || !has_session,
+                                onclick: {
+                                    let base = base_url.clone();
+                                    move |_| {
+                                        if busy() {
+                                            return;
+                                        }
+                                        let selected = selection
+                                            .read()
+                                            .iter()
+                                            .cloned()
+                                            .collect::<Vec<_>>();
+                                        if selected.is_empty() {
+                                            return;
+                                        }
+                                        let actor_did = match state_store.write().ensure_local_identity() {
+                                            Ok(id) => id.device_did.as_str().to_owned(),
+                                            Err(err) => {
+                                                status.set(format!("identity unavailable: {err}"));
+                                                return;
+                                            }
+                                        };
+                                        let current_nodes = realm_tree_nodes();
+                                        let ids_to_forget_by_realm = selected
+                                            .iter()
+                                            .map(|realm_id| {
+                                                let mut ids = descendant_node_ids(&current_nodes, realm_id);
+                                                if ids.is_empty() {
+                                                    ids.push(realm_id.clone());
+                                                }
+                                                (realm_id.clone(), ids)
+                                            })
+                                            .collect::<BTreeMap<_, _>>();
+                                        let total = selected.len();
+                                        let api_token = token();
+                                        let base = base.clone();
+                                        busy.set(true);
+                                        status.set(format!("Leaving {total} Realm(s)..."));
+                                        spawn(async move {
+                                            let mut succeeded = BTreeSet::<String>::new();
+                                            let mut forgotten_ids = BTreeSet::<String>::new();
+                                            let mut failed = Vec::<String>::new();
+                                            for realm_id in selected {
+                                                let realm_for_api = realm_id.clone();
+                                                let actor_for_api = actor_did.clone();
+                                                match crate::views::helpers::with_authed_api(
+                                                    &base,
+                                                    api_token.clone(),
+                                                    |api| async move {
+                                                        api.leave_realm(&realm_for_api, &actor_for_api).await
+                                                    },
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        succeeded.insert(realm_id.clone());
+                                                        if let Some(ids) = ids_to_forget_by_realm.get(&realm_id) {
+                                                            for id in ids {
+                                                                state_store.write().forget_realm_tree_projection(id);
+                                                                forgotten_ids.insert(id.clone());
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(err) => failed.push(format!(
+                                                        "{} ({})",
+                                                        short_protocol_id(&realm_id),
+                                                        err.display()
+                                                    )),
+                                                }
+                                            }
+
+                                            if !forgotten_ids.is_empty() {
+                                                realm_tree_nodes.set(
+                                                    realm_tree_nodes()
+                                                        .into_iter()
+                                                        .filter(|node| !forgotten_ids.contains(&node.id))
+                                                        .collect(),
+                                                );
+                                                if forgotten_ids.contains(&selected_realm_id()) {
+                                                    selected_realm_id.set(String::new());
+                                                }
+                                                sync_cursor.set("-".to_owned());
+                                            }
+                                            if !succeeded.is_empty() {
+                                                let mut next_selection = selection();
+                                                for realm_id in &succeeded {
+                                                    next_selection.remove(realm_id);
+                                                }
+                                                selection.set(next_selection);
+                                            }
+
+                                            busy.set(false);
+                                            if failed.is_empty() {
+                                                status.set(format!(
+                                                    "Left {} of {total} Realm(s).",
+                                                    succeeded.len()
+                                                ));
+                                            } else {
+                                                status.set(format!(
+                                                    "Left {} of {total}; failed: {}",
+                                                    succeeded.len(),
+                                                    failed.join(", ")
+                                                ));
+                                            }
+                                        });
+                                    }
+                                },
+                                if busy() { "Leaving..." } else { "Leave selected" }
+                            }
+                        }
+                    }
+
+                    if !status.read().is_empty() {
+                        div { class: "event workspace-manage-status", "data-testid": "realms-manage-status",
+                            "{status}"
+                        }
+                    }
+
+                    div { class: "event workspace-manage-list-card",
+                        div { class: "event-head",
+                            span { "Realms" }
+                            span { "{filtered_rows.len()} rows" }
+                        }
+                        if realm_rows.is_empty() {
+                            div { class: "members-empty", "data-testid": "realms-manage-empty",
+                                div { class: "members-empty-title", if has_session { "No Realm tree loaded" } else { "Sign in to load Realms" } }
+                                div { class: "muted members-empty-hint", "Realms will appear here after sync loads the collaboration tree." }
+                            }
+                        } else if filtered_rows.is_empty() {
+                            div { class: "members-empty", "data-testid": "realms-manage-no-results",
+                                div { class: "members-empty-title", "No matching Realms" }
+                                div { class: "muted members-empty-hint", "Adjust the search query to show more rows." }
+                            }
+                        } else {
+                            div { class: "workspace-manage-list", "data-testid": "realms-manage-list",
+                                for row in filtered_rows {
+                                    {
+                                        let realm_id = row.realm_id.clone();
+                                        let checked = selected_ids.contains(&realm_id);
+                                        let security_label = if row.encrypted { "Encrypted" } else { "Unencrypted" };
+                                        let security_icon = if row.encrypted { "lock" } else { "unlock" };
+                                        rsx! {
+                                            label {
+                                                class: "workspace-manage-row",
+                                                "data-testid": "realms-manage-row",
+                                                "data-realm-id": "{realm_id}",
+                                                Checkbox {
+                                                    checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                    on_checked_change: {
+                                                        let realm_id = realm_id.clone();
+                                                        move |state: CheckboxState| {
+                                                            let mut next = selection();
+                                                            if bool::from(state) {
+                                                                next.insert(realm_id.clone());
+                                                            } else {
+                                                                next.remove(&realm_id);
+                                                            }
+                                                            selection.set(next);
+                                                        }
+                                                    },
+                                                }
+                                                div { class: "workspace-manage-row-main",
+                                                    strong { title: "{row.title}", "{row.display_name}" }
+                                                    span { class: "muted mono", title: "{realm_id}", "{realm_id}" }
+                                                }
+                                                div { class: "workspace-manage-row-meta",
+                                                    span { class: "pill muted xs", title: "{security_label}",
+                                                        UiIcon { name: security_icon }
+                                                        "{security_label}"
+                                                    }
+                                                    span { class: "pill muted xs", "{row.space_count} spaces" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ContactsManagePage(
+    base_url: String,
+    token: Signal<String>,
+    has_session: bool,
+    mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut contacts_loaded: Signal<bool>,
+    mut app_status: Signal<String>,
+    mut query: Signal<String>,
+    mut selection: Signal<BTreeSet<String>>,
+    mut busy: Signal<bool>,
+    mut status: Signal<String>,
+) -> Element {
+    {
+        let base = base_url.clone();
+        use_effect(move || {
+            if contacts_loaded() || token().trim().is_empty() {
+                return;
+            }
+            load_direct_contacts_for_sidebar(
+                base.clone(),
+                token(),
+                contact_rows,
+                contacts_loaded,
+                app_status,
+            );
+        });
+    }
+
+    let rows = contact_rows.read().clone();
+    let normalized_query = query().trim().to_ascii_lowercase();
+    let filtered_rows = rows
+        .iter()
+        .filter(|contact| {
+            let scopes = contact_manage_scope_summary(contact);
+            sidebar_text_matches_query(&normalized_query, &[&contact.peer, &contact.state, &scopes])
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_ids = selection.read().clone();
+    let selection_count = selected_ids.len();
+
+    rsx! {
+        div { class: "settings workspace-manage-page", "data-testid": "contacts-manage-page",
+            div { class: "settings-shell workspace-manage-shell",
+                section { class: "settings-content-stack workspace-manage-main",
+                    div { class: "event workspace-manage-hero",
+                        div { class: "workspace-manage-title-block",
+                            span { class: "workspace-manage-icon", UiIcon { name: "users" } }
+                            div {
+                                h2 { class: "settings-content-title", "Manage Contacts" }
+                                div { class: "muted", "Bulk delete contacts and keep successful rows out of the current contact list." }
+                            }
+                        }
+                        div { class: "workspace-manage-stats",
+                            span { class: "pill muted xs", "{filtered_rows.len()} shown" }
+                            span { class: "pill muted xs", "{rows.len()} total" }
+                            span { class: "pill muted xs", "{selection_count} selected" }
+                        }
+                    }
+
+                    div { class: "event workspace-manage-toolbar", "data-testid": "contacts-manage-toolbar",
+                        div { class: "workspace-manage-search",
+                            span { class: "workspace-manage-search-icon", UiIcon { name: "search" } }
+                            Input {
+                                "data-testid": "contacts-manage-search-input",
+                                value: "{query}",
+                                placeholder: "Search Contacts",
+                                oninput: move |event: FormEvent| query.set(event.value()),
+                            }
+                        }
+                        div { class: "actions workspace-manage-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "contacts-manage-select-all",
+                                disabled: filtered_rows.is_empty() || busy(),
+                                onclick: {
+                                    let peers = filtered_rows
+                                        .iter()
+                                        .map(|contact| contact.peer.clone())
+                                        .collect::<BTreeSet<_>>();
+                                    move |_| selection.set(peers.clone())
+                                },
+                                "Select shown"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "contacts-manage-clear",
+                                disabled: selection_count == 0 || busy(),
+                                onclick: move |_| selection.set(BTreeSet::new()),
+                                "Clear"
+                            }
+                            Button {
+                                variant: ButtonVariant::Destructive,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                "data-testid": "contacts-manage-delete-selected",
+                                disabled: selection_count == 0 || busy() || !has_session,
+                                onclick: {
+                                    let base = base_url.clone();
+                                    move |_| {
+                                        if busy() {
+                                            return;
+                                        }
+                                        let selected = selection
+                                            .read()
+                                            .iter()
+                                            .cloned()
+                                            .collect::<Vec<_>>();
+                                        if selected.is_empty() {
+                                            return;
+                                        }
+                                        let total = selected.len();
+                                        let api_token = token();
+                                        let base = base.clone();
+                                        busy.set(true);
+                                        status.set(format!("Deleting {total} contact(s)..."));
+                                        spawn(async move {
+                                            let mut succeeded = BTreeSet::<String>::new();
+                                            let mut failed = Vec::<String>::new();
+                                            for peer in selected {
+                                                let peer_for_api = peer.clone();
+                                                match crate::views::helpers::with_authed_api(
+                                                    &base,
+                                                    api_token.clone(),
+                                                    |api| async move {
+                                                        api.tombstone_contact(&peer_for_api, false).await
+                                                    },
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        succeeded.insert(peer);
+                                                    }
+                                                    Err(err) => failed.push(format!(
+                                                        "{} ({})",
+                                                        short_protocol_id(&peer),
+                                                        err.display()
+                                                    )),
+                                                }
+                                            }
+
+                                            if !succeeded.is_empty() {
+                                                let mut next_selection = selection();
+                                                for peer in &succeeded {
+                                                    next_selection.remove(peer);
+                                                }
+                                                selection.set(next_selection);
+                                                match crate::views::helpers::with_authed_api(
+                                                    &base,
+                                                    api_token.clone(),
+                                                    |api| async move { api.contacts().await },
+                                                )
+                                                .await
+                                                {
+                                                    Ok(response) => {
+                                                        contact_rows.set(response.contacts);
+                                                        contacts_loaded.set(true);
+                                                    }
+                                                    Err(err) => app_status.set(format!(
+                                                        "contacts refresh: {}",
+                                                        err.display()
+                                                    )),
+                                                }
+                                            }
+
+                                            busy.set(false);
+                                            if failed.is_empty() {
+                                                status.set(format!(
+                                                    "Deleted {} of {total} contact(s).",
+                                                    succeeded.len()
+                                                ));
+                                            } else {
+                                                status.set(format!(
+                                                    "Deleted {} of {total}; failed: {}",
+                                                    succeeded.len(),
+                                                    failed.join(", ")
+                                                ));
+                                            }
+                                        });
+                                    }
+                                },
+                                if busy() { "Deleting..." } else { "Delete selected" }
+                            }
+                        }
+                    }
+
+                    if !status.read().is_empty() {
+                        div { class: "event workspace-manage-status", "data-testid": "contacts-manage-status",
+                            "{status}"
+                        }
+                    }
+
+                    div { class: "event workspace-manage-list-card",
+                        div { class: "event-head",
+                            span { "Contacts" }
+                            span { "{filtered_rows.len()} rows" }
+                        }
+                        if rows.is_empty() {
+                            div { class: "members-empty", "data-testid": "contacts-manage-empty",
+                                div { class: "members-empty-title",
+                                    {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
+                                }
+                                div { class: "muted members-empty-hint", "Accepted, pending, and tombstoned contact rows appear here after loading." }
+                            }
+                        } else if filtered_rows.is_empty() {
+                            div { class: "members-empty", "data-testid": "contacts-manage-no-results",
+                                div { class: "members-empty-title", "No matching contacts" }
+                                div { class: "muted members-empty-hint", "Adjust the search query to show more rows." }
+                            }
+                        } else {
+                            div { class: "workspace-manage-list", "data-testid": "contacts-manage-list",
+                                for contact in filtered_rows {
+                                    {
+                                        let peer = contact.peer.clone();
+                                        let checked = selected_ids.contains(&peer);
+                                        let scopes_label = contact_manage_scope_summary(&contact);
+                                        let direct_label = contact
+                                            .direct_conversation
+                                            .as_ref()
+                                            .map(|summary| format!("DM {}", summary.state))
+                                            .unwrap_or_else(|| "No DM".to_owned());
+                                        rsx! {
+                                            label {
+                                                class: "workspace-manage-row",
+                                                "data-testid": "contacts-manage-row",
+                                                "data-peer": "{peer}",
+                                                Checkbox {
+                                                    checked: if checked { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                    on_checked_change: {
+                                                        let peer = peer.clone();
+                                                        move |state: CheckboxState| {
+                                                            let mut next = selection();
+                                                            if bool::from(state) {
+                                                                next.insert(peer.clone());
+                                                            } else {
+                                                                next.remove(&peer);
+                                                            }
+                                                            selection.set(next);
+                                                        }
+                                                    },
+                                                }
+                                                div { class: "workspace-manage-row-main",
+                                                    strong { title: "{peer}", "{peer}" }
+                                                    span { class: "muted", title: "{scopes_label}", "{scopes_label}" }
+                                                }
+                                                div { class: "workspace-manage-row-meta",
+                                                    span { class: "pill muted xs", "{contact.state}" }
+                                                    span { class: "pill muted xs", "{direct_label}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn RealmContextBar(
     realm_id: String,
-    scope_label: String,
-    scope_count: usize,
     current_surface: Option<RealmSurface>,
     account_did: String,
     state_store: Signal<LocalStateStore>,
@@ -3997,7 +5180,6 @@ fn RealmContextBar(
     kanban_ready: bool,
     full_ready: bool,
 ) -> Element {
-    let _ = (&scope_label, scope_count);
     let mut menu_open = use_signal(|| false);
     let (current_nav_label, current_nav_icon) = match current_surface {
         Some(surface) => (surface.short_label(), surface.icon_name()),
@@ -4529,12 +5711,14 @@ fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
+        Route::RealmsManage => "Manage Realms",
         Route::Realm { .. } => "Realm",
         Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
             "Timeline View"
         }
         Route::Chat { .. } => "Discussion",
         Route::DirectConversation { .. } => "Direct",
+        Route::ContactsManage => "Manage Contacts",
         Route::Contacts => "Contacts",
         Route::FileTransfer => "Files",
         Route::Directory => "Search",
@@ -4998,22 +6182,6 @@ fn save_sidebar_width_preference(state_store: &mut LocalStateStore, width: f64) 
         UI_PREFERENCES_SCOPE,
         SIDEBAR_WIDTH_PREFERENCE_KEY,
         format!("{:.0}", clamp_sidebar_width(width)),
-    );
-}
-
-fn load_navigation_scope_preference(state_store: &LocalStateStore) -> NavigationScopeMode {
-    state_store
-        .load_private_data(UI_PREFERENCES_SCOPE, NAVIGATION_SCOPE_PREFERENCE_KEY)
-        .as_deref()
-        .map(NavigationScopeMode::from_preference)
-        .unwrap_or(NavigationScopeMode::Exact)
-}
-
-fn save_navigation_scope_preference(state_store: &mut LocalStateStore, mode: NavigationScopeMode) {
-    state_store.save_private_data(
-        UI_PREFERENCES_SCOPE,
-        NAVIGATION_SCOPE_PREFERENCE_KEY,
-        mode.preference_value(),
     );
 }
 
@@ -6647,58 +7815,6 @@ mod tests {
         );
     }
 
-    fn preview(id: &str, name: &str, parent: Option<&str>) -> RealmTreeNode {
-        let kind = if id.starts_with("ck:space:") {
-            RealmTreeNodeKind::Space
-        } else {
-            RealmTreeNodeKind::Realm
-        };
-        RealmTreeNode {
-            id: id.to_owned(),
-            title: name.to_owned(),
-            description: None,
-            tags: Default::default(),
-            public: true,
-            category: None,
-            parent_space_id: parent.map(ToOwned::to_owned),
-            child_space_ids: Vec::new(),
-            kind,
-            realm_id: if kind == RealmTreeNodeKind::Realm {
-                id.to_owned()
-            } else {
-                "ck:realm:scope".to_owned()
-            },
-        }
-    }
-    #[test]
-    fn scoped_space_ids_support_exact_and_descendants() {
-        let realm_tree_nodes = vec![
-            preview("ck:space:root", "Root", None),
-            preview("ck:space:child", "Child", Some("ck:space:root")),
-            preview("ck:space:deep", "Deep", Some("ck:space:child")),
-        ];
-
-        assert_eq!(
-            scoped_navigation_ids(
-                &realm_tree_nodes,
-                "ck:space:root",
-                NavigationScopeMode::Exact
-            ),
-            vec!["ck:space:root".to_owned()]
-        );
-        assert_eq!(
-            scoped_navigation_ids(
-                &realm_tree_nodes,
-                "ck:space:root",
-                NavigationScopeMode::IncludeDescendants
-            ),
-            vec![
-                "ck:space:root".to_owned(),
-                "ck:space:child".to_owned(),
-                "ck:space:deep".to_owned()
-            ]
-        );
-    }
     #[test]
     fn merge_timeline_events_keeps_existing_messages_on_summary_only_delta() {
         let mut summary = TimelineEvent::system_notice("summary-ck:realm:test", "server", "old");

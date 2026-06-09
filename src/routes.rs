@@ -19,6 +19,9 @@ pub enum Route {
     #[route("/timeline", crate::app::RouterView)]
     Timeline,
 
+    #[route("/realms/manage", crate::app::RouterView)]
+    RealmsManage,
+
     #[route("/realms/:realm_id", RealmPage)]
     Realm { realm_id: String },
 
@@ -39,6 +42,9 @@ pub enum Route {
 
     #[route("/directory", crate::app::RouterView)]
     Directory,
+
+    #[route("/contacts/manage", crate::app::RouterView)]
+    ContactsManage,
 
     #[route("/contacts", crate::app::RouterView)]
     Contacts,
@@ -284,12 +290,12 @@ impl Route {
         match self {
             Route::Dashboard => View::Dashboard,
             Route::Login | Route::AuthCallback => View::Login,
-            Route::Realm { .. } => View::Timeline,
+            Route::RealmsManage | Route::Realm { .. } => View::Timeline,
             Route::Timeline | Route::TimelineRealm { .. } | Route::TimelineMessage { .. } => {
                 View::Timeline
             }
             Route::Chat { .. } | Route::DirectConversation { .. } => View::Chat,
-            Route::Contacts => View::Contacts,
+            Route::Contacts | Route::ContactsManage => View::Contacts,
             Route::FileTransfer => View::FileTransfer,
             Route::Directory => View::Directory,
             Route::Setup | Route::SetupSection { .. } => View::Setup,

@@ -493,6 +493,32 @@ impl ContactRemark {
         }
     }
 
+    pub fn with_pinned_preserving_fields(
+        actor_id: impl Into<String>,
+        existing: Option<&Self>,
+        pinned: bool,
+        updated_at: Option<String>,
+    ) -> Self {
+        let actor_id = actor_id.into();
+        let mut next = existing
+            .cloned()
+            .unwrap_or_else(|| Self::new(actor_id.clone(), ""));
+        if next.version == 0 {
+            next.version = 1;
+        }
+        next.actor_id = actor_id;
+        next.pinned = pinned;
+
+        if let Some(updated_at) = updated_at {
+            if next.saved_at.is_none() && !next.is_empty() {
+                next.saved_at = Some(updated_at.clone());
+            }
+            next.updated_at = Some(updated_at);
+        }
+
+        next
+    }
+
     pub fn is_empty(&self) -> bool {
         self.local_name.trim().is_empty()
             && self.note.trim().is_empty()
@@ -1191,6 +1217,40 @@ mod tests {
         let remark: ContactRemark = serde_json::from_value(legacy).unwrap();
         assert_eq!(remark.actor_id, "did:web:bob.example");
         assert_eq!(remark.local_name, "Bob");
+    }
+
+    #[test]
+    fn contact_remark_pinned_builder_preserves_private_fields() {
+        let actor_id = "did:web:alice.example";
+        let existing = ContactRemark {
+            version: 1,
+            actor_id: actor_id.to_owned(),
+            local_name: "Alice from Ops".to_owned(),
+            note: "met at launch".to_owned(),
+            tags: vec!["ops".to_owned()],
+            pinned: false,
+            verified_handle_at_save: Some("alice:example.com".to_owned()),
+            saved_at: Some("2026-06-05T00:00:00Z".to_owned()),
+            updated_at: Some("2026-06-05T00:00:00Z".to_owned()),
+        };
+
+        let next = ContactRemark::with_pinned_preserving_fields(
+            actor_id,
+            Some(&existing),
+            true,
+            Some("2026-06-06T00:00:00Z".to_owned()),
+        );
+
+        assert!(next.pinned);
+        assert_eq!(next.local_name, existing.local_name);
+        assert_eq!(next.note, existing.note);
+        assert_eq!(next.tags, existing.tags);
+        assert_eq!(
+            next.verified_handle_at_save,
+            existing.verified_handle_at_save
+        );
+        assert_eq!(next.saved_at, existing.saved_at);
+        assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00Z"));
     }
 
     #[test]
