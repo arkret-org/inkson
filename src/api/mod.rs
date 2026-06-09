@@ -1835,10 +1835,12 @@ pub fn build_realm_archive_event(
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
-    let mut payload = json!({ "archived": archived });
+    // Strong type: realm_archive_payload (additionalProperties:false).
+    let mut typed = cokret_sdk::RealmArchivePayload::new(archived);
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
-        payload["reason"] = json!(reason);
+        typed = typed.with_reason(reason);
     }
+    let payload = typed.to_value()?;
     let effects = vec![Effect {
         cell,
         op: LatticeOp {
@@ -1883,10 +1885,11 @@ pub fn build_realm_tombstone_event(
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
-    let payload = json!({
-        "reason": reason,
-        "successor_realm_id": successor_realm_id,
-    });
+    // Strong type: realm_tombstone_payload (reason + successor_realm_id both
+    // required by spec; additionalProperties:false).
+    let successor = cokret_sdk::RealmId::new(successor_realm_id)
+        .map_err(|err| anyhow::anyhow!("invalid successor_realm_id: {err}"))?;
+    let payload = cokret_sdk::RealmTombstonePayload::new(successor, reason).to_value()?;
     let effects = vec![Effect {
         cell,
         op: LatticeOp {
@@ -1922,7 +1925,10 @@ pub fn build_realm_destroy_event(
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
-    let payload = json!({ "reason": reason });
+    // Strong type: realm_destroy_payload (reason required; verification_stub
+    // _required omitted so the reducer applies its default; additionalProperties
+    // :false).
+    let payload = cokret_sdk::RealmDestroyPayload::new(reason).to_value()?;
     let effects = vec![Effect {
         cell,
         op: LatticeOp {
