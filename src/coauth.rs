@@ -13,6 +13,14 @@ use crate::config::validate_server_url;
 
 const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
 const PRINCIPAL_SESSION_BIND_SCOPE: &str = "urn:cokret:principal-server:session.bind";
+// Device-binding scope prefix (see coauth docs/zh/reference/scopes.md).
+// Requesting `urn:cokret:client:device:{device_id}` at authorize time binds
+// the OAuth session to our stable, persisted device id so coauth introspection
+// returns a stable `org.cokret.device_id`. Without it, soland derives a
+// per-OAuth-session device id (hash of session_id), which drifts on every
+// re-authentication and invalidates the globally-shared sync cursor
+// (`cursor_integrity_invalid` / "cursor device does not match request device").
+const COKRET_DEVICE_SCOPE_PREFIX: &str = "urn:cokret:client:device:";
 // These three constants are **only**
 // referenced by `build_authorize_url_preview` — the diagnostic /
 // inspector function that renders an example authorize URL without
@@ -911,7 +919,7 @@ pub fn build_soland_session_grant_plan(
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
     let principal_audience = principal_audience(principal_server_url.as_str())?;
     let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_did, principal_audience.as_str())?;
+        build_authorize_url_preview(topology, actor_did, device_id, principal_audience.as_str())?;
 
     Ok(SolandSessionGrantPlan {
         principal_server_url,
@@ -955,7 +963,7 @@ pub fn build_oidc_code_exchange_plan(
     let redirect_uri = current_oidc_redirect_uri();
     let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
     let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_did, principal_audience.as_str())?;
+        build_authorize_url_preview(topology, actor_did, device_id, principal_audience.as_str())?;
     let token_endpoint = topology
         .token_endpoint
         .clone()
@@ -1016,7 +1024,9 @@ pub fn build_oidc_scaffold_bundle(
     let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;
-    let _ = (actor_did, device_id); // no longer factored into PKCE state
+    // `actor_did` / `device_id` are no longer factored into the (random) PKCE
+    // state, but both are still forwarded to `build_authorize_url` below —
+    // `actor_did` as `login_hint` and `device_id` as the device-binding scope.
     let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
     let code_challenge = match pkce_method {
         Some("plain") => code_verifier.clone(),
@@ -1030,6 +1040,7 @@ pub fn build_oidc_scaffold_bundle(
         client_id.as_str(),
         callback_uri.as_str(),
         actor_did,
+        device_id,
         principal_audience.as_str(),
         &state,
         &nonce,
@@ -1493,6 +1504,7 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
 fn build_authorize_url_preview(
     topology: &CoauthTopologySnapshot,
     actor_did: &str,
+    device_id: &str,
     principal_audience: &str,
 ) -> anyhow::Result<String> {
     let redirect_uri = current_oidc_redirect_uri();
@@ -1502,6 +1514,7 @@ fn build_authorize_url_preview(
         client_id.as_str(),
         redirect_uri.as_str(),
         actor_did,
+        device_id,
         principal_audience,
         OIDC_STATE_PREVIEW,
         OIDC_NONCE_PREVIEW,
@@ -1514,6 +1527,7 @@ fn build_authorize_url(
     client_id: &str,
     redirect_uri: &str,
     actor_did: &str,
+    device_id: &str,
     principal_audience: &str,
     state: &str,
     nonce: &str,
@@ -1529,13 +1543,23 @@ fn build_authorize_url(
             "coauth discovery did not advertise required principal session scope {PRINCIPAL_SESSION_BIND_SCOPE}"
         );
     }
-    let mut scope_tokens = vec!["openid", PRINCIPAL_SESSION_BIND_SCOPE];
+    let mut scope_tokens: Vec<String> =
+        vec!["openid".to_owned(), PRINCIPAL_SESSION_BIND_SCOPE.to_owned()];
     if topology
         .scopes_supported
         .iter()
         .any(|scope| scope == "offline_access")
     {
-        scope_tokens.push("offline_access");
+        scope_tokens.push("offline_access".to_owned());
+    }
+    // Bind this OAuth session to our stable device id. The device scope is a
+    // parameterized `urn:cokret:client:*` capability that coauth accepts and
+    // stores verbatim on the session; it is NOT gated by `scopes_supported`
+    // discovery (which only advertises fixed scopes), so we always request it
+    // when we have a device id rather than probing the discovery list.
+    let device_id = device_id.trim();
+    if !device_id.is_empty() {
+        scope_tokens.push(format!("{COKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
     }
     let scope = scope_tokens.join(" ");
     let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
@@ -2087,6 +2111,17 @@ mod tests {
                 .split_ascii_whitespace()
                 .any(|scope| scope == PRINCIPAL_SESSION_BIND_SCOPE),
             "authorize URL must request the principal session-bind scope"
+        );
+        // Regression guard: the authorize request MUST bind the OAuth session to
+        // our stable device id via `urn:cokret:client:device:{id}`. Without it
+        // coauth introspection returns no `org.cokret.device_id`, soland derives
+        // a per-session device id that drifts on every re-auth, and the shared
+        // sync cursor fails with `cursor_integrity_invalid`.
+        assert!(
+            requested_scope
+                .split_ascii_whitespace()
+                .any(|scope| scope == format!("{COKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444")),
+            "authorize URL must request the device-binding scope, got: {requested_scope}"
         );
     }
 
