@@ -8,16 +8,21 @@ impl CokretApi {
         report_reason_code: &str,
         reporter: &str,
     ) -> anyhow::Result<ModerationReportOutcome> {
+        let realm = cokret_sdk::RealmId::new(realm_id)
+            .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
+        let reporter_did = cokret_sdk::Did::new(reporter.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid reporter `{reporter}`: {err}"))?;
+        let body = cokret_sdk::model::ModerationReportRequestBody {
+            realm_id: realm,
+            target_ref: target_ref.to_owned(),
+            report_reason_code: report_reason_code.to_owned(),
+            description: None,
+            reporter: reporter_did,
+            evidence_refs: Vec::new(),
+        };
         self.post_json(
             "_cokret/self/moderation/report",
-            json!({
-                "realm_id": realm_id,
-                "target_ref": target_ref,
-                "report_reason_code": report_reason_code,
-                "reporter": reporter,
-                "description": null,
-                "evidence_refs": []
-            }),
+            serde_json::to_value(&body)?,
         )
         .await
     }

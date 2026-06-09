@@ -559,43 +559,54 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         .then(|| tokens.join(","))
 }
 
-fn resolve_handle_request_body(handle: &str, context: ResolveHandleContext<'_>) -> Value {
-    let mut body = serde_json::Map::new();
-    body.insert("handle".to_owned(), json!(handle));
-    if let Some(intent) = context.intent.filter(|value| !value.trim().is_empty()) {
-        body.insert("intent".to_owned(), json!(intent));
-    }
-    if let Some(requester) = context.requester.filter(|value| !value.trim().is_empty()) {
-        body.insert("requester".to_owned(), json!(requester));
-    }
-    if let Some(audience) = context.audience.filter(|value| !value.trim().is_empty()) {
-        body.insert("audience".to_owned(), json!(audience));
-    }
-    if let Some(realm_id) = context.realm_id.filter(|value| !value.trim().is_empty()) {
-        body.insert("realm_id".to_owned(), json!(realm_id));
-    }
-    if let Some(expected_did) = context
-        .expected_did
-        .filter(|value| !value.trim().is_empty())
-    {
-        body.insert("expected_did".to_owned(), json!(expected_did));
-    }
-    if let Some(challenge) = context
-        .proof_challenge
-        .filter(|value| !value.trim().is_empty())
-    {
-        body.insert("proof_challenge".to_owned(), json!(challenge));
-    }
-    let proofs = context
-        .proofs
-        .iter()
-        .map(|proof| proof.trim())
-        .filter(|proof| !proof.is_empty())
-        .collect::<Vec<_>>();
-    if !proofs.is_empty() {
-        body.insert("proofs".to_owned(), json!(proofs));
-    }
-    Value::Object(body)
+fn resolve_handle_request_body(
+    handle: &str,
+    context: ResolveHandleContext<'_>,
+) -> anyhow::Result<Value> {
+    let non_empty = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    let realm_id = match non_empty(context.realm_id) {
+        Some(realm_id) => Some(
+            cokret_sdk::RealmId::new(&realm_id)
+                .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?,
+        ),
+        None => None,
+    };
+    let expected_did = match non_empty(context.expected_did) {
+        Some(did) => Some(
+            cokret_sdk::Did::new(did.clone())
+                .map_err(|err| anyhow::anyhow!("invalid expected_did `{did}`: {err}"))?,
+        ),
+        None => None,
+    };
+    let requester = match non_empty(context.requester) {
+        Some(did) => Some(
+            cokret_sdk::Did::new(did.clone())
+                .map_err(|err| anyhow::anyhow!("invalid requester `{did}`: {err}"))?,
+        ),
+        None => None,
+    };
+    let body = cokret_sdk::model::DirectoryResolveHandleRequestBody {
+        handle: handle.to_owned(),
+        expected_did,
+        proof_challenge: non_empty(context.proof_challenge),
+        intent: non_empty(context.intent),
+        requester,
+        audience: non_empty(context.audience),
+        realm_id,
+        proofs: context
+            .proofs
+            .iter()
+            .map(|proof| proof.trim())
+            .filter(|proof| !proof.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    };
+    Ok(serde_json::to_value(&body)?)
 }
 
 fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
@@ -2071,7 +2082,15 @@ fn build_member_state_transition_event_with_binding(
     delivery_binding: Option<Value>,
 ) -> anyhow::Result<EventEnvelope> {
     let created_at = event_timestamp();
+    let realm_id_wire = trim_realm_id(realm_id);
+    // Spec `event-payload.schema.json` `membership_payload`: the `allOf`
+    // if/then makes `realm_id` REQUIRED in the payload body whenever
+    // `membership == "join"` (alongside `actor_id` + `delivery_status`).
+    // `realm_id` is a valid property for every membership transition, so we
+    // always carry it. Omitting it made soland reject invite-accept with
+    // `schema_violation … membership_payload … requires field 'realm_id'`.
     let mut payload = json!({
+        "realm_id": realm_id_wire,
         "actor_id": member_actor_id,
         "membership": to_state,
         "reason": reason,
@@ -2089,7 +2108,6 @@ fn build_member_state_transition_event_with_binding(
     if let Some(delivery_binding) = delivery_binding {
         payload["delivery_binding"] = delivery_binding;
     }
-    let realm_id_wire = trim_realm_id(realm_id);
     let cell = format!(
         "{}:{}",
         space_cell("ck.component.member.state.v1", &realm_id_wire),
@@ -3054,7 +3072,8 @@ mod tests {
                 proof_challenge: Some("ck:challenge:test"),
                 proofs: &["proof-a", "  ", "proof-b"],
             },
-        );
+        )
+        .expect("resolve_handle request body builds");
 
         assert_eq!(body["handle"], "bob:local.host");
         assert_eq!(body["intent"], "lookup");
@@ -3529,6 +3548,11 @@ mod tests {
             "ck:realm:0196419b-0000-7000-8000-000000000010"
         );
         assert_eq!(event.actor_id, "did:web:bob.example");
+        // Spec `membership_payload` requires `realm_id` in the body for join.
+        assert_eq!(
+            event.payload["realm_id"],
+            "ck:realm:0196419b-0000-7000-8000-000000000010"
+        );
         assert_eq!(event.payload["actor_id"], "did:web:bob.example");
         assert_eq!(event.payload["membership"], "join");
         assert_eq!(event.payload["reason"], "invite_accept");

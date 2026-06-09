@@ -430,9 +430,15 @@ impl CokretApi {
     }
 
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveOutcome> {
+        let subject = cokret_sdk::Did::new(did.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
+        let body = cokret_sdk::model::IdentityResolveRequestBody {
+            did: subject,
+            requested_evidence_kinds: Vec::new(),
+        };
         self.post_json(
             "_cokret/root/identity/resolve",
-            json!({"did": did, "requested_evidence_kinds": []}),
+            serde_json::to_value(&body)?,
         )
         .await
     }

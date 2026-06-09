@@ -166,12 +166,20 @@ impl CokretApi {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let mut body = json!({"query": query, "limit": 20});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("_cokret/find/directory/search-realms", body)
-            .await
+        let body = cokret_sdk::model::DirectorySearchRealmsRequestBody {
+            query: Some(query.to_owned()),
+            organization_did: None,
+            parent_space_id: None,
+            requester: None,
+            proofs: Vec::new(),
+            cursor: next_cursor.map(ToOwned::to_owned),
+            limit: Some(20),
+        };
+        self.post_json(
+            "_cokret/find/directory/search-realms",
+            serde_json::to_value(&body)?,
+        )
+        .await
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<SolandDirectoryDescribeResBody> {
@@ -179,9 +187,19 @@ impl CokretApi {
     }
 
     pub async fn resolve_realm(&self, realm_id: &str) -> anyhow::Result<ResolveRealmOutcome> {
+        let realm = cokret_sdk::RealmId::new(realm_id)
+            .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
+        let body = cokret_sdk::model::DirectoryResolveRealmRequestBody {
+            realm_id: Some(realm),
+            alias: None,
+            invite_token: None,
+            signed_link: None,
+            requester: None,
+            proofs: Vec::new(),
+        };
         self.post_json(
             "_cokret/find/directory/resolve-realm",
-            json!({"realm_id": realm_id}),
+            serde_json::to_value(&body)?,
         )
         .await
     }
@@ -235,12 +253,17 @@ impl CokretApi {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let mut body = json!({"query": query, "limit": 20});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("_cokret/find/directory/search-organizations", body)
-            .await
+        let body = cokret_sdk::model::DirectorySearchOrganizationsRequestBody {
+            query: Some(query.to_owned()),
+            claims: Value::Null,
+            cursor: next_cursor.map(ToOwned::to_owned),
+            limit: Some(20),
+        };
+        self.post_json(
+            "_cokret/find/directory/search-organizations",
+            serde_json::to_value(&body)?,
+        )
+        .await
     }
 
     pub async fn search_actors(
@@ -251,12 +274,18 @@ impl CokretApi {
         if let Some(token) = next_cursor {
             validate_cursor(token)?;
         }
-        let mut body = json!({"query": query, "limit": 20});
-        if let Some(cursor) = next_cursor {
-            body["next_cursor"] = json!(cursor);
-        }
-        self.post_json("_cokret/find/directory/search-actors", body)
-            .await
+        let body = cokret_sdk::model::DirectorySearchActorsRequestBody {
+            query: Some(query.to_owned()),
+            realm_id: None,
+            organization_did: None,
+            cursor: next_cursor.map(ToOwned::to_owned),
+            limit: Some(20),
+        };
+        self.post_json(
+            "_cokret/find/directory/search-actors",
+            serde_json::to_value(&body)?,
+        )
+        .await
     }
 
     /// A6.1 — global cross-Realm message search backed by soland's
@@ -306,7 +335,7 @@ impl CokretApi {
     ) -> anyhow::Result<ResolveHandleOutcome> {
         self.post_json(
             "_cokret/find/directory/resolve-handle",
-            resolve_handle_request_body(handle, context),
+            resolve_handle_request_body(handle, context)?,
         )
         .await
     }
