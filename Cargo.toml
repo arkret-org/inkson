@@ -252,3 +252,25 @@ rand_core = { version = "0.6", features = ["std"] }
 # out-of-bounds -> wasm heap corruption). See the fork branch for the full note.
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", branch = "cokret/focus-trap-idempotent" }
+
+# cokret fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. The only delta
+# is `Callback::__point_to` in `packages/core/src/events.rs`: upstream 0.7.9
+# calls `.unwrap()` on `point_to`, which aborts the entire wasm instance (white
+# screen) when an `Option<EventHandler>` prop's owner scope is reclaimed in the
+# same frame the rsx diff tries to re-point its stable handle — surfacing as
+# `Result::unwrap() on Dropped(ValueDroppedError)`. Re-pointing only reuses the
+# stable handle for the current frame; the real callback is still owned by the
+# new value, so the fork degrades that unwrap to a trace-log no-op.
+#
+# The wasm-shared lifetime crates below MUST come from the same git source as
+# `dioxus-core`: a git `dioxus-core` pulls in git `generational-box` /
+# `subsecond` via workspace deps, and if the registry copies remained, the same
+# crate would exist under two sources and `GenerationalBox<T>` would mismatch
+# across the registry `dioxus-signals`/`dioxus-web` and the patched core.
+# See https://github.com/cokret/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
+[patch.crates-io]
+dioxus-core       = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+dioxus-core-types = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+generational-box  = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+subsecond         = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }
+subsecond-types   = { git = "https://github.com/cokret/dioxus", branch = "cokret/point-to-graceful" }

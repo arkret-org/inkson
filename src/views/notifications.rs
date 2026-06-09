@@ -806,7 +806,7 @@ pub(crate) fn merge_invite_notifications(
 }
 
 fn invite_notification_from_value(invite: &Value) -> Option<Value> {
-    let invite_id = value_string(invite, &["invite_id"])?;
+    let invite_id = value_string(invite, &["id", "invite_id"])?;
     let realm_id = value_string(invite, &["realm_id"])?;
     let realm_title = realm_title_from_value(invite);
     let created_at = value_string(invite, &["created_at"])
@@ -1240,15 +1240,19 @@ mod tests {
     #[test]
     fn pending_invites_are_hydrated_as_notifications() {
         let invite = json!({
-            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000001",
+            "id": "ck:invite:01904100-0000-7000-8000-000000000001",
+            "schema": "ck.schema.invite.v1",
             "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
+            "state": "pending",
             "created_at": "2026-05-29T00:00:00Z",
         });
         let duplicate_invite = json!({
-            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000099",
+            "id": "ck:invite:01904100-0000-7000-8000-000000000099",
+            "schema": "ck.schema.invite.v1",
             "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
+            "state": "pending",
             "created_at": "2026-05-29T00:00:01Z",
         });
         let mut raw = Vec::new();
@@ -1283,9 +1287,11 @@ mod tests {
     fn invite_title_is_preserved_for_accept_projection_hint() {
         let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
         let invite = json!({
-            "invite_id": "ck:invite:01904100-0000-7000-8000-000000000011",
+            "id": "ck:invite:01904100-0000-7000-8000-000000000011",
+            "schema": "ck.schema.invite.v1",
             "realm_id": realm_id,
             "realm_title": "Partner Launch",
+            "state": "pending",
             "created_at": "2026-05-29T00:00:00Z",
         });
         let mut raw = Vec::new();
