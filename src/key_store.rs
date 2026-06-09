@@ -57,8 +57,10 @@ pub trait KeyStore: Send + Sync {
     /// Read the persisted identity record for `local_signing_did`. `None` means
     /// "no record yet" — callers typically follow up with
     /// [`Self::save_identity`] after generating a fresh seed.
-    fn load_identity(&self, local_signing_did: &str)
-    -> Result<Option<LocalIdentityRecord>, KeyStoreError>;
+    fn load_identity(
+        &self,
+        local_signing_did: &str,
+    ) -> Result<Option<LocalIdentityRecord>, KeyStoreError>;
 
     /// Persist (or overwrite) the identity record for the device. The
     /// `local_signing_did` argument is redundant with `record.did_key` but lets

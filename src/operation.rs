@@ -516,7 +516,9 @@ pub mod cx_ops {
         if let Some(reason) = reason {
             payload = payload.with_reason(reason);
         }
-        payload.to_value().unwrap_or_else(|err| panic!("invite ref payload: {err}"))
+        payload
+            .to_value()
+            .unwrap_or_else(|err| panic!("invite ref payload: {err}"))
     }
 
     fn realm_id_value(value: &str) -> cokret_sdk::RealmId {
@@ -661,11 +663,10 @@ pub mod cx_ops {
             rank.to_owned(),
         );
         if let Some(expected_rank) = expected_rank {
-            payload =
-                payload.with_expected_position(cokret_sdk::FlowReorderExpectedPosition {
-                    rank: Some(expected_rank.to_owned()),
-                    relation_id: None,
-                });
+            payload = payload.with_expected_position(cokret_sdk::FlowReorderExpectedPosition {
+                rank: Some(expected_rank.to_owned()),
+                relation_id: None,
+            });
         }
         payload
             .to_value()
@@ -677,7 +678,9 @@ pub mod cx_ops {
     fn object_lifecycle_payload_value(target_ref: &str) -> Value {
         cokret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
             .to_value()
-            .unwrap_or_else(|err| panic!("invalid object_lifecycle_payload for {target_ref}: {err}"))
+            .unwrap_or_else(|err| {
+                panic!("invalid object_lifecycle_payload for {target_ref}: {err}")
+            })
     }
 
     /// Build the canonical `relation_create_payload` body (flat
@@ -1801,7 +1804,7 @@ pub mod cx_ops {
     //
     // Spec: `extensions/applet-integration.md` + canonical event-kind
     // registry rows `ck.applet.registration` / `ck.applet.discovery` /
-    // `ck.applet.protocol_session.{start,status}` / `ck.applet.bridge_error`.
+    // `ck.applet.interop_session.{start,status}` / `ck.applet.bridge_error`.
     //
     // The builders below produce the wire shape soland validators and the
     // SDK reducer consume. Each carries the canonical `applet_id` (or
@@ -1874,17 +1877,17 @@ pub mod cx_ops {
         cokret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
     }
 
-    /// `ck.applet.protocol_session.start` — open a per-session channel
+    /// `ck.applet.interop_session.start` — open a per-session channel
     /// between a Realm member and an applet (used for portal-style RPC
     /// + agent invocation).
-    pub fn applet_protocol_session_start(
+    pub fn applet_interop_session_start(
         realm_id: &str,
         actor: &str,
         applet_id: &str,
         session_id: &str,
         params: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.applet.protocol_session.start")
+        OperationBuilder::new(realm_id, actor, "ck.applet.interop_session.start")
             .target_ref(session_id)
             .body(json!({
                 "applet_id": applet_id,
@@ -1893,16 +1896,16 @@ pub mod cx_ops {
             }))
     }
 
-    /// `ck.applet.protocol_session.status` — applet → caller status push
+    /// `ck.applet.interop_session.status` — applet → caller status push
     /// (progress, intermediate result, completion).
-    pub fn applet_protocol_session_status(
+    pub fn applet_interop_session_status(
         realm_id: &str,
         actor: &str,
         session_id: &str,
         status: &str,
         detail: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.applet.protocol_session.status")
+        OperationBuilder::new(realm_id, actor, "ck.applet.interop_session.status")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1912,7 +1915,7 @@ pub mod cx_ops {
     }
 
     /// `ck.applet.bridge_error` — emitted by the applet bridge when a
-    /// protocol_session call fails outside the spec's typed result.
+    /// interop_session call fails outside the spec's typed result.
     pub fn applet_bridge_error(
         realm_id: &str,
         actor: &str,
@@ -1932,7 +1935,7 @@ pub mod cx_ops {
     // ── Agent protocol family ─────────────────────────────────────────
     //
     // Spec: `extensions/agent-integration.md` + canonical event-kind
-    // registry rows `ck.agent.endpoint` / `ck.agent.protocol_session.
+    // registry rows `ck.agent.endpoint` / `ck.agent.interop_session.
     // {start,status,result}`. Agents are server-side delegates a member
     // grants narrow capabilities to (e.g. a read-flow Researcher Agent);
     // the wire shape lets soland and the SDK reducer track which agent
@@ -1958,10 +1961,10 @@ pub mod cx_ops {
             }))
     }
 
-    /// `ck.agent.protocol_session.start` — kick off an agent
+    /// `ck.agent.interop_session.start` — kick off an agent
     /// invocation;  body carries the parameter payload + the
     /// capability proof bundle.
-    pub fn agent_protocol_session_start(
+    pub fn agent_interop_session_start(
         realm_id: &str,
         actor: &str,
         counterparty_agent: &str,
@@ -1970,7 +1973,7 @@ pub mod cx_ops {
         params: serde_json::Value,
         capability_grant: &str,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.agent.protocol_session.start")
+        OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.start")
             .target_ref(session_id)
             .body(json!({
                 "counterparty_agent": counterparty_agent,
@@ -1981,15 +1984,15 @@ pub mod cx_ops {
             }))
     }
 
-    /// `ck.agent.protocol_session.status` — agent progress signal.
-    pub fn agent_protocol_session_status(
+    /// `ck.agent.interop_session.status` — agent progress signal.
+    pub fn agent_interop_session_status(
         realm_id: &str,
         actor: &str,
         session_id: &str,
         status: &str,
         detail: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.agent.protocol_session.status")
+        OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.status")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -1998,16 +2001,16 @@ pub mod cx_ops {
             }))
     }
 
-    /// `ck.agent.protocol_session.result` — terminal event carrying the
+    /// `ck.agent.interop_session.result` — terminal event carrying the
     /// agent's signed result + the audit-binding proof.
-    pub fn agent_protocol_session_result(
+    pub fn agent_interop_session_result(
         realm_id: &str,
         actor: &str,
         session_id: &str,
         result: serde_json::Value,
         audit_binding: serde_json::Value,
     ) -> OperationBuilder {
-        OperationBuilder::new(realm_id, actor, "ck.agent.protocol_session.result")
+        OperationBuilder::new(realm_id, actor, "ck.agent.interop_session.result")
             .target_ref(session_id)
             .body(json!({
                 "session_id": session_id,
@@ -2977,7 +2980,7 @@ mod tests {
         assert_eq!(disc.payload["manifest"]["version"], 1);
         assert_eq!(disc.local_target_ref(), Some(service_did));
 
-        let start = cx_ops::applet_protocol_session_start(
+        let start = cx_ops::applet_interop_session_start(
             realm,
             actor,
             "ck:applet:dummy",
@@ -2985,11 +2988,11 @@ mod tests {
             json!({"op": "ping"}),
         )
         .build("node");
-        assert_eq!(start.kind, "ck.applet.protocol_session.start");
+        assert_eq!(start.kind, "ck.applet.interop_session.start");
         assert_eq!(start.payload["session_id"], session_id);
         assert_eq!(start.local_target_ref(), Some(session_id));
 
-        let status = cx_ops::applet_protocol_session_status(
+        let status = cx_ops::applet_interop_session_status(
             realm,
             actor,
             session_id,
@@ -2997,7 +3000,7 @@ mod tests {
             json!({"progress": 0.5}),
         )
         .build("node");
-        assert_eq!(status.kind, "ck.applet.protocol_session.status");
+        assert_eq!(status.kind, "ck.applet.interop_session.status");
         assert_eq!(status.payload["status"], "running");
 
         let err = cx_ops::applet_bridge_error(
@@ -3026,7 +3029,7 @@ mod tests {
         assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ck.agent.v1");
         assert_eq!(endpoint.local_target_ref(), Some(agent));
 
-        let start = cx_ops::agent_protocol_session_start(
+        let start = cx_ops::agent_interop_session_start(
             realm,
             actor,
             agent,
@@ -3036,7 +3039,7 @@ mod tests {
             "ck:grant:01904100-0000-7000-8000-000000000099",
         )
         .build("node");
-        assert_eq!(start.kind, "ck.agent.protocol_session.start");
+        assert_eq!(start.kind, "ck.agent.interop_session.start");
         assert_eq!(start.payload["counterparty_agent"], agent);
         assert_eq!(
             start.payload["capability_grant"],
@@ -3044,11 +3047,11 @@ mod tests {
         );
 
         let status =
-            cx_ops::agent_protocol_session_status(realm, actor, session_id, "thinking", json!({}))
+            cx_ops::agent_interop_session_status(realm, actor, session_id, "thinking", json!({}))
                 .build("node");
-        assert_eq!(status.kind, "ck.agent.protocol_session.status");
+        assert_eq!(status.kind, "ck.agent.interop_session.status");
 
-        let result = cx_ops::agent_protocol_session_result(
+        let result = cx_ops::agent_interop_session_result(
             realm,
             actor,
             session_id,
@@ -3056,7 +3059,7 @@ mod tests {
             json!({"merkle_root": "sha256:abc"}),
         )
         .build("node");
-        assert_eq!(result.kind, "ck.agent.protocol_session.result");
+        assert_eq!(result.kind, "ck.agent.interop_session.result");
         assert_eq!(result.payload["audit_binding"]["merkle_root"], "sha256:abc");
     }
 }

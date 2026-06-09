@@ -7,9 +7,14 @@
 //!   XChaCha20-Poly1305 before being POSTed to `PUT /_cokret/self/keys/backups/{backup_id}` via
 //!   [`crate::api::CokretApi::put_key_backup`]. The server never sees the passphrase or the
 //!   plaintext.
-//! - **Recovery Key**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. The plaintext
-//!   only lives in memory between Generate and the user's Copy / Print interaction; only a SHA-256
-//!   fingerprint plus rotation timestamp are persisted via `LocalStateStore::save_private_data`.
+//! - **Recovery Key**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This is the
+//!   canonical cross-device recovery credential — `normalize_recovery_key_input` (and therefore the
+//!   `MlsUnlockPrompt` restore path) only accepts this 24-word format, so generating the key also
+//!   wraps the account MLS secret behind it and uploads that backup (see
+//!   `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory between
+//!   Generate and the user's Copy / Print interaction; only a SHA-256 fingerprint plus rotation
+//!   timestamp are persisted via `LocalStateStore::save_private_data` — the words themselves are
+//!   never uploaded.
 //! - **Social Recovery**: guardian list + Shamir threshold + last-rehearsal timestamp persisted as
 //!   JSON under the same private_data store.
 //!
@@ -413,6 +418,116 @@ fn copy_recovery_text_to_clipboard(text: &str) {
     let _ = document::eval(&script);
 }
 
+/// RK-as-authority backup: wrap the local account MLS secret behind the just
+/// generated 24-word Recovery Key and upload it, so the key the restore prompt
+/// asks for is the same key that actually protects encrypted history. Mirrors
+/// `MlsBackupPrompt`'s upload (account secret + best-effort sidecar). No-op with
+/// an explanatory status when there is no account secret yet (encryption hasn't
+/// been used, so there is nothing to back up — the backup runs on first use).
+fn upload_recovery_key_account_backup(
+    base_url: String,
+    token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+    state_store: Signal<LocalStateStore>,
+    recovery_key: String,
+    mut status: Signal<String>,
+) {
+    let Some(recovery_secret) = crate::recovery_crypto::normalize_recovery_key_input(&recovery_key)
+    else {
+        return;
+    };
+    let base = base_url;
+    let session = token();
+    let actor = account_did();
+    let device = device_id();
+    if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+        return;
+    }
+    // Only upload when encryption has produced an account secret. Otherwise there
+    // is nothing to wrap yet; the secret is created on the first encrypted write
+    // or an applied Welcome, and the backup-prompt path runs the upload then.
+    let has_secret = {
+        let secure = crate::secure_key_store::default_secure_key_store("yougen");
+        matches!(
+            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor),
+            Ok(Some(_))
+        )
+    };
+    if !has_secret {
+        status.set(
+            "Recovery Key saved. Your encrypted content will be backed up to it automatically the first time you use encryption.".to_owned(),
+        );
+        return;
+    }
+    let sidecar_json = if state_store.read().private_plaintext_is_empty() {
+        None
+    } else {
+        Some(state_store.read().private_plaintext_snapshot_json())
+    };
+    status.set("Recovery Key generated — backing up your encrypted history to it…".to_owned());
+    spawn(async move {
+        let actor_for_sidecar = actor.clone();
+        let device_for_sidecar = device.clone();
+        let base_for_sidecar = base.clone();
+        let session_for_sidecar = session.clone();
+        let mut state_store = state_store;
+        let result = with_authed_api(&base, session, |api| async move {
+            let secure = crate::secure_key_store::default_secure_key_store("yougen");
+            crate::mls::account_recovery::upload_mls_account_secret_backup_with_passphrase(
+                &api,
+                secure.as_ref(),
+                &actor,
+                &device,
+                recovery_secret.as_bytes(),
+            )
+            .await
+        })
+        .await;
+        match result {
+            Ok(backup_id) => {
+                if let Ok(mut store) = state_store.try_write() {
+                    crate::components::mark_mls_recovery_backup_configured(
+                        &mut store,
+                        &actor_for_sidecar,
+                        &backup_id,
+                    );
+                }
+                // Best-effort: also back up the encrypted local-plaintext sidecar
+                // so a fresh device recovers the author's own content. A failure
+                // here must not block the (successful) account-secret backup.
+                if let Some(sidecar_json) = sidecar_json {
+                    let actor = actor_for_sidecar;
+                    let device = device_for_sidecar;
+                    let _ =
+                        with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
+                            let secure =
+                                crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::mls::account_recovery::upload_mls_private_plaintext_backup(
+                                &api,
+                                secure.as_ref(),
+                                &actor,
+                                &device,
+                                &sidecar_json,
+                            )
+                            .await
+                        })
+                        .await;
+                }
+                status.set(
+                    "Recovery Key generated and your encrypted history is now backed up to it. Write the 24 words down — they are the only way to restore on a new device.".to_owned(),
+                );
+            }
+            Err(err) => {
+                status.set(format!(
+                    "Recovery Key saved, but backing up your encrypted history failed: {}",
+                    err.display()
+                ));
+            }
+        }
+    });
+}
+
 #[component]
 pub fn RecoveryPanel(
     base_url: String,
@@ -644,22 +759,6 @@ pub fn RecoveryPanel(
                                         }
                                     };
                                     let backup_id_clone = backup_id_for_async.clone();
-                                    // Cloned up-front because the primary upload moves `api_token`.
-                                    let mls_base = base.clone();
-                                    let mls_api_token = api_token.clone();
-                                    // X5.3 — clones for the private-plaintext sidecar upload
-                                    // (the account-secret upload below moves `mls_base`/`mls_api_token`).
-                                    let sidecar_base = base.clone();
-                                    let sidecar_api_token = api_token.clone();
-                                    let sidecar_actor = actor_for_async.clone();
-                                    let sidecar_device = device_for_async.clone();
-                                    // Snapshot the sidecar before any await so we don't hold the
-                                    // store borrow across the network round-trips.
-                                    let sidecar_json = if store.read().private_plaintext_is_empty() {
-                                        None
-                                    } else {
-                                        Some(store.read().private_plaintext_snapshot_json())
-                                    };
                                     match with_authed_api(&base, api_token, |api| async move {
                                         api.put_key_backup(&backup_id_clone, body).await
                                     })
@@ -679,85 +778,6 @@ pub fn RecoveryPanel(
                                             next.vault_backup_id = backup_id_for_async;
                                             next.vault_uploaded_at = now;
                                             save_state(&mut store, &actor_key_for_async, &next);
-
-                                            // Option A — also wrap the ACCOUNT-scoped MLS snapshot
-                                            // secret behind the same passphrase so a brand-new
-                                            // browser of this account can decrypt realm/kanban
-                                            // history after recovery. Reuses the already-derived KEK
-                                            // (no second Argon2id pass). Best-effort: a failure here
-                                            // must not undo the primary vault upload above.
-                                            let secure = crate::secure_key_store::default_secure_key_store("yougen");
-                                            match crate::mls::runtime::load_or_create_account_mls_secret(
-                                                secure.as_ref(),
-                                                &actor_for_async,
-                                                &device_for_async,
-                                            ) {
-                                                Ok(account_secret) => {
-                                                    let mls_backup_id =
-                                                        format!("ck:backup:{}", uuid_v7());
-                                                    match crate::mls::account_recovery::build_mls_account_secret_backup_body_with_kek(
-                                                        &mls_backup_id,
-                                                        &actor_for_async,
-                                                        &device_for_async,
-                                                        &kek,
-                                                        &account_secret,
-                                                    ) {
-                                                        Ok(mls_body) => {
-                                                            let mls_id = mls_backup_id.clone();
-                                                            let mls_outcome = with_authed_api(
-                                                                &mls_base,
-                                                                mls_api_token,
-                                                                |api| async move {
-                                                                    api.put_key_backup(&mls_id, mls_body).await
-                                                                },
-                                                            )
-                                                            .await;
-                                                            if let Err(err) = mls_outcome {
-                                                                vault_status.set(format!(
-                                                                    "Vault uploaded; account MLS recovery key upload failed: {}",
-                                                                    err.display()
-                                                                ));
-                                                            } else if let Some(sidecar_json) = sidecar_json {
-                                                                // X5.3 — account secret backup is up;
-                                                                // now back up the encrypted local-plaintext
-                                                                // sidecar (KEK derived from the account
-                                                                // secret inside the helper) so a fresh
-                                                                // browser recovers the author's own content.
-                                                                // Best-effort: failure must not undo the
-                                                                // vault/account-secret uploads above.
-                                                                let sidecar_outcome = with_authed_api(
-                                                                    &sidecar_base,
-                                                                    sidecar_api_token,
-                                                                    |api| async move {
-                                                                        let secure = crate::secure_key_store::default_secure_key_store("yougen");
-                                                                        crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                                                            &api,
-                                                                            secure.as_ref(),
-                                                                            &sidecar_actor,
-                                                                            &sidecar_device,
-                                                                            &sidecar_json,
-                                                                        )
-                                                                        .await
-                                                                    },
-                                                                )
-                                                                .await;
-                                                                if let Err(err) = sidecar_outcome {
-                                                                    vault_status.set(format!(
-                                                                        "Vault + account MLS recovery key uploaded; private plaintext backup failed: {}",
-                                                                        err.display()
-                                                                    ));
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(err) => vault_status.set(format!(
-                                                            "Vault uploaded; failed to wrap account MLS secret: {err}"
-                                                        )),
-                                                    }
-                                                }
-                                                Err(err) => vault_status.set(format!(
-                                                    "Vault uploaded; account MLS secret unavailable: {err}"
-                                                )),
-                                            }
                                         }
                                         Err(err) => {
                                             vault_sync.set(SyncBadge::Failed);
@@ -787,7 +807,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery Key" }
                     span { "high-entropy string · keep offline" }
-                    HelpTip { text: "A fallback for when every device is lost and no guardian is reachable. Cokret never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it." }
+                    HelpTip { text: "This is your account's master recovery credential. Generating it wraps your encrypted history behind it and uploads that backup, so a brand-new device can restore by entering these 24 words. The words themselves never leave this device (only a SHA-256 fingerprint is kept locally); Cokret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored." }
                 }
 
                 // The key itself — promoted to a full-width hero so it reads as
@@ -871,12 +891,13 @@ pub fn RecoveryPanel(
                         onclick: {
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
+                            let base_url = base_url.clone();
                             move |_| {
                                 match generate_recovery_key() {
                                     Ok(key) => {
                                         let fp = fingerprint_recovery_key(&key);
                                         let now = chrono::Utc::now().to_rfc3339();
-                                        live_recovery_key.set(key);
+                                        live_recovery_key.set(key.clone());
                                         recovery_key_fp.set(fp);
                                         recovery_key_rotated_at.set(now);
                                         passkey_wraps.set(Vec::new());
@@ -886,6 +907,20 @@ pub fn RecoveryPanel(
                                         passkey_status.set(String::new());
                                         let next = snapshot_state();
                                         save_state(&mut store, &actor_key, &next);
+                                        // RK-as-authority: this 24-word key is the canonical
+                                        // cross-device recovery credential (the restore prompt
+                                        // only accepts a 24-word key), so wrap and upload the
+                                        // account MLS secret backup with it now. Generating the
+                                        // key is what makes a real cloud backup exist.
+                                        upload_recovery_key_account_backup(
+                                            base_url.clone(),
+                                            token,
+                                            account_did,
+                                            device_id,
+                                            state_store,
+                                            key,
+                                            recovery_key_status,
+                                        );
                                     }
                                     Err(err) => {
                                         recovery_key_status.set(format!("Generate failed: {err}"));

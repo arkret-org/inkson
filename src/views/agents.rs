@@ -1,4 +1,4 @@
-//! Agents - endpoint registry + protocol_session monitor.
+//! Agents - endpoint registry + interop_session monitor.
 //!
 //! Spec: `cokret-spec/spec/v1/zh/extensions/agent-integration.md`.
 //!
@@ -6,11 +6,11 @@
 //! layer:
 //!   * `ck.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
 //!     requirement.
-//!   * `ck.agent.protocol_session.{start,status,result}` track agent invocations. The terminal
+//!   * `ck.agent.interop_session.{start,status,result}` track agent invocations. The terminal
 //!     `result` event carries a typed result payload + the audit_binding proof so the audit
 //!     timeline can verify the agent's output corresponds to the signed input.
 //!
-//! Incoming `ck.agent.protocol_session.result` events fetched from
+//! Incoming `ck.agent.interop_session.result` events fetched from
 //! soland are decoded + verified via
 //! `cokret_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
@@ -19,7 +19,7 @@
 //! G3.Y4 additions:
 //!   * `agent-protocol-handoff-button` initiates a handoff to a registered agent endpoint.
 //!   * `agent-protocol-handoff-confirm-button` confirms the handoff intent and emits the
-//!     `ck.agent.protocol_session.start` event via soland's `agent_bridge` route.
+//!     `ck.agent.interop_session.start` event via soland's `agent_bridge` route.
 //!   * `agent-protocol-handoff-status` carries the pending → approved → running → completed/failed
 //!     lifecycle via `data-state`.
 //!   * `agent-protocol-transcript-panel` lists each incremental status step as
@@ -127,7 +127,7 @@ pub fn agent_state_is_terminal(state: &str) -> bool {
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
 /// machine is purely client-side (the durable counterpart is the
-/// `ck.agent.protocol_session.{start,status,result}` family); the
+/// `ck.agent.interop_session.{start,status,result}` family); the
 /// panel uses it to gate which sub-controls are visible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandoffState {
@@ -213,14 +213,14 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if first_kind != "ck.agent.protocol_session.start" {
+    if first_kind != "ck.agent.interop_session.start" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     let last_kind = match kind_of(events.last().unwrap()) {
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if last_kind != "ck.agent.protocol_session.result" {
+    if last_kind != "ck.agent.interop_session.result" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     // Middle events MUST be status events.
@@ -229,7 +229,7 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
             Some(k) => k,
             None => return AuditChainVerifyOutcome::ChainBreak,
         };
-        if k != "ck.agent.protocol_session.status" {
+        if k != "ck.agent.interop_session.status" {
             return AuditChainVerifyOutcome::ChainBreak;
         }
     }
@@ -296,7 +296,7 @@ impl AuditVerifyStatus {
     }
 }
 
-/// Verify a soland `ck.agent.protocol_session.result` payload's
+/// Verify a soland `ck.agent.interop_session.result` payload's
 /// `audit_binding` block. Yougen delegates the `binding_kind` switch
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
@@ -341,7 +341,7 @@ pub fn AgentsPanel(
     let mut audit_verify_result = use_signal(|| Option::<AuditChainVerifyOutcome>::None);
     let mut transcript_steps = use_signal(Vec::<(String, String)>::new); // (kind, summary)
 
-    // Incoming agent `protocol_session.result` events polled from
+    // Incoming agent `interop_session.result` events polled from
     // soland every 4s. Each entry is a (event_id, payload) pair so
     // the render side can call `verify_agent_audit_binding` on each
     // payload and show the resulting badge. The poll loop
@@ -396,7 +396,7 @@ pub fn AgentsPanel(
                             .get("event_kind")
                             .and_then(Value::as_str)
                             .unwrap_or("");
-                        if kind != "ck.agent.protocol_session.result" {
+                        if kind != "ck.agent.interop_session.result" {
                             continue;
                         }
                         let event_id = event
@@ -444,7 +444,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("ck.agent.protocol_session."))
+                .map(|k| k.starts_with("ck.agent.interop_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -455,7 +455,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ck.agent.protocol_session.result")
+                .map(|k| k == "ck.agent.interop_session.result")
                 .unwrap_or(false)
         })
         .cloned()
@@ -693,7 +693,7 @@ pub fn AgentsPanel(
                     }
                 }
             }
-            // Incoming `ck.agent.protocol_session.result` events
+            // Incoming `ck.agent.interop_session.result` events
             // fetched from soland, with per-event Ed25519
             // audit-binding verification badge.
             div { class: "event", "data-testid": "agent-incoming-results",
@@ -711,7 +711,7 @@ pub fn AgentsPanel(
                 }
                 if incoming_results.read().is_empty() {
                     div { class: "muted", "data-testid": "agent-incoming-empty",
-                        "No result events fetched yet. The runtime emits these after a ck.agent.protocol_session.start lands."
+                        "No result events fetched yet. The runtime emits these after a ck.agent.interop_session.start lands."
                     }
                 } else {
                     for (event_id, payload) in incoming_results.read().iter() {
@@ -772,7 +772,7 @@ pub fn AgentsPanel(
                     }
                 }
                 div { class: "muted",
-                    "Initiates a ck.agent.protocol_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
+                    "Initiates a ck.agent.interop_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -828,7 +828,7 @@ pub fn AgentsPanel(
                                             "handoff to {target_label} approved; submitting start event"
                                         ));
                                         transcript_steps.write().push((
-                                            "ck.agent.protocol_session.start".to_owned(),
+                                            "ck.agent.interop_session.start".to_owned(),
                                             format!("start handoff to {target_label}"),
                                         ));
                                         spawn(async move {
@@ -836,7 +836,7 @@ pub fn AgentsPanel(
                                                 "ck:session:{}",
                                                 crate::operation::uuid_v7()
                                             );
-                                            let op = crate::operation::cx_ops::agent_protocol_session_start(
+                                            let op = crate::operation::cx_ops::agent_interop_session_start(
                                                 &realm,
                                                 &actor,
                                                 &target,
@@ -858,7 +858,7 @@ pub fn AgentsPanel(
                                                         resp.event_id
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "ck.agent.protocol_session.status".to_owned(),
+                                                        "ck.agent.interop_session.status".to_owned(),
                                                         "running (in-process echo bridge)".to_owned(),
                                                     ));
                                                     // Experimental-only surface:
@@ -875,7 +875,7 @@ pub fn AgentsPanel(
                                                         err.display()
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "ck.agent.protocol_session.status".to_owned(),
+                                                        "ck.agent.interop_session.status".to_owned(),
                                                         format!("failed: {}", err.display()),
                                                     ));
                                                 }
@@ -901,13 +901,13 @@ pub fn AgentsPanel(
                                 // ends are present.
                                 let synthesized = vec![
                                     serde_json::json!({
-                                        "kind": "ck.agent.protocol_session.start"
+                                        "kind": "ck.agent.interop_session.start"
                                     }),
                                 ];
                                 let mut chain = synthesized;
                                 for (_, payload) in incoming_results.read().iter() {
                                     chain.push(serde_json::json!({
-                                        "kind": "ck.agent.protocol_session.result",
+                                        "kind": "ck.agent.interop_session.result",
                                         "payload": payload,
                                     }));
                                 }
@@ -2230,7 +2230,7 @@ mod tests {
 
     #[test]
     fn agent_result_body_carries_audit_binding() {
-        let op = crate::operation::cx_ops::agent_protocol_session_result(
+        let op = crate::operation::cx_ops::agent_interop_session_result(
             "ck:space:test",
             "did:web:alice.example",
             "ck:session:test",
@@ -2442,22 +2442,22 @@ mod tests {
     #[test]
     fn verify_audit_chain_requires_start_then_result() {
         // Missing start
-        let events = vec![json!({"kind": "ck.agent.protocol_session.result"})];
+        let events = vec![json!({"kind": "ck.agent.interop_session.result"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Missing result
-        let events = vec![json!({"kind": "ck.agent.protocol_session.start"})];
+        let events = vec![json!({"kind": "ck.agent.interop_session.start"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Middle event is not a status
         let events = vec![
-            json!({"kind": "ck.agent.protocol_session.start"}),
+            json!({"kind": "ck.agent.interop_session.start"}),
             json!({"kind": "ck.message.create"}),
-            json!({"kind": "ck.agent.protocol_session.result"}),
+            json!({"kind": "ck.agent.interop_session.result"}),
         ];
         assert_eq!(
             verify_audit_chain(&events),
@@ -2468,9 +2468,9 @@ mod tests {
     #[test]
     fn verify_audit_chain_signature_invalid_when_audit_binding_is_garbage() {
         let events = vec![
-            json!({"kind": "ck.agent.protocol_session.start"}),
+            json!({"kind": "ck.agent.interop_session.start"}),
             json!({
-                "kind": "ck.agent.protocol_session.result",
+                "kind": "ck.agent.interop_session.result",
                 "payload": {
                     "audit_binding": {
                         "binding_kind": "ed25519_v1",
@@ -2513,10 +2513,10 @@ mod tests {
             },
         });
         let events = vec![
-            json!({"kind": "ck.agent.protocol_session.start"}),
-            json!({"kind": "ck.agent.protocol_session.status"}),
+            json!({"kind": "ck.agent.interop_session.start"}),
+            json!({"kind": "ck.agent.interop_session.status"}),
             json!({
-                "kind": "ck.agent.protocol_session.result",
+                "kind": "ck.agent.interop_session.result",
                 "payload": result_payload,
             }),
         ];

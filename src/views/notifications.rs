@@ -818,7 +818,15 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
     };
 
     Some(json!({
-        "notification_id": format!("invite:{realm_id}"),
+        // Key the notification identity on the unique invite id, not the
+        // realm id. The realm id is stable across the realm's whole
+        // lifetime, so a realm-scoped id made a *fresh* invite inherit the
+        // archived/read client-state (and stale per-realm mute) of an
+        // earlier invite to the same realm — silently hiding re-invites.
+        // The invite id is unique per invitation yet stable across refreshes
+        // of the same pending invite, so archive/read still persist while it
+        // is pending, and a later re-invite gets a clean, visible entry.
+        "notification_id": format!("invite:{invite_id}"),
         "invite_id": invite_id,
         "notification_kind": "invite",
         "notification_type": "invite",
@@ -949,7 +957,14 @@ fn notification_from_value(
 ) -> Option<Notification> {
     let mut eval_ctx = notification_eval_context(&value);
     // Apply the receiver's per-realm watch override (None when unconfigured).
-    eval_ctx.realm_watch_level = realm_watch_override(local_state, &eval_ctx.realm_id);
+    // Invites are exempt: they target a realm the receiver is not a member of,
+    // so a leftover per-realm mute (e.g. from a prior membership) is stale and
+    // must not short-circuit the invite out of the feed during hydration.
+    eval_ctx.realm_watch_level = if eval_ctx.notification_type == "invite" {
+        None
+    } else {
+        realm_watch_override(local_state, &eval_ctx.realm_id)
+    };
     let decision = evaluate_notification(push_rules, dnd, &eval_ctx);
 
     // T4.4 — When the watch level (not DND, not muted-short-circuit)
@@ -1211,7 +1226,12 @@ fn notification_kind_enabled(local_state: &ClientLocalState, kind: &str) -> bool
 fn notification_overrides_realm_mute(notification: &Notification) -> bool {
     matches!(
         notification.kind.as_str(),
-        "mention" | "priority" | "critical" | "urgent"
+        // Invites bypass a per-realm mute: a pending invitation targets a
+        // realm the receiver is not currently a member of (joined realms are
+        // dropped before this filter), so any `realm_watch_levels` mute is
+        // necessarily stale from a prior membership and must not swallow a
+        // fresh, actionable invite.
+        "invite" | "mention" | "priority" | "critical" | "urgent"
     )
 }
 
@@ -1290,6 +1310,50 @@ mod tests {
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
+    }
+
+    #[test]
+    fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000002";
+        // Local state left over from an earlier invite to this realm: the
+        // previous invite notification was archived, and the realm itself is
+        // muted (e.g. a prior membership the receiver left). Both are keyed on
+        // the realm — the regression was that they suppressed re-invites.
+        let mut local_state = ClientLocalState::default();
+        local_state
+            .notification_client_state
+            .entry("invite:ck:invite:00000000-0000-7000-8000-0000000000aa".to_owned())
+            .or_default()
+            .archived = true;
+        local_state
+            .realm_watch_levels
+            .insert(realm_id.to_owned(), WatchLevel::Muted);
+
+        // A brand-new invitation (distinct invite id) to the same realm.
+        let invite = json!({
+            "id": "ck:invite:00000000-0000-7000-8000-0000000000bb",
+            "schema": "ck.schema.invite.v1",
+            "realm_id": realm_id,
+            "state": "pending",
+            "created_at": "2026-06-10T00:00:00Z",
+        });
+        let mut raw = Vec::new();
+        append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
+
+        let hydrated = hydrate_notifications(raw, &local_state, None, None);
+        assert_eq!(hydrated.len(), 1, "fresh invite must hydrate");
+        let notification = &hydrated[0];
+        assert!(
+            !notification.archived,
+            "fresh invite must not inherit archive"
+        );
+        assert_eq!(
+            notification.id, "invite:ck:invite:00000000-0000-7000-8000-0000000000bb",
+            "invite notification id is keyed on the unique invite id"
+        );
+        // Realm mute must not hide an invite to a realm we are not in.
+        assert!(notification_overrides_realm_mute(notification));
+        assert!(realm_is_muted(&local_state, realm_id));
     }
 
     #[test]

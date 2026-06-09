@@ -2012,8 +2012,9 @@ pub fn build_plaintext_visible_services_event(
         .map(|service| service.trim())
         .filter(|service| !service.is_empty())
         .map(|service| -> anyhow::Result<PlaintextVisibleService> {
-            let service_did = cokret_sdk::Did::new(service.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}"))?;
+            let service_did = cokret_sdk::Did::new(service.to_owned()).map_err(|err| {
+                anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
+            })?;
             Ok(PlaintextVisibleService::new(
                 service_did,
                 "principal_server",
@@ -2171,12 +2172,7 @@ fn build_member_state_transition_event_with_binding(
     let realm_value = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
     let mut membership_payload = if membership == MembershipPayloadState::Join {
-        MembershipPayload::join(
-            realm_value,
-            member_did,
-            DeliveryStatus::Unroutable,
-            reason,
-        )
+        MembershipPayload::join(realm_value, member_did, DeliveryStatus::Unroutable, reason)
     } else {
         MembershipPayload::transition(membership, member_did, reason).with_realm_id(realm_value)
     };

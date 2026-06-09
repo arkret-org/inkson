@@ -1,4 +1,4 @@
-//! Applets — registry + protocol_session controls.
+//! Applets — registry + interop_session controls.
 //!
 //! Spec: `cokret-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
@@ -9,7 +9,7 @@
 //!   * Surfaces a registration form bound to [`crate::operation::cx_ops::applet_registration`] —
 //!     fills `service_did`, `namespace` and `capabilities` and submits via
 //!     `with_authed_api(api.submit_event_envelope)`.
-//!   * Per-session monitor lists active `protocol_session.start/status` rows so an operator can see
+//!   * Per-session monitor lists active `interop_session.start/status` rows so an operator can see
 //!     in-flight applet calls + their bridge errors.
 //!
 //! G3.Y4 additions:
@@ -128,7 +128,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("ck.applet.protocol_session."))
+                .map(|k| k.starts_with("ck.applet.interop_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -341,7 +341,7 @@ pub fn AppletsPanel(
                 }
                 if sessions.is_empty() {
                     div { class: "muted", "data-testid": "applet-session-empty",
-                        "No protocol sessions observed. Once an applet calls ck.applet.protocol_session.start the row appears here with its status updates."
+                        "No protocol sessions observed. Once an applet calls ck.applet.interop_session.start the row appears here with its status updates."
                     }
                 } else {
                     for s in sessions {
@@ -655,14 +655,14 @@ mod tests {
 
     #[test]
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
-        // The view filters with `kind.starts_with("ck.applet.protocol_session.")`.
+        // The view filters with `kind.starts_with("ck.applet.interop_session.")`.
         for kind in [
-            "ck.applet.protocol_session.start",
-            "ck.applet.protocol_session.status",
+            "ck.applet.interop_session.start",
+            "ck.applet.interop_session.status",
         ] {
-            assert!(kind.starts_with("ck.applet.protocol_session."));
+            assert!(kind.starts_with("ck.applet.interop_session."));
         }
-        assert!(!"ck.applet.registration".starts_with("ck.applet.protocol_session."));
+        assert!(!"ck.applet.registration".starts_with("ck.applet.interop_session."));
     }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────

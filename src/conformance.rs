@@ -239,13 +239,13 @@ pub fn known_event_kinds() -> Vec<&'static str> {
         "ck.profile.realm_override",
         // Agent (extensions/agent-protocol-interop — v1.1+ but kinds are core)
         "ck.agent.endpoint",
-        "ck.agent.protocol_session.result",
-        "ck.agent.protocol_session.start",
-        "ck.agent.protocol_session.status",
+        "ck.agent.interop_session.result",
+        "ck.agent.interop_session.start",
+        "ck.agent.interop_session.status",
         // Applet (extensions/applet-integration — v1.1+ but kinds are core)
         "ck.applet.bridge_error",
-        "ck.applet.protocol_session.start",
-        "ck.applet.protocol_session.status",
+        "ck.applet.interop_session.start",
+        "ck.applet.interop_session.status",
         "ck.applet.registration",
         // Range-completeness attestation (sync/operations-sync §4.2 + new in C45).
         // Non-reducer; used by audit layer to assert no silent omission within a
@@ -931,10 +931,11 @@ mod tests {
         // a `ck.patch.v1` JSON Patch against `Flow.tracks`. Net -3 more.
         // Round C45 (spec 5ed365c, 2026-05-18 main): +3 new event kinds
         // (ck.attestation.range_completeness / ck.identity.accountability_grant /
-        // ck.morph.schema_migrate). The two `.v1`-suffixed audit kinds were
-        // renamed in-place (ck.audit.epoch_key_destruction[.v1] and
-        // ck.realm.audit_policy_downgrade[.v1] — yougen does not yet surface
-        // those typed kinds, so the rename doesn't shift the count).
+        // ck.morph.schema_migrate). The two standing-audit-member kinds
+        // (ck.audit.epoch_key_destruction and ck.realm.audit_policy_downgrade)
+        // were later removed by the 2026-06-04 audit-applet-binding migration —
+        // yougen never surfaced those typed kinds, so the removal doesn't shift
+        // the count.
         // Spec `artifacts/registry/event-kind-registry.json` itself declares
         // 134 active event kinds at HEAD — yougen's `known_event_kinds()`
         // surface remains a subset (105 here).

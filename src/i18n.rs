@@ -675,16 +675,19 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.status.failed_suffix", "failed");
     dict.set(
         "mls_recovery_missing.aria_label",
-        "Encrypted history recovery is not configured",
+        "This device does not have the encryption key yet",
     );
-    dict.set("mls_recovery_missing.title", "Recovery backup is missing");
+    dict.set(
+        "mls_recovery_missing.title",
+        "This device doesn't have the key yet",
+    );
     dict.set(
         "mls_recovery_missing.subtitle",
-        "this device can't open the encrypted history yet",
+        "encrypted content can't be opened here right now",
     );
     dict.set(
         "mls_recovery_missing.description",
-        "This Realm is end-to-end encrypted, and this device does not yet hold the key to open its history. If you have another device or browser where this account is already unlocked, open it, create the encrypted-history recovery backup, then reload here. If this is your only device, restore from a Recovery Key or Encrypted Vault you set up earlier under Settings -> Recovery; without one, past encrypted messages stay sealed by design.",
+        "This Realm is end-to-end encrypted. If you just accepted an invite, the key is delivered to you automatically when you join — no passphrase needed; reload or let sync finish and new messages will open. Messages sent before you joined cannot be opened on any device — that is by design, and no recovery backup will unlock them. A recovery backup only brings back content from YOUR OWN earlier devices: set it up under Settings -> Recovery by completing the Encrypted Vault passphrase step (generating a Recovery Key by itself does not upload a cloud backup).",
     );
     dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 
@@ -1897,12 +1900,15 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_prefix", "已恢复");
     dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
     dict.set("mls_unlock.status.failed_suffix", "个失败");
-    dict.set("mls_recovery_missing.aria_label", "加密历史尚未配置恢复");
-    dict.set("mls_recovery_missing.title", "缺少恢复备份");
-    dict.set("mls_recovery_missing.subtitle", "此浏览器无法解锁加密历史");
+    dict.set("mls_recovery_missing.aria_label", "此设备尚未拿到加密密钥");
+    dict.set(
+        "mls_recovery_missing.title",
+        "此设备还没有这个 Realm 的密钥",
+    );
+    dict.set("mls_recovery_missing.subtitle", "当前无法在此打开加密内容");
     dict.set(
         "mls_recovery_missing.description",
-        "此浏览器能看到加密 Realm，但服务器上没有可用的加密历史恢复备份。请在已有且已解锁的设备上创建加密历史恢复备份，然后刷新此浏览器。",
+        "这个 Realm 是端到端加密的。如果你刚接受邀请,密钥会在你加入时自动送达——无需口令,刷新或等同步完成,新消息即可打开。你加入之前发的消息在任何设备上都无法打开——这是设计使然,任何恢复备份都解不开它们。恢复备份只用于找回你自己其他设备上的内容:请到 设置 → Recovery,完成「Encrypted Vault 口令」那一步(只生成 Recovery Key 并不会上传云端备份)。",
     );
     dict.set("mls_recovery_missing.button_dismiss", "关闭");
 

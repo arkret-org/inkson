@@ -873,9 +873,12 @@ mod tests {
         assert!(projection.iter().any(|entry| {
             entry.get("notification_id").and_then(Value::as_str) == Some("message-1")
         }));
+        // The invite notification is keyed on the unique invite id, not the
+        // realm id, so a re-invite to the same realm cannot inherit stale
+        // archive/read client-state from an earlier invite.
         assert!(projection.iter().any(|entry| {
             entry.get("notification_id").and_then(Value::as_str)
-                == Some("invite:ck:realm:0196419b-0000-7000-8000-000000000011")
+                == Some("invite:ck:invite:0196419b-0000-7000-8000-000000000010")
         }));
     }
 

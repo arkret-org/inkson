@@ -128,9 +128,9 @@ pub enum View {
     /// quarantined invites. Approve / reject buttons POST
     /// `/_cokret/local/admin/invite-quarantine/{id}/resolve`.
     Quarantine,
-    /// Agent endpoint + protocol_session monitor.
+    /// Agent endpoint + interop_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `ck.agent.endpoint` /
-    /// `ck.agent.protocol_session.{start,status,result}` via
+    /// `ck.agent.interop_session.{start,status,result}` via
     /// `crate::operation::cx_ops::agent_*` builders.
     Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by
