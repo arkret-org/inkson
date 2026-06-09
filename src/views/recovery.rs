@@ -454,77 +454,6 @@ pub fn RecoveryPanel(
 
     rsx! {
         div { class: "timeline", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
-            // R3 spec sync (b47ff6ec) — Recovery Policy / Receipt stub.
-            //
-            // Spec landed two new normative JSON schemas:
-            //   - `recovery-policy.schema.json` — policy_id, principal_id,
-            //     policy_version, proof_kinds[] (device_quorum |
-            //     recovery_unlock | threshold_recovery |
-            //     trusted_recovery_service | principal_signing).
-            //   - `recovery-receipt.schema.json` — receipt_id, principal_id,
-            //     recovery_session_id, proof_summary[], completion_timestamp.
-            //
-            // Soland exposes list / inspect endpoints (`/_cokret/self/recovery/policies`
-            // and `/_cokret/self/recovery/receipts`). Wiring lands in R3.1; this
-            // stub keeps the panel + testids stable so the QA harness can
-            // assert presence today and verify content once the live fetch
-            // is wired.
-            //
-            // TODO(R3.1): replace placeholder rows with a real
-            // `CokretApi::recovery_policy_get` / `recovery_receipt_list`
-            // fetch and decode against the schemas above.
-            div { class: "event", "data-testid": "recovery-policy-panel",
-                div { class: "event-head",
-                    span { "Recovery policy" }
-                    span { class: "badge", "spec b47ff6ec" }
-                    HelpTip { text: "The recovery policy declares which proof kinds (device_quorum, recovery_unlock, threshold_recovery, trusted_recovery_service, principal_signing) and what threshold must be met before a recovery_session can complete. Backup unlock alone is not DID ownership proof; receipts carry the proof_summary for audit." }
-                }
-                div { class: "muted",
-                    "TODO(R3.1): wire to /_cokret/self/recovery/policies + /_cokret/self/recovery/receipts. "
-                    "The panel surface and testids below stay stable so QA can assert on them today."
-                }
-                div { class: "metric-grid", "data-testid": "recovery-policy-overview",
-                    div { class: "metric",
-                        strong { "policy_id" }
-                        span { "data-testid": "recovery-policy-id", "—" }
-                        div { class: "muted", "Stable id; rotates on policy_version bump" }
-                    }
-                    div { class: "metric",
-                        strong { "policy_version" }
-                        span { "data-testid": "recovery-policy-version", "—" }
-                        div { class: "muted", "Monotonic; server rejects mismatch with recovery_policy_mismatch" }
-                    }
-                    div { class: "metric",
-                        strong { "proof_kinds" }
-                        span { "data-testid": "recovery-policy-proof-kinds", "device_quorum · recovery_unlock · threshold_recovery · trusted_recovery_service · principal_signing" }
-                        div { class: "muted", "Subset chosen by the policy author" }
-                    }
-                    div { class: "metric",
-                        strong { "threshold" }
-                        span { "data-testid": "recovery-policy-threshold", "—" }
-                        div { class: "muted", "Minimum proof count required to issue a receipt" }
-                    }
-                }
-                div { class: "event-head",
-                    span { "Receipt history" }
-                    span { class: "muted", "data-testid": "recovery-receipt-count", "0 receipts" }
-                }
-                div {
-                    class: "muted",
-                    "data-testid": "recovery-receipt-empty",
-                    "No recovery receipts on record. When a recovery_session completes, soland writes a receipt with proof_summary[]; this panel will surface the summary + completion_timestamp."
-                }
-                div {
-                    class: "muted",
-                    "data-testid": "recovery-error-hints",
-                    "Server-side errors surfaced here: "
-                    span { class: "badge red", "recovery_witness_revoke_lagging" }
-                    " "
-                    span { class: "badge red", "recovery_policy_mismatch" }
-                    " "
-                    span { class: "badge red", "challenge_proof_invalid" }
-                }
-            }
             div { class: "event",
                 div { class: "event-head",
                     span { "Recovery options" }
@@ -596,16 +525,6 @@ pub fn RecoveryPanel(
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
-                        strong { "Key derivation" }
-                        span { "Argon2id (m=64MiB, t=3, p=4)" }
-                        div { class: "muted", "OWASP-recommended parameters" }
-                    }
-                    div { class: "metric",
-                        strong { "Encryption" }
-                        span { "xchacha20poly1305" }
-                        div { class: "muted", "192-bit nonce, AEAD authenticated" }
-                    }
-                    div { class: "metric",
                         strong { "Latest upload" }
                         span {
                             "data-testid": "vault-uploaded-at",
@@ -617,8 +536,8 @@ pub fn RecoveryPanel(
                     }
                     div { class: "metric",
                         strong { "Storage" }
-                        span { "PUT /_cokret/self/keys/backups" }
-                        div { class: "muted", "Ciphertext only; the server cannot decrypt" }
+                        span { "Ciphertext only" }
+                        div { class: "muted", "The server cannot decrypt your backup" }
                     }
                 }
                 if !vault_status().is_empty() {
@@ -839,9 +758,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery Key" }
                     span { "high-entropy string · keep offline" }
-                }
-                div { class: "muted",
-                    "A fallback for when every device is lost and no guardian is reachable. Cokret never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it."
+                    HelpTip { text: "A fallback for when every device is lost and no guardian is reachable. Cokret never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
@@ -941,10 +858,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Passkey quick unlock" }
                     span { class: "muted", "browser-local WebAuthn PRF" }
-                    HelpTip { text: "This wraps the 24-word Recovery Key with a WebAuthn PRF output for this browser/RP context. It is a convenience unlock layer, not a replacement for writing down the 24 words or for fresh-device recovery policy proof." }
-                }
-                div { class: "muted",
-                    "After you generate or unlock the 24-word Recovery Key, create a local passkey wrapper so this browser can show it again after user verification. This is not a replacement for the 24 words; the encrypted wrapper is stored locally and the server still never receives the words."
+                    HelpTip { text: "This wraps the 24-word Recovery Key with a WebAuthn PRF output for this browser/RP context. It is a convenience unlock layer, not a replacement for writing down the 24 words or for fresh-device recovery policy proof. The encrypted wrapper is stored locally; the server never receives the words." }
                 }
                 div { class: "metric-grid", "data-testid": "passkey-wrap-overview",
                     div { class: "metric",
@@ -1689,9 +1603,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "What happens when recovery succeeds" }
                     span { "method-specific evidence" }
-                }
-                div { class: "muted",
-                    "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up flows."
+                    HelpTip { text: "A complete recovery session should make the new device generate its own key, bind proof to the active recovery_policy, record a recovery receipt, authorize the new device, and then unlock secret_storage / MLS history backups. This panel currently handles backup unlock; policy proof and device authorization are separate follow-up flows." }
                 }
             }
         }
