@@ -1525,9 +1525,18 @@ pub fn build_realm_create_event(
             predecessor: None,
         },
     }];
+    // The Realm entity itself has no SDK `*CreateObject` strong type yet
+    // (the realm schema is large / lives outside the operation_payloads
+    // module); the `object` Value above is hand-built. But the `{object}`
+    // create-payload envelope is shared, so wrap it through the SDK
+    // `ObjectCreatePayload` to align the envelope shape with
+    // `realm_create_payload` (object, additionalProperties:false).
+    let realm_body = cokret_sdk::ObjectCreatePayload::new(object.clone())
+        .to_value()
+        .map_err(|e| anyhow::anyhow!("ck.realm.create payload serialize: {e}"))?;
     let mut envelope = OperationBuilder::new(realm_id, actor_id, "ck.realm.create")
         .target_ref(realm_id)
-        .body(json!({ "object": object }))
+        .body(realm_body)
         .preconditions(preconditions)
         .effects(effects)
         .requirements(EventRequirements {
