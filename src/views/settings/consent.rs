@@ -21,8 +21,13 @@ pub fn ConsentSettingsCard(
     let mut loaded = use_signal(|| false);
     let mut show_form = use_signal(|| false);
     let mut new_scope = use_signal(|| "message".to_owned());
+    let new_scope_selected = use_memo(move || Some(new_scope()));
     let mut new_grantee = use_signal(String::new);
     let mut new_ttl = use_signal(|| "30d".to_owned());
+    let mut show_request_form = use_signal(|| false);
+    let mut request_scope = use_signal(|| "message".to_owned());
+    let request_scope_selected = use_memo(move || Some(request_scope()));
+    let mut request_holder = use_signal(String::new);
     let mut selected_cell_id = use_signal(String::new);
     let mut detail_scope = use_signal(|| "message".to_owned());
     let detail_scope_selected = use_memo(move || Some(detail_scope()));
@@ -54,13 +59,14 @@ pub fn ConsentSettingsCard(
                 }
             } else {
                 ul { class: "settings-list",
-                    for cell in cells.read().iter().filter(|cell| cell.state == "pending").cloned() {
+                    for cell in cells.read().iter().filter(|cell| cell.holder_did == account_did() && cell.state != "granted").cloned() {
                         li {
                             class: "event",
                             "data-testid": "consent-pending-row",
+                            "data-cell-state": "{cell.state}",
                             "data-cell-id": "{cell.cell_id}",
                             div { class: "event-head",
-                                span { "pending" }
+                                span { "{cell.state}" }
                                 span { class: "mono", title: "{cell.peer_did}", "{short_protocol_id(&cell.peer_did)}" }
                             }
                             div { class: "mono", "{cell.peer_did}" }
@@ -92,6 +98,8 @@ pub fn ConsentSettingsCard(
                                         SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "invite", "invite" }
                                         SelectOption::<String> { index: 1usize, value: "message".to_string(), text_value: "message", "message" }
                                         SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "call", "call" }
+                                        SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "presence", "presence" }
+                                        SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "any", "any" }
                                     }
                                     Input {
                                         "data-testid": "consent-expires-at-input",
@@ -139,7 +147,7 @@ pub fn ConsentSettingsCard(
                             }
                         }
                     }
-                    for cell in cells.read().iter().filter(|cell| cell.state == "granted").cloned() {
+                    for cell in cells.read().iter().filter(|cell| cell.holder_did == account_did() && cell.state == "granted").cloned() {
                         {
                             let peer_label = short_protocol_id(&cell.peer_did);
                             let expiry_label = cell
@@ -192,6 +200,20 @@ pub fn ConsentSettingsCard(
                             }
                         }
                     }
+                    for cell in cells.read().iter().filter(|cell| cell.peer_did == account_did() && cell.holder_did != account_did()).cloned() {
+                        li {
+                            class: "event",
+                            "data-testid": "consent-outgoing-request-row",
+                            "data-cell-state": "{cell.state}",
+                            "data-cell-id": "{cell.cell_id}",
+                            div { class: "event-head",
+                                span { "requested ({cell.state})" }
+                                span { class: "mono", title: "{cell.holder_did}", "{short_protocol_id(&cell.holder_did)}" }
+                            }
+                            div { class: "mono", "{cell.holder_did}" }
+                            div { class: "muted", "{cell.scope}" }
+                        }
+                    }
                 }
             }
 
@@ -202,14 +224,25 @@ pub fn ConsentSettingsCard(
                     onclick: move |_| show_form.set(!show_form()),
                     if show_form() { "Cancel" } else { "New grant" }
                 }
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    "data-testid": "consent-request-button",
+                    onclick: move |_| show_request_form.set(!show_request_form()),
+                    if show_request_form() { "Cancel" } else { "Request consent" }
+                }
             }
 
             if show_form() {
                 div { class: "event",
-                    Input {
+                    Select::<String> {
                         "data-testid": "consent-new-grant-scope-input",
-                        value: "{new_scope}",
-                        oninput: move |event: FormEvent| new_scope.set(event.value()),
+                        value: Some(new_scope_selected.into()),
+                        on_value_change: move |v: Option<String>| { if let Some(v) = v { new_scope.set(v); } },
+                        SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "invite", "invite" }
+                        SelectOption::<String> { index: 1usize, value: "message".to_string(), text_value: "message", "message" }
+                        SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "call", "call" }
+                        SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "presence", "presence" }
+                        SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "any", "any" }
                     }
                     Input {
                         "data-testid": "consent-new-grant-grantee-input",
@@ -264,9 +297,60 @@ pub fn ConsentSettingsCard(
                 }
             }
 
+            if show_request_form() {
+                div { class: "event", "data-testid": "consent-request-form",
+                    div { class: "muted", "Ask another DID to grant you consent" }
+                    Select::<String> {
+                        "data-testid": "consent-request-scope-input",
+                        value: Some(request_scope_selected.into()),
+                        on_value_change: move |v: Option<String>| { if let Some(v) = v { request_scope.set(v); } },
+                        SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "invite", "invite" }
+                        SelectOption::<String> { index: 1usize, value: "message".to_string(), text_value: "message", "message" }
+                        SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "call", "call" }
+                        SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "presence", "presence" }
+                        SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "any", "any" }
+                    }
+                    Input {
+                        "data-testid": "consent-request-holder-input",
+                        value: "{request_holder}",
+                        placeholder: "did:web:holder.example",
+                        oninput: move |event: FormEvent| request_holder.set(event.value()),
+                    }
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "consent-request-submit-button",
+                        disabled: request_holder.read().trim().is_empty(),
+                        onclick: {
+                            let base = base_url();
+                            move |_| {
+                                let api_token = token();
+                                let base = base.clone();
+                                let holder = request_holder().trim().to_owned();
+                                let scope = request_scope().trim().to_owned();
+                                spawn(async move {
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        api.request_consent_cell(&holder, &scope).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            show_request_form.set(false);
+                                            request_holder.set(String::new());
+                                            status.set("requested".to_owned());
+                                            refresh_consent_cells(base, token(), cells, status);
+                                        }
+                                        Err(err) => status.set(format!("request error {}", err.display())),
+                                    }
+                                });
+                            }
+                        },
+                        "Submit"
+                    }
+                }
+            }
+
             if !status.read().is_empty() {
                 div { class: "muted", "data-testid": "write-status", "{status}" }
-                div { class: "muted", "data-testid": "consent-new-grant-status", "{status}" }
             }
         }
     }

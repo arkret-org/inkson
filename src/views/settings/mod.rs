@@ -495,6 +495,40 @@ pub(crate) fn is_likely_valid_did(input: &str) -> bool {
     true
 }
 
+/// Client-side DNS-domain sanity check for the blocklist `domain` target
+/// (`client-preferences.md` §3.5 / `content-moderation.md` §4.3). Like
+/// [`is_likely_valid_did`] this only powers *live* form feedback — the wire
+/// value is normalized by `account_data::normalize_blocklist_value` and the
+/// real DID/claim resolution happens client-side before the block applies.
+/// Accepts a bare multi-label domain (`example.com`, `sub.acme.example`);
+/// rejects schemes, ports, paths, whitespace, `@`, and single-label inputs.
+pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
+    let value = input.trim();
+    if value.is_empty() || value.len() > 253 {
+        return false;
+    }
+    if value.contains(|c: char| c.is_whitespace())
+        || value.contains('/')
+        || value.contains(':')
+        || value.contains('@')
+    {
+        return false;
+    }
+    let labels: Vec<&str> = value.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    })
+}
+
 /// Spec client-preferences.md §3.7: push (or tombstone) a Realm remark to
 /// soland via `ck.account_data.set`. Same graceful-degradation contract as
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
