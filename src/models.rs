@@ -520,40 +520,15 @@ pub struct SolandDirectoryDescribeResBody {
     pub restricted_query_proof: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveRealmOutcome {
-    pub realm_preview: RealmTreeNode,
-    #[serde(default)]
-    pub stripped_state: Vec<Value>,
-    pub join_rule: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub join_candidates: Vec<RealmJoinCandidate>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmJoinCandidate {
-    pub realm_id: String,
-    pub service_did: String,
-    pub service_type: String,
-    pub role: String,
-    #[serde(default)]
-    pub endpoint: Option<String>,
-    #[serde(default)]
-    pub operations: Vec<String>,
-    #[serde(default)]
-    pub join_methods: Vec<String>,
-    #[serde(default)]
-    pub priority: Option<u16>,
-    pub source: String,
-    #[serde(default)]
-    pub source_refs: Option<Vec<String>>,
-    #[serde(default)]
-    pub frontier_ref: Option<String>,
-    pub as_of: String,
-    pub expires_at: String,
-    #[serde(default)]
-    pub proofs: Vec<Value>,
-}
+// `resolve-realm` decodes into the canonical SDK wire types so the client stays
+// byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
+// yougen-local duplicate previously drifted from the wire (a required
+// `public`/`title` on the preview node, a non-optional `join_rule`) and broke
+// invite-accept with "error decoding response body" whenever the server omitted
+// those fields. The SDK type is the single source of truth.
+pub use cokret_sdk::model::{
+    DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
+};
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
 /// Space. Wire signal is either the `ck.schema.{realm,space}.v1` schema

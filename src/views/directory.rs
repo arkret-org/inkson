@@ -494,8 +494,13 @@ pub fn DirectoryPanel(
                                             .await
                                             {
                                                 Ok(resolved) => {
-                                                    selected_realm_id.set(resolved.realm_preview.id);
-                                                    status.set(format!("resolved {}", resolved.join_rule));
+                                                    selected_realm_id.set(
+                                                        resolved.realm_preview.realm_id.as_str().to_owned(),
+                                                    );
+                                                    status.set(format!(
+                                                        "resolved {:?}",
+                                                        resolved.join_rule
+                                                    ));
                                                 }
                                                 Err(err) => status.set(format!(
                                                     "resolve failed: {}", err.display()
