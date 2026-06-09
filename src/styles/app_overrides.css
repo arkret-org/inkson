@@ -1918,18 +1918,12 @@
   transform: translateY(-1px);
 }
 
-.sidebar-toolbar-link.add-realm-cta {
+.sidebar-toolbar-link.add-realm-cta,
+.sidebar-toolbar-link.add-contact-cta {
   color: #1a1a1a;
   background: linear-gradient(135deg, #ffb547 0%, #ff8a3d 100%);
   border-color: color-mix(in srgb, #ff8a3d 64%, transparent);
   box-shadow: 0 4px 10px rgba(255, 138, 61, 0.16);
-}
-
-.sidebar-toolbar-link.add-contact-cta {
-  color: #07130f;
-  background: linear-gradient(135deg, #9de7c8 0%, #63c2ff 100%);
-  border-color: color-mix(in srgb, #63c2ff 64%, transparent);
-  box-shadow: 0 4px 10px rgba(99, 194, 255, 0.14);
 }
 
 .realm-tree-item {
@@ -3362,6 +3356,19 @@
   overflow: visible;
   align-content: start;
   gap: 16px;
+}
+
+.compose-safety-banner {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--warning-ink, var(--text));
+  background: color-mix(in srgb, var(--warning-soft) 58%, var(--surface));
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .workspace-body > .timeline.kanban-panel {

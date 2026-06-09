@@ -8,7 +8,6 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
-use crate::conformance::PlaintextBoundary;
 use crate::crypto::compose_local_encrypted_message;
 use crate::local_state::{LocalStateStore, ReadMarkerRecord};
 use crate::media::{hash_matches, media_type_preview_policy, sha256_hex};
@@ -16,7 +15,6 @@ use crate::operation::{EventEnvelope, OperationBuilder, uuid_v7};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
-use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
     active_sync_token, authed_api_with_sync, short_protocol_id, with_authed_api,
@@ -24,6 +22,12 @@ use crate::views::helpers::{
 };
 
 const ATTACHMENT_BYTES: &[u8] = b"yougen encrypted bytes";
+
+pub(crate) const TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY: &str = "timeline.encrypt_local_default";
+pub(crate) const TIMELINE_INCIDENT_PRIORITY_KEY: &str = "timeline.incident_priority";
+pub(crate) const TIMELINE_PUBLIC_UPDATE_GUARD_KEY: &str = "timeline.public_update_guard";
+pub(crate) const TIMELINE_PRIVATE_PLAINTEXT_KEY: &str = "timeline.private_plaintext";
+pub(crate) const TIMELINE_PLAINTEXT_ACK_KEY: &str = "timeline.plaintext_ack";
 
 const EMOJI_GRID: &[&str] = &[
     "\u{1f44d}",
@@ -257,6 +261,29 @@ fn incident_priority_wire_value(priority: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) fn timeline_private_data_bool(
+    store: &LocalStateStore,
+    account_key: &str,
+    key: &str,
+    default_value: bool,
+) -> bool {
+    store
+        .load_private_data(account_key, key)
+        .as_deref()
+        .map(|value| matches!(value, "true" | "1" | "yes" | "on"))
+        .unwrap_or(default_value)
+}
+
+pub(crate) fn timeline_incident_priority_preference(
+    store: &LocalStateStore,
+    account_key: &str,
+) -> String {
+    match store.load_private_data(account_key, TIMELINE_INCIDENT_PRIORITY_KEY) {
+        Some(value) if matches!(value.as_str(), "sev1" | "sev2" | "sev3" | "normal") => value,
+        _ => "normal".to_owned(),
+    }
+}
+
 fn public_update_requires_sanitization(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     [
@@ -421,7 +448,13 @@ pub fn TimelinePanel(
     let mut redact_confirm = use_signal(|| Option::<usize>::None);
     let mut reply_to_index = use_signal(|| Option::<usize>::None);
     let mut thread_open = use_signal(|| Option::<usize>::None);
-    let mut encrypt_toggle = use_signal(|| false);
+    let initial_encrypt_local = timeline_private_data_bool(
+        &state_store.read(),
+        &account_did,
+        TIMELINE_ENCRYPT_LOCAL_DEFAULT_KEY,
+        false,
+    );
+    let mut encrypt_toggle = use_signal(|| initial_encrypt_local);
     let _typing_indicator = use_signal(String::new);
     let mut read_receipts = use_signal(Vec::<String>::new);
     let mut receipt_status = use_signal(|| "Read receipt: none".to_owned());
@@ -429,12 +462,26 @@ pub fn TimelinePanel(
     let mut attached_blob = use_signal(|| Option::<BlobAttachment>::None);
     let mut write_status = use_signal(String::new);
     let mut search_query = use_signal(String::new);
-    let mut private_plaintext = use_signal(|| false);
-    let mut plaintext_ack = use_signal(|| false);
-    let mut incident_priority = use_signal(|| "normal".to_owned());
-    let incident_priority_selected = use_memo(move || Some(incident_priority()));
-    let mut public_update_guard = use_signal(|| true);
-    let mut public_update_guard_status = use_signal(|| "public update guard ready".to_owned());
+    let timeline_public_update_guard = timeline_private_data_bool(
+        &state_store.read(),
+        &account_did,
+        TIMELINE_PUBLIC_UPDATE_GUARD_KEY,
+        true,
+    );
+    let timeline_private_plaintext = timeline_private_data_bool(
+        &state_store.read(),
+        &account_did,
+        TIMELINE_PRIVATE_PLAINTEXT_KEY,
+        false,
+    );
+    let timeline_plaintext_ack = timeline_private_data_bool(
+        &state_store.read(),
+        &account_did,
+        TIMELINE_PLAINTEXT_ACK_KEY,
+        false,
+    );
+    let timeline_incident_priority =
+        timeline_incident_priority_preference(&state_store.read(), &account_did);
     let mut initial_sync_requested = use_signal(|| false);
     // Perf (P0): the composer used to persist the whole draft state and POST a
     // `ck.typing` ephemeral on every keystroke. Debounce the draft persist and
@@ -500,13 +547,10 @@ pub fn TimelinePanel(
             let decision_event_id = event.event_id.clone().unwrap_or_else(|| event.id.clone());
             (decision_event_id, target_ref)
         });
-    let plaintext_service = plaintext_visible_service(&base_url);
-    let plaintext_boundary = PlaintextBoundary {
-        allowed_services: vec![plaintext_service.clone()],
-        is_e2ee: encrypt_toggle(),
-    };
-    let plaintext_can_leave = plaintext_boundary.can_send_plaintext(&plaintext_service);
-    let plaintext_blocked = private_plaintext() && !encrypt_toggle() && !plaintext_ack();
+    let plaintext_blocked =
+        timeline_private_plaintext && !encrypt_toggle() && !timeline_plaintext_ack;
+    let timeline_incident_priority_for_keydown = timeline_incident_priority.clone();
+    let timeline_incident_priority_for_button = timeline_incident_priority.clone();
 
     if timeline().is_empty() && !initial_sync_requested() && !token().trim().is_empty() {
         initial_sync_requested.set(true);
@@ -789,77 +833,77 @@ pub fn TimelinePanel(
                                 }
                             }
 
-                            if !event.reactions.is_empty() {
-                                div { class: "actions",
-                                    for (emoji, senders) in &event.reactions {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "reaction-badge",
-                                            "{emoji} {senders.len()}"
+                                if !event.reactions.is_empty() {
+                                    div { class: "actions",
+                                        for (emoji, senders) in &event.reactions {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                "data-testid": "reaction-badge",
+                                                "{emoji} {senders.len()}"
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "reply-button",
-                                    onclick: move |_| reply_to_index.set(Some(idx)),
-                                    "Reply"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "react-button",
-                                    onclick: move |_| {
-                                        let current = show_reaction_picker();
-                                        show_reaction_picker.set(if current == Some(idx) { None } else { Some(idx) });
-                                    },
-                                    "React"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "edit-button",
-                                    onclick: {
-                                        let body = event.body.clone();
-                                        move |_| {
-                                            editing_index.set(Some(idx));
-                                            edit_draft.set(body.clone());
-                                        }
-                                    },
-                                    "Edit"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "redact-button",
-                                    onclick: move |_| redact_confirm.set(Some(idx)),
-                                    "Redact"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "thread-button",
-                                    onclick: move |_| {
-                                        let current = thread_open();
-                                        thread_open.set(if current == Some(idx) { None } else { Some(idx) });
-                                    },
-                                    "Thread"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "mark-read-button",
-                                    disabled: event.pending || selected_realm_id.trim().is_empty(),
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let event_id = event.id.clone();
-                                        let realm = selected_realm_id.clone();
-                                        let topic_id = event.thread_id.clone();
-                                        let actor = account_did.clone();
-                                        let device = device_id.clone();
-                                        move |_| {
-                                            if event_id.trim().is_empty() || realm.trim().is_empty() {
-                                                write_status.set("mark read skipped: missing event or realm".to_owned());
-                                                return;
+                                div { class: "actions",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "reply-button",
+                                        onclick: move |_| reply_to_index.set(Some(idx)),
+                                        "Reply"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "react-button",
+                                        onclick: move |_| {
+                                            let current = show_reaction_picker();
+                                            show_reaction_picker.set(if current == Some(idx) { None } else { Some(idx) });
+                                        },
+                                        "React"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "edit-button",
+                                        onclick: {
+                                            let body = event.body.clone();
+                                            move |_| {
+                                                editing_index.set(Some(idx));
+                                                edit_draft.set(body.clone());
                                             }
+                                        },
+                                        "Edit"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "redact-button",
+                                        onclick: move |_| redact_confirm.set(Some(idx)),
+                                        "Redact"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "thread-button",
+                                        onclick: move |_| {
+                                            let current = thread_open();
+                                            thread_open.set(if current == Some(idx) { None } else { Some(idx) });
+                                        },
+                                        "Thread"
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "mark-read-button",
+                                        disabled: event.pending || selected_realm_id.trim().is_empty(),
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let event_id = event.id.clone();
+                                            let realm = selected_realm_id.clone();
+                                            let topic_id = event.thread_id.clone();
+                                            let actor = account_did.clone();
+                                            let device = device_id.clone();
+                                            move |_| {
+                                                if event_id.trim().is_empty() || realm.trim().is_empty() {
+                                                    write_status.set("mark read skipped: missing event or realm".to_owned());
+                                                    return;
+                                                }
 
                                             let marker = state_store.write().save_read_cursor(
                                                 actor.clone(),
@@ -1250,25 +1294,24 @@ pub fn TimelinePanel(
                         }
 
                         if let Some(fact) = event.fact_summary() {
-                            div { class: "muted", "data-testid": "event-fact", "{fact}" }
-                        }
+                                div { class: "muted", "data-testid": "event-fact", "{fact}" }
+                            }
 
-                                if !event.revisions.is_empty() {
-                                    div { class: "section", "data-testid": "revision-chain",
-                                        div { class: "muted", "Revision chain ({event.revisions.len()})" }
-                                        for revision in &event.revisions {
-                                            {
-                                                let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
-                                                let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
-                                                rsx! {
-                                                    div { class: "muted", "data-testid": "revision-entry",
-                                                        "{revision.timestamp}: {revision.body}"
-                                                        if let Some(operation_id) = &revision_operation_id_label {
-                                                            " [{operation_id}]"
-                                                        }
-                                                        if let Some(event_id) = &revision_event_id_label {
-                                                            " / {event_id}"
-                                                        }
+                            if !event.revisions.is_empty() {
+                                div { class: "section", "data-testid": "revision-chain",
+                                    div { class: "muted", "Revision chain ({event.revisions.len()})" }
+                                    for revision in &event.revisions {
+                                        {
+                                            let revision_operation_id_label = revision.operation_id.as_ref().map(short_protocol_id);
+                                            let revision_event_id_label = revision.event_id.as_ref().map(short_protocol_id);
+                                            rsx! {
+                                                div { class: "muted", "data-testid": "revision-entry",
+                                                    "{revision.timestamp}: {revision.body}"
+                                                    if let Some(operation_id) = &revision_operation_id_label {
+                                                        " [{operation_id}]"
+                                                    }
+                                                    if let Some(event_id) = &revision_event_id_label {
+                                                        " / {event_id}"
                                                     }
                                                 }
                                             }
@@ -1276,10 +1319,11 @@ pub fn TimelinePanel(
                                     }
                                 }
                             }
-                        }
+            }
                     }
                 }
             }
+        }
 
             if timeline().is_empty() {
                 div { class: "event",
@@ -1319,98 +1363,12 @@ pub fn TimelinePanel(
         }
 
         div { class: "{composer_class}", "data-testid": "composer",
-            div {
-                class: "event",
-                "data-testid": "incident-response-controls",
-                div { class: "event-head",
-                    span { "Incident response" }
-                    span { "priority and public update guard" }
-                }
-                div { class: "actions",
-                    label {
-                        span { "Priority" }
-                        Select::<String> {
-                            "data-testid": "incident-priority-select",
-                            value: Some(incident_priority_selected.into()),
-                            on_value_change: move |v: Option<String>| {
-                                if let Some(v) = v {
-                                    incident_priority.set(v);
-                                }
-                            },
-                            SelectOption::<String> { index: 0usize, value: "normal".to_string(), text_value: "Normal", "Normal" }
-                            SelectOption::<String> { index: 1usize, value: "sev3".to_string(), text_value: "SEV-3", "SEV-3" }
-                            SelectOption::<String> { index: 2usize, value: "sev2".to_string(), text_value: "SEV-2", "SEV-2" }
-                            SelectOption::<String> { index: 3usize, value: "sev1".to_string(), text_value: "SEV-1", "SEV-1" }
-                        }
-                    }
-                    label {
-                        Checkbox {
-                            "data-testid": "public-update-guard-toggle",
-                            checked: if public_update_guard() {
-                                CheckboxState::Checked
-                            } else {
-                                CheckboxState::Unchecked
-                            },
-                            on_checked_change: move |state: CheckboxState| {
-                                public_update_guard.set(bool::from(state))
-                            },
-                        }
-                        " Public update guard"
-                    }
-                }
+            if plaintext_blocked {
                 div {
-                    class: "muted",
-                    "data-testid": "public-update-guard-status",
-                    "{public_update_guard_status}"
-                }
-            }
-            div {
-                class: "event",
-                "data-testid": "plaintext-boundary-panel",
-                role: "note",
-                "aria-label": "Plaintext boundary",
-                div { class: "event-head",
-                    span { "Plaintext boundary" }
-                    span {
-                        "data-testid": "plaintext-boundary-state",
-                        if encrypt_toggle() { "encrypted local" } else if plaintext_blocked { "private plaintext blocked" } else if plaintext_can_leave { "plaintext visible" } else { "blocked" }
-                    }
-                }
-                div { class: "muted", "data-testid": "plaintext-visible-services",
-                    "Visible service: {plaintext_service}"
-                }
-                div { class: "muted", "data-testid": "plaintext-preview-disclosure",
-                    "Plaintext messages may be visible to the configured server and may feed server-side search, previews, moderation, and notification snippets."
-                }
-                label {
-                    Checkbox {
-                        "data-testid": "private-plaintext-toggle",
-                        checked: if private_plaintext() {
-                            CheckboxState::Checked
-                        } else {
-                            CheckboxState::Unchecked
-                        },
-                        on_checked_change: move |state: CheckboxState| {
-                            private_plaintext.set(bool::from(state));
-                            plaintext_ack.set(false);
-                        },
-                    }
-                    " Mark draft as private"
-                }
-                if private_plaintext() && !encrypt_toggle() {
-                    div {
-                        class: "muted",
-                        "data-testid": "plaintext-boundary-warning",
-                        "Private plaintext is not E2EE. Enable Encrypt Local or acknowledge that this server may see the body."
-                    }
-                    if !plaintext_ack() {
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "plaintext-boundary-ack",
-                            onclick: move |_| plaintext_ack.set(true),
-                            "Acknowledge plaintext exposure"
-                        }
-                    }
+                    class: "compose-safety-banner",
+                    "data-testid": "plaintext-boundary-warning",
+                    role: "alert",
+                    "Private plaintext is blocked by Timeline settings."
                 }
             }
             if let Some(reply_idx) = reply_to_index() {
@@ -1629,14 +1587,12 @@ pub fn TimelinePanel(
                             write_status.set("epoch_update_required: waiting for MLS Remove/Commit".to_owned());
                             return;
                         }
-                        if public_update_guard() && public_update_requires_sanitization(&body) {
+                        if timeline_public_update_guard && public_update_requires_sanitization(&body) {
                             let msg = "public update blocked: remove internal incident details before posting".to_owned();
-                            public_update_guard_status.set(msg.clone());
                             write_status.set(msg);
                             return;
                         }
-                        public_update_guard_status.set("public update guard passed".to_owned());
-                        if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
+                        if timeline_private_plaintext && !encrypt_toggle() && !timeline_plaintext_ack {
                             write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                             return;
                         }
@@ -1646,7 +1602,8 @@ pub fn TimelinePanel(
                         let realm_for_encrypt = selected_realm_key.clone();
                         let realm_for_plain = selected_realm_key.clone();
                         let realm_for_draft = selected_realm_key.clone();
-                        let incident_priority_for_send = incident_priority();
+                        let incident_priority_for_send =
+                            timeline_incident_priority_for_keydown.clone();
                         if encrypt_toggle() {
                             match compose_local_encrypted_message(
                                 &account_did_key,
@@ -1741,7 +1698,6 @@ pub fn TimelinePanel(
                         draft.set(String::new());
                         state_store.write().save_draft(realm_for_draft, String::new());
                         reply_to_index.set(None);
-                        plaintext_ack.set(false);
                     }
                 },
             }
@@ -1905,14 +1861,12 @@ pub fn TimelinePanel(
                             if body.is_empty() {
                                 return;
                             }
-                            if public_update_guard() && public_update_requires_sanitization(&body) {
+                            if timeline_public_update_guard && public_update_requires_sanitization(&body) {
                                 let msg = "public update blocked: remove internal incident details before posting".to_owned();
-                                public_update_guard_status.set(msg.clone());
                                 write_status.set(msg);
                                 return;
                             }
-                            public_update_guard_status.set("public update guard passed".to_owned());
-                            if private_plaintext() && !encrypt_toggle() && !plaintext_ack() {
+                            if timeline_private_plaintext && !encrypt_toggle() && !timeline_plaintext_ack {
                                 write_status.set("plaintext blocked: acknowledge boundary or enable encryption".to_owned());
                                 return;
                             }
@@ -1923,7 +1877,8 @@ pub fn TimelinePanel(
                             let realm_for_encrypt = sc.clone();
                             let realm_for_plain = sc.clone();
                             let realm_for_draft = sc.clone();
-                            let incident_priority_for_send = incident_priority();
+                            let incident_priority_for_send =
+                                timeline_incident_priority_for_button.clone();
                             if encrypt_toggle() {
                                 match compose_local_encrypted_message(
                                     &ac,
@@ -1951,7 +1906,6 @@ pub fn TimelinePanel(
                                         state_store.write().save_draft(realm_for_encrypt, "");
                                         draft.set(String::new());
                                         reply_to_index.set(None);
-                                        plaintext_ack.set(false);
                                     }
                                     Err(error) => crypto_state.set(format!("encrypt failed: {error}")),
                                 }
@@ -1969,7 +1923,6 @@ pub fn TimelinePanel(
                                 state_store.write().save_draft(realm_for_draft, "");
                                 draft.set(String::new());
                                 reply_to_index.set(None);
-                                plaintext_ack.set(false);
 
                                 let base = base_url_sig();
                                 let realm = realm_for_plain;
@@ -2273,7 +2226,7 @@ fn read_cursor_status_label(marker: &ReadMarkerRecord) -> String {
     )
 }
 
-fn plaintext_visible_service(base_url: &str) -> String {
+pub(crate) fn plaintext_visible_service(base_url: &str) -> String {
     base_url
         .split_once("://")
         .and_then(|(_, rest)| rest.split('/').next())

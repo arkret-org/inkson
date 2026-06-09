@@ -5804,6 +5804,7 @@ fn settings_route_label(section: &str) -> &'static str {
         "consent" => "Consent grants",
         "blocklist" | "blocked-users" => "Blocked actors",
         "capabilities" => "Capabilities",
+        "timeline" | "composer" => "Timeline & composer",
         "audit" | "audit-log" | "developer" | "developer-tools" => "Diagnostics",
         "theme" => "Appearance & locale",
         "release" => "Diagnostics",

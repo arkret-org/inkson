@@ -84,17 +84,30 @@ impl RealmAdminSection {
         }
     }
 
-    fn sections() -> [Self; 6] {
-        [
-            Self::Overview,
-            Self::Profile,
-            Self::Access,
-            Self::Security,
-            Self::Federation,
-            Self::Repair,
-        ]
+    fn route(self, realm_id: String) -> Route {
+        match self.slug() {
+            Some(slug) => Route::RealmAdminSection {
+                realm_id,
+                section: slug.to_owned(),
+            },
+            None => Route::RealmAdmin { realm_id },
+        }
     }
 }
+
+const REALM_ADMIN_REALM_GROUP: &[RealmAdminSection] =
+    &[RealmAdminSection::Overview, RealmAdminSection::Profile];
+const REALM_ADMIN_POLICY_GROUP: &[RealmAdminSection] = &[
+    RealmAdminSection::Access,
+    RealmAdminSection::Security,
+    RealmAdminSection::Federation,
+];
+const REALM_ADMIN_OPERATIONS_GROUP: &[RealmAdminSection] = &[RealmAdminSection::Repair];
+const REALM_ADMIN_NAV_GROUPS: &[(&str, &[RealmAdminSection])] = &[
+    ("Realm", REALM_ADMIN_REALM_GROUP),
+    ("Policy", REALM_ADMIN_POLICY_GROUP),
+    ("Operations", REALM_ADMIN_OPERATIONS_GROUP),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MetadataSubject {
@@ -1576,29 +1589,44 @@ pub fn RealmAdminPanel(
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
 
     rsx! {
-        div { class: "timeline", "data-testid": "realm-admin-panel",
-            div { class: "actions", "data-testid": "realm-admin-sections",
-                for section in RealmAdminSection::sections() {
-                    if let Some(slug) = section.slug() {
-                        Link {
-                            class: if active_section == section { "primary" } else { "secondary" },
-                            to: Route::RealmAdminSection {
-                                realm_id: selected_realm_id.clone(),
-                                section: slug.to_owned(),
-                            },
-                            "{section.label()}"
+        div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
+            div { class: "settings-shell realm-settings-shell",
+                aside { class: "settings-sidebar-column", "data-testid": "realm-admin-sections",
+                    for (group_index, (group_label, sections)) in REALM_ADMIN_NAV_GROUPS.iter().copied().enumerate() {
+                        div { class: "settings-nav-cluster",
+                            div { class: "settings-nav-group-label", "{group_label}" }
+                            for section in sections.iter().copied() {
+                                {
+                                    let section_slug = section.slug().unwrap_or("overview");
+                                    rsx! {
+                                        Link {
+                                            class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
+                                            "data-testid": "realm-admin-nav-item-{section_slug}",
+                                            "aria-current": if active_section == section { "page" } else { "false" },
+                                            to: section.route(selected_realm_id.clone()),
+                                            strong { "{section.label()}" }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        Link {
-                            class: if active_section == section { "primary" } else { "secondary" },
-                            to: Route::RealmAdmin {
-                                realm_id: selected_realm_id.clone(),
-                            },
-                            "{section.label()}"
+                        if group_index + 1 < REALM_ADMIN_NAV_GROUPS.len() {
+                            div { class: "settings-nav-divider", "aria-hidden": "true" }
                         }
                     }
                 }
-            }
+                section { class: "settings-content-column realm-settings-content",
+                    div { class: "event settings-content-hero",
+                        div { class: "settings-content-title-row",
+                            h2 { class: "settings-content-title", "{active_section.label()}" }
+                            span { class: "badge", "{metadata_subject_label}" }
+                        }
+                        Link {
+                            class: "secondary",
+                            to: Route::RealmMembers { realm_id: selected_realm_id.clone() },
+                            {crate::i18n::tr("realm_admin.members")}
+                        }
+                    }
             if active_section == RealmAdminSection::Overview {
                 div { class: "event", "data-testid": "realm-admin-overview",
                     div { class: "event-head",
@@ -2898,6 +2926,8 @@ pub fn RealmAdminPanel(
 
             if !status_msg().is_empty() {
                 div { class: "muted", "data-testid": "realm-admin-status", "{status_msg}" }
+            }
+                }
             }
         }
     }

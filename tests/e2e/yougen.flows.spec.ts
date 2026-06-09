@@ -33,6 +33,11 @@ async function refreshServer(page: import("@playwright/test").Page) {
   await page.getByTestId("server-option").filter({ hasText: "https://local.host" }).click();
 }
 
+async function gotoAndDismissRecovery(page: import("@playwright/test").Page, url: string) {
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await dismissBlockingRecoveryModal(page);
+}
+
 async function openSettings(page: import("@playwright/test").Page) {
   await latestTestId(page, "account-menu-button").click();
   await latestTestId(page, "account-menu-settings").click();
@@ -40,7 +45,8 @@ async function openSettings(page: import("@playwright/test").Page) {
 
 async function openTimeline(page: import("@playwright/test").Page) {
   await page.goto(`/timeline/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("timeline")).toBeVisible();
+  await dismissBlockingRecoveryModal(page);
+  await expect(latestTestId(page, "timeline")).toBeVisible();
 }
 
 async function openDiscussion(page: import("@playwright/test").Page) {
@@ -1446,19 +1452,23 @@ test("plaintext compose keeps request ids, revision chains, tombstones, and loca
 });
 
 test("timeline mark-read sends public receipt and stores private marker", async ({ page }) => {
-  await refreshServer(page);
   await openTimeline(page);
-  await expect(page.getByTestId("timeline-event").first()).toBeVisible();
+  const sendRequest = page.waitForRequest("**/_cokret/self/events");
+  await latestTestId(page, "composer-input").fill("read marker target");
+  await latestTestId(page, "send-button").click();
+  expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
+  await expect(latestTestId(page, "write-status")).toContainText("persisted");
+  await expect(page.getByTestId("timeline-event").filter({ hasText: "read marker target" }).last()).toBeVisible();
 
   const receiptRequest = page.waitForRequest("**/_cokret/self/ephemeral");
-  await page.getByTestId("mark-read-button").first().click();
+  await page.getByTestId("timeline-event").filter({ hasText: "read marker target" }).last().getByTestId("mark-read-button").click();
   const receiptBody = await receiptRequest.then((request) => request.postDataJSON());
 
   expect(receiptBody.kind).toBe("ck.receipt.read");
   expect(receiptBody.realm_id).toBe("ck:realm:0196419b-0000-7000-8000-000000000000");
   expect(receiptBody.payload.receipt_type).toBe("read");
   expect(receiptBody.payload.schema).toBe("ck.schema.read_receipt.v1");
-  expect(receiptBody.payload.event_id).toContain("summary-ck:realm");
+  expect(receiptBody.payload.event_id).toContain("ck:event");
   await expect(page.getByTestId("read-receipt-status")).toContainText("ck.receipt.read");
   await expect(page.getByTestId("read-cursor-status")).toContainText("Read marker:");
   await expect(page.getByTestId("read-cursor-badge")).toContainText("Read marker here");
@@ -1488,22 +1498,26 @@ test("timeline blob flow verifies hashes and authenticated downloads", async ({ 
 });
 
 test("plaintext boundary blocks private drafts until exposure is acknowledged", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/timeline");
+  await expect(latestTestId(page, "settings-timeline-plain-text")).toBeVisible();
+  await expect(latestTestId(page, "settings-timeline-visible-service")).toContainText("configured server");
+  await expect(latestTestId(page, "settings-timeline-disclosure")).toContainText("search");
+  await latestTestId(page, "settings-timeline-private-plaintext").click();
+
   await openTimeline(page);
-  await expect(page.getByTestId("plaintext-boundary-panel")).toBeVisible();
-  await expect(page.getByTestId("plaintext-visible-services")).toContainText("configured server");
-  await expect(page.getByTestId("plaintext-preview-disclosure")).toContainText("search");
+  await latestTestId(page, "composer-input").fill("private plaintext body");
+  await latestTestId(page, "send-button").click();
+  await expect(latestTestId(page, "write-status")).toContainText("plaintext blocked");
+  await expect(latestTestId(page, "plaintext-boundary-warning")).toContainText("blocked");
 
-  await page.getByTestId("private-plaintext-toggle").check();
-  await page.getByTestId("composer-input").fill("private plaintext body");
-  await page.getByTestId("send-button").click();
-  await expect(page.getByTestId("write-status")).toContainText("plaintext blocked");
-  await expect(page.getByTestId("plaintext-boundary-warning")).toContainText("not E2EE");
-
+  await gotoAndDismissRecovery(page, "/settings/timeline");
+  await latestTestId(page, "settings-timeline-plaintext-ack").click();
+  await openTimeline(page);
+  await latestTestId(page, "composer-input").fill("acknowledged private plaintext body");
   const sendRequest = page.waitForRequest("**/_cokret/self/events");
-  await page.getByTestId("plaintext-boundary-ack").click();
-  await page.getByTestId("send-button").click();
+  await latestTestId(page, "send-button").click();
   expect((await sendRequest).headers()["x-cokret-request-id"]).toBeTruthy();
-  await expect(page.getByTestId("write-status")).toContainText("persisted");
+  await expect(latestTestId(page, "write-status")).toContainText("persisted");
 });
 
 test("moderation report and to-device queue action hits protocol endpoints", async ({ page }) => {
@@ -1524,25 +1538,26 @@ test("moderation report and to-device queue action hits protocol endpoints", asy
 });
 
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("realm-admin-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-admin-overview")).toContainText("Realm settings");
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings");
+  await expect(latestTestId(page, "realm-admin-panel")).toBeVisible();
+  await expect(latestTestId(page, "realm-admin-overview")).toContainText("Realm settings");
   await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
   await expect(page.getByTestId("realm-admin-advanced-sections")).toHaveCount(0);
-  const adminSections = page.getByTestId("realm-admin-sections");
+  const adminSections = latestTestId(page, "realm-admin-sections");
   await expect(adminSections.getByRole("link", { name: "Members" })).toHaveCount(0);
-  await expect(adminSections.getByRole("link", { name: "Profile" })).toBeVisible();
-  await expect(adminSections.getByRole("link", { name: "Access" })).toBeVisible();
-  await expect(adminSections.getByRole("link", { name: "Security & MLS" })).toBeVisible();
-  await expect(adminSections.getByRole("link", { name: "Federation" })).toBeVisible();
-  await expect(adminSections.getByRole("link", { name: "Repair & Danger" })).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Profile" }).last()).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Access" }).last()).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Security & MLS" }).last()).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Federation" }).last()).toBeVisible();
+  await expect(adminSections.getByRole("link", { name: "Repair & Danger" }).last()).toBeVisible();
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/members", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/members");
   await expect(page).toHaveURL(/\/realms\/ck:realm:0196419b-0000-7000-8000-000000000000\/members$/);
-  await expect(page.getByTestId("realm-members-panel")).toBeVisible();
+  await dismissBlockingRecoveryModal(page);
+  await expect(latestTestId(page, "realm-members-panel")).toBeVisible();
   await expect(page.getByTestId("realm-admin-panel")).toHaveCount(0);
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/profile", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/profile");
   await expect(page.getByTestId("realm-profile")).toBeVisible();
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("realm-summary-input").fill("Updated realm summary");
@@ -1553,13 +1568,13 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("profile updated");
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/access", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/access");
   await expect(page.getByTestId("realm-profile")).toHaveCount(0);
   await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
   await expect(page.getByTestId("join-policy")).toBeVisible();
   await expect(page.getByTestId("history-visibility")).toBeVisible();
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/members", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/members");
   await expect(page.getByTestId("member-table")).toBeVisible();
   await page.getByTestId("open-invite-modal-button").click();
   await expect(page.getByTestId("invite-member-modal")).toBeVisible();
@@ -1598,11 +1613,11 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   // The invite modal closes itself once the create event is accepted.
   await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security");
   await page.getByTestId("rotate-realm-epoch").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotated to epoch");
 
-  await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair", { waitUntil: "domcontentloaded" });
+  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
   await page.getByTestId("archive-realm-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");
 });
