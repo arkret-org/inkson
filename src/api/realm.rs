@@ -559,7 +559,8 @@ impl CokretApi {
         let envelope =
             crate::operation::cx_ops::invite_accept(realm_id, actor_id, invite_id).build("yougen");
         let resolved = self.resolve_realm(realm_id).await?;
-        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        let candidate =
+            select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }
@@ -575,7 +576,8 @@ impl CokretApi {
     ) -> anyhow::Result<SubmitEventOutcome> {
         let envelope = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
-        let candidate = select_join_candidate(&resolved, "invite_accept")?;
+        let candidate =
+            select_join_candidate(&resolved, cokret_sdk::model::RealmJoinMethod::InviteAccept)?;
         self.submit_event_envelope_via_join_candidate(candidate, &envelope)
             .await
     }

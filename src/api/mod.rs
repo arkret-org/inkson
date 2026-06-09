@@ -2719,13 +2719,13 @@ pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmOutcome> 
 
 fn select_join_candidate<'a>(
     resolved: &'a ResolveRealmOutcome,
-    join_method: &str,
+    join_method: cokret_sdk::model::RealmJoinMethod,
 ) -> anyhow::Result<&'a RealmJoinCandidate> {
-    let realm_id = trim_realm_id(resolved.realm_preview.projection_realm_id());
+    let realm_id = trim_realm_id(resolved.realm_preview.realm_id.as_str());
     resolved
         .join_candidates
         .iter()
-        .filter(|candidate| candidate.realm_id == realm_id)
+        .filter(|candidate| candidate.realm_id.as_str() == realm_id.as_str())
         .filter(|candidate| {
             candidate
                 .operations
@@ -2736,7 +2736,7 @@ fn select_join_candidate<'a>(
             candidate
                 .join_methods
                 .iter()
-                .any(|method| method == join_method)
+                .any(|method| *method == join_method)
         })
         .filter(|candidate| join_candidate_is_current(candidate))
         .min_by(|left, right| {
@@ -2747,15 +2747,13 @@ fn select_join_candidate<'a>(
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "resolve_realm did not return a current join candidate for {join_method}"
+                "resolve_realm did not return a current join candidate for {join_method:?}"
             )
         })
 }
 
 fn join_candidate_is_current(candidate: &RealmJoinCandidate) -> bool {
-    chrono::DateTime::parse_from_rfc3339(&candidate.expires_at)
-        .map(|expires_at| expires_at.with_timezone(&chrono::Utc) > chrono::Utc::now())
-        .unwrap_or(false)
+    candidate.expires_at > chrono::Utc::now()
 }
 
 fn patch_touches_create_locked_encryption_profile(patch: &Value) -> bool {
