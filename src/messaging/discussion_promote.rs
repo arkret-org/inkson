@@ -172,7 +172,13 @@ mod tests {
         );
         assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
         assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
-        assert_eq!(ops[2].payload["scope_circle_id"], ids.circle_id);
+        // relation_create_payload is additionalProperties:false — the private
+        // scope is carried by the Circle-scoped Flow (ops[1]), NOT by an
+        // illegal `scope_circle_id` key on the relation payload.
+        assert!(
+            ops[2].payload.get("scope_circle_id").is_none(),
+            "scope_circle_id is not a relation_create_payload field"
+        );
         assert_eq!(ops[2].payload["from_ref"], ids.discussion_flow_id);
         assert_eq!(
             ops[2].payload["to_ref"],

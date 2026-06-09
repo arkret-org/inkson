@@ -564,6 +564,21 @@ pub mod cx_ops {
             })
     }
 
+    /// Build the canonical `relation_create_payload` body (flat
+    /// `{kind, from_ref, to_ref}` form) via the SDK strong type. The
+    /// schema is `additionalProperties:false`, so any legacy
+    /// `relation_id` / `scope_circle_id` / `fields` keys are dropped:
+    /// the relation id is routed via the operation `target_ref`, and the
+    /// extra annotation fields were never spec-legal (they tripped
+    /// `schema_violation`).
+    fn relation_create_payload_value(kind: &str, from_ref: &str, to_ref: &str) -> Value {
+        cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
+            .to_value()
+            .unwrap_or_else(|err| {
+                panic!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}");
+            })
+    }
+
     fn patch_set(path: &str, value: Value) -> cokret_sdk::Patch {
         let mut patch = cokret_sdk::Patch::new();
         patch
@@ -684,19 +699,17 @@ pub mod cx_ops {
         public_anchor_ref: &str,
         circle_id: &str,
     ) -> OperationBuilder {
-        let relation_id = format!("ck:relation:{}", uuid_v7());
+        // `circle_id` is unused on the wire: relation_create_payload is
+        // additionalProperties:false and the private-side scope is already
+        // carried by the Circle-scoped Flow itself.
+        let _ = circle_id;
         OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(private_flow_id)
-            .body(json!({
-                "relation_id": relation_id,
-                "kind": "confidential_discussion_of",
-                "from_ref": private_flow_id,
-                "to_ref": public_anchor_ref,
-                "scope_circle_id": circle_id,
-                "fields": {
-                    "role": "promoted_discussion"
-                }
-            }))
+            .body(relation_create_payload_value(
+                "confidential_discussion_of",
+                private_flow_id,
+                public_anchor_ref,
+            ))
     }
 
     /// Build a `ck.flow.watch.set` operation. Spec:
@@ -1029,18 +1042,13 @@ pub mod cx_ops {
         morph_id: &str,
         target_ref: &str,
     ) -> OperationBuilder {
-        let relation_id = format!("ck:relation:{}", uuid_v7());
         OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(morph_id)
-            .body(json!({
-                "relation_id": relation_id,
-                "kind": "references",
-                "from_ref": morph_id,
-                "to_ref": target_ref,
-                "fields": {
-                    "role": "postmortem_for"
-                }
-            }))
+            .body(relation_create_payload_value(
+                "references",
+                morph_id,
+                target_ref,
+            ))
     }
 
     /// Build a schema-legal `ck.relation.create` event. The Relation id is
@@ -1055,11 +1063,7 @@ pub mod cx_ops {
     ) -> OperationBuilder {
         OperationBuilder::new(realm_id, actor, "ck.relation.create")
             .target_ref(from_ref)
-            .body(json!({
-                "kind": kind,
-                "from_ref": from_ref,
-                "to_ref": to_ref,
-            }))
+            .body(relation_create_payload_value(kind, from_ref, to_ref))
     }
 
     /// Build a `ck.relation.tombstone` event targeting an existing Relation.

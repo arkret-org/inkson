@@ -67,13 +67,12 @@ pub fn build_relation_create(
     from_ref: &str,
     to_ref: &str,
 ) -> OperationBuilder {
+    let body = cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
+        .to_value()
+        .unwrap_or_else(|err| panic!("invalid relation_create_payload: {err}"));
     OperationBuilder::new(realm_id, actor, "ck.relation.create")
         .target_ref(relation_id)
-        .body(json!({
-            "kind": kind,
-            "from_ref": from_ref,
-            "to_ref": to_ref,
-        }))
+        .body(body)
 }
 
 /// Build a `ck.relation.tombstone` operation by id.
