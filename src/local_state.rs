@@ -2417,6 +2417,52 @@ impl LocalStateStore {
         changed
     }
 
+    /// Append a typed block (`kind` ∈ actor / service / domain / organization)
+    /// to the personal blocklist. Idempotent per `(kind, value)` pair.
+    /// `applies_to` lists the surfaces the block covers (empty = all default
+    /// surfaces); `expires_at` is an optional RFC 3339 expiry. Same
+    /// persistence + push contract as [`block_user`].
+    pub fn block_target(
+        &mut self,
+        kind: impl AsRef<str>,
+        value: impl AsRef<str>,
+        reason: Option<String>,
+        applies_to: Vec<String>,
+        expires_at: Option<String>,
+    ) -> bool {
+        self.ensure_cached_loaded();
+        let now = chrono::Utc::now().to_rfc3339();
+        let changed = crate::account_data::block_target_in(
+            &mut self.cached.client_blocklist,
+            kind.as_ref(),
+            value.as_ref(),
+            reason,
+            applies_to,
+            expires_at,
+            Some(now),
+        );
+        if changed {
+            let _ = self.flush();
+        }
+        changed
+    }
+
+    /// Remove the `(kind, value)` block from the personal blocklist. Returns
+    /// `true` when an entry was removed. Prefer this over [`unblock_user`] on
+    /// surfaces that track the target kind.
+    pub fn unblock_target(&mut self, kind: impl AsRef<str>, value: impl AsRef<str>) -> bool {
+        self.ensure_cached_loaded();
+        let changed = crate::account_data::unblock_target_in(
+            &mut self.cached.client_blocklist,
+            kind.as_ref(),
+            value.as_ref(),
+        );
+        if changed {
+            let _ = self.flush();
+        }
+        changed
+    }
+
     /// Replace the whole personal blocklist from `/sync account_data`.
     /// User edits still go through [`block_user`] / [`unblock_user`];
     /// this method is only for remote state hydration.

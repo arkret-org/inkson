@@ -328,6 +328,26 @@ impl CokretApi {
         .await
     }
 
+    /// Open a scoped consent request toward `holder` (`ck.consent.request`).
+    /// The authenticated actor is the requester/peer, so `peer_did` is left to
+    /// soland's default (the session actor); only the `holder` and scope are
+    /// sent. Records a pending cell the holder can later grant.
+    pub async fn request_consent_cell(
+        &self,
+        holder: &str,
+        scope: &str,
+    ) -> anyhow::Result<ConsentCellOutcome> {
+        self.post_json(
+            "_soland/self/consent/request",
+            json!({
+                "holder_did": holder,
+                // Spec consent-model.md §3: domain-prefixed `consent_scope`.
+                "consent_scope": scope,
+            }),
+        )
+        .await
+    }
+
     pub async fn logout(&self) -> anyhow::Result<LogoutOutcome> {
         self.post_json("_soland/gate/auth/logout", json!({})).await
     }

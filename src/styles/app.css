@@ -44,6 +44,8 @@ button, input, textarea, select { font: inherit; }
 .card-meta, .muted { color: #6b7787; font-size: 13px; }
 .sidebar .card-meta, .sidebar .muted { color: #cbd5e1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.blocklist-applies-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.blocklist-applies-grid .metric { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; }
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
 .primary { background: #1f6b4f; color: white; }
 .secondary { background: #e7edf3; color: #18212f; }
