@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_emits_canonical_kind() {
         let op = build_appeal_submit_op(
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:appeal:01904100-0000-7000-8000-000000000002",
             "ck:event:01904100-0000-7000-8000-000000000003",
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_rejects_bad_appeal_id() {
         let err = build_appeal_submit_op(
-            "ck:space:01904100-0000-7000-8000-000000000001",
+            "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "appeal-1",
             "ck:event:01904100-0000-7000-8000-000000000003",
