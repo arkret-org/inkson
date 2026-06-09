@@ -32,6 +32,7 @@ use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
 use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetOutcome;
+use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -348,39 +349,105 @@ pub(crate) fn push_blocklist_account_data(
     });
 }
 
+/// Project the local per-realm watch levels into a spec-conformant
+/// `ck.push_rules` body (push-notifications.md §4) and sync it to soland.
+///
+/// Every emitted rule carries the MUST-on-wire `kind` (§4.2) and
+/// `evaluation_locus` (§4.3) fields. The rule chain is ordered highest
+/// priority first (first match wins):
+///
+/// 1. `override.priority` — critical/high/urgent always notify.
+/// 2. `override.mute-realm.{id}` — a `muted` realm suppresses *everything*, placed above the
+///    mention rule so even direct mentions are silenced (§4.3.2: `watch_state=muted` MUST converge
+///    to `dont_notify`).
+/// 3. `override.mention` — direct mentions notify (client locus: in an E2EE realm the mention lives
+///    in ciphertext, §4.5).
+/// 4. `underride.realm-mentions-only.{id}` — a `mentions_only` realm suppresses non-mention traffic
+///    (placed after the mention rule so mentions still get through). `participating` degrades to
+///    the same server-side rule offline (the server can't read the receiver watch cell to tell
+///    participation apart); the full `participating` semantics are resolved locally online via the
+///    watch gate in `notification_rules`.
+/// 5. `underride.realm-all.{id}` — an `all` realm notifies on every event.
+/// 6. `default.notify` — global catch-all: unset realms notify (the same baseline the in-app drawer
+///    uses for non-muted realms).
 fn push_notification_rules_account_data(
     base_url: String,
     api_token: String,
-    muted_realms: Vec<String>,
+    realm_watch_levels: std::collections::BTreeMap<String, WatchLevel>,
 ) {
     if api_token.trim().is_empty() {
         return;
     }
-    let mut rules = vec![
-        json!({
-            "rule_id": "override.priority",
-            "conditions": [
-                {"kind": "field_match", "field": "priority", "pattern": ["critical", "high", "urgent", "priority"]}
-            ],
-            "actions": ["notify", "highlight", "sound_critical"]
-        }),
-        json!({
-            "rule_id": "override.mention",
-            "conditions": [{"kind": "mentions_actor"}],
-            "actions": ["notify", "highlight"]
-        }),
-    ];
-    for realm_id in muted_realms {
-        rules.push(json!({
-            "rule_id": format!("override.mute-realm.{realm_id}"),
-            "conditions": [
-                {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
-            ],
-            "actions": ["dont_notify"]
-        }));
+    let mut rules = vec![json!({
+        "rule_id": "override.priority",
+        "kind": "override",
+        "enabled": true,
+        "evaluation_locus": "server",
+        "conditions": [
+            {"kind": "field_match", "field": "priority", "pattern": ["critical", "high", "urgent", "priority"]}
+        ],
+        "actions": ["notify", "highlight", "sound_critical"]
+    })];
+    // (2) muted realms — above the mention rule.
+    for (realm_id, level) in &realm_watch_levels {
+        if *level == WatchLevel::Muted {
+            rules.push(json!({
+                "rule_id": format!("override.mute-realm.{realm_id}"),
+                "kind": "override",
+                "enabled": true,
+                "evaluation_locus": "server",
+                "conditions": [
+                    {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
+                ],
+                "actions": ["dont_notify"]
+            }));
+        }
     }
+    // (3) global mention rule.
+    rules.push(json!({
+        "rule_id": "override.mention",
+        "kind": "override",
+        "enabled": true,
+        "evaluation_locus": "client",
+        "conditions": [{"kind": "mentions_actor"}],
+        "actions": ["notify", "highlight"]
+    }));
+    // (4) mentions_only / participating realms — suppress non-mention traffic.
+    for (realm_id, level) in &realm_watch_levels {
+        if matches!(level, WatchLevel::MentionsOnly | WatchLevel::Participating) {
+            rules.push(json!({
+                "rule_id": format!("underride.realm-mentions-only.{realm_id}"),
+                "kind": "underride",
+                "enabled": true,
+                "evaluation_locus": "server",
+                "conditions": [
+                    {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
+                ],
+                "actions": ["dont_notify"]
+            }));
+        }
+    }
+    // (5) all-traffic realms.
+    for (realm_id, level) in &realm_watch_levels {
+        if *level == WatchLevel::All {
+            rules.push(json!({
+                "rule_id": format!("underride.realm-all.{realm_id}"),
+                "kind": "underride",
+                "enabled": true,
+                "evaluation_locus": "server",
+                "conditions": [
+                    {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
+                ],
+                "actions": ["notify"]
+            }));
+        }
+    }
+    // (6) global catch-all.
     rules.push(json!({
         "rule_id": "default.notify",
+        "kind": "underride",
+        "enabled": true,
+        "evaluation_locus": "server",
         "conditions": [],
         "actions": ["notify"]
     }));
@@ -521,9 +588,7 @@ pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
     labels.iter().all(|label| {
         !label.is_empty()
             && label.len() <= 63
-            && label
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             && !label.starts_with('-')
             && !label.ends_with('-')
     })
@@ -702,6 +767,140 @@ fn render_notification_kind_toggle(
                     },
                 }
                 if enabled { " Enabled" } else { " Muted" }
+            }
+        }
+    }
+}
+
+/// Human-readable label for a watch level, used by the per-realm override
+/// picker. Spec values: push-notifications.md §4.3.2.
+fn watch_level_label(level: WatchLevel) -> &'static str {
+    match level {
+        WatchLevel::All => "All messages",
+        WatchLevel::Participating => "Participating",
+        WatchLevel::MentionsOnly => "Mentions only",
+        WatchLevel::Muted => "Muted",
+    }
+}
+
+/// Realms the user can pick a per-realm override for: the union of realms with
+/// a cached tree projection, a private remark, or an existing override. Each
+/// entry is `(realm_id, friendly_label)` with the label resolved through the
+/// local remark (falling back to the public title, then the short id). Sorted
+/// by realm id (BTreeMap) for a stable picker order.
+fn known_realm_options(store: &LocalStateStore) -> Vec<(String, String)> {
+    let state = store.load();
+    let mut titles: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for (realm_id, projection) in &state.realm_tree_projections {
+        let title = projection
+            .get("name")
+            .and_then(|value| value.as_str())
+            .or_else(|| projection.get("title").and_then(|value| value.as_str()))
+            .unwrap_or_default()
+            .to_owned();
+        titles.entry(realm_id.clone()).or_insert(title);
+    }
+    for realm_id in state.realm_remarks.keys() {
+        titles.entry(realm_id.clone()).or_default();
+    }
+    for realm_id in state.realm_watch_levels.keys() {
+        titles.entry(realm_id.clone()).or_default();
+    }
+    titles
+        .into_iter()
+        .map(|(realm_id, public_title)| {
+            let resolved = store.display_name_for_realm(&realm_id, &public_title);
+            let label = if resolved.trim().is_empty() {
+                short_protocol_id(&realm_id)
+            } else {
+                resolved
+            };
+            (realm_id, label)
+        })
+        .collect()
+}
+
+/// One row of the per-realm override list: the realm label, a 4-level watch
+/// picker bound to local state, and a remove button. Its own component so the
+/// controlled `value` memo can read `state_store` reactively (a free function
+/// could not hold a hook).
+#[component]
+fn RealmOverrideRow(
+    realm_id: String,
+    label: String,
+    mut state_store: Signal<LocalStateStore>,
+    base_url: Signal<String>,
+    token: Signal<String>,
+    mut status: Signal<String>,
+) -> Element {
+    let level = state_store.read().realm_watch_level(&realm_id);
+    let selected = use_memo({
+        let realm_id = realm_id.clone();
+        move || {
+            Some(
+                state_store
+                    .read()
+                    .realm_watch_level(&realm_id)
+                    .as_wire()
+                    .to_owned(),
+            )
+        }
+    });
+    // Muted rows keep the legacy testid so existing notification e2e flows
+    // (mute from drawer → confirm here) keep resolving.
+    let row_testid = if level == WatchLevel::Muted {
+        "settings-muted-realm-row"
+    } else {
+        "settings-realm-override-row"
+    };
+    rsx! {
+        div { class: "actions", "data-testid": "{row_testid}", "data-realm-id": "{realm_id}",
+            span { class: "mono", title: "{realm_id}", "{label}" }
+            Select::<String> {
+                "data-testid": "realm-watch-level-select",
+                value: Some(selected.into()),
+                on_value_change: {
+                    let realm_id = realm_id.clone();
+                    move |value: Option<String>| {
+                        let Some(value) = value else { return };
+                        let next = WatchLevel::from_wire(&value).unwrap_or_default();
+                        state_store.write().set_realm_watch_level(realm_id.clone(), next);
+                        push_notification_rules_account_data(
+                            base_url(),
+                            token(),
+                            state_store.read().realm_watch_levels(),
+                        );
+                        status.set(format!(
+                            "Set {} to {}.",
+                            short_protocol_id(&realm_id),
+                            watch_level_label(next)
+                        ));
+                    }
+                },
+                SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
+                SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
+                SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
+                SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+            }
+            Button {
+                variant: ButtonVariant::Secondary,
+                "data-testid": "settings-realm-override-remove",
+                onclick: {
+                    let realm_id = realm_id.clone();
+                    move |_| {
+                        state_store.write().set_realm_watch_level(realm_id.clone(), WatchLevel::default());
+                        push_notification_rules_account_data(
+                            base_url(),
+                            token(),
+                            state_store.read().realm_watch_levels(),
+                        );
+                        status.set(format!(
+                            "Removed override for {}.",
+                            short_protocol_id(&realm_id)
+                        ));
+                    }
+                },
+                "Remove"
             }
         }
     }
@@ -919,12 +1118,18 @@ pub fn SettingsPanel(
         use_signal(|| route_diagnostics_mode.unwrap_or(DiagnosticsMode::Developer));
     let active_diagnostics_mode = route_diagnostics_mode.unwrap_or_else(|| diagnostics_mode());
     let mut presence_visible = use_signal(|| true);
-    let mut notification_realm_input = use_signal(String::new);
-    let mut notification_realm_muted = use_signal(|| false);
     let mut dnd_enabled = use_signal(|| false);
     let mut dnd_mode = use_signal(|| "off".to_owned());
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
-    let mut notification_settings_status = use_signal(String::new);
+    let notification_settings_status = use_signal(String::new);
+    // Per-realm override editor state (spec push-notifications.md §4.3.2).
+    // `new_override_realm` holds the realm id picked in the "add" row;
+    // `new_override_level` is the watch level to apply. New overrides default
+    // to `Muted` since silencing a noisy realm is the common case.
+    let mut new_override_realm = use_signal(String::new);
+    let mut new_override_level = use_signal(|| WatchLevel::Muted.as_wire().to_owned());
+    let new_override_realm_selected = use_memo(move || Some(new_override_realm()));
+    let new_override_level_selected = use_memo(move || Some(new_override_level()));
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so the timeline view can resolve
@@ -1026,7 +1231,8 @@ pub fn SettingsPanel(
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
-    let muted_realms = state_store.read().muted_realms();
+    let realm_watch_overrides = state_store.read().realm_watch_levels();
+    let known_realms = known_realm_options(&state_store.read());
     let active_locale = locale();
     let active_locale_code = active_locale.code();
     let active_direction = active_locale.direction().as_str();
@@ -2122,44 +2328,17 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "notification-settings-panel",
                                 div { class: "event-head",
-                                    span { "Notification preferences" }
+                                    span { "Global notification defaults" }
                                     span { "synced" }
                                 }
-                                label {
-                                    "Realm"
-                                    Input {
-                                        "data-testid": "realm-notification-target-input",
-                                        value: "{notification_realm_input}",
-                                        placeholder: "ck:realm:...",
-                                        oninput: move |event: FormEvent| notification_realm_input.set(event.value()),
-                                    }
+                                div { class: "muted",
+                                    "Apply to every Realm unless you add a per-Realm override below."
                                 }
-                                label {
-                                    Checkbox {
-                                        "data-testid": "realm-mute-toggle",
-                                        checked: if notification_realm_muted() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                        on_checked_change: move |state: CheckboxState| {
-                                            let muted = bool::from(state);
-                                            notification_realm_muted.set(muted);
-                                            let realm_id = notification_realm_input().trim().to_owned();
-                                            if realm_id.is_empty() {
-                                                notification_settings_status.set("Enter a Realm ID before changing mute.".to_owned());
-                                                return;
-                                            }
-                                            state_store.write().set_realm_muted(realm_id.clone(), muted);
-                                            push_notification_rules_account_data(
-                                                base_url(),
-                                                token(),
-                                                state_store.read().muted_realms(),
-                                            );
-                                            notification_settings_status.set(format!(
-                                                "{} {}.",
-                                                short_protocol_id(&realm_id),
-                                                if muted { "muted" } else { "unmuted" }
-                                            ));
-                                        },
-                                    }
-                                    " Mute this Realm"
+                                div { class: "metric-grid",
+                                    {render_notification_kind_toggle("mention", "Mention notifications", state_store, status)}
+                                    {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
+                                    {render_notification_kind_toggle("invite", "Invite notifications", state_store, status)}
+                                    {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
                                 }
                                 div { class: "actions",
                                     label {
@@ -2191,7 +2370,7 @@ pub fn SettingsPanel(
                                             push_notification_rules_account_data(
                                                 base_url(),
                                                 token(),
-                                                state_store.read().muted_realms(),
+                                                state_store.read().realm_watch_levels(),
                                             );
                                         },
                                         "Save"
@@ -2199,18 +2378,126 @@ pub fn SettingsPanel(
                                 }
                                 div { class: "muted", "data-testid": "notification-settings-status", "{notification_settings_status}" }
                             }
-                            div { class: "event", "data-testid": "notification-rules-settings",
-                    div { class: "event-head",
-                        span { "Notification rules" }
-                        HelpTip { text: "These toggles only affect this client. Server-side moderation and retention policies remain separate." }
-                    }
-                    div { class: "metric-grid",
-                        {render_notification_kind_toggle("mention", "Mention notifications", state_store, status)}
-                        {render_notification_kind_toggle("reaction", "Reaction notifications", state_store, status)}
-                        {render_notification_kind_toggle("invite", "Invite notifications", state_store, status)}
-                        {render_notification_kind_toggle("message", "Message notifications", state_store, status)}
-                    }
-                }
+                            // (2) Per-realm overrides — choose how much a specific Realm notifies.
+                            div { class: "event", "data-testid": "per-realm-overrides",
+                                div { class: "event-head",
+                                    span { "Per-realm overrides" }
+                                    span { "{realm_watch_overrides.len()} configured" }
+                                }
+                                div { class: "muted",
+                                    "Pick a Realm and how much it should notify you. This overrides the global defaults above for that Realm only."
+                                }
+                                div { class: "actions",
+                                    if known_realms.is_empty() {
+                                        Input {
+                                            "data-testid": "realm-override-id-input",
+                                            value: "{new_override_realm}",
+                                            placeholder: "ck:realm:...",
+                                            oninput: move |event: FormEvent| new_override_realm.set(event.value()),
+                                        }
+                                    } else {
+                                        Select::<String> {
+                                            "data-testid": "realm-override-realm-select",
+                                            value: Some(new_override_realm_selected.into()),
+                                            on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_realm.set(v); } },
+                                            SelectOption::<String> { index: 0usize, value: String::new(), text_value: "Select a Realm…", "Select a Realm…" }
+                                            for (index , (realm_id , label)) in known_realms.iter().enumerate() {
+                                                SelectOption::<String> {
+                                                    key: "{realm_id}",
+                                                    index: index + 1,
+                                                    value: realm_id.clone(),
+                                                    text_value: "{label}",
+                                                    "{label}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Select::<String> {
+                                        "data-testid": "realm-override-level-select",
+                                        value: Some(new_override_level_selected.into()),
+                                        on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_level.set(v); } },
+                                        SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
+                                        SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
+                                        SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
+                                        SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        "data-testid": "realm-override-add",
+                                        onclick: move |_| {
+                                            let realm_id = new_override_realm().trim().to_owned();
+                                            if realm_id.is_empty() {
+                                                status.set("Pick a Realm before adding an override.".to_owned());
+                                                return;
+                                            }
+                                            let level = WatchLevel::from_wire(&new_override_level())
+                                                .unwrap_or_default();
+                                            state_store.write().set_realm_watch_level(realm_id.clone(), level);
+                                            push_notification_rules_account_data(
+                                                base_url(),
+                                                token(),
+                                                state_store.read().realm_watch_levels(),
+                                            );
+                                            status.set(format!(
+                                                "Set {} to {}.",
+                                                short_protocol_id(&realm_id),
+                                                watch_level_label(level)
+                                            ));
+                                            new_override_realm.set(String::new());
+                                        },
+                                        "Add override"
+                                    }
+                                }
+                                if realm_watch_overrides.is_empty() {
+                                    div { class: "muted", "data-testid": "per-realm-overrides-empty",
+                                        "No per-Realm overrides yet. Unconfigured Realms follow the global defaults."
+                                    }
+                                } else {
+                                    for realm_id in realm_watch_overrides.keys() {
+                                        {
+                                            let label = known_realms
+                                                .iter()
+                                                .find(|(id, _)| id == realm_id)
+                                                .map(|(_, label)| label.clone())
+                                                .unwrap_or_else(|| short_protocol_id(realm_id));
+                                            rsx! {
+                                                RealmOverrideRow {
+                                                    key: "{realm_id}",
+                                                    realm_id: realm_id.clone(),
+                                                    label,
+                                                    state_store,
+                                                    base_url,
+                                                    token,
+                                                    status,
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "notifications-settings-clear-muted-realms",
+                                        onclick: move |_| {
+                                            let ids: Vec<String> = state_store
+                                                .read()
+                                                .realm_watch_levels()
+                                                .into_keys()
+                                                .collect();
+                                            for id in ids {
+                                                state_store
+                                                    .write()
+                                                    .set_realm_watch_level(id, WatchLevel::default());
+                                            }
+                                            push_notification_rules_account_data(
+                                                base_url(),
+                                                token(),
+                                                state_store.read().realm_watch_levels(),
+                                            );
+                                            status.set("Cleared all per-realm overrides.".to_owned());
+                                        },
+                                        "Clear all overrides"
+                                    }
+                                }
+                            }
                 div { class: "event", "data-testid": "push-settings",
                     div { class: "event-head", span { "Push delivery" } span { "configure" } }
                     div { class: "muted", "Push notification preferences and gateway registration." }
@@ -2303,60 +2590,6 @@ pub fn SettingsPanel(
                                 }
                             },
                             {crate::i18n::tr("settings.unregister_push")}
-                        }
-                    }
-                    div { class: "event", "data-testid": "notifications-mute-summary",
-                        div { class: "event-head",
-                            span { "Per-realm mute rules" }
-                            span { "{muted_realms.len()} muted" }
-                        }
-                        if muted_realms.is_empty() {
-                            div { class: "muted", {crate::i18n::tr("settings.muted_realms_empty")} }
-                        } else {
-                            for realm_id in muted_realms {
-                                {
-                                    let realm_id_label = short_protocol_id(&realm_id);
-                                    rsx! {
-                                        div { class: "actions", "data-testid": "settings-muted-realm-row",
-                                            span { title: "{realm_id}", "{realm_id_label}" }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "notifications-settings-unmute-realm",
-                                                onclick: {
-                                                    let realm_id = realm_id.clone();
-                                                    move |_| {
-                                                        state_store.write().set_realm_muted(realm_id.clone(), false);
-                                                        push_notification_rules_account_data(
-                                                            base_url(),
-                                                            token(),
-                                                            state_store.read().muted_realms(),
-                                                        );
-                                                        status.set(format!(
-                                                            "Unmuted {} from notification preferences",
-                                                            short_protocol_id(&realm_id)
-                                                        ));
-                                                    }
-                                                },
-                                                "Unmute"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "notifications-settings-clear-muted-realms",
-                                onclick: move |_| {
-                                    state_store.write().clear_muted_realms();
-                                    push_notification_rules_account_data(
-                                        base_url(),
-                                        token(),
-                                        state_store.read().muted_realms(),
-                                    );
-                                    status.set("Cleared all per-realm mute rules".to_owned());
-                                },
-                                "Clear All Mutes"
-                            }
                         }
                     }
                 }

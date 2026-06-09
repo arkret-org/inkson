@@ -1027,9 +1027,9 @@ test("notifications are derived from index projections and respect per-realm mut
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-notifications").click();
-  await expect(page.getByTestId("settings-muted-realm-row").locator("span")).toHaveAttribute("title", DEMO_REALM);
-  await page.getByTestId("notifications-settings-unmute-realm").click();
-  await expect(page.getByTestId("status-label")).toContainText("Unmuted");
+  await expect(page.getByTestId("settings-muted-realm-row")).toHaveAttribute("data-realm-id", DEMO_REALM);
+  await page.getByTestId("settings-realm-override-remove").click();
+  await expect(page.getByTestId("status-label")).toContainText("Removed");
 
   await page.getByTestId("topbar-notifications-button").click();
   await expect(page.getByTestId("notifications-panel")).toContainText("You were invited to review Demo Realm");

@@ -646,13 +646,7 @@ impl BlocklistEntry {
     /// Construct an actor-kind entry. Normalises `did` (trim) and treats an
     /// empty `reason` as `None`. `blocked_at` is stamped to now.
     pub fn new(did: impl Into<String>, reason: Option<String>) -> Self {
-        Self::new_target(
-            DEFAULT_BLOCKLIST_TARGET_KIND,
-            did,
-            reason,
-            Vec::new(),
-            None,
-        )
+        Self::new_target(DEFAULT_BLOCKLIST_TARGET_KIND, did, reason, Vec::new(), None)
     }
 
     /// Construct an entry for an arbitrary `target.kind`. Normalises kind,
@@ -759,7 +753,10 @@ pub fn block_target_in(
             entry.blocked_at = Some(blocked_at.to_owned());
         }
     }
-    if list.iter().any(|e| e.kind == entry.kind && e.did == entry.did) {
+    if list
+        .iter()
+        .any(|e| e.kind == entry.kind && e.did == entry.did)
+    {
         return false;
     }
     let stamp = entry.blocked_at.clone().unwrap_or_default();
@@ -1629,11 +1626,21 @@ mod tests {
         assert_eq!(list[0].did, "spam.example");
         assert_eq!(list[0].applies_to, vec!["dm", "calls"]);
         assert_eq!(list[0].expires_at.as_deref(), Some("2026-08-01T00:00:00Z"));
-        assert!(list[0].entry_id.as_deref().is_some_and(|id| id
-            .starts_with("ck:block:")));
+        assert!(
+            list[0]
+                .entry_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("ck:block:"))
+        );
         // Same (kind, value) is a no-op even with different metadata.
         assert!(!block_target_in(
-            &mut list, "domain", "spam.example", None, Vec::new(), None, None,
+            &mut list,
+            "domain",
+            "spam.example",
+            None,
+            Vec::new(),
+            None,
+            None,
         ));
         assert_eq!(list.len(), 1);
         // Same value, different kind (service) is a distinct entry.
@@ -1673,14 +1680,28 @@ mod tests {
         let mut list: Vec<BlocklistEntry> = Vec::new();
         block_user_in(&mut list, "did:web:dup.example", None, None);
         block_target_in(
-            &mut list, "service", "did:web:dup.example", None, Vec::new(), None, None,
+            &mut list,
+            "service",
+            "did:web:dup.example",
+            None,
+            Vec::new(),
+            None,
+            None,
         );
         assert_eq!(list.len(), 2);
         // Removing the service block leaves the actor block intact.
-        assert!(unblock_target_in(&mut list, "service", "did:web:dup.example"));
+        assert!(unblock_target_in(
+            &mut list,
+            "service",
+            "did:web:dup.example"
+        ));
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].kind, "actor");
-        assert!(!unblock_target_in(&mut list, "service", "did:web:dup.example"));
+        assert!(!unblock_target_in(
+            &mut list,
+            "service",
+            "did:web:dup.example"
+        ));
     }
 
     #[test]

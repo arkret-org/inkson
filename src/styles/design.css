@@ -2589,6 +2589,11 @@ label.avatar-upload-button:active,
 .mls-recovery-modal .mls-backup-row {
   flex-wrap: wrap;
 }
+.mls-recovery-modal .mls-backup-key-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .mls-recovery-modal .mls-unlock-row input {
   flex: 1 1 260px;
   min-width: min(100%, 220px);

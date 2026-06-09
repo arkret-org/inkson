@@ -704,6 +704,9 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_backup.button_busy", "Backing up...");
     dict.set("mls_backup.button_dismiss", "Remind me later");
     dict.set("mls_backup.button_saved", "I saved the key");
+    dict.set("mls_backup.copy_key", "Copy");
+    dict.set("mls_backup.copy_key_done", "Copied ✓");
+    dict.set("mls_backup.download_key", "Download .txt");
     dict.set(
         "mls_backup.generated_key_label",
         "Your 24-word recovery key",
@@ -1919,6 +1922,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_backup.button_busy", "正在备份…");
     dict.set("mls_backup.button_dismiss", "稍后提醒");
     dict.set("mls_backup.button_saved", "我已保存密钥");
+    dict.set("mls_backup.copy_key", "复制");
+    dict.set("mls_backup.copy_key_done", "已复制 ✓");
+    dict.set("mls_backup.download_key", "下载 .txt");
     dict.set("mls_backup.generated_key_label", "你的 24 词恢复密钥");
     dict.set(
         "mls_backup.generated_key_warning",

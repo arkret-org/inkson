@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use zeroize::Zeroize;
 
 use crate::hlc::Hlc;
+use crate::notification_rules::WatchLevel;
 
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
@@ -933,8 +934,17 @@ pub struct ClientLocalState {
     pub presence_projection: Vec<Value>,
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
+    /// Legacy binary per-realm mute map (JSON key `muted_realms`). Superseded
+    /// by `realm_watch_levels`; kept as deserialize-only so existing devices
+    /// migrate (`true → WatchLevel::Muted`) on next load via
+    /// `migrate_legacy_realm_mutes`. Never written back to storage.
+    #[serde(default, rename = "muted_realms", skip_serializing)]
+    pub legacy_muted_realms: BTreeMap<String, bool>,
+    /// Per-realm watch level overrides (spec
+    /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
+    /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
     #[serde(default)]
-    pub muted_realms: BTreeMap<String, bool>,
+    pub realm_watch_levels: BTreeMap<String, WatchLevel>,
     #[serde(default)]
     pub muted_notification_kinds: BTreeMap<String, bool>,
     /// Read receipt send preferences (spec
@@ -1257,6 +1267,25 @@ pub struct OidcTokenBundle {
     pub stored_at: DateTime<Utc>,
 }
 
+impl ClientLocalState {
+    /// One-way migration of the legacy binary `muted_realms` map into
+    /// `realm_watch_levels`. A muted realm becomes `WatchLevel::Muted`; the
+    /// legacy map is drained so it is never serialized again. Existing
+    /// `realm_watch_levels` entries win (already migrated / explicitly set).
+    fn migrate_legacy_realm_mutes(&mut self) {
+        if self.legacy_muted_realms.is_empty() {
+            return;
+        }
+        for (realm_id, muted) in std::mem::take(&mut self.legacy_muted_realms) {
+            if muted {
+                self.realm_watch_levels
+                    .entry(realm_id)
+                    .or_insert(WatchLevel::Muted);
+            }
+        }
+    }
+}
+
 impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
@@ -1269,7 +1298,8 @@ impl Default for ClientLocalState {
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
             notification_client_state: BTreeMap::new(),
-            muted_realms: BTreeMap::new(),
+            legacy_muted_realms: BTreeMap::new(),
+            realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             read_receipt_default_send: true,
             read_receipt_realm_overrides: BTreeMap::new(),
@@ -1779,7 +1809,7 @@ impl LocalStateStore {
     /// `anchor_views`, `read_cursors`, `realm_remarks`,
     /// `mls_snapshots`, `move_submissions` keyed by Realm, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
-    /// `muted_realms`, and any leftover encrypted-message draft) so a
+    /// `realm_watch_levels`, and any leftover encrypted-message draft) so a
     /// pruned Realm/Space node doesn't leave private remnants behind.
     pub fn retain_realm_tree_projections<F>(&mut self, keep: F) -> Vec<String>
     where
@@ -1823,7 +1853,7 @@ impl LocalStateStore {
         self.cached.anchor_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
         self.cached.mls_snapshots.remove(projection_id);
-        self.cached.muted_realms.remove(projection_id);
+        self.cached.realm_watch_levels.remove(projection_id);
         self.cached
             .read_receipt_realm_overrides
             .remove(projection_id);
@@ -2175,36 +2205,68 @@ impl LocalStateStore {
             .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
     }
 
-    pub fn set_realm_muted(&mut self, realm_id: impl Into<String>, muted: bool) {
+    // ── Per-realm watch level (spec push-notifications.md §4.3.2) ──
+    //
+    // Replaces the legacy binary mute map. A realm with no stored entry
+    // resolves to the protocol default `WatchLevel::MentionsOnly`; only
+    // non-default levels are persisted. Binary "mute" is just the `Muted`
+    // end of this scale, so the `*_muted` helpers below stay as thin
+    // wrappers for the notification drawer / chat sidebar toggles.
+
+    /// Set (or clear) the per-realm watch level. Storing the default
+    /// (`MentionsOnly`) removes the override so the realm follows global
+    /// defaults again.
+    pub fn set_realm_watch_level(&mut self, realm_id: impl Into<String>, level: WatchLevel) {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        if muted {
-            self.cached.muted_realms.insert(realm_id, true);
+        if level == WatchLevel::default() {
+            self.cached.realm_watch_levels.remove(&realm_id);
         } else {
-            self.cached.muted_realms.remove(&realm_id);
+            self.cached.realm_watch_levels.insert(realm_id, level);
         }
         let _ = self.flush();
     }
 
+    /// Effective per-realm watch level (default `MentionsOnly` when unset).
+    pub fn realm_watch_level(&self, realm_id: &str) -> WatchLevel {
+        self.load()
+            .realm_watch_levels
+            .get(realm_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// All non-default per-realm watch level overrides.
+    pub fn realm_watch_levels(&self) -> BTreeMap<String, WatchLevel> {
+        self.load().realm_watch_levels
+    }
+
+    pub fn set_realm_muted(&mut self, realm_id: impl Into<String>, muted: bool) {
+        let level = if muted {
+            WatchLevel::Muted
+        } else {
+            WatchLevel::default()
+        };
+        self.set_realm_watch_level(realm_id, level);
+    }
+
     pub fn clear_muted_realms(&mut self) {
         self.ensure_cached_loaded();
-        self.cached.muted_realms.clear();
+        self.cached
+            .realm_watch_levels
+            .retain(|_, level| *level != WatchLevel::Muted);
         let _ = self.flush();
     }
 
     pub fn is_realm_muted(&self, realm_id: &str) -> bool {
-        self.load()
-            .muted_realms
-            .get(realm_id)
-            .copied()
-            .unwrap_or(false)
+        self.realm_watch_level(realm_id) == WatchLevel::Muted
     }
 
     pub fn muted_realms(&self) -> Vec<String> {
         self.load()
-            .muted_realms
+            .realm_watch_levels
             .into_iter()
-            .filter_map(|(realm_id, muted)| muted.then_some(realm_id))
+            .filter_map(|(realm_id, level)| (level == WatchLevel::Muted).then_some(realm_id))
             .collect()
     }
 
@@ -3513,14 +3575,18 @@ impl LocalStateStore {
     #[cfg(not(target_arch = "wasm32"))]
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let bytes = fs::read(&self.path).ok()?;
-        serde_json::from_slice(&bytes).ok()
+        let mut state: ClientLocalState = serde_json::from_slice(&bytes).ok()?;
+        state.migrate_legacy_realm_mutes();
+        Some(state)
     }
 
     #[cfg(target_arch = "wasm32")]
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        browser_storage()
-            .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())
-            .and_then(|json| serde_json::from_str(&json).ok())
+        let json = browser_storage()
+            .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())?;
+        let mut state: ClientLocalState = serde_json::from_str(&json).ok()?;
+        state.migrate_legacy_realm_mutes();
+        Some(state)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -4353,6 +4419,55 @@ mod tests {
     }
 
     #[test]
+    fn realm_watch_level_set_get_roundtrip() {
+        let path = temp_state_path("watch-level-roundtrip");
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.set_realm_watch_level("ck:realm:a", WatchLevel::All);
+        store.set_realm_watch_level("ck:realm:b", WatchLevel::Muted);
+        // Setting the protocol default clears the override.
+        store.set_realm_watch_level("ck:realm:c", WatchLevel::Participating);
+        store.set_realm_watch_level("ck:realm:c", WatchLevel::MentionsOnly);
+
+        let reader = LocalStateStore::with_path(path);
+        assert_eq!(reader.realm_watch_level("ck:realm:a"), WatchLevel::All);
+        assert_eq!(reader.realm_watch_level("ck:realm:b"), WatchLevel::Muted);
+        assert_eq!(
+            reader.realm_watch_level("ck:realm:c"),
+            WatchLevel::MentionsOnly
+        );
+        assert!(!reader.realm_watch_levels().contains_key("ck:realm:c"));
+        // The binary-mute compatibility view only reports `Muted` realms.
+        assert_eq!(reader.muted_realms(), vec!["ck:realm:b".to_owned()]);
+        assert!(reader.is_realm_muted("ck:realm:b"));
+        assert!(!reader.is_realm_muted("ck:realm:a"));
+    }
+
+    #[test]
+    fn legacy_muted_realms_migrate_to_watch_level() {
+        let path = temp_state_path("legacy-mute-migration");
+        // Persist a snapshot in the legacy shape (binary `muted_realms` map).
+        let mut value = serde_json::to_value(ClientLocalState::default()).unwrap();
+        value["muted_realms"] = serde_json::json!({
+            "ck:realm:legacy": true,
+            "ck:realm:already-unmuted": false,
+        });
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let store = LocalStateStore::with_path(path);
+        assert_eq!(
+            store.realm_watch_level("ck:realm:legacy"),
+            WatchLevel::Muted
+        );
+        assert_eq!(
+            store.realm_watch_level("ck:realm:already-unmuted"),
+            WatchLevel::MentionsOnly
+        );
+        // The legacy key must not survive a round-trip back to storage.
+        let reserialized = serde_json::to_value(store.load()).unwrap();
+        assert!(reserialized.get("muted_realms").is_none());
+    }
+
+    #[test]
     fn local_state_store_persists_private_read_cursors() {
         let path = temp_state_path("read-cursor");
         let mut store = LocalStateStore::with_path(path.clone());
@@ -4626,8 +4741,8 @@ mod tests {
         assert!(state.drafts.contains_key("ck:realm:keep"));
         assert!(!state.anchor_views.contains_key("ck:realm:drop-a"));
         assert!(state.anchor_views.contains_key("ck:realm:keep"));
-        assert!(!state.muted_realms.contains_key("ck:realm:drop-b"));
-        assert!(state.muted_realms.contains_key("ck:realm:keep"));
+        assert!(!state.realm_watch_levels.contains_key("ck:realm:drop-b"));
+        assert!(state.realm_watch_levels.contains_key("ck:realm:keep"));
         let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
         assert!(
             kept_marker_keys

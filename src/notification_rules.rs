@@ -94,7 +94,15 @@ pub struct NotificationEvalContext {
     pub member_count: Option<u32>,
     pub priority: Option<String>,
     pub priority_override: bool,
+    /// Flow/thread-scoped watch level for this event (from the event's own
+    /// `watch_state` projection). Takes precedence over `realm_watch_level`.
     pub watch_level: Option<WatchLevel>,
+    /// Realm-scoped watch level override the receiver set in notification
+    /// settings (spec push-notifications.md §4.3.2). `None` means the realm
+    /// has no explicit override, so the watch gate is skipped and global
+    /// defaults apply — callers MUST pass `None` (not the default level) for
+    /// unconfigured realms to preserve baseline notify-all behavior.
+    pub realm_watch_level: Option<WatchLevel>,
     /// Minutes after local midnight in the DND schedule timezone. UI callers
     /// should provide this when rendering deterministic previews; dispatch
     /// callers can omit it to use the host local clock.
@@ -280,7 +288,9 @@ fn apply_dnd(
 }
 
 fn effective_watch_level(ctx: &NotificationEvalContext) -> Option<WatchLevel> {
-    ctx.watch_level
+    // Flow/thread watch (most specific) wins; fall back to the realm-level
+    // override. An unset realm leaves this `None` so the gate is skipped.
+    ctx.watch_level.or(ctx.realm_watch_level)
 }
 
 fn evaluate_watch_gate(ctx: &NotificationEvalContext) -> Option<NotificationDecision> {
@@ -606,6 +616,28 @@ mod tests {
             watch_level: Some(WatchLevel::All),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn realm_watch_level_gates_when_flow_level_absent() {
+        // No flow-scoped watch level; a realm override of `Muted` suppresses
+        // everything, even a direct mention.
+        let mut ctx = message_context();
+        ctx.watch_level = None;
+        ctx.realm_watch_level = Some(WatchLevel::Muted);
+        ctx.mentions_actor = Some(true);
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(!decision.should_notify);
+        assert!(decision.muted_short_circuit);
+    }
+
+    #[test]
+    fn flow_watch_level_takes_precedence_over_realm_override() {
+        let mut ctx = message_context();
+        ctx.watch_level = Some(WatchLevel::All);
+        ctx.realm_watch_level = Some(WatchLevel::Muted);
+        let decision = evaluate_notification(None, None, &ctx);
+        assert!(decision.should_notify);
     }
 
     #[test]

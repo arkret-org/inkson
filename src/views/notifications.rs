@@ -947,7 +947,9 @@ fn notification_from_value(
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
 ) -> Option<Notification> {
-    let eval_ctx = notification_eval_context(&value);
+    let mut eval_ctx = notification_eval_context(&value);
+    // Apply the receiver's per-realm watch override (None when unconfigured).
+    eval_ctx.realm_watch_level = realm_watch_override(local_state, &eval_ctx.realm_id);
     let decision = evaluate_notification(push_rules, dnd, &eval_ctx);
 
     // T4.4 — When the watch level (not DND, not muted-short-circuit)
@@ -1178,17 +1180,24 @@ fn notification_eval_context(value: &Value) -> NotificationEvalContext {
         priority_override,
         watch_level: value_string(value, &["watch_state", "watch_level"])
             .and_then(|level| WatchLevel::from_wire(&level)),
+        // Filled by the caller from the receiver's per-realm override; left
+        // `None` here so a bare context never resolves to a watch level.
+        realm_watch_level: None,
         now_minutes: None,
     }
 }
 
+/// Receiver's explicit per-realm watch override, or `None` when the realm is
+/// unconfigured (so the watch gate is skipped and global defaults apply).
+fn realm_watch_override(local_state: &ClientLocalState, realm_id: &str) -> Option<WatchLevel> {
+    if realm_id.is_empty() {
+        return None;
+    }
+    local_state.realm_watch_levels.get(realm_id).copied()
+}
+
 fn realm_is_muted(local_state: &ClientLocalState, realm_id: &str) -> bool {
-    !realm_id.is_empty()
-        && local_state
-            .muted_realms
-            .get(realm_id)
-            .copied()
-            .unwrap_or(false)
+    realm_watch_override(local_state, realm_id) == Some(WatchLevel::Muted)
 }
 
 fn notification_kind_enabled(local_state: &ClientLocalState, kind: &str) -> bool {

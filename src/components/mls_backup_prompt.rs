@@ -34,6 +34,65 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     }
 }
 
+/// Copy the recovery words to the clipboard so the user never has to manually
+/// select the textarea (a partial selection would silently drop words). Prefers
+/// the async Clipboard API, falling back to `execCommand` on insecure contexts.
+fn copy_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
+}
+
+/// Download the recovery words as a plain-text file. Same goal as the copy
+/// button — guarantee the user captures all 24 words rather than relying on a
+/// hand-made selection — for users who would rather keep a file than the
+/// clipboard. The object URL is revoked after the click so the blob is not
+/// retained in memory.
+fn download_text_as_file(filename: &str, text: &str) {
+    let (Ok(encoded_text), Ok(encoded_name)) =
+        (serde_json::to_string(text), serde_json::to_string(filename))
+    else {
+        return;
+    };
+    let script = format!(
+        r#"(() => {{
+    const text = {encoded_text};
+    const name = {encoded_name};
+    const blob = new Blob([text], {{ type: "text/plain;charset=utf-8" }});
+    const url = URL.createObjectURL(blob);
+    const node = document.createElement("a");
+    node.href = url;
+    node.download = name;
+    document.body.appendChild(node);
+    node.click();
+    document.body.removeChild(node);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+}})()"#
+    );
+    let _ = document::eval(&script);
+}
+
 #[derive(Clone, Default)]
 struct MlsPrivatePlaintextBackupJob {
     base_url: String,
@@ -408,6 +467,7 @@ pub fn MlsBackupPrompt(
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut copied = use_signal(|| false);
 
     if !needs_mls_backup() {
         return rsx! {};
@@ -557,6 +617,35 @@ pub fn MlsBackupPrompt(
                                 rows: "3",
                                 readonly: true,
                                 value: "{generated_now}",
+                            }
+                            div { class: "mls-backup-key-actions",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "mls-backup-copy-key",
+                                    onclick: {
+                                        let key = generated_now.clone();
+                                        move |_| {
+                                            copy_text_to_clipboard(&key);
+                                            copied.set(true);
+                                        }
+                                    },
+                                    if copied() {
+                                        {crate::i18n::tr("mls_backup.copy_key_done")}
+                                    } else {
+                                        {crate::i18n::tr("mls_backup.copy_key")}
+                                    }
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "mls-backup-download-key",
+                                    onclick: {
+                                        let key = generated_now.clone();
+                                        move |_| {
+                                            download_text_as_file("cokret-recovery-key.txt", &key);
+                                        }
+                                    },
+                                    {crate::i18n::tr("mls_backup.download_key")}
+                                }
                             }
                             div { class: "form-hint-warn", "data-testid": "mls-backup-generated-key-warning",
                                 {crate::i18n::tr("mls_backup.generated_key_warning")}
