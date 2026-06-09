@@ -575,6 +575,111 @@ pub mod cx_ops {
             })
     }
 
+    fn flow_watch_level_value(level: &str) -> cokret_sdk::FlowWatchLevel {
+        match level {
+            "mentions_only" => cokret_sdk::FlowWatchLevel::MentionsOnly,
+            "participating" => cokret_sdk::FlowWatchLevel::Participating,
+            "all" => cokret_sdk::FlowWatchLevel::All,
+            "muted" => cokret_sdk::FlowWatchLevel::Muted,
+            other => panic!("unknown ck.flow.watch.set level {other:?}"),
+        }
+    }
+
+    /// Build the canonical `flow_watch_set_payload` body via the SDK strong
+    /// type. `level=None` clears the cell (`level:null`); per the schema
+    /// `allOf`, the typed constructor forces `level_public` off on that path.
+    fn flow_watch_set_payload_value(
+        flow_id: &str,
+        watcher_actor_did: &str,
+        level: Option<&str>,
+        level_public: Option<bool>,
+    ) -> Value {
+        let payload = match level {
+            Some(level) => cokret_sdk::FlowWatchSetPayload::set(
+                flow_id_value(flow_id),
+                did_id(watcher_actor_did),
+                flow_watch_level_value(level),
+                level_public,
+            ),
+            None => cokret_sdk::FlowWatchSetPayload::clear(
+                flow_id_value(flow_id),
+                did_id(watcher_actor_did),
+            ),
+        };
+        payload
+            .to_value()
+            .unwrap_or_else(|err| panic!("invalid flow_watch_set_payload for {flow_id}: {err}"))
+    }
+
+    /// Build the canonical `flow_move_payload` body via the SDK strong type.
+    /// `additionalProperties:false` — the destination is single-sourced by
+    /// `target_space_id`; the optional `from_space_id` / `expected_position`
+    /// (space_id + rank) are CAS hints.
+    fn flow_move_payload_value(
+        board_space_id: &str,
+        flow_id: &str,
+        target_space_id: &str,
+        rank: &str,
+        from_space_id: Option<&str>,
+        expected: Option<(Option<&str>, Option<&str>)>,
+    ) -> Value {
+        let mut payload = cokret_sdk::FlowMovePayload::new(
+            space_id_value(board_space_id),
+            flow_id_value(flow_id),
+            space_id_value(target_space_id),
+            rank.to_owned(),
+        );
+        if let Some(from) = from_space_id {
+            payload = payload.with_from_space_id(space_id_value(from));
+        }
+        if let Some((expected_space, expected_rank)) = expected {
+            payload = payload.with_expected_position(cokret_sdk::FlowMoveExpectedPosition {
+                space_id: expected_space.map(space_id_value),
+                rank: expected_rank.map(ToOwned::to_owned),
+                relation_id: None,
+            });
+        }
+        payload
+            .to_value()
+            .unwrap_or_else(|err| panic!("invalid flow_move_payload for {flow_id}: {err}"))
+    }
+
+    /// Build the canonical `flow_reorder_payload` body via the SDK strong
+    /// type. Re-ranks within a single List Space (`space_id`); the optional
+    /// `expected_position` carries only a rank (no space_id field).
+    fn flow_reorder_payload_value(
+        board_space_id: &str,
+        flow_id: &str,
+        space_id: &str,
+        rank: &str,
+        expected_rank: Option<&str>,
+    ) -> Value {
+        let mut payload = cokret_sdk::FlowReorderPayload::new(
+            space_id_value(board_space_id),
+            flow_id_value(flow_id),
+            space_id_value(space_id),
+            rank.to_owned(),
+        );
+        if let Some(expected_rank) = expected_rank {
+            payload =
+                payload.with_expected_position(cokret_sdk::FlowReorderExpectedPosition {
+                    rank: Some(expected_rank.to_owned()),
+                    relation_id: None,
+                });
+        }
+        payload
+            .to_value()
+            .unwrap_or_else(|err| panic!("invalid flow_reorder_payload for {flow_id}: {err}"))
+    }
+
+    /// Build the canonical `object_lifecycle_payload` body via the SDK strong
+    /// type. Single truth source `target_ref` (`additionalProperties:false`).
+    fn object_lifecycle_payload_value(target_ref: &str) -> Value {
+        cokret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
+            .to_value()
+            .unwrap_or_else(|err| panic!("invalid object_lifecycle_payload for {target_ref}: {err}"))
+    }
+
     /// Build the canonical `relation_create_payload` body (flat
     /// `{kind, from_ref, to_ref}` form) via the SDK strong type. The
     /// schema is `additionalProperties:false`, so any legacy
@@ -746,18 +851,10 @@ pub mod cx_ops {
         level: Option<&str>,
         level_public: Option<bool>,
     ) -> OperationBuilder {
-        let mut payload = json!({
-            "flow_id": flow_id,
-            "watcher_actor_id": target_actor_did,
-            "level": level,
-        });
-        // Schema-level allOf in flow_watch_set_payload forbids
-        // level_public when level is null; only emit it on non-null level.
-        if level.is_some()
-            && let Some(public) = level_public
-        {
-            payload["level_public"] = json!(public);
-        }
+        // Strong type: flow_watch_set_payload (additionalProperties:false +
+        // allOf forbidding level_public when level is null). The typed
+        // constructors keep the clear path (level:null) free of level_public.
+        let payload = flow_watch_set_payload_value(flow_id, target_actor_did, level, level_public);
         OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
             .target_ref(flow_id)
             .body(payload)
@@ -1348,7 +1445,7 @@ pub mod cx_ops {
     pub fn flow_archive(realm_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(realm_id, actor, "ck.flow.archive")
             .target_ref(flow_id)
-            .body(json!({ "target_ref": flow_id }))
+            .body(object_lifecycle_payload_value(flow_id))
     }
 
     /// Build a `ck.flow.restore` operation. Reverses [`flow_archive`]
@@ -1358,7 +1455,7 @@ pub mod cx_ops {
     pub fn flow_restore(realm_id: &str, actor: &str, flow_id: &str) -> OperationBuilder {
         OperationBuilder::new(realm_id, actor, "ck.flow.restore")
             .target_ref(flow_id)
-            .body(json!({ "target_ref": flow_id }))
+            .body(object_lifecycle_payload_value(flow_id))
     }
 
     // ── Consent (OrSet cell `ck.component.consent.grant.v1`) ─────────
@@ -1640,38 +1737,42 @@ pub mod cx_ops {
                 .body(payload);
         };
 
-        let mut body = serde_json::Map::new();
-        body.insert("board_space_id".to_owned(), json!(board_space_id));
-        body.insert("flow_id".to_owned(), json!(flow_id));
-        body.insert("rank".to_owned(), json!(effect_rank));
-
+        // Strong types: flow_reorder_payload / flow_move_payload
+        // (additionalProperties:false). The reorder path stays within a
+        // single List Space (effect_space == space_id); the move path treats
+        // effect_space as the destination target_space_id and carries the
+        // optional from_space_id / expected_position CAS hints.
         match kind {
             "ck.flow.reorder" => {
-                body.insert("space_id".to_owned(), json!(effect_space));
-                if let Some(rank) = expected_rank {
-                    body.insert("expected_position".to_owned(), json!({ "rank": rank }));
-                }
+                let payload = flow_reorder_payload_value(
+                    board_space_id,
+                    flow_id,
+                    &effect_space,
+                    &effect_rank,
+                    expected_rank.as_deref(),
+                );
                 OperationBuilder::new(realm_id, actor, "ck.flow.reorder")
                     .target_ref(flow_id)
-                    .body(Value::Object(body))
+                    .body(payload)
             }
             _ => {
-                body.insert("target_space_id".to_owned(), json!(effect_space));
-                if let Some(space_id) = expected_space {
-                    body.insert("from_space_id".to_owned(), json!(space_id));
-                }
-                if let (Some(space_id), Some(rank)) = (
-                    position_field(&expected_position, "space_id"),
-                    expected_rank,
-                ) {
-                    body.insert(
-                        "expected_position".to_owned(),
-                        json!({ "space_id": space_id, "rank": rank }),
-                    );
-                }
+                // expected_position is only emitted when BOTH a prior
+                // space_id and rank are known (matches the legacy guard).
+                let expected = match (expected_space.as_deref(), expected_rank.as_deref()) {
+                    (Some(space), Some(rank)) => Some((Some(space), Some(rank))),
+                    _ => None,
+                };
+                let payload = flow_move_payload_value(
+                    board_space_id,
+                    flow_id,
+                    &effect_space,
+                    &effect_rank,
+                    expected_space.as_deref(),
+                    expected,
+                );
                 OperationBuilder::new(realm_id, actor, "ck.flow.move")
                     .target_ref(flow_id)
-                    .body(Value::Object(body))
+                    .body(payload)
             }
         }
     }
