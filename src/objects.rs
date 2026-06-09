@@ -18,10 +18,16 @@ pub fn build_morph_create(
     actor: &str,
     morph: &Morph,
 ) -> anyhow::Result<OperationBuilder> {
-    let value = serde_json::to_value(morph)?;
+    // `morph_create_payload` (additionalProperties:false) carries the typed
+    // Morph under the canonical `object` key — NOT `morph`. Build the
+    // `{object}` envelope via the SDK's shared `ObjectCreatePayload` so the
+    // key/shape stays aligned with the schema.
+    let body = cokret_sdk::ObjectCreatePayload::new(morph)
+        .to_value()
+        .map_err(|e| anyhow::anyhow!("ck.morph.create payload serialize: {e}"))?;
     Ok(OperationBuilder::new(realm_id, actor, "ck.morph.create")
         .target_ref(morph.id.as_str())
-        .body(json!({"morph": value})))
+        .body(body))
 }
 
 /// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
