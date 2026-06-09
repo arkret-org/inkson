@@ -1815,8 +1815,27 @@ pub fn build_realm_state_event(
             predecessor: None,
         },
     }];
+    // For `ck.realm.history_visibility` the body is the spec
+    // `history_visibility_payload` (`{value, restricted_policy_digest?,
+    // reason?}`, additionalProperties:false). Route it through the SDK strong
+    // type so the enum value + the `restricted ⇒ restricted_policy_digest`
+    // conditional are checked at construction; the cell effect keeps the bare
+    // enum string. Other facets (`join_rule`/`discovery`/...) have no dedicated
+    // spec payload def and keep the generic `{value}` body.
+    let body = if kind == "ck.realm.history_visibility" {
+        let visibility = value
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
+        let typed: cokret_sdk::HistoryVisibility =
+            serde_json::from_value(Value::String(visibility.to_owned())).map_err(|err| {
+                anyhow::anyhow!("invalid history_visibility {visibility:?}: {err}")
+            })?;
+        cokret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
+    } else {
+        json!({ "value": value })
+    };
     let mut envelope = OperationBuilder::new(realm_id, actor_id, kind)
-        .body(json!({ "value": value }))
+        .body(body)
         .preconditions(preconditions)
         .effects(effects)
         .build("yougen");
@@ -1980,29 +1999,35 @@ pub fn build_plaintext_visible_services_event(
     actor_id: &str,
     service_dids: &[String],
 ) -> anyhow::Result<Option<EventEnvelope>> {
+    // Strong type: plaintext_visible_services_payload (top-level
+    // additionalProperties:false; item required fields strongly typed via the
+    // SDK PlaintextDataClassKind / PlaintextServiceVisibility enums).
+    //
+    // Spec rename (head 37ce729 / SDK 4d5a1af): privacy / service feature enums
+    // renamed `flow_body / message_body / body_only` → `flow_content /
+    // message_content / content_only`. No serde alias — aggressive migration.
+    use cokret_sdk::{PlaintextDataClassKind, PlaintextServiceVisibility, PlaintextVisibleService};
     let services = service_dids
         .iter()
         .map(|service| service.trim())
         .filter(|service| !service.is_empty())
-        .map(|service| {
-            json!({
-                "service_did": service,
-                "service_type": "principal_server",
-                // Spec rename (head 37ce729 / SDK 4d5a1af): privacy / service
-                // feature enums renamed `flow_body / message_body / body_only`
-                // → `flow_content / message_content / content_only`. No serde
-                // alias — aggressive migration.
-                "data_classes": [
-                    "message_content",
-                    "full_text_index",
-                    "notification_summary",
-                    "inbox_preview",
+        .map(|service| -> anyhow::Result<PlaintextVisibleService> {
+            let service_did = cokret_sdk::Did::new(service.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}"))?;
+            Ok(PlaintextVisibleService::new(
+                service_did,
+                "principal_server",
+                vec![
+                    PlaintextDataClassKind::MessageContent,
+                    PlaintextDataClassKind::FullTextIndex,
+                    PlaintextDataClassKind::NotificationSummary,
+                    PlaintextDataClassKind::InboxPreview,
                 ],
-                "purposes": ["message_index", "notification_fanout"],
-                "visibility": "private_plaintext",
-            })
+                vec!["message_index".to_owned(), "notification_fanout".to_owned()],
+                PlaintextServiceVisibility::PrivatePlaintext,
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     if services.is_empty() {
         return Ok(None);
     }
@@ -2021,7 +2046,7 @@ pub fn build_plaintext_visible_services_event(
             predicate_id: None,
         },
     }];
-    let body_value = json!({ "services": services });
+    let body_value = cokret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
     let effects = vec![Effect {
         cell,
         op: LatticeOp {
