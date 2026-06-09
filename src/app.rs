@@ -290,7 +290,10 @@ fn ensure_sidebar_row_perms(
                     .await;
                 SidebarRowRealmPerms {
                     can_add_member: invite.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
-                    can_settings: settings.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
+                    can_settings: settings
+                        .as_ref()
+                        .map(sidebar_authz_allowed)
+                        .unwrap_or(false),
                 }
             }
             Err(_) => SidebarRowRealmPerms::default(),
@@ -895,8 +898,7 @@ pub fn RouterView() -> Element {
     // keyed by realm_id. Filled lazily when a row kebab opens (see
     // `ensure_sidebar_row_perms`) so we never probe authz for Realms whose
     // menu the user never touches.
-    let sidebar_row_perms =
-        use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
+    let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
     // Step 3 of the account-MLS-secret auto-unlock flow: set by the bootstrap
     // effect when this device has no local account secret yet but the server
@@ -5780,6 +5782,7 @@ fn settings_route_label(section: &str) -> &'static str {
         "consent" => "Consent grants",
         "blocklist" | "blocked-users" => "Blocked actors",
         "capabilities" => "Capabilities",
+        "timeline" | "composer" => "Timeline & composer",
         "audit" | "audit-log" | "developer" | "developer-tools" => "Diagnostics",
         "theme" => "Appearance & locale",
         "release" => "Diagnostics",
