@@ -680,11 +680,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_recovery_missing.title", "Recovery backup is missing");
     dict.set(
         "mls_recovery_missing.subtitle",
-        "encrypted history cannot unlock here",
+        "this device can't open the encrypted history yet",
     );
     dict.set(
         "mls_recovery_missing.description",
-        "This browser can see an encrypted Realm, but the server does not have a recovery-key backup for it. Open an existing unlocked device, create the encrypted-history recovery backup, then reload this browser.",
+        "This Realm is end-to-end encrypted, and this device does not yet hold the key to open its history. If you have another device or browser where this account is already unlocked, open it, create the encrypted-history recovery backup, then reload here. If this is your only device, restore from a Recovery Key or Encrypted Vault you set up earlier under Settings -> Recovery; without one, past encrypted messages stay sealed by design.",
     );
     dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 

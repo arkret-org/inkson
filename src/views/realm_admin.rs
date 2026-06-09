@@ -2241,6 +2241,7 @@ pub fn RealmAdminPanel(
                                     let subject_id = selected_realm_id.clone();
                                     let subject_kind = metadata_subject.kind;
                                     let home_realm_id = metadata_subject.home_realm_id.clone();
+                                    let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let subject_id = subject_id.clone();
@@ -2263,13 +2264,16 @@ pub fn RealmAdminPanel(
                                             );
                                             return;
                                         }
-                                        let actor_did = match state_store.write().ensure_local_identity() {
-                                            Ok(id) => id.device_did.as_str().to_owned(),
-                                            Err(err) => {
-                                                status_msg.set(format!("identity unavailable: {err}"));
-                                                return;
-                                            }
-                                        };
+                                        // Realm/Space metadata events are authored by the
+                                        // account/principal DID, not the device DID, or the server
+                                        // rejects them with `actor_session_mismatch`.
+                                        let actor_did = actor_account_did.trim().to_owned();
+                                        if actor_did.is_empty() {
+                                            status_msg.set(
+                                                "profile update failed: account is not connected".to_owned(),
+                                            );
+                                            return;
+                                        }
                                         let mut patch = serde_json::Map::new();
                                         patch.insert("title".to_owned(), json!(title));
                                         patch.insert(
@@ -2527,19 +2531,21 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
                             let mut state_store = state_store;
                             let mut sync_cursor = sync_cursor;
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
-                                let actor_did = match state_store.write().ensure_local_identity() {
-                                    Ok(id) => id.device_did.as_str().to_owned(),
-                                    Err(err) => {
-                                        status_msg.set(format!("identity unavailable: {err}"));
-                                        return;
-                                    }
-                                };
+                                // Membership events are authored by the account/principal DID
+                                // (the bearer session actor), not the device DID, or the server
+                                // rejects them with `actor_session_mismatch`.
+                                let actor_did = actor_account_did.trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status_msg.set("Leave Realm failed: account is not connected".to_owned());
+                                    return;
+                                }
                                 spawn(async move {
                                     let realm_for_msg = realm.clone();
                                     match crate::views::helpers::with_authed_api(
@@ -2659,6 +2665,7 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
@@ -2671,16 +2678,16 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let actor_did =
-                                    match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id.device_did.as_str().to_owned(),
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "identity unavailable: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
+                                // Capability events are authored by the account/principal DID,
+                                // not the device DID, or the server returns
+                                // `actor_session_mismatch`.
+                                let actor_did = actor_account_did.trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status_msg.set(
+                                        "capability grant failed: account is not connected".to_owned(),
+                                    );
+                                    return;
+                                }
                                 // Pull the active constraint from the editor
                                 // signals into the wire shape. Empty input
                                 // yields no constraint.
@@ -2758,6 +2765,7 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
@@ -2776,16 +2784,16 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let actor_did =
-                                    match state_store.write().ensure_local_identity() {
-                                        Ok(id) => id.device_did.as_str().to_owned(),
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "identity unavailable: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
+                                // Capability events are authored by the account/principal DID,
+                                // not the device DID, or the server returns
+                                // `actor_session_mismatch`.
+                                let actor_did = actor_account_did.trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status_msg.set(
+                                        "capability revoke failed: account is not connected".to_owned(),
+                                    );
+                                    return;
+                                }
                                 let envelope = crate::operation::cx_ops::capability_revoke(
                                     &realm,
                                     &actor_did,
@@ -2846,17 +2854,18 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
-                                let actor_did = match state_store.write().ensure_local_identity() {
-                                    Ok(id) => id.device_did.as_str().to_owned(),
-                                    Err(err) => {
-                                        status_msg.set(format!("identity unavailable: {err}"));
-                                        return;
-                                    }
-                                };
+                                // Lifecycle events are authored by the account/principal DID, not
+                                // the device DID, or the server returns `actor_session_mismatch`.
+                                let actor_did = actor_account_did.trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status_msg.set("archive failed: account is not connected".to_owned());
+                                    return;
+                                }
                                 let realm_for_msg = realm.clone();
                                 spawn(async move {
                                     match crate::views::helpers::with_authed_api(
@@ -2886,17 +2895,18 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
+                            let actor_account_did = account_did.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
-                                let actor_did = match state_store.write().ensure_local_identity() {
-                                    Ok(id) => id.device_did.as_str().to_owned(),
-                                    Err(err) => {
-                                        status_msg.set(format!("identity unavailable: {err}"));
-                                        return;
-                                    }
-                                };
+                                // Lifecycle events are authored by the account/principal DID, not
+                                // the device DID, or the server returns `actor_session_mismatch`.
+                                let actor_did = actor_account_did.trim().to_owned();
+                                if actor_did.is_empty() {
+                                    status_msg.set("destroy failed: account is not connected".to_owned());
+                                    return;
+                                }
                                 spawn(async move {
                                     let realm_for_msg = realm.clone();
                                     match crate::views::helpers::with_authed_api(

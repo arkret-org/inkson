@@ -177,19 +177,22 @@ fn leave_sidebar_realm(
     base_url: String,
     api_token: String,
     realm_id: String,
+    account_did: String,
     mut state_store: Signal<LocalStateStore>,
     mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
     mut sync_cursor: Signal<String>,
     mut status: Signal<String>,
 ) {
-    let actor_did = match state_store.write().ensure_local_identity() {
-        Ok(id) => id.device_did.as_str().to_owned(),
-        Err(err) => {
-            status.set(format!("identity unavailable: {err}"));
-            return;
-        }
-    };
+    // Realm membership events are authored by the account/principal DID — the
+    // server rejects any event whose `actor_id` differs from the bearer
+    // session actor (`actor_session_mismatch`). The local device DID is not the
+    // session actor, so it must not be used here.
+    let actor_did = account_did.trim().to_owned();
+    if actor_did.is_empty() {
+        status.set("Leave Realm failed: account is not connected".to_owned());
+        return;
+    }
     let current_nodes = realm_tree_nodes();
     let mut ids_to_forget = descendant_node_ids(&current_nodes, &realm_id);
     if ids_to_forget.is_empty() {
@@ -3380,6 +3383,7 @@ pub fn RouterView() -> Element {
                                                             base_url(),
                                                             token(),
                                                             id.clone(),
+                                                            account_did(),
                                                             state_store,
                                                             realm_tree_nodes,
                                                             selected_realm_id,
@@ -4270,6 +4274,7 @@ pub fn RouterView() -> Element {
                     Route::RealmsManage => rsx! {
                         RealmsManagePage {
                             base_url: base_url(),
+                            account_did: account_did(),
                             token,
                             has_session,
                             realm_rows: manage_realm_rows.clone(),
@@ -4656,6 +4661,7 @@ fn contact_manage_scope_summary(contact: &crate::models::ContactListRow) -> Stri
 #[component]
 fn RealmsManagePage(
     base_url: String,
+    account_did: String,
     token: Signal<String>,
     has_session: bool,
     realm_rows: Vec<RealmManageRow>,
@@ -4744,6 +4750,7 @@ fn RealmsManagePage(
                                 disabled: selection_count == 0 || busy() || !has_session,
                                 onclick: {
                                     let base = base_url.clone();
+                                    let actor_account_did = account_did.clone();
                                     move |_| {
                                         if busy() {
                                             return;
@@ -4756,13 +4763,14 @@ fn RealmsManagePage(
                                         if selected.is_empty() {
                                             return;
                                         }
-                                        let actor_did = match state_store.write().ensure_local_identity() {
-                                            Ok(id) => id.device_did.as_str().to_owned(),
-                                            Err(err) => {
-                                                status.set(format!("identity unavailable: {err}"));
-                                                return;
-                                            }
-                                        };
+                                        // Membership events are authored by the account/principal
+                                        // DID (the bearer session actor), not the local device DID,
+                                        // or the server rejects them with `actor_session_mismatch`.
+                                        let actor_did = actor_account_did.clone();
+                                        if actor_did.trim().is_empty() {
+                                            status.set("Leave selected failed: account is not connected".to_owned());
+                                            return;
+                                        }
                                         let current_nodes = realm_tree_nodes();
                                         let ids_to_forget_by_realm = selected
                                             .iter()

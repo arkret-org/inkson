@@ -2444,6 +2444,114 @@ label.avatar-upload-button:active,
 }
 .metric .delta.down { color: var(--danger); }
 
+/* ----- Recovery panel ----- */
+/* Give the whole panel a clear label -> value rhythm so the metric cards stop
+   reading as flat rows of equal-weight text. Scoped to `.recovery-panel` so it
+   never touches metric grids elsewhere. */
+.recovery-panel .metric > strong {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  font-weight: 600;
+}
+.recovery-panel .metric > span {
+  display: block;
+  margin-top: 3px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.recovery-panel .metric > .muted { margin-top: 4px; font-size: 12px; }
+
+/* The Recovery Key itself — promoted out of the metric grid into a hero block. */
+.recovery-key-hero {
+  margin: 2px 0;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.recovery-key-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: rk;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+.rk-word {
+  counter-increment: rk;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.rk-word::before {
+  content: counter(rk);
+  flex-shrink: 0;
+  min-width: 1.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.recovery-key-masked {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  word-spacing: 0.35em;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.recovery-key-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+  padding: 8px 0;
+}
+.recovery-key-empty > strong { font-size: 14px; font-weight: 600; color: var(--text-2); }
+.recovery-key-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  margin-top: 2px;
+}
+.recovery-key-meta > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recovery-key-meta .lbl {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  font-weight: 600;
+}
+.recovery-key-meta .val {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.recovery-key-meta .muted { font-size: 11px; }
+@media (max-width: 640px) {
+  .recovery-key-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Progress bar / sync indicator */
 .bar {
   height: 4px;

@@ -384,6 +384,35 @@ fn passphrase_strength_label(score: u8) -> &'static str {
     }
 }
 
+/// Copy the 24-word Recovery Key to the clipboard so the user never has to
+/// hand-select it (a partial selection silently drops words). Prefers the async
+/// Clipboard API and falls back to `execCommand` on insecure contexts.
+fn copy_recovery_text_to_clipboard(text: &str) {
+    let Ok(encoded) = serde_json::to_string(text) else {
+        return;
+    };
+    let script = format!(
+        r#"(async () => {{
+    const text = {encoded};
+    if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(text);
+        return true;
+    }}
+    const node = document.createElement("textarea");
+    node.value = text;
+    node.setAttribute("readonly", "");
+    node.style.position = "fixed";
+    node.style.left = "-9999px";
+    document.body.appendChild(node);
+    node.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(node);
+    return copied;
+}})()"#
+    );
+    let _ = document::eval(&script);
+}
+
 #[component]
 pub fn RecoveryPanel(
     base_url: String,
@@ -453,7 +482,7 @@ pub fn RecoveryPanel(
     };
 
     rsx! {
-        div { class: "timeline", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
+        div { class: "timeline recovery-panel", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
             div { class: "event",
                 div { class: "event-head",
                     span { "Recovery options" }
@@ -760,36 +789,62 @@ pub fn RecoveryPanel(
                     span { "high-entropy string · keep offline" }
                     HelpTip { text: "A fallback for when every device is lost and no guardian is reachable. Cokret never stores this on the server — only a SHA-256 fingerprint stays in local state for verification. Generate one and write it down or print it." }
                 }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { "Current Recovery Key" }
-                        span { "data-testid": "recovery-key-current",
-                            if !live_recovery_key().is_empty() {
-                                "{live_recovery_key()}"
-                            } else if !recovery_key_fp().is_empty() {
-                                "·······-·······-·······-·······-·······-·······"
-                            } else {
-                                "not generated"
+
+                // The key itself — promoted to a full-width hero so it reads as
+                // the single most important value on the panel, not one metric
+                // cell among equals.
+                div { class: "recovery-key-hero",
+                    if !live_recovery_key().is_empty() {
+                        {
+                            let words: Vec<String> = live_recovery_key()
+                                .split_whitespace()
+                                .map(|word| word.to_owned())
+                                .collect();
+                            // The `data-testid` element's text content must stay
+                            // exactly the 24 whitespace-separated words (the index
+                            // is a CSS counter, not text), so the e2e word-count
+                            // assertion keeps holding.
+                            rsx! {
+                                ol { class: "recovery-key-grid", "data-testid": "recovery-key-current",
+                                    for word in words {
+                                        li { class: "rk-word", "{word}", " " }
+                                    }
+                                }
                             }
                         }
-                        div { class: "muted",
-                            if !live_recovery_key().is_empty() {
-                                "Plaintext is only shown until you navigate away or generate a new one."
-                            } else if !recovery_key_fp().is_empty() {
-                                "Plaintext is no longer in memory. Regenerate to view a new value."
-                            } else {
-                                "Generate one to enable policy-approved backup unlock fallback"
-                            }
+                    } else if !recovery_key_fp().is_empty() {
+                        div { class: "recovery-key-masked", "data-testid": "recovery-key-current",
+                            "•••• •••• •••• •••• •••• •••• •••• ••••"
+                        }
+                    } else {
+                        div { class: "recovery-key-empty", "data-testid": "recovery-key-current",
+                            strong { "Not generated yet" }
+                            span { class: "muted", "Generate one to enable policy-approved backup unlock fallback." }
                         }
                     }
-                    div { class: "metric",
-                        strong { "Last rotated" }
-                        span { "data-testid": "recovery-key-rotated-at", "{fmt_relative(&recovery_key_rotated_at())}" }
-                        div { class: "muted", "Recommended: rotate at least every 90 days" }
+                }
+
+                if !live_recovery_key().is_empty() {
+                    div { class: "callout warn", "data-testid": "recovery-key-live-warning",
+                        div { class: "body",
+                            strong { "Write these 24 words down now." }
+                            " Plaintext is only shown until you navigate away or generate a new one."
+                        }
                     }
-                    div { class: "metric",
-                        strong { "Fingerprint" }
-                        span { "data-testid": "recovery-key-fp",
+                } else if !recovery_key_fp().is_empty() {
+                    div { class: "muted", "Plaintext is no longer in memory. Regenerate to view a new value." }
+                }
+
+                // Supporting metadata — deliberately quieter than the key above.
+                div { class: "recovery-key-meta",
+                    div {
+                        span { class: "lbl", "Last rotated" }
+                        span { class: "val", "data-testid": "recovery-key-rotated-at", "{fmt_relative(&recovery_key_rotated_at())}" }
+                        span { class: "muted", "Rotate at least every 90 days" }
+                    }
+                    div {
+                        span { class: "lbl", "Fingerprint" }
+                        span { class: "val", "data-testid": "recovery-key-fp",
                             if recovery_key_fp().is_empty() { "—" } else {
                                 {
                                     let fp = recovery_key_fp();
@@ -802,9 +857,10 @@ pub fn RecoveryPanel(
                                 }
                             }
                         }
-                        div { class: "muted", "SHA-256 of the Recovery Key (locally stored, never uploaded)" }
+                        span { class: "muted", "SHA-256, stored locally, never uploaded" }
                     }
                 }
+
                 if !recovery_key_status().is_empty() {
                     div { class: "muted", "data-testid": "recovery-key-status", "{recovery_key_status}" }
                 }
@@ -838,6 +894,17 @@ pub fn RecoveryPanel(
                             }
                         },
                         if recovery_key_fp().is_empty() { "Generate" } else { "Regenerate" }
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "recovery-key-copy",
+                        disabled: live_recovery_key().is_empty(),
+                        title: "Copy the 24-word Recovery Key to the clipboard.",
+                        onclick: move |_| {
+                            copy_recovery_text_to_clipboard(&live_recovery_key());
+                            recovery_key_status.set("Recovery Key copied to clipboard. Store it offline and clear it from the screen.".to_owned());
+                        },
+                        "Copy"
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
