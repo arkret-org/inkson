@@ -783,26 +783,25 @@ fn watch_level_label(level: WatchLevel) -> &'static str {
     }
 }
 
-/// Realms the user can pick a per-realm override for: the union of realms with
-/// a cached tree projection, a private remark, or an existing override. Each
-/// entry is `(realm_id, friendly_label)` with the label resolved through the
-/// local remark (falling back to the public title, then the short id). Sorted
-/// by realm id (BTreeMap) for a stable picker order.
+/// Realms the user can pick a per-realm override for. Derived from the SAME
+/// source the sidebar renders — `realm_tree_nodes_from_sync_realms` over the
+/// cached realm-tree projections — so the picker always matches the Realms the
+/// user actually sees. Spaces are folded onto their home Realm; any Realm that
+/// already has an override is kept even if its projection isn't cached yet.
+/// Each entry is `(realm_id, friendly_label)`, label resolved through the local
+/// remark (falling back to the public title, then the short id). Sorted by
+/// realm id (BTreeMap) for a stable picker order.
 fn known_realm_options(store: &LocalStateStore) -> Vec<(String, String)> {
     let state = store.load();
     let mut titles: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for (realm_id, projection) in &state.realm_tree_projections {
-        let title = projection
-            .get("name")
-            .and_then(|value| value.as_str())
-            .or_else(|| projection.get("title").and_then(|value| value.as_str()))
-            .unwrap_or_default()
-            .to_owned();
-        titles.entry(realm_id.clone()).or_insert(title);
+    for node in crate::realm_tree::realm_tree_nodes_from_sync_realms(&state.realm_tree_projections)
+    {
+        if node.kind == crate::models::RealmTreeNodeKind::Realm && !node.realm_id.is_empty() {
+            titles.entry(node.realm_id).or_insert(node.title);
+        }
     }
-    for realm_id in state.realm_remarks.keys() {
-        titles.entry(realm_id.clone()).or_default();
-    }
+    // Keep Realms that already carry an override pickable even if their tree
+    // projection hasn't synced into the cache yet.
     for realm_id in state.realm_watch_levels.keys() {
         titles.entry(realm_id.clone()).or_default();
     }
@@ -857,6 +856,7 @@ fn RealmOverrideRow(
         div { class: "actions", "data-testid": "{row_testid}", "data-realm-id": "{realm_id}",
             span { class: "mono", title: "{realm_id}", "{label}" }
             Select::<String> {
+                class: "select",
                 "data-testid": "realm-watch-level-select",
                 value: Some(selected.into()),
                 on_value_change: {
@@ -2388,19 +2388,25 @@ pub fn SettingsPanel(
                                     "Pick a Realm and how much it should notify you. This overrides the global defaults above for that Realm only."
                                 }
                                 div { class: "actions",
-                                    if known_realms.is_empty() {
-                                        Input {
-                                            "data-testid": "realm-override-id-input",
-                                            value: "{new_override_realm}",
-                                            placeholder: "ck:realm:...",
-                                            oninput: move |event: FormEvent| new_override_realm.set(event.value()),
-                                        }
-                                    } else {
+                                    // Each picker lives in its own `label.field` wrapper (the same
+                                    // shape create_circle_modal uses for multiple dxc Selects) — never
+                                    // a raw id box, and never two bare-adjacent Selects. Isolating each
+                                    // Select keeps the VNode tree stable so opening one doesn't remount
+                                    // (and snap shut) its neighbour.
+                                    label { class: "field",
+                                        span { class: "field-label", "Realm" }
                                         Select::<String> {
+                                            class: "select",
                                             "data-testid": "realm-override-realm-select",
+                                            disabled: known_realms.is_empty(),
                                             value: Some(new_override_realm_selected.into()),
                                             on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_realm.set(v); } },
-                                            SelectOption::<String> { index: 0usize, value: String::new(), text_value: "Select a Realm…", "Select a Realm…" }
+                                            SelectOption::<String> {
+                                                index: 0usize,
+                                                value: String::new(),
+                                                text_value: if known_realms.is_empty() { "No Realms available yet" } else { "Select a Realm…" },
+                                                if known_realms.is_empty() { "No Realms available yet" } else { "Select a Realm…" }
+                                            }
                                             for (index , (realm_id , label)) in known_realms.iter().enumerate() {
                                                 SelectOption::<String> {
                                                     key: "{realm_id}",
@@ -2412,14 +2418,18 @@ pub fn SettingsPanel(
                                             }
                                         }
                                     }
-                                    Select::<String> {
-                                        "data-testid": "realm-override-level-select",
-                                        value: Some(new_override_level_selected.into()),
-                                        on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_level.set(v); } },
-                                        SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
-                                        SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
-                                        SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
-                                        SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+                                    label { class: "field",
+                                        span { class: "field-label", "Notify me about" }
+                                        Select::<String> {
+                                            class: "select",
+                                            "data-testid": "realm-override-level-select",
+                                            value: Some(new_override_level_selected.into()),
+                                            on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_level.set(v); } },
+                                            SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
+                                            SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
+                                            SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
+                                            SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+                                        }
                                     }
                                     Button {
                                         variant: ButtonVariant::Primary,
