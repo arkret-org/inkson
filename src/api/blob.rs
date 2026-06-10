@@ -99,6 +99,9 @@ impl CokretApi {
         realm_id: &str,
         asset: &crate::blob::EncryptedClientAsset,
     ) -> anyhow::Result<BlobUploadOutcome> {
+        // The envelope is now the SDK's canonical `EncryptedAttachmentEnvelope`
+        // (spec `blob.schema.json#/$defs/encrypted_attachment` wire shape), not
+        // the old private `cokret.encrypted_attachment.v1` JSON.
         let envelope = serde_json::to_string(&asset.envelope)?;
         let request = self
             .http
@@ -107,7 +110,7 @@ impl CokretApi {
             .header("x-cokret-realm-id", realm_id)
             .header("x-cokret-blob-encrypted", "true")
             .header("x-cokret-attachment-envelope", envelope)
-            .header("x-cokret-content-digest", &asset.ciphertext_digest)
+            .header("x-cokret-content-digest", asset.ciphertext_digest())
             .body(asset.ciphertext.clone());
         self.send_json(self.prepare_request(request), Method::POST)
             .await
@@ -146,5 +149,89 @@ impl CokretApi {
         ))?);
         self.send_bytes(self.prepare_request(request), Method::GET)
             .await
+    }
+
+    /// Download an encrypted MLS attachment and recover its plaintext using the
+    /// SDK's canonical decoder, dispatched on the envelope `scheme`.
+    ///
+    /// `content_key` is the 32-byte MLS-exporter secret (the same value passed
+    /// as `content_key` at encrypt time). The envelope is the canonical
+    /// [`cokret_sdk::blob_aead::EncryptedAttachmentEnvelope`] that travelled
+    /// alongside the blob_ref in the message payload.
+    ///
+    /// Scheme dispatch:
+    /// - `ck.blob.whole_file_aead.v1` → [`decrypt_whole_file`].
+    /// - `ck.blob.stream_aead.v1` → incremental [`StreamDecryptor`] fed the
+    ///   segments of the downloaded ciphertext, so every §3.3.6 sequencing /
+    ///   integrity check runs before plaintext is released.
+    /// - any other scheme → fail closed.
+    ///
+    /// Minimal implementation: the ciphertext is fetched with a single whole
+    /// GET, then driven segment-by-segment through the decryptor.
+    /// TODO(perf): for `ck.blob.stream_aead.v1` issue HTTP Range requests at
+    /// `segment_size` (+16-byte tag) integer offsets so Range / progressive
+    /// playback can decrypt segments as they arrive instead of buffering the
+    /// whole object — the `StreamDecryptor` already supports incremental push.
+    pub async fn get_encrypted_attachment_plaintext(
+        &self,
+        envelope: &cokret_sdk::blob_aead::EncryptedAttachmentEnvelope,
+        content_key: &[u8; 32],
+    ) -> anyhow::Result<Vec<u8>> {
+        use cokret_sdk::blob_aead::{
+            SCHEME_STREAM, SCHEME_WHOLE_FILE, StreamDecryptor, decrypt_whole_file,
+        };
+
+        let ciphertext = self.get_blob_bytes(&envelope.blob_ref).await?;
+
+        match envelope.scheme.as_str() {
+            SCHEME_WHOLE_FILE => decrypt_whole_file(&ciphertext, envelope, content_key)
+                .map_err(|err| anyhow::anyhow!("whole-file attachment decrypt: {err}")),
+            SCHEME_STREAM => {
+                let segment_size = envelope
+                    .segment_size
+                    .ok_or_else(|| anyhow::anyhow!("stream envelope missing segment_size"))?
+                    as usize;
+                let segment_count = envelope
+                    .segment_count
+                    .ok_or_else(|| anyhow::anyhow!("stream envelope missing segment_count"))?;
+                const TAG_LEN: usize = 16;
+
+                let mut decryptor = StreamDecryptor::new(envelope, content_key)
+                    .map_err(|err| anyhow::anyhow!("stream attachment decrypt: {err}"))?;
+                let mut plaintext = Vec::with_capacity(envelope.size_bytes as usize);
+                let mut offset = 0usize;
+                for index in 0..segment_count {
+                    // Per §3.3.1: every segment but the last carries exactly
+                    // `segment_size` plaintext bytes; the last carries the
+                    // remainder. Each ciphertext segment adds a 16-byte tag.
+                    let last_index = segment_count - 1;
+                    let pt_len = if index < last_index {
+                        segment_size
+                    } else {
+                        (envelope.size_bytes - (segment_size as u64) * (last_index as u64)) as usize
+                    };
+                    let seg_len = pt_len + TAG_LEN;
+                    if offset + seg_len > ciphertext.len() {
+                        return Err(anyhow::anyhow!(
+                            "stream ciphertext shorter than declared segments"
+                        ));
+                    }
+                    let segment = &ciphertext[offset..offset + seg_len];
+                    offset += seg_len;
+                    let seg_plaintext = decryptor
+                        .push_segment(index, segment)
+                        .map_err(|err| anyhow::anyhow!("stream segment decrypt: {err}"))?;
+                    plaintext.extend_from_slice(&seg_plaintext);
+                }
+                decryptor
+                    .finish()
+                    .map_err(|err| anyhow::anyhow!("stream attachment finalize: {err}"))?;
+                Ok(plaintext)
+            }
+            // Unknown / unsupported scheme: fail closed, never attempt a decrypt.
+            other => Err(anyhow::anyhow!(
+                "unsupported_attachment_scheme: {other}"
+            )),
+        }
     }
 }

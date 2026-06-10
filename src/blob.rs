@@ -8,149 +8,219 @@
 //! structures and provides operation builders for blob register / revoke
 //! events. The actual upload bytes go to the Principal Server's
 //! `ck.self.blob.upload` endpoint; this module covers the durable event side.
+//!
+//! # Attachment AEAD is the SDK's canonical codec
+//!
+//! All client-side attachment encryption is delegated to
+//! [`cokret_sdk::blob_aead`], the canonical implementation of
+//! `ck.blob.stream_aead.v1` (chunked streaming AEAD) and
+//! `ck.blob.whole_file_aead.v1` (whole-file AEAD). Yougen no longer ships a
+//! private XChaCha envelope or its own nonce derivation; the
+//! `mls_exported_secret` (32 bytes from the MLS exporter) is passed straight
+//! through as the SDK `content_key`. The envelope carried on the wire is the
+//! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
+//! `blob.schema.json#/$defs/encrypted_attachment`.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 pub use cokret_sdk::{
     Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, MediaMetadata,
     Thumbnail, safe_content_disposition, safe_content_type,
 };
-use hmac::{Hmac, Mac};
+use cokret_sdk::blob_aead::{
+    self, EncryptedAttachmentEnvelope, StreamEncryptParams, DEFAULT_SEGMENT_SIZE,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::canonical::canonical_json_bytes;
 use crate::operation::OperationBuilder;
 
-pub const MLS_ATTACHMENT_AEAD_ALGORITHM: &str = "mls-rfc9420+xchacha20poly1305";
-pub const MLS_ATTACHMENT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
-pub const MLS_ATTACHMENT_NONCE_LEN: usize = 24;
-pub const MLS_ATTACHMENT_NONCE_COUNTER_LEN: usize = 8;
-pub const MLS_ATTACHMENT_NONCE_PREFIX_LEN: usize =
-    MLS_ATTACHMENT_NONCE_LEN - MLS_ATTACHMENT_NONCE_COUNTER_LEN;
+/// MLS exporter content-key length (XChaCha20-Poly1305 key).
 pub const MLS_ATTACHMENT_KEY_LEN: usize = 32;
+/// Ciphertext is opaque octet-stream on the wire; the plaintext media type is
+/// recorded inside the (encrypted-AAD-bound) envelope, never in the blob's
+/// transport `content-type`.
 pub const CIPHERTEXT_MEDIA_TYPE: &str = "application/octet-stream";
-const MLS_ATTACHMENT_NONCE_LABEL: &str = "cokret-aead-sender-nonce-prefix-v1";
-const MLS_ATTACHMENT_NONCE_PURPOSE: &str = "blob-attachment";
 
-type HmacSha256 = Hmac<Sha256>;
+/// Plaintext sizes at or below this go whole-file; larger attachments use the
+/// chunked streaming scheme so a multi-MiB upload/download can be processed
+/// segment-by-segment (Range / progressive playback) instead of buffered
+/// whole. Equal to the SDK's `DEFAULT_SEGMENT_SIZE` (256 KiB): a payload that
+/// fits in a single stream segment gains nothing from the streaming framing,
+/// so it stays whole-file.
+pub const STREAM_ATTACHMENT_THRESHOLD: usize = DEFAULT_SEGMENT_SIZE as usize;
 
+/// A single encrypted asset ready for upload: the ciphertext bytes plus the
+/// canonical [`EncryptedAttachmentEnvelope`] (SDK / spec wire shape) with its
+/// `blob_ref` already content-addressed over the ciphertext.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncryptedClientAsset {
     pub ciphertext: Vec<u8>,
-    pub nonce: [u8; MLS_ATTACHMENT_NONCE_LEN],
-    pub ciphertext_digest: String,
-    pub aad: String,
-    pub envelope: Value,
+    pub envelope: EncryptedAttachmentEnvelope,
 }
 
+impl EncryptedClientAsset {
+    /// `<algo>:<hex>` digest the SDK already recorded over the ciphertext.
+    pub fn ciphertext_digest(&self) -> &str {
+        &self.envelope.ciphertext_digest
+    }
+
+    /// Content-addressed blob reference (`ck:blob:sha256:<hex>`).
+    pub fn blob_ref(&self) -> &str {
+        &self.envelope.blob_ref
+    }
+}
+
+/// A full-resolution attachment plus its optional independently-keyed
+/// thumbnail. Per spec §3.3.4 the thumbnail always uses the whole-file scheme.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncryptedAttachmentBundle {
     pub attachment: EncryptedClientAsset,
     pub thumbnail: Option<EncryptedClientAsset>,
 }
 
-/// Caller-owned per-device counter for MLS attachment AEAD nonces.
-///
-/// The spec requires the counter to be persisted per `(device_id, key_ref,
-/// epoch, purpose)` so restarts never reuse a value. Yougen keeps this type
-/// at the API boundary: encryption callers must provide the monotonic state
-/// explicitly instead of falling back to a random nonce.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MlsAttachmentNonceState {
-    sender_device_id: String,
-    next_counter: u64,
-}
-
-impl MlsAttachmentNonceState {
-    pub fn new(sender_device_id: impl Into<String>, next_counter: u64) -> anyhow::Result<Self> {
-        let sender_device_id = sender_device_id.into();
-        if sender_device_id.trim().is_empty() {
-            anyhow::bail!("sender_device_id is required for attachment nonce derivation");
-        }
-        Ok(Self {
-            sender_device_id,
-            next_counter,
-        })
-    }
-
-    pub fn sender_device_id(&self) -> &str {
-        &self.sender_device_id
-    }
-
-    pub fn next_counter(&self) -> u64 {
-        self.next_counter
-    }
-
-    fn next_nonce(
-        &mut self,
-        mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
-        epoch: u64,
-        key_ref: &Value,
-    ) -> anyhow::Result<DerivedMlsAttachmentNonce> {
-        let counter = self.next_counter;
-        let next_counter = counter
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("attachment nonce counter exhausted"))?;
-        let bytes = derive_mls_attachment_nonce(
-            mls_exported_secret,
-            epoch,
-            key_ref,
-            &self.sender_device_id,
-            counter,
-        )?;
-        self.next_counter = next_counter;
-        Ok(DerivedMlsAttachmentNonce { bytes, counter })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DerivedMlsAttachmentNonce {
-    bytes: [u8; MLS_ATTACHMENT_NONCE_LEN],
-    counter: u64,
-}
-
-fn derive_mls_attachment_nonce(
-    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
-    epoch: u64,
-    key_ref: &Value,
-    sender_device_id: &str,
-    counter: u64,
-) -> anyhow::Result<[u8; MLS_ATTACHMENT_NONCE_LEN]> {
-    if sender_device_id.trim().is_empty() {
-        anyhow::bail!("sender_device_id is required for attachment nonce derivation");
-    }
-    if !key_ref.is_object() && !key_ref.is_string() {
-        anyhow::bail!("key_ref must be an MLS key reference object or string");
-    }
-    let context = json!({
-        "key_ref": key_ref,
-        "epoch": epoch,
-        "device_id": sender_device_id,
-        "purpose": MLS_ATTACHMENT_NONCE_PURPOSE,
-        "aead_profile": MLS_ATTACHMENT_AEAD_PROFILE,
-    });
-    let context = canonical_json_bytes(&context)?;
-    let mut mac = <HmacSha256 as Mac>::new_from_slice(mls_exported_secret)
-        .map_err(|err| anyhow::anyhow!("attachment nonce hmac key: {err}"))?;
-    mac.update(MLS_ATTACHMENT_NONCE_LABEL.as_bytes());
-    mac.update(&[0]);
-    mac.update(&context);
-    let digest = mac.finalize().into_bytes();
-
-    let mut nonce = [0u8; MLS_ATTACHMENT_NONCE_LEN];
-    nonce[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
-        .copy_from_slice(&digest[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]);
-    nonce[MLS_ATTACHMENT_NONCE_PREFIX_LEN..].copy_from_slice(&counter.to_be_bytes());
-    Ok(nonce)
-}
-
 /// Content-address a blob payload as `ck:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("ck:blob:sha256:{digest:x}")
+}
+
+/// Stabilise an MLS `key_ref` (object or string) into the opaque string the
+/// SDK / spec wire schema expects. Object refs are serialised with the
+/// crate's canonical JSON so the AAD binding is deterministic and reproducible
+/// across senders/receivers; a string ref is bound verbatim.
+fn key_ref_string(key_ref: &Value) -> anyhow::Result<String> {
+    match key_ref {
+        Value::String(s) => {
+            if s.trim().is_empty() {
+                anyhow::bail!("key_ref string must be non-empty");
+            }
+            Ok(s.clone())
+        }
+        Value::Object(_) => {
+            let bytes = canonical_json_bytes(key_ref)?;
+            String::from_utf8(bytes)
+                .map_err(|err| anyhow::anyhow!("canonical key_ref is not valid UTF-8: {err}"))
+        }
+        _ => anyhow::bail!("key_ref must be an MLS key reference object or string"),
+    }
+}
+
+/// Finish an SDK encrypt: content-address the ciphertext and stamp the
+/// resulting `ck:blob:sha256:<hex>` into the envelope's `blob_ref`.
+fn finish_asset(
+    ciphertext: Vec<u8>,
+    mut envelope: EncryptedAttachmentEnvelope,
+) -> EncryptedClientAsset {
+    envelope.blob_ref = blob_typed_id(&ciphertext);
+    EncryptedClientAsset {
+        ciphertext,
+        envelope,
+    }
+}
+
+/// Encrypt one attachment asset, choosing the scheme by size.
+///
+/// `force_whole_file` pins the whole-file scheme regardless of size — used for
+/// thumbnails, which spec §3.3.4 always carries whole-file. The plaintext
+/// `media_type` is recorded inside the envelope only (AAD-bound), never on the
+/// transport.
+fn encrypt_asset(
+    plaintext: &[u8],
+    content_key: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    epoch: u64,
+    key_ref: &str,
+    media_type: &str,
+    force_whole_file: bool,
+) -> anyhow::Result<EncryptedClientAsset> {
+    let (ciphertext, envelope) = if !force_whole_file && plaintext.len() > STREAM_ATTACHMENT_THRESHOLD
+    {
+        let params = StreamEncryptParams {
+            key_ref: key_ref.to_owned(),
+            epoch,
+            media_type: media_type.to_owned(),
+            segment_size: DEFAULT_SEGMENT_SIZE,
+        };
+        blob_aead::encrypt_stream(plaintext, content_key, &params)
+            .map_err(|err| anyhow::anyhow!("stream attachment encrypt: {err}"))?
+    } else {
+        blob_aead::encrypt_whole_file(
+            plaintext,
+            content_key,
+            key_ref.to_owned(),
+            epoch,
+            media_type.to_owned(),
+        )
+        .map_err(|err| anyhow::anyhow!("whole-file attachment encrypt: {err}"))?
+    };
+    Ok(finish_asset(ciphertext, envelope))
+}
+
+/// Encrypt a full-resolution attachment (plus an optional thumbnail) against
+/// the SDK's canonical AEAD codec.
+///
+/// `mls_exported_secret` is the 32-byte MLS-exporter content key, used verbatim
+/// as the SDK `content_key`. The body attachment picks stream vs whole-file by
+/// size ([`STREAM_ATTACHMENT_THRESHOLD`]); the thumbnail is always whole-file
+/// (spec §3.3.4). `media_type` is the *plaintext* media type recorded in the
+/// AAD-bound envelope; `thumbnail_media_type` defaults to `image/jpeg` when
+/// `None`.
+#[allow(clippy::too_many_arguments)]
+pub fn encrypt_mls_attachment_bundle(
+    attachment_plaintext: &[u8],
+    thumbnail_plaintext: Option<&[u8]>,
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    epoch: u64,
+    key_ref: Value,
+    media_type: &str,
+    thumbnail_media_type: Option<&str>,
+) -> anyhow::Result<EncryptedAttachmentBundle> {
+    let key_ref = key_ref_string(&key_ref)?;
+    let attachment = encrypt_asset(
+        attachment_plaintext,
+        mls_exported_secret,
+        epoch,
+        &key_ref,
+        media_type,
+        false,
+    )?;
+    let thumbnail = thumbnail_plaintext
+        .map(|bytes| {
+            encrypt_asset(
+                bytes,
+                mls_exported_secret,
+                epoch,
+                &key_ref,
+                thumbnail_media_type.unwrap_or("image/jpeg"),
+                // Thumbnails are always whole-file (spec §3.3.4).
+                true,
+            )
+        })
+        .transpose()?;
+    Ok(EncryptedAttachmentBundle {
+        attachment,
+        thumbnail,
+    })
+}
+
+/// Encrypt a single MLS attachment asset (body media), choosing stream vs
+/// whole-file by size. Thin wrapper over the SDK codec for callers that do not
+/// also produce a thumbnail.
+pub fn encrypt_mls_asset(
+    plaintext: &[u8],
+    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
+    epoch: u64,
+    key_ref: Value,
+    media_type: &str,
+) -> anyhow::Result<EncryptedClientAsset> {
+    let key_ref = key_ref_string(&key_ref)?;
+    encrypt_asset(
+        plaintext,
+        mls_exported_secret,
+        epoch,
+        &key_ref,
+        media_type,
+        false,
+    )
 }
 
 /// Build a `ck.blob.register` event body describing an authenticated media
@@ -215,127 +285,12 @@ pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     }))
 }
 
-pub fn encrypt_mls_attachment_bundle(
-    attachment_plaintext: &[u8],
-    thumbnail_plaintext: Option<&[u8]>,
-    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
-    realm_id: &str,
-    epoch: u64,
-    key_ref: Value,
-    nonce_state: &mut MlsAttachmentNonceState,
-) -> anyhow::Result<EncryptedAttachmentBundle> {
-    let attachment = encrypt_mls_asset(
-        attachment_plaintext,
-        "attachment",
-        mls_exported_secret,
-        realm_id,
-        epoch,
-        key_ref.clone(),
-        nonce_state,
-    )?;
-    let thumbnail = thumbnail_plaintext
-        .map(|bytes| {
-            encrypt_mls_asset(
-                bytes,
-                "thumbnail",
-                mls_exported_secret,
-                realm_id,
-                epoch,
-                key_ref.clone(),
-                nonce_state,
-            )
-        })
-        .transpose()?;
-    Ok(EncryptedAttachmentBundle {
-        attachment,
-        thumbnail,
-    })
-}
-
-pub fn encrypt_mls_asset(
-    plaintext: &[u8],
-    asset_kind: &str,
-    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
-    realm_id: &str,
-    epoch: u64,
-    key_ref: Value,
-    nonce_state: &mut MlsAttachmentNonceState,
-) -> anyhow::Result<EncryptedClientAsset> {
-    let nonce = nonce_state.next_nonce(mls_exported_secret, epoch, &key_ref)?;
-    encrypt_mls_asset_with_nonce(
-        plaintext,
-        asset_kind,
-        mls_exported_secret,
-        realm_id,
-        epoch,
-        key_ref,
-        nonce.bytes,
-        nonce_state.sender_device_id(),
-        nonce.counter,
-    )
-}
-
-fn encrypt_mls_asset_with_nonce(
-    plaintext: &[u8],
-    asset_kind: &str,
-    mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
-    realm_id: &str,
-    epoch: u64,
-    key_ref: Value,
-    nonce: [u8; MLS_ATTACHMENT_NONCE_LEN],
-    sender_device_id: &str,
-    nonce_counter: u64,
-) -> anyhow::Result<EncryptedClientAsset> {
-    if realm_id.trim().is_empty() {
-        anyhow::bail!("realm_id is required for encrypted attachment AAD");
-    }
-    if !key_ref.is_object() && !key_ref.is_string() {
-        anyhow::bail!("key_ref must be an MLS key reference object or string");
-    }
-    if sender_device_id.trim().is_empty() {
-        anyhow::bail!("sender_device_id is required for encrypted attachment metadata");
-    }
-    let asset_kind = match asset_kind {
-        "attachment" | "thumbnail" => asset_kind,
-        _ => anyhow::bail!("asset_kind must be attachment or thumbnail"),
-    };
-    let aad = format!("cokret:media:v1:{realm_id}:{epoch}:{asset_kind}");
-    let cipher = XChaCha20Poly1305::new(mls_exported_secret.into());
-    let ciphertext = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext,
-                aad: aad.as_bytes(),
-            },
-        )
-        .map_err(|err| anyhow::anyhow!("xchacha20poly1305 attachment encrypt: {err}"))?;
-    let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&ciphertext));
-    let envelope = json!({
-        "version": "cokret.encrypted_attachment.v1",
-        "algorithm": MLS_ATTACHMENT_AEAD_ALGORITHM,
-        "aead_profile": MLS_ATTACHMENT_AEAD_PROFILE,
-        "nonce": URL_SAFE_NO_PAD.encode(nonce),
-        "nonce_counter": nonce_counter,
-        "sender_device_id": sender_device_id,
-        "key_ref": key_ref,
-        "ciphertext_digest": ciphertext_digest,
-        "media_type": CIPHERTEXT_MEDIA_TYPE,
-        "realm_id": realm_id,
-        "epoch": epoch,
-    });
-    Ok(EncryptedClientAsset {
-        ciphertext,
-        nonce,
-        ciphertext_digest,
-        aad,
-        envelope,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cokret_sdk::blob_aead::{
+        SCHEME_STREAM, SCHEME_WHOLE_FILE, decrypt_stream, decrypt_whole_file,
+    };
 
     #[test]
     fn blob_typed_id_is_content_addressed() {
@@ -363,131 +318,125 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_mls_attachment_asset_uses_ciphertext_only_metadata() {
-        let key = [7u8; MLS_ATTACHMENT_KEY_LEN];
-        let nonce = [3u8; MLS_ATTACHMENT_NONCE_LEN];
-        let asset = encrypt_mls_asset_with_nonce(
-            b"plain cat png bytes",
-            "attachment",
-            &key,
-            "ck:realm:encrypted",
-            42,
-            json!({"group_id": "ck:mls:group", "epoch": 42}),
-            nonce,
-            "ck:device:alice",
-            3,
-        )
-        .unwrap();
-
-        assert_ne!(asset.ciphertext, b"plain cat png bytes");
-        assert_eq!(
-            asset.ciphertext_digest,
-            format!("sha256:{:x}", Sha256::digest(&asset.ciphertext))
-        );
-        assert_eq!(asset.envelope["algorithm"], MLS_ATTACHMENT_AEAD_ALGORITHM);
-        assert_eq!(asset.envelope["aead_profile"], MLS_ATTACHMENT_AEAD_PROFILE);
-        assert_eq!(asset.envelope["sender_device_id"], "ck:device:alice");
-        assert_eq!(asset.envelope["nonce_counter"], 3);
-        assert_eq!(asset.envelope["media_type"], CIPHERTEXT_MEDIA_TYPE);
-        assert_eq!(asset.envelope["ciphertext_digest"], asset.ciphertext_digest);
-        let envelope = asset.envelope.to_string();
-        assert!(!envelope.contains("cat.png"));
-        assert!(!envelope.contains("image/png"));
-
-        let cipher = XChaCha20Poly1305::new((&key).into());
-        let decrypted = cipher
-            .decrypt(
-                XNonce::from_slice(&asset.nonce),
-                Payload {
-                    msg: &asset.ciphertext,
-                    aad: asset.aad.as_bytes(),
-                },
-            )
-            .unwrap();
-        assert_eq!(decrypted, b"plain cat png bytes");
+    fn key_ref_object_is_stable_canonical_json() {
+        // Field order in the source object must not change the stabilised string.
+        let a = key_ref_string(&json!({"group_id": "ck:mls:group", "epoch": 7})).unwrap();
+        let b = key_ref_string(&json!({"epoch": 7, "group_id": "ck:mls:group"})).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, r#"{"epoch":7,"group_id":"ck:mls:group"}"#);
+        // String refs pass through verbatim.
+        assert_eq!(key_ref_string(&json!("ck:keyref:opaque")).unwrap(), "ck:keyref:opaque");
+        // Other JSON shapes / empty strings are rejected.
+        assert!(key_ref_string(&json!(42)).is_err());
+        assert!(key_ref_string(&json!("  ")).is_err());
     }
 
     #[test]
-    fn encrypt_mls_attachment_bundle_encrypts_thumbnail_as_separate_asset() {
-        let key = [9u8; MLS_ATTACHMENT_KEY_LEN];
-        let mut nonce_state = MlsAttachmentNonceState::new("ck:device:alice", 0).unwrap();
-        let bundle = encrypt_mls_attachment_bundle(
-            b"full-resolution plaintext",
-            Some(b"thumbnail plaintext"),
+    fn small_attachment_uses_whole_file_and_roundtrips() {
+        let key = [7u8; MLS_ATTACHMENT_KEY_LEN];
+        let plaintext = b"plain cat png bytes";
+        let asset = encrypt_mls_asset(
+            plaintext,
             &key,
-            "ck:realm:encrypted",
+            42,
+            json!({"group_id": "ck:mls:group", "epoch": 42}),
+            "image/png",
+        )
+        .unwrap();
+
+        assert_ne!(asset.ciphertext.as_slice(), plaintext.as_slice());
+        assert_eq!(asset.envelope.scheme, SCHEME_WHOLE_FILE);
+        assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
+        assert_eq!(
+            asset.ciphertext_digest(),
+            format!("sha256:{:x}", Sha256::digest(&asset.ciphertext))
+        );
+        // ciphertext-only metadata: no plaintext filename / media type leaks
+        // into the wire envelope.
+        let wire = serde_json::to_string(&asset.envelope).unwrap();
+        assert!(!wire.contains("cat.png"));
+
+        let recovered = decrypt_whole_file(&asset.ciphertext, &asset.envelope, &key).unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn large_attachment_uses_stream_and_roundtrips() {
+        let key = [5u8; MLS_ATTACHMENT_KEY_LEN];
+        // Strictly larger than one segment so the streaming scheme kicks in.
+        let plaintext: Vec<u8> = (0..(STREAM_ATTACHMENT_THRESHOLD + 1024))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let asset = encrypt_mls_asset(
+            &plaintext,
+            &key,
+            9,
+            json!({"group_id": "ck:mls:group", "epoch": 9}),
+            "video/mp4",
+        )
+        .unwrap();
+
+        assert_eq!(asset.envelope.scheme, SCHEME_STREAM);
+        assert_eq!(asset.envelope.segment_size, Some(DEFAULT_SEGMENT_SIZE));
+        assert!(asset.envelope.segment_count.unwrap() >= 2);
+        assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
+
+        let recovered = decrypt_stream(&asset.ciphertext, &asset.envelope, &key).unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn thumbnail_is_always_whole_file_and_independent() {
+        let key = [9u8; MLS_ATTACHMENT_KEY_LEN];
+        // Make the body large enough to be a stream, while the thumbnail must
+        // still be whole-file even if it were also large.
+        let body: Vec<u8> = vec![1u8; STREAM_ATTACHMENT_THRESHOLD + 4096];
+        let thumb: Vec<u8> = vec![2u8; STREAM_ATTACHMENT_THRESHOLD + 4096];
+        let bundle = encrypt_mls_attachment_bundle(
+            &body,
+            Some(&thumb),
+            &key,
             7,
             json!({"group_id": "ck:mls:group", "epoch": 7}),
-            &mut nonce_state,
+            "video/mp4",
+            Some("image/jpeg"),
         )
         .unwrap();
         let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");
 
-        assert_ne!(bundle.attachment.ciphertext, b"full-resolution plaintext");
-        assert_ne!(thumbnail.ciphertext, b"thumbnail plaintext");
-        assert_ne!(bundle.attachment.nonce, thumbnail.nonce);
-        assert_eq!(nonce_counter(&bundle.attachment.nonce), 0);
-        assert_eq!(nonce_counter(&thumbnail.nonce), 1);
-        assert_eq!(nonce_state.next_counter(), 2);
+        assert_eq!(bundle.attachment.envelope.scheme, SCHEME_STREAM);
+        // §3.3.4: thumbnail always whole-file regardless of size.
+        assert_eq!(thumbnail.envelope.scheme, SCHEME_WHOLE_FILE);
+        // Independent ciphertexts / blob refs.
+        assert_ne!(bundle.attachment.ciphertext, thumbnail.ciphertext);
+        assert_ne!(bundle.attachment.blob_ref(), thumbnail.blob_ref());
         assert_ne!(
-            bundle.attachment.ciphertext_digest,
-            thumbnail.ciphertext_digest
+            bundle.attachment.ciphertext_digest(),
+            thumbnail.ciphertext_digest()
         );
-        assert_eq!(thumbnail.envelope["media_type"], CIPHERTEXT_MEDIA_TYPE);
-        assert_eq!(
-            thumbnail.ciphertext_digest,
-            format!("sha256:{:x}", Sha256::digest(&thumbnail.ciphertext))
-        );
+
+        // ciphertext-only metadata: the wire transport media type is opaque,
+        // but the envelope records the plaintext media type for the receiver.
+        assert_eq!(thumbnail.envelope.media_type, "image/jpeg");
+        let recovered = decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).unwrap();
+        assert_eq!(recovered, thumb);
     }
 
     #[test]
-    fn mls_attachment_nonce_state_derives_monotonic_nonce_suffixes() {
-        let key = [11u8; MLS_ATTACHMENT_KEY_LEN];
-        let key_ref = json!({"group_id": "ck:mls:group", "epoch": 7});
-        let mut state = MlsAttachmentNonceState::new("ck:device:alice", 41).unwrap();
-
-        let first = state.next_nonce(&key, 7, &key_ref).unwrap();
-        let second = state.next_nonce(&key, 7, &key_ref).unwrap();
-
-        assert_eq!(nonce_counter(&first.bytes), 41);
-        assert_eq!(nonce_counter(&second.bytes), 42);
-        assert_eq!(state.next_counter(), 43);
-        assert_ne!(first.bytes, second.bytes);
-        assert_eq!(
-            &first.bytes[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
-            &second.bytes[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
-            "same sender/key_ref/epoch keeps a stable sender nonce prefix"
-        );
-    }
-
-    #[test]
-    fn mls_attachment_nonce_prefix_binds_sender_device_and_key_ref() {
-        let key = [13u8; MLS_ATTACHMENT_KEY_LEN];
-        let key_ref = json!({"group_id": "ck:mls:group", "epoch": 7});
-        let other_key_ref = json!({"group_id": "ck:mls:other", "epoch": 7});
-        let alice = derive_mls_attachment_nonce(&key, 7, &key_ref, "ck:device:alice", 0).unwrap();
-        let bob = derive_mls_attachment_nonce(&key, 7, &key_ref, "ck:device:bob", 0).unwrap();
-        let other_key =
-            derive_mls_attachment_nonce(&key, 7, &other_key_ref, "ck:device:alice", 0).unwrap();
-
-        assert_eq!(nonce_counter(&alice), 0);
-        assert_eq!(nonce_counter(&bob), 0);
-        assert_ne!(
-            &alice[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
-            &bob[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
-        );
-        assert_ne!(
-            &alice[..MLS_ATTACHMENT_NONCE_PREFIX_LEN],
-            &other_key[..MLS_ATTACHMENT_NONCE_PREFIX_LEN]
-        );
-    }
-
-    #[test]
-    fn mls_attachment_nonce_state_rejects_empty_sender_device() {
-        assert!(MlsAttachmentNonceState::new("  ", 0).is_err());
-    }
-
-    fn nonce_counter(nonce: &[u8; MLS_ATTACHMENT_NONCE_LEN]) -> u64 {
-        u64::from_be_bytes(nonce[MLS_ATTACHMENT_NONCE_PREFIX_LEN..].try_into().unwrap())
+    fn bundle_without_thumbnail_leaves_it_unset() {
+        let key = [3u8; MLS_ATTACHMENT_KEY_LEN];
+        let bundle = encrypt_mls_attachment_bundle(
+            b"small body",
+            None,
+            &key,
+            1,
+            json!("ck:keyref:opaque"),
+            "text/plain",
+            None,
+        )
+        .unwrap();
+        assert!(bundle.thumbnail.is_none());
+        assert_eq!(bundle.attachment.envelope.scheme, SCHEME_WHOLE_FILE);
+        assert_eq!(bundle.attachment.envelope.key_ref, "ck:keyref:opaque");
     }
 }
