@@ -10,3 +10,4 @@ pub mod governance;
 pub mod mimi_client;
 pub mod persistence;
 pub mod runtime;
+pub mod secret_share;

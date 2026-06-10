@@ -24,3 +24,11 @@ pub(crate) fn now_utc() -> DateTime<Utc> {
 pub(crate) fn now_rfc3339_secs() -> String {
     now_utc().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
+
+/// RFC3339 (seconds precision) timestamp `minutes` into the future. Used to
+/// stamp `DeviceMessageEnvelope.expires_at`, which `device-lifecycle.md` §7
+/// makes a required to-device queue field (default cap 24h; verification and
+/// secret-share flows use much shorter windows).
+pub(crate) fn rfc3339_secs_in(minutes: i64) -> String {
+    (now_utc() + chrono::Duration::minutes(minutes)).to_rfc3339_opts(SecondsFormat::Secs, true)
+}

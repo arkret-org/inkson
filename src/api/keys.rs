@@ -65,6 +65,7 @@ impl CokretApi {
             actor,
             device_id,
             "ck.mls.test",
+            &crate::clock::rfc3339_secs_in(60),
             json!({"ciphertext": "opaque-yougen-test"}),
         )
         .await
@@ -83,23 +84,33 @@ impl CokretApi {
 
     /// POST a typed `ck.schema.device_message.v1` envelope to soland's
     /// `/_cokret/self/device_messages` endpoint. Used by device
-    /// verification flows (R3) and any other flow that needs to deliver a
-    /// message to a specific (actor, device_id) pair without going through
-    /// Space history. The body shape is the canonical
-    /// `messages -> actor -> device_id -> {type, content}` map. Idempotency
-    /// is conveyed via the `Idempotency-Key` request header (previously the
+    /// verification flows (R3), secret sharing (`ck.secret.*`) and any
+    /// other flow that needs to deliver a message to a specific
+    /// (actor, device_id) pair without going through Space history. The
+    /// body shape is the canonical
+    /// `messages -> actor -> device_id -> {kind, expires_at, content}` map
+    /// required by the SDK `DeviceMessageTarget` and `device-lifecycle.md`
+    /// §7. `expires_at` is an RFC3339 timestamp; per §7 it MUST NOT be
+    /// later than the kind/profile TTL cap (24h default). Idempotency is
+    /// conveyed via the `Idempotency-Key` request header (previously the
     /// trailing `{txn_id}` path segment).
     pub async fn send_device_message_envelope(
         &self,
         txn_id: &str,
         target_actor: &str,
         target_device_id: &str,
-        message_type: &str,
+        kind: &str,
+        expires_at: &str,
         content: serde_json::Value,
     ) -> anyhow::Result<DeviceMessagesPutOutcome> {
         let path = "_cokret/self/device_messages";
-        let payload =
-            build_device_message_envelope(target_actor, target_device_id, message_type, content);
+        let payload = build_device_message_envelope(
+            target_actor,
+            target_device_id,
+            kind,
+            expires_at,
+            content,
+        );
         let request = self
             .http
             .post(self.endpoint(path)?)

@@ -401,11 +401,14 @@ impl CokretApi {
                 "to-device ephemeral submit: message_type {message_type:?} is not in the ck.key.verification.* family"
             );
         }
+        // `device-lifecycle.md` §8.2 caps verification request.expires_at at
+        // `timestamp + 10m`; use that window for every step of the family.
         self.send_device_message_envelope(
             txn_id,
             target_actor,
             target_device_id,
             message_type,
+            &crate::clock::rfc3339_secs_in(10),
             content,
         )
         .await

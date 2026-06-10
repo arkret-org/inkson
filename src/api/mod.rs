@@ -2245,14 +2245,15 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
     format!("ck:cell:{cell_family}:{space_id}")
 }
 
-/// Build the canonical `ck.schema.device_message.v1` envelope:
+/// Build the canonical `ck.schema.device_message.v1` send envelope:
 ///
 /// ```json
 /// {
 ///   "messages": {
 ///     "<target_actor_did>": {
 ///       "<target_device_id>": {
-///         "type": "<message_type>",
+///         "kind": "<kind>",
+///         "expires_at": "<rfc3339>",
 ///         "content": <content>
 ///       }
 ///     }
@@ -2260,19 +2261,27 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 /// }
 /// ```
 ///
+/// The per-target object MUST match the SDK `DeviceMessageTarget`
+/// (`kind` + `content` + `expires_at`) and `device-lifecycle.md` §7,
+/// which both make `kind` and `expires_at` required — the older
+/// `{type, content}` shape dropped `expires_at` and mislabelled `kind`
+/// as `type`, so soland had to fall back to defaults.
+///
 /// Pure function so the wire shape is testable without a live HTTP
 /// client; used by [`CokretApi::send_device_message_envelope`] (R3).
 pub fn build_device_message_envelope(
     target_actor: &str,
     target_device_id: &str,
-    message_type: &str,
+    kind: &str,
+    expires_at: &str,
     content: serde_json::Value,
 ) -> serde_json::Value {
     json!({
         "messages": {
             target_actor: {
                 target_device_id: {
-                    "type": message_type,
+                    "kind": kind,
+                    "expires_at": expires_at,
                     "content": content,
                 }
             }
@@ -4124,18 +4133,20 @@ mod tests {
     }
 
     /// R3 — `build_device_message_envelope` MUST emit the canonical
-    /// `ck.schema.device_message.v1` shape:
-    /// `{messages: {<actor>: {<device_id>: {type, content}}}}`. soland's
-    /// reducer keys verification events by this exact path; if the wire
-    /// shape drifts (extra wrapping, missing layer, etc.) device verification
-    /// silently fails because the message never reaches the target device.
-    /// This test pins the bytes so a refactor cannot change them by accident.
+    /// `ck.schema.device_message.v1` send shape:
+    /// `{messages: {<actor>: {<device_id>: {kind, expires_at, content}}}}`.
+    /// This matches the SDK `DeviceMessageTarget` and `device-lifecycle.md`
+    /// §7, which both make `kind` and `expires_at` required. If the wire
+    /// shape drifts (mislabelled `type`, missing `expires_at`, etc.) soland
+    /// has to fall back to defaults. This test pins the bytes so a refactor
+    /// cannot change them by accident.
     #[test]
     fn device_message_envelope_matches_schema_v1() {
         let envelope = build_device_message_envelope(
             "did:web:alice.example",
             "device-aaaa-1111",
             "ck.key.verification.request",
+            "2026-04-26T00:10:00Z",
             json!({
                 "method": "sas",
                 "transaction_id": "verify-001"
@@ -4147,7 +4158,8 @@ mod tests {
                 "messages": {
                     "did:web:alice.example": {
                         "device-aaaa-1111": {
-                            "type": "ck.key.verification.request",
+                            "kind": "ck.key.verification.request",
+                            "expires_at": "2026-04-26T00:10:00Z",
                             "content": {
                                 "method": "sas",
                                 "transaction_id": "verify-001"
@@ -4156,7 +4168,7 @@ mod tests {
                     }
                 }
             }),
-            "wire shape must remain `messages → actor → device_id → {{type, content}}`",
+            "wire shape must remain `messages → actor → device_id → {{kind, expires_at, content}}`",
         );
     }
 
@@ -4169,10 +4181,12 @@ mod tests {
             "did:web:bob.example",
             "device-bbbb-2222",
             "ck.key.verification.done",
+            "2026-04-26T00:10:00Z",
             json!({"transaction_id": "verify-done-001"}),
         );
         let inner = &envelope["messages"]["did:web:bob.example"]["device-bbbb-2222"];
-        assert_eq!(inner["type"], "ck.key.verification.done");
+        assert_eq!(inner["kind"], "ck.key.verification.done");
+        assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
         assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
     }
 
