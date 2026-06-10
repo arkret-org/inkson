@@ -2083,6 +2083,7 @@ pub fn SettingsPanel(
                                 account_did,
                                 device_id,
                                 state_store,
+                                personal_handles: personal_handles.clone(),
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
                                 summary { class: "event-head",

@@ -2327,6 +2327,7 @@ pub fn RouterView() -> Element {
                 device_id,
                 state_store,
                 needs_mls_backup,
+                personal_handles,
             }
             div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                 Button {

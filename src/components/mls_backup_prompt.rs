@@ -93,22 +93,36 @@ pub(crate) fn download_text_as_file(filename: &str, text: &str) {
     let _ = document::eval(&script);
 }
 
+/// Pull the human-readable localpart out of the account's primary personal
+/// handle (`<localpart>:<domain>(:<port>)?`) for use in the recovery-key
+/// download filename. We deliberately do NOT derive it from the account DID:
+/// the DID's `:users:<…>` segment is the stable ULID
+/// (`01KTR58RQ4FRTRA0R6Y63C5Y7A`), which is unreadable and useless for telling
+/// downloaded files apart. Returns an empty string when no handle is known yet
+/// (directory lookup still pending), letting the filename fall back to the bare
+/// name rather than an opaque ULID.
+pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
+    handles
+        .iter()
+        .find_map(|handle| {
+            crate::identity_handle::parse_user_handle(handle).map(|parsed| parsed.localpart)
+        })
+        .unwrap_or_default()
+}
+
 /// Build a per-account download filename for the recovery-key `.txt`, so that
 /// multiple accounts (or repeated generations for one account) don't all land
 /// as `cokret-recovery-key.txt` / `…(1).txt` in the Downloads folder, where the
 /// 24 words become impossible to tell apart.
 ///
-/// The localpart is lifted from the account DID's trailing `:users:<localpart>`
-/// segment and sanitised to a filesystem-safe stem (`:` from the wire handle is
-/// illegal on Windows, so we never use the full `<localpart>:<domain>` form).
-/// Falls back to the bare name when no localpart can be derived.
-pub(crate) fn recovery_key_filename(actor_did: &str) -> String {
-    let localpart = actor_did
-        .rsplit_once(":users:")
-        .map(|(_, local)| local)
-        .unwrap_or("")
-        .trim();
+/// `localpart` is the human handle localpart (see
+/// [`recovery_localpart_from_handles`]); it is sanitised to a filesystem-safe
+/// stem (`:` from the wire handle is illegal on Windows, so the caller never
+/// passes the full `<localpart>:<domain>` form). Falls back to the bare name
+/// when the localpart is empty.
+pub(crate) fn recovery_key_filename(localpart: &str) -> String {
     let sanitized: String = localpart
+        .trim()
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
@@ -498,6 +512,9 @@ pub fn MlsBackupPrompt(
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
+    /// Account's personal handles (`<localpart>:<domain>`), used only to name
+    /// the recovery-key download file readably.
+    personal_handles: Signal<Vec<String>>,
 ) -> Element {
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
@@ -675,7 +692,9 @@ pub fn MlsBackupPrompt(
                                     "data-testid": "mls-backup-download-key",
                                     onclick: {
                                         let key = generated_now.clone();
-                                        let fname = recovery_key_filename(&actor_did());
+                                        let localpart =
+                                            recovery_localpart_from_handles(&personal_handles());
+                                        let fname = recovery_key_filename(&localpart);
                                         move |_| {
                                             download_text_as_file(&fname, &key);
                                         }
@@ -731,17 +750,48 @@ pub fn MlsBackupPrompt(
 
 #[cfg(test)]
 mod tests {
-    use super::recovery_key_filename;
+    use super::{recovery_key_filename, recovery_localpart_from_handles};
 
     #[test]
-    fn filename_uses_localpart_from_account_did() {
+    fn localpart_comes_from_handle_not_did_ulid() {
+        // The readable localpart is taken from the personal handle; the DID's
+        // `:users:<ULID>` segment is never used.
         assert_eq!(
-            recovery_key_filename("did:web:example.com:users:alice"),
+            recovery_localpart_from_handles(&["alice:example.com".to_owned()]),
+            "alice"
+        );
+        // Ported authority: localpart is still just the user part.
+        assert_eq!(
+            recovery_localpart_from_handles(&["bob.smith_1:example.com:8443".to_owned()]),
+            "bob.smith_1"
+        );
+        // First parseable handle wins; junk is skipped.
+        assert_eq!(
+            recovery_localpart_from_handles(&[
+                "not a handle".to_owned(),
+                "carol:example.com".to_owned(),
+            ]),
+            "carol"
+        );
+    }
+
+    #[test]
+    fn localpart_empty_when_no_usable_handle() {
+        assert_eq!(recovery_localpart_from_handles(&[]), "");
+        assert_eq!(
+            recovery_localpart_from_handles(&["did:web:example.com:users:01ABC".to_owned()]),
+            ""
+        );
+    }
+
+    #[test]
+    fn filename_uses_localpart() {
+        assert_eq!(
+            recovery_key_filename("alice"),
             "cokret-recovery-key-alice.txt"
         );
-        // Ported authority (`%3A`) doesn't bleed into the localpart segment.
         assert_eq!(
-            recovery_key_filename("did:web:example.com%3A8443:users:bob.smith_1"),
+            recovery_key_filename("bob.smith_1"),
             "cokret-recovery-key-bob.smith_1.txt"
         );
     }
@@ -751,21 +801,18 @@ mod tests {
         // `+`/`~` are valid in a localpart but become `-`; leading/trailing
         // separators are stripped so we never emit a dotfile or dangling dash.
         assert_eq!(
-            recovery_key_filename("did:web:example.com:users:a+b~c"),
+            recovery_key_filename("a+b~c"),
             "cokret-recovery-key-a-b-c.txt"
         );
         assert_eq!(
-            recovery_key_filename("did:web:example.com:users:.hidden."),
+            recovery_key_filename(".hidden."),
             "cokret-recovery-key-hidden.txt"
         );
     }
 
     #[test]
-    fn filename_falls_back_when_no_localpart() {
-        assert_eq!(
-            recovery_key_filename("did:web:example.com"),
-            "cokret-recovery-key.txt"
-        );
+    fn filename_falls_back_when_localpart_empty() {
         assert_eq!(recovery_key_filename(""), "cokret-recovery-key.txt");
+        assert_eq!(recovery_key_filename("   "), "cokret-recovery-key.txt");
     }
 }
