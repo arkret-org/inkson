@@ -642,6 +642,7 @@ struct ApiErrorBody {
 mod account;
 mod agent;
 mod blob;
+mod blob_resumable;
 mod directory;
 mod events;
 mod keys;

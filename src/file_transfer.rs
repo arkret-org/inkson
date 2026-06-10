@@ -184,8 +184,12 @@ pub async fn upload_actor_private_file(
         crypto, actor_id, device_id, filename, media_type, plaintext,
     )?;
     let account_data_key = prepared.account_data_key.clone();
+    // Auto-dispatch: large ciphertexts take the resumable (tus) binding
+    // when the server advertises it in /_cokret/describe, with automatic
+    // fallback to the canonical single-shot upload. Outcome shape and
+    // blob_ref are identical either way (media-and-blob.md §2.1).
     let upload = api
-        .upload_file_transfer_ciphertext(prepared.ciphertext.clone(), &prepared.content_digest)
+        .upload_file_transfer_ciphertext_auto(prepared.ciphertext.clone(), &prepared.content_digest)
         .await?;
     let uploaded_digest = upload.content_digest.to_string();
     if uploaded_digest != prepared.content_digest {
