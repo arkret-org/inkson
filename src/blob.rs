@@ -22,8 +22,8 @@
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
 pub use cokret_sdk::{
-    Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, MediaMetadata,
-    Thumbnail, safe_content_disposition, safe_content_type,
+    Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, KeyRefObject,
+    MediaMetadata, Thumbnail, safe_content_disposition, safe_content_type,
 };
 use cokret_sdk::blob_aead::{
     self, EncryptedAttachmentEnvelope, StreamEncryptParams, DEFAULT_SEGMENT_SIZE,
@@ -31,7 +31,6 @@ use cokret_sdk::blob_aead::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::canonical::canonical_json_bytes;
 use crate::operation::OperationBuilder;
 
 /// MLS exporter content-key length (XChaCha20-Poly1305 key).
@@ -84,27 +83,6 @@ pub fn blob_typed_id(bytes: &[u8]) -> String {
     format!("ck:blob:sha256:{digest:x}")
 }
 
-/// Stabilise an MLS `key_ref` (object or string) into the opaque string the
-/// SDK / spec wire schema expects. Object refs are serialised with the
-/// crate's canonical JSON so the AAD binding is deterministic and reproducible
-/// across senders/receivers; a string ref is bound verbatim.
-fn key_ref_string(key_ref: &Value) -> anyhow::Result<String> {
-    match key_ref {
-        Value::String(s) => {
-            if s.trim().is_empty() {
-                anyhow::bail!("key_ref string must be non-empty");
-            }
-            Ok(s.clone())
-        }
-        Value::Object(_) => {
-            let bytes = canonical_json_bytes(key_ref)?;
-            String::from_utf8(bytes)
-                .map_err(|err| anyhow::anyhow!("canonical key_ref is not valid UTF-8: {err}"))
-        }
-        _ => anyhow::bail!("key_ref must be an MLS key reference object or string"),
-    }
-}
-
 /// Finish an SDK encrypt: content-address the ciphertext and stamp the
 /// resulting `ck:blob:sha256:<hex>` into the envelope's `blob_ref`.
 fn finish_asset(
@@ -128,14 +106,14 @@ fn encrypt_asset(
     plaintext: &[u8],
     content_key: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: &str,
+    key_ref: &KeyRefObject,
     media_type: &str,
     force_whole_file: bool,
 ) -> anyhow::Result<EncryptedClientAsset> {
     let (ciphertext, envelope) = if !force_whole_file && plaintext.len() > STREAM_ATTACHMENT_THRESHOLD
     {
         let params = StreamEncryptParams {
-            key_ref: key_ref.to_owned(),
+            key_ref: key_ref.clone(),
             epoch,
             media_type: media_type.to_owned(),
             segment_size: DEFAULT_SEGMENT_SIZE,
@@ -146,7 +124,7 @@ fn encrypt_asset(
         blob_aead::encrypt_whole_file(
             plaintext,
             content_key,
-            key_ref.to_owned(),
+            key_ref.clone(),
             epoch,
             media_type.to_owned(),
         )
@@ -170,11 +148,10 @@ pub fn encrypt_mls_attachment_bundle(
     thumbnail_plaintext: Option<&[u8]>,
     mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: Value,
+    key_ref: KeyRefObject,
     media_type: &str,
     thumbnail_media_type: Option<&str>,
 ) -> anyhow::Result<EncryptedAttachmentBundle> {
-    let key_ref = key_ref_string(&key_ref)?;
     let attachment = encrypt_asset(
         attachment_plaintext,
         mls_exported_secret,
@@ -209,10 +186,9 @@ pub fn encrypt_mls_asset(
     plaintext: &[u8],
     mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: Value,
+    key_ref: KeyRefObject,
     media_type: &str,
 ) -> anyhow::Result<EncryptedClientAsset> {
-    let key_ref = key_ref_string(&key_ref)?;
     encrypt_asset(
         plaintext,
         mls_exported_secret,
@@ -317,18 +293,11 @@ mod tests {
         assert_eq!(op.payload["reason"], "uploaded in error");
     }
 
-    #[test]
-    fn key_ref_object_is_stable_canonical_json() {
-        // Field order in the source object must not change the stabilised string.
-        let a = key_ref_string(&json!({"group_id": "ck:mls:group", "epoch": 7})).unwrap();
-        let b = key_ref_string(&json!({"epoch": 7, "group_id": "ck:mls:group"})).unwrap();
-        assert_eq!(a, b);
-        assert_eq!(a, r#"{"epoch":7,"group_id":"ck:mls:group"}"#);
-        // String refs pass through verbatim.
-        assert_eq!(key_ref_string(&json!("ck:keyref:opaque")).unwrap(), "ck:keyref:opaque");
-        // Other JSON shapes / empty strings are rejected.
-        assert!(key_ref_string(&json!(42)).is_err());
-        assert!(key_ref_string(&json!("  ")).is_err());
+    fn test_key_ref() -> KeyRefObject {
+        KeyRefObject {
+            algorithm: "MLS".to_owned(),
+            group_state_ref: "ck:event:01964148-0000-7000-8000-000000000000".to_owned(),
+        }
     }
 
     #[test]
@@ -339,7 +308,7 @@ mod tests {
             plaintext,
             &key,
             42,
-            json!({"group_id": "ck:mls:group", "epoch": 42}),
+            test_key_ref(),
             "image/png",
         )
         .unwrap();
@@ -371,7 +340,7 @@ mod tests {
             &plaintext,
             &key,
             9,
-            json!({"group_id": "ck:mls:group", "epoch": 9}),
+            test_key_ref(),
             "video/mp4",
         )
         .unwrap();
@@ -397,7 +366,7 @@ mod tests {
             Some(&thumb),
             &key,
             7,
-            json!({"group_id": "ck:mls:group", "epoch": 7}),
+            test_key_ref(),
             "video/mp4",
             Some("image/jpeg"),
         )
@@ -430,13 +399,13 @@ mod tests {
             None,
             &key,
             1,
-            json!("ck:keyref:opaque"),
+            test_key_ref(),
             "text/plain",
             None,
         )
         .unwrap();
         assert!(bundle.thumbnail.is_none());
         assert_eq!(bundle.attachment.envelope.scheme, SCHEME_WHOLE_FILE);
-        assert_eq!(bundle.attachment.envelope.key_ref, "ck:keyref:opaque");
+        assert_eq!(bundle.attachment.envelope.key_ref, test_key_ref());
     }
 }
