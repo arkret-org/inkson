@@ -4,15 +4,33 @@
 //! (`list_key_backups` → is there an `mls_account_secret` backup?) instead of
 //! keeping a local mirror, and it offers no manual trigger. The only write
 //! path for key backups is the Recovery Key (24 words) flow on
-//! `/settings/recovery` (plus the automatic sidecar backups after encrypted
-//! writes); when nothing is configured the single action here is a link to
-//! that page.
+//! `/settings/recovery` (plus the automatic backups after encrypted writes:
+//! the private-plaintext sidecar AND the §7.10 continuous `mls_history`
+//! uploads after each accepted `ck.mls.commit`); when nothing is configured
+//! the single action here is a link to that page.
+//!
+//! Spec alignment (the old G3.Y1-followup note here was wrong and is
+//! resolved): `crypto-media/encryption-and-audit.md` §2.4 deliberately does
+//! NOT define a dedicated MLS-key backup endpoint. Epoch backfill is a CLIENT
+//! replay of the Realm's `ck.mls.commit` history (key-management.md §7.3
+//! step 6); the key material itself travels on the generic key-backup surface
+//! as `backup_class="mls_history"` envelopes
+//! (`PUT/GET /_cokret/self/keys/backups/{backup_id}`), implemented in
+//! `crate::mls::account_recovery` and the `MlsUnlockPrompt` restore flow. The
+//! remaining gap was CLIENT continuity — now closed by
+//! `crate::components::mls_history_backup` (key-management.md §7.10 automatic
+//! continuous backup) — not a missing soland endpoint.
 //!
 //! Surfaces:
 //! - `key-backup-status` — "enabled" / "disabled" / "loading" / "error"
 //! - `key-backup-last-backup-at` — created_at of the account-secret backup
 //! - `key-backup-recovery-key-fp` — local Recovery Key fingerprint (never the words)
 //! - `key-backup-setup-link` — link to `/settings/recovery` when disabled
+//! - `key-backup-history-pending` — Realms whose newest MLS epoch material
+//!   still awaits its continuous `mls_history` upload ("0" when drained)
+//! - `key-backup-history-last-uploaded-at` — last successful continuous upload
+//! - `key-backup-history-error` — last continuous-upload failure (only rendered
+//!   after a failure)
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -70,6 +88,21 @@ pub fn SettingsSecurityPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut status = use_signal(|| KeyBackupStatus::Loading);
+    let mut history_status =
+        use_signal(crate::components::mls_history_backup_status);
+
+    // Lightweight poll of the continuous mls_history backup job state (a
+    // plain static job table — no server round-trip). Keeps the panel live
+    // while mounted without introducing a second persisted status store.
+    use_future(move || async move {
+        loop {
+            let current = crate::components::mls_history_backup_status();
+            if *history_status.peek() != current {
+                history_status.set(current);
+            }
+            crate::api::sleep_for(std::time::Duration::from_millis(1500)).await;
+        }
+    });
 
     let has_session = !token().trim().is_empty();
     let recovery_key_fp =
@@ -95,6 +128,7 @@ pub fn SettingsSecurityPanel(
     });
 
     let current = status();
+    let history_now = history_status();
     let last_backup_at = match &current {
         KeyBackupStatus::Enabled { last_backup_at } if !last_backup_at.is_empty() => {
             last_backup_at.clone()
@@ -163,9 +197,41 @@ pub fn SettingsSecurityPanel(
                         span { "PUT /_cokret/self/keys/backups" }
                         div { class: "muted", "ciphertext only" }
                     }
+                    div { class: "metric",
+                        strong { "Continuous history backup" }
+                        span {
+                            "data-testid": "key-backup-history-pending",
+                            "{history_now.pending_realms}"
+                        }
+                        div { class: "muted",
+                            if history_now.in_flight {
+                                "uploading epoch material…"
+                            } else if history_now.pending_realms > 0 {
+                                "Realm(s) with epoch material waiting to upload"
+                            } else {
+                                "all MLS epoch material backed up"
+                            }
+                        }
+                        div { class: "muted",
+                            "last upload: "
+                            span {
+                                "data-testid": "key-backup-history-last-uploaded-at",
+                                {history_now.last_uploaded_at.clone().unwrap_or_else(|| "never".to_owned())}
+                            }
+                        }
+                    }
                 }
                 if let KeyBackupStatus::Error(err) = &current {
                     div { class: "muted", "data-testid": "key-backup-error", "{err}" }
+                }
+                if let Some(history_err) = history_now.last_error.clone() {
+                    div { class: "muted", "data-testid": "key-backup-history-error",
+                        "last history-backup failure"
+                        if let Some(at) = history_now.last_error_at.clone() {
+                            " ({at})"
+                        }
+                        ": {history_err}"
+                    }
                 }
                 if matches!(current, KeyBackupStatus::Disabled) {
                     div { class: "actions",

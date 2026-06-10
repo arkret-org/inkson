@@ -6971,6 +6971,18 @@ fn dispatch_card_detail_update(
                         state_store
                             .write()
                             .save_mls_snapshot(realm_id.clone(), snapshot);
+                        // §7.10 continuous backup: the accepted commit advanced
+                        // the epoch, so re-upload this Realm's mls_history
+                        // series tail (debounced; no-op until the 24-word
+                        // Recovery Key exists).
+                        crate::components::schedule_mls_history_backup_after_commit(
+                            base_for_backup_trigger.clone(),
+                            api_token.clone(),
+                            actor_for_backup_trigger.clone(),
+                            device_for_sidecar_backup.clone(),
+                            realm_id.clone(),
+                            state_store,
+                        );
                     }
                     if let Some(commit_operation_id) = mls_commit_operation_id {
                         state_store.write().record_move_submission_with_event_id(

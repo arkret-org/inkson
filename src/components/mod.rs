@@ -27,6 +27,10 @@ pub mod error_boundary;
 /// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
 pub mod mls_backup_prompt;
+/// key-management.md §7.10 — continuous `mls_history` backup job: re-uploads
+/// the per-Realm group-state envelope (series successor chain) after every
+/// accepted `ck.mls.commit`, once the 24-word Recovery Key is configured.
+pub mod mls_history_backup;
 /// Account-MLS-secret auto-unlock prompt — the recovery-passphrase banner
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
@@ -74,6 +78,10 @@ pub use mls_backup_prompt::{
 pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,
     schedule_mls_private_plaintext_backup_after_encrypted_write,
+};
+pub use mls_history_backup::{MlsHistoryBackupStatus, mls_history_backup_status};
+pub(crate) use mls_history_backup::{
+    schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use offline_pending_badge::OfflinePendingBadge;

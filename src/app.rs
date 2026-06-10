@@ -6044,18 +6044,24 @@ async fn bootstrap_mls_welcome_for_realm(
             backup_id: None,
         });
     };
+    let base_for_backup = base_url.clone();
     let actor_for_backup = actor_did.clone();
     let device_for_backup = device_id.clone();
+    let realm_for_backup = realm_id.clone();
     let backup_id =
         crate::views::helpers::with_authed_api(&base_url, session_token, |api| async move {
-            crate::mls::runtime::upload_mls_snapshot_backup(
+            // §7.10: applying a Welcome lands a fresh epoch — chain the upload
+            // onto the Realm's existing mls_history series (successor
+            // envelope) instead of minting a new genesis series per Welcome.
+            crate::components::upload_mls_history_backup_now(
                 &api,
-                &snapshot,
+                &base_for_backup,
                 &actor_for_backup,
                 &device_for_backup,
+                &realm_for_backup,
+                &snapshot,
             )
             .await
-            .map_err(|err| anyhow::anyhow!(err.user_message()))
         })
         .await
         .map_err(|error| error.display())?;

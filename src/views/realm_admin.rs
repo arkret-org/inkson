@@ -3110,14 +3110,18 @@ async fn run_device_revoke_from_snapshot(
             let snapshot = state_store.read().mls_snapshot_for(&realm_id);
             let backup_result = if let Some(snapshot) = snapshot {
                 crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| {
+                    let base_url = base_url.clone();
                     let actor_did = actor_did.clone();
                     let device_id = device_id.clone();
+                    let realm_id = realm_id.clone();
                     async move {
-                        crate::mls::runtime::upload_mls_snapshot_backup(
-                            &api, &snapshot, &actor_did, &device_id,
+                        // §7.10: chain onto the Realm's existing mls_history
+                        // series (successor envelope) instead of minting a
+                        // fresh genesis series on every device-remove commit.
+                        crate::components::upload_mls_history_backup_now(
+                            &api, &base_url, &actor_did, &device_id, &realm_id, &snapshot,
                         )
                         .await
-                        .map_err(|err| anyhow::anyhow!(err.user_message()))
                     }
                 })
                 .await

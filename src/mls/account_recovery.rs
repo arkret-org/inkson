@@ -496,6 +496,12 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     device_id: &str,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload(api).await?;
+    // §7.10 continuous backup makes mls_history series chains long-lived;
+    // restore only needs the TAIL of each series (the tail folds the Realm's
+    // recoverable state), so superseded chain links are skipped entirely —
+    // both to avoid useless restores and to keep the per-principal 24h
+    // full-ciphertext download quota (default 64) from being burned on links.
+    let mls_history_tails = mls_history_series_tail_ids(&payload);
     let mut full_backups = Vec::new();
     for entry in payload
         .get("backups")
@@ -503,6 +509,15 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
         .cloned()
         .unwrap_or_default()
     {
+        if is_mls_history_backup(&entry) {
+            let backup_id = entry
+                .get("backup_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !mls_history_tails.contains(backup_id) {
+                continue;
+            }
+        }
         if entry.get("ciphertext").and_then(Value::as_str).is_some() {
             full_backups.push(entry);
             continue;
@@ -922,21 +937,33 @@ pub fn select_superseded_backup_ids(
     let keep: std::collections::BTreeSet<&str> =
         keep_backup_ids.iter().map(String::as_str).collect();
     let mls_history = crate::key_backup::KeyBackupClass::MlsHistory.as_str();
-    iter_backup_bodies(list_payload)
-        .filter(|body| {
-            let id = body
-                .get("backup_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if keep.contains(id) {
-                return false;
-            }
-            is_mls_account_secret_backup(body)
-                || body.get("backup_class").and_then(Value::as_str) == Some(mls_history)
-        })
-        .filter_map(|body| body.get("backup_id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect()
+    let mut selected: Vec<(String, std::cmp::Reverse<u64>, String)> =
+        iter_backup_bodies(list_payload)
+            .filter(|body| {
+                let id = body
+                    .get("backup_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if keep.contains(id) {
+                    return false;
+                }
+                is_mls_account_secret_backup(body)
+                    || body.get("backup_class").and_then(Value::as_str) == Some(mls_history)
+            })
+            .filter_map(|body| {
+                let id = body.get("backup_id").and_then(Value::as_str)?;
+                Some((
+                    backup_series_id(body).to_owned(),
+                    std::cmp::Reverse(backup_series_seq(body)),
+                    id.to_owned(),
+                ))
+            })
+            .collect();
+    // Per-series tail-first (descending `series_seq`): soland rejects deleting
+    // a non-tail chain link (`active_series_non_tail_delete_forbidden`), so
+    // a §7.10 continuous-backup chain can only be unwound from the tail down.
+    selected.sort();
+    selected.into_iter().map(|(_, _, id)| id).collect()
 }
 
 /// Delete `backup_ids` from the server (ownership-proof authenticated,
@@ -1227,6 +1254,150 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
 
+    Ok((backup_id, body))
+}
+
+/// Realm a `mls_history` backup body belongs to (`envelope_meta.realm_ref`,
+/// falling back to `contents[0].realm_ref`). Both survive soland's
+/// list-metadata redaction, so tail selection works on the redacted list.
+fn mls_history_backup_realm_ref(body: &Value) -> Option<&str> {
+    body.get("envelope_meta")
+        .and_then(|meta| meta.get("realm_ref"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            body.get("contents")
+                .and_then(Value::as_array)
+                .and_then(|c| c.first())
+                .and_then(|item| item.get("realm_ref"))
+                .and_then(Value::as_str)
+        })
+}
+
+fn backup_series_id(body: &Value) -> &str {
+    body.get("series_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn is_mls_history_backup(body: &Value) -> bool {
+    body.get("backup_class").and_then(Value::as_str)
+        == Some(crate::key_backup::KeyBackupClass::MlsHistory.as_str())
+}
+
+/// Series-tail `backup_id`s among the `mls_history` backups in `list_payload`.
+///
+/// Grouped per `series_id` (a missing `series_id` degrades to per-backup
+/// grouping, so legacy envelopes are all kept); the tail is the highest
+/// `(series_seq, created_at)` link. The continuous-backup writer folds each
+/// Realm's epoch material into the tail of one series, so restore only needs
+/// the tail per series — soland's per-principal 24h full-ciphertext download
+/// quota (default 64) would otherwise be burned on superseded chain links.
+pub fn mls_history_series_tail_ids(list_payload: &Value) -> std::collections::BTreeSet<String> {
+    let mut tails: std::collections::BTreeMap<String, &Value> = std::collections::BTreeMap::new();
+    for body in iter_backup_bodies(list_payload).filter(|body| is_mls_history_backup(body)) {
+        let backup_id = body
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let series = backup_series_id(body);
+        let group_key = if series.is_empty() {
+            format!("backup:{backup_id}")
+        } else {
+            format!("series:{series}")
+        };
+        let replace = match tails.get(group_key.as_str()) {
+            Some(current) => {
+                (backup_series_seq(body), backup_created_at(body))
+                    > (backup_series_seq(current), backup_created_at(current))
+            }
+            None => true,
+        };
+        if replace {
+            tails.insert(group_key, body);
+        }
+    }
+    tails
+        .values()
+        .filter_map(|body| body.get("backup_id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Pick the series tail to chain the next continuous `mls_history` upload of
+/// `realm_id` onto: the highest `(series_seq, created_at)` body among that
+/// Realm's `mls_history` backups. `None` means no prior series — the upload is
+/// a genesis.
+pub fn select_mls_history_tail_for_realm(list_payload: &Value, realm_id: &str) -> Option<Value> {
+    iter_backup_bodies(list_payload)
+        .filter(|body| is_mls_history_backup(body))
+        .filter(|body| mls_history_backup_realm_ref(body) == Some(realm_id))
+        .max_by(|a, b| {
+            (backup_series_seq(a), backup_created_at(a))
+                .cmp(&(backup_series_seq(b), backup_created_at(b)))
+        })
+        .cloned()
+}
+
+/// Fetch the FULL body of the current `mls_history` series tail for `realm_id`
+/// (or `None` when the Realm has no history backup yet).
+///
+/// soland's list endpoint redacts `ciphertext` / `key_commitment` /
+/// `auth_data.signature`, and `supersedes_digest` must be computed over the
+/// full persisted predecessor — so a cache miss costs one unlock-proof read
+/// (bounded: once per Realm per session; afterwards the uploader caches the
+/// body it just PUT).
+pub async fn fetch_mls_history_tail_for_realm(
+    api: &crate::api::CokretApi,
+    actor_did: &str,
+    device_id: &str,
+    realm_id: &str,
+) -> Result<Option<Value>> {
+    let list_payload = fetch_mls_restore_payload(api).await?;
+    let Some(tail) = select_mls_history_tail_for_realm(&list_payload, realm_id) else {
+        return Ok(None);
+    };
+    if tail.get("ciphertext").and_then(Value::as_str).is_some() {
+        return Ok(Some(tail));
+    }
+    let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+        api, &tail, actor_did, device_id,
+    )
+    .await
+    .map_err(|err| anyhow!("fetch mls_history series tail: {err}"))?;
+    Ok(Some(full))
+}
+
+/// Build + upload one `mls_history` envelope for `snapshot`, chained as the
+/// SUCCESSOR of `previous` when given (key-management.md §7.10 continuous
+/// backup; soland enforces `series_seq` strictly +1 with
+/// `supersedes`/`supersedes_digest`, and rejects parallel fresh series piling
+/// as the read-quota anti-pattern). With `previous == None` this is a series
+/// genesis (first backup for the Realm, or a deliberate post-rotation reset).
+///
+/// The successor mutation happens BEFORE signing matters: `to_key_backup_body`
+/// signs the genesis shape, so after `apply_next_series` injects
+/// `supersedes`/`supersedes_digest` we re-sign so `auth_data.signed_fields`
+/// covers them (they are signed-when-present fields).
+///
+/// Returns `(backup_id, uploaded_body)`; callers should cache the body as the
+/// new series tail for the next chain link.
+pub async fn upload_mls_history_backup_with_previous(
+    api: &crate::api::CokretApi,
+    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
+    actor_did: &str,
+    device_id: &str,
+    previous: Option<&Value>,
+) -> Result<(String, Value)> {
+    let (backup_id, mut body) =
+        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_did, device_id);
+    if previous.is_some() {
+        apply_next_series(previous, &mut body)?;
+        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
+            .map_err(|err| anyhow!("re-sign mls_history successor envelope: {err}"))?;
+    }
+    api.put_key_backup(&backup_id, body.clone())
+        .await
+        .map_err(|err| anyhow!("upload mls_history backup: {err}"))?;
     Ok((backup_id, body))
 }
 
@@ -1763,6 +1934,114 @@ mod tests {
         assert!(
             !superseded.contains(&"ck:backup:new-hist-a".to_owned()),
             "freshly uploaded history must be kept"
+        );
+    }
+
+    #[test]
+    fn select_superseded_orders_chain_links_tail_first() {
+        // soland rejects deleting a non-tail chain link
+        // (`active_series_non_tail_delete_forbidden`), so the rotation cleanup
+        // must unwind each superseded series from the tail down.
+        let series = "ck:backup_series:01964137-0000-7000-8000-0000000000d0";
+        let env = history_envelope("ck:realm:a", "g-a", 1, ACCOUNT_SECRET);
+        let mut link0 = history_body(&env);
+        link0["backup_id"] = serde_json::json!("ck:backup:link0");
+        link0["series_id"] = serde_json::json!(series);
+        link0["series_seq"] = serde_json::json!(0);
+        let mut link1 = history_body(&env);
+        link1["backup_id"] = serde_json::json!("ck:backup:link1");
+        link1["series_id"] = serde_json::json!(series);
+        link1["series_seq"] = serde_json::json!(1);
+        let mut link2 = history_body(&env);
+        link2["backup_id"] = serde_json::json!("ck:backup:link2");
+        link2["series_id"] = serde_json::json!(series);
+        link2["series_seq"] = serde_json::json!(2);
+        // List order is deliberately shuffled.
+        let payload = serde_json::json!({ "backups": [link1, link2, link0] });
+
+        let superseded = select_superseded_backup_ids(&payload, &[]);
+        assert_eq!(
+            superseded,
+            vec![
+                "ck:backup:link2".to_owned(),
+                "ck:backup:link1".to_owned(),
+                "ck:backup:link0".to_owned(),
+            ],
+            "within a series, deletes must run tail-first (descending series_seq)"
+        );
+    }
+
+    #[test]
+    fn mls_history_successor_chains_onto_previous_tail() {
+        // §7.10 continuous backup: the n+1-th upload for a Realm must extend
+        // the SAME series (inherited series_id, seq+1, supersedes +
+        // supersedes_digest over the canonical predecessor) instead of opening
+        // a parallel genesis series.
+        let env_v1 = history_envelope("ck:realm:a", "g-a", 1, ACCOUNT_SECRET);
+        let genesis = history_body(&env_v1);
+        // Genesis shape: fresh series, seq 0, explicit `supersedes: null`.
+        assert_eq!(genesis["series_seq"], 0);
+        assert!(genesis["supersedes"].is_null());
+        assert!(genesis.get("supersedes_digest").is_none());
+
+        let env_v2 = history_envelope("ck:realm:a", "g-a", 2, ACCOUNT_SECRET);
+        let mut successor = env_v2.to_key_backup_body(
+            "ck:backup:01964137-0000-7000-8000-000000000123",
+            ACTOR,
+            DEVICE,
+        );
+        apply_next_series(Some(&genesis), &mut successor).unwrap();
+
+        assert_eq!(successor["series_id"], genesis["series_id"]);
+        assert_eq!(successor["series_seq"], 1);
+        assert_eq!(successor["supersedes"], genesis["backup_id"]);
+        assert_eq!(
+            successor["supersedes_digest"].as_str().unwrap(),
+            series_supersedes_digest(&genesis).unwrap(),
+            "supersedes_digest must be the canonical sha256 of the predecessor \
+             envelope without auth_data.signature (soland recomputes and 409s \
+             on mismatch)"
+        );
+        // Still a valid mls_history envelope after the successor mutation.
+        validate_key_backup_envelope(&successor, Some(KeyBackupClass::MlsHistory)).unwrap();
+    }
+
+    #[test]
+    fn mls_history_tail_selection_is_per_realm_and_per_series() {
+        let series_a = "ck:backup_series:01964137-0000-7000-8000-0000000000a0";
+        let env_a = history_envelope("ck:realm:a", "g-a", 1, ACCOUNT_SECRET);
+        let mut a0 = history_body(&env_a);
+        a0["backup_id"] = serde_json::json!("ck:backup:a0");
+        a0["series_id"] = serde_json::json!(series_a);
+        a0["series_seq"] = serde_json::json!(0);
+        let env_a2 = history_envelope("ck:realm:a", "g-a", 2, ACCOUNT_SECRET);
+        let mut a1 = history_body(&env_a2);
+        a1["backup_id"] = serde_json::json!("ck:backup:a1");
+        a1["series_id"] = serde_json::json!(series_a);
+        a1["series_seq"] = serde_json::json!(1);
+        let env_b = history_envelope("ck:realm:b", "g-b", 5, ACCOUNT_SECRET);
+        let mut b0 = history_body(&env_b);
+        b0["backup_id"] = serde_json::json!("ck:backup:b0");
+        // Non-history classes must never be selected as history tails.
+        let account = wrap();
+        let payload =
+            serde_json::json!({ "backups": [a0, a1.clone(), b0.clone(), account] });
+
+        // Per-Realm chaining target: realm a -> highest-seq link a1; realm b
+        // -> its genesis; unknown realm -> none.
+        let tail_a = select_mls_history_tail_for_realm(&payload, "ck:realm:a").unwrap();
+        assert_eq!(tail_a["backup_id"], "ck:backup:a1");
+        let tail_b = select_mls_history_tail_for_realm(&payload, "ck:realm:b").unwrap();
+        assert_eq!(tail_b["backup_id"], "ck:backup:b0");
+        assert!(select_mls_history_tail_for_realm(&payload, "ck:realm:absent").is_none());
+
+        // Restore-side quota guard: only series tails survive the filter.
+        let tails = mls_history_series_tail_ids(&payload);
+        assert!(tails.contains("ck:backup:a1"));
+        assert!(tails.contains("ck:backup:b0"));
+        assert!(
+            !tails.contains("ck:backup:a0"),
+            "superseded chain links must not be fetched/restored"
         );
     }
 

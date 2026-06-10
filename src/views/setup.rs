@@ -1337,11 +1337,17 @@ pub fn SetupPanel(
                                                                         }
                                                                     }
                                                                     if let Some(snapshot) = snapshot {
-                                                                        match crate::mls::runtime::upload_mls_snapshot_backup(
+                                                                        // §7.10: a brand-new Realm has no prior series, so
+                                                                        // this resolves to a genesis envelope — and it seeds
+                                                                        // the series-tail cache so post-commit continuous
+                                                                        // uploads chain successors without an extra read.
+                                                                        match crate::components::upload_mls_history_backup_now(
                                                                             &api,
-                                                                            &snapshot,
+                                                                            &base,
                                                                             &actor,
                                                                             &device,
+                                                                            &realm_id,
+                                                                            &snapshot,
                                                                         )
                                                                         .await
                                                                         {
@@ -1350,7 +1356,7 @@ pub fn SetupPanel(
                                                                             }
                                                                             Err(err) => {
                                                                                 tracing::warn!(
-                                                                                    error = %err.user_message(),
+                                                                                    error = %err,
                                                                                     realm = %realm_id,
                                                                                     "initial MLS history backup upload failed"
                                                                                 );
