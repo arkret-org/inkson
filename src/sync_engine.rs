@@ -335,6 +335,15 @@ async fn run_iteration(
                 *deltas_since_invites += 1;
                 None
             };
+            // YOU-02-006: the invite refetch above is a full network await; a
+            // logout / profile switch / server switch during it bumps the
+            // generation and rebinds `state_store`. Re-check before applying so a
+            // stale-generation `response` (old account's realms / cursor /
+            // timeline) can't be written into the new generation's store and UI
+            // signals. The generation bump covers the profile/server switch case.
+            if generation() != start_generation {
+                return IterationOutcome::Ok;
+            }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
             IterationOutcome::Ok
         }

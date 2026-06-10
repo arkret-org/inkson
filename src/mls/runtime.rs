@@ -128,6 +128,10 @@ impl MlsRuntimeError {
 pub struct WelcomeApplyOutcome {
     pub applied: usize,
     pub failed: usize,
+    /// YOU-02-005: welcomes skipped because a snapshot at an equal-or-higher
+    /// epoch for the same group already exists (a replayed / stale Welcome that
+    /// would otherwise roll the local MLS snapshot back to the join epoch).
+    pub skipped_stale: usize,
     pub first_error: Option<String>,
 }
 
@@ -815,6 +819,20 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
+        // YOU-02-005: epoch guard against rolling the realm snapshot backwards.
+        // A replayed / re-delivered Welcome (device_messages GET does not ack,
+        // so the same `ck.mls.welcome` can be returned repeatedly) must not
+        // overwrite a snapshot that has already advanced past the join epoch.
+        // Doing so would discard the sender ratchet position (risking AEAD
+        // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
+        // from the server. Skip when we already hold an equal-or-higher epoch for
+        // the same group.
+        if let Some(existing) = state_store.mls_snapshot_for(realm_id) {
+            if existing.group_id == post_state.group_id && existing.epoch >= post_state.epoch {
+                outcome.skipped_stale += 1;
+                continue;
+            }
+        }
         let mut salt = [0u8; 16];
         if let Err(err) = getrandom::fill(&mut salt) {
             outcome.record_failure(format!("salt: {err}"));

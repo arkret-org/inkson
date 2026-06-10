@@ -1,6 +1,6 @@
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs,
@@ -1366,11 +1366,13 @@ pub struct LocalStateStore {
     /// YOU-02-002/003: shared persistence-health latch. `None` = healthy;
     /// `Some(message)` records the last persist/read failure (atomic write
     /// failed, localStorage quota exceeded, or a corrupt backing store was
-    /// found on boot). Shared via `Rc` so every `Clone` of the store (the
-    /// Dioxus `Signal<LocalStateStore>` is cloned widely) observes the same
+    /// found on boot). Shared via `Arc<Mutex<_>>` so every `Clone` of the store
+    /// (the Dioxus `Signal<LocalStateStore>` is cloned widely) observes the same
     /// latch, letting the UI surface "your changes aren't being saved"
-    /// instead of silently diverging from disk.
-    persist_health: Rc<RefCell<Option<String>>>,
+    /// instead of silently diverging from disk. Must be thread-safe because the
+    /// store is held behind `Arc<Mutex<_>>` in `InMemoryKeyStore` (`KeyStore:
+    /// Send + Sync`).
+    persist_health: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -1462,7 +1464,7 @@ impl Default for LocalStateStore {
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
-            persist_health: Rc::new(RefCell::new(None)),
+            persist_health: Arc::new(Mutex::new(None)),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -1514,12 +1516,12 @@ impl LocalStateStore {
     fn record_persist_result(&self, result: &anyhow::Result<()>) {
         match result {
             Ok(()) => {
-                self.persist_health.borrow_mut().take();
+                self.persist_health.lock().unwrap().take();
             }
             Err(error) => {
                 let message = error.to_string();
                 tracing::error!(%error, "local state persist failed (latched for UI)");
-                *self.persist_health.borrow_mut() = Some(message);
+                *self.persist_health.lock().unwrap() = Some(message);
             }
         }
     }
@@ -1529,7 +1531,7 @@ impl LocalStateStore {
     /// backing store detected on load). `None` once a subsequent persist
     /// succeeds. UI surfaces this as a "changes are not being saved" banner.
     pub fn persist_error(&self) -> Option<String> {
-        self.persist_health.borrow().clone()
+        self.persist_health.lock().unwrap().clone()
     }
 
     /// Perf: run `body` with flushing suspended, then persist at most once.
@@ -3625,7 +3627,7 @@ impl LocalStateStore {
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
-            persist_health: Rc::new(RefCell::new(None)),
+            persist_health: Arc::new(Mutex::new(None)),
             path: path.into(),
         }
     }
@@ -3653,7 +3655,7 @@ impl LocalStateStore {
                     corrupt_path.display()
                 );
                 tracing::error!(%error, "corrupt local state preserved, not silently reset");
-                *self.persist_health.borrow_mut() = Some(message);
+                *self.persist_health.lock().unwrap() = Some(message);
                 None
             }
         }
@@ -3681,7 +3683,7 @@ impl LocalStateStore {
                     "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
                 );
                 tracing::error!(%error, "corrupt local state preserved, not silently reset");
-                *self.persist_health.borrow_mut() = Some(message);
+                *self.persist_health.lock().unwrap() = Some(message);
                 None
             }
         }
