@@ -102,14 +102,14 @@ pub(super) fn submit_column_order_updates(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     ordered_columns: Vec<KanbanColumn>,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     state_store: Signal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    if actor_did.trim().is_empty() {
+    if actor_id.trim().is_empty() {
         board_status.set("sign in before reordering lists".to_owned());
         return;
     }
@@ -131,7 +131,7 @@ pub(super) fn submit_column_order_updates(
     for (column_id, rank) in updates {
         let op = crate::operation::cx_ops::space_update_patch(
             &realm_id,
-            &actor_did,
+            &actor_id,
             &column_id,
             json!({ "rank": rank }),
         )
@@ -156,7 +156,7 @@ pub(super) fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     subject: String,
     kind: &'static str,
     value: serde_json::Value,
@@ -169,7 +169,7 @@ pub(super) fn submit_kanban_move(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
-    if actor_did.trim().is_empty() {
+    if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
@@ -192,7 +192,7 @@ pub(super) fn submit_kanban_move(
         };
         crate::operation::cx_ops::kanban_card_flow_create(
             &realm_id,
-            &actor_did,
+            &actor_id,
             &subject,
             board_space_id,
             list_space_id,
@@ -203,7 +203,7 @@ pub(super) fn submit_kanban_move(
     } else {
         crate::operation::cx_ops::flow_position_update(
             &realm_id,
-            &actor_did,
+            &actor_id,
             &subject,
             value.clone(),
         )
@@ -244,7 +244,7 @@ pub(super) fn submit_kanban_move(
         json!({
             "kind": kind,
             "operation_id": op_id,
-            "actor_id": actor_did.clone(),
+            "actor_id": actor_id.clone(),
             "created_at": envelope.created_at.clone(),
             "cell": cell_id,
             "effect": value,
@@ -349,7 +349,7 @@ pub(super) fn dispatch_flow_position_move(
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
-    actor_did: String,
+    actor_id: String,
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
@@ -422,7 +422,7 @@ pub(super) fn dispatch_flow_position_move(
         realm_id,
         board_space_id,
         board_view_id,
-        actor_did,
+        actor_id,
         dragged.card_id,
         kind,
         expected,
@@ -552,7 +552,7 @@ pub(super) fn dispatch_space_container_lifecycle(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     space_container_id: String,
     target: SpaceContainerLifecycleState,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -584,10 +584,10 @@ pub(super) fn dispatch_space_container_lifecycle(
     // Only Active <-> Archived reach here (validator rejects Tombstone).
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
-            crate::operation::cx_ops::realm_archive(&realm_id, &actor_did, &space_container_id)
+            crate::operation::cx_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Active => {
-            crate::operation::cx_ops::space_restore(&realm_id, &actor_did, &space_container_id)
+            crate::operation::cx_ops::space_restore(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
             // Invariant: `validate_space_container_lifecycle_transition` (called above)
@@ -662,7 +662,7 @@ pub(super) fn dispatch_flow_lifecycle(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     flow_id: String,
     target: FlowLifecycleState,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -700,10 +700,10 @@ pub(super) fn dispatch_flow_lifecycle(
 
     let builder = match target {
         FlowLifecycleState::Archived => {
-            crate::operation::cx_ops::flow_archive(&realm_id, &actor_did, &flow_id)
+            crate::operation::cx_ops::flow_archive(&realm_id, &actor_id, &flow_id)
         }
         FlowLifecycleState::Active => {
-            crate::operation::cx_ops::flow_restore(&realm_id, &actor_did, &flow_id)
+            crate::operation::cx_ops::flow_restore(&realm_id, &actor_id, &flow_id)
         }
         FlowLifecycleState::Redacted => {
             // Invariant: `validate_flow_lifecycle_transition` (called above)
@@ -804,7 +804,7 @@ pub(super) fn submit_flow_position_cas_move(
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
-    actor_did: String,
+    actor_id: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -820,7 +820,7 @@ pub(super) fn submit_flow_position_cas_move(
         realm_id,
         board_space_id,
         board_view_id,
-        actor_did,
+        actor_id,
         flow_id,
         kind,
         expected,
@@ -845,7 +845,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
-    actor_did: String,
+    actor_id: String,
     flow_id: String,
     kind: &'static str,
     expected: FlowPositionExpectation,
@@ -858,7 +858,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
 ) {
     let hlc = Hlc::now("yougen").to_string();
     let anchor_ref = state_store.read().anchor_ref_for_realm_move(&realm_id);
-    if actor_did.trim().is_empty() {
+    if actor_id.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
         return;
     }
@@ -882,7 +882,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
     };
     let envelope = crate::operation::cx_ops::flow_position_cas_update(
         &realm_id,
-        &actor_did,
+        &actor_id,
         kind,
         &board_space_id,
         &flow_id,
@@ -1039,7 +1039,7 @@ pub(super) fn submit_flow_position_cas_move_with_attempt(
                         realm_for_rebase,
                         board_for_rebase,
                         view_for_rebase,
-                        actor_did.clone(),
+                        actor_id.clone(),
                         flow_for_rebase,
                         kind_for_record,
                         effect_for_rebase,
@@ -1097,7 +1097,7 @@ pub(super) fn rebase_flow_position_after_conflict(
     realm_id: String,
     board_space_id: String,
     board_view_id: String,
-    actor_did: String,
+    actor_id: String,
     flow_id: String,
     kind: String,
     effect: FlowPositionEffect,
@@ -1148,7 +1148,7 @@ pub(super) fn rebase_flow_position_after_conflict(
             realm_id,
             board_space_id,
             board_view_id,
-            actor_did,
+            actor_id,
             flow_id,
             kind_static,
             new_expected,

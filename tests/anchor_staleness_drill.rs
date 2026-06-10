@@ -37,7 +37,7 @@ use yougen::api;
 use yougen::operation::EventEnvelope;
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
-const TEST_ACTOR_DID: &str = "did:web:alice.example";
+const TEST_actor_id: &str = "did:web:alice.example";
 
 /// Deterministic Ed25519 seed used in this test process. Different
 /// seed from `conformance_gates.rs::test_signing_key` so a future
@@ -65,7 +65,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     let digest = hasher.finalize();
     envelope.anchor_ref = Some(format!("ck:anchor:sha256:{:x}", digest));
 
-    let signer_did = TEST_ACTOR_DID;
+    let signer_did = TEST_actor_id;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, &signing_key())
@@ -76,7 +76,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     let mut envelope = api::build_realm_create_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -103,7 +103,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     let events = api::build_realm_bootstrap_events(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "Engineering",
         None,
         "listed",

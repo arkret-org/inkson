@@ -176,7 +176,7 @@ fn test_signing_key() -> &'static SigningKey {
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-000000000002";
-const TEST_ACTOR_DID: &str = "did:web:alice.example";
+const TEST_actor_id: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ck:anchor:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -189,7 +189,7 @@ fn stamp_wire_fields(envelope: &mut EventEnvelope) {
     if envelope.anchor_ref.is_none() {
         envelope.anchor_ref = Some(TEST_ANCHOR_REF.to_owned());
     }
-    let signer_did = TEST_ACTOR_DID;
+    let signer_did = TEST_actor_id;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
@@ -289,7 +289,7 @@ fn assert_envelope_matches_schema(label: &str, envelope: &EventEnvelope) {
 fn build_realm_create_event_matches_event_schema() {
     let mut envelope = api::build_realm_create_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -313,7 +313,7 @@ fn build_space_create_event_matches_event_schema() {
     let mut envelope = api::build_space_create_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "Launch checklist",
         Some("Quarterly launch tracking"),
         "list",
@@ -330,7 +330,7 @@ fn build_space_lifecycle_event_archive_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "ck.space.archive",
     )
     .expect("build_space_lifecycle_event(archive) succeeds");
@@ -343,7 +343,7 @@ fn build_space_lifecycle_event_restore_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "ck.space.restore",
     )
     .expect("build_space_lifecycle_event(restore) succeeds");
@@ -356,7 +356,7 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
     let mut envelope = api::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "ck.space.tombstone",
     )
     .expect("build_space_lifecycle_event(tombstone) succeeds");
@@ -368,7 +368,7 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 fn build_realm_state_event_join_rule_matches_event_schema() {
     let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "ck.realm.join_rule",
         serde_json::json!("invite"),
     )
@@ -381,7 +381,7 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 fn build_realm_state_event_history_visibility_matches_event_schema() {
     let mut envelope = api::build_realm_state_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "ck.realm.history_visibility",
         serde_json::json!("shared"),
     )
@@ -394,7 +394,7 @@ fn build_realm_state_event_history_visibility_matches_event_schema() {
 fn build_realm_history_sharing_policy_event_matches_event_schema() {
     let mut envelope = api::build_realm_history_sharing_policy_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         serde_json::json!({
             "version": 1,
             "default_key_share": "event_time_visibility",
@@ -415,7 +415,7 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
 fn build_realm_preview_policy_event_matches_event_schema() {
     let mut envelope = api::build_realm_preview_policy_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         serde_json::json!({
             "mode": "stripped_state",
             "audiences": ["link_token_holder"],
@@ -441,7 +441,7 @@ fn build_member_state_event_matches_event_schema() {
     // calls it for each invitee) and pick out the member-state envelope.
     let events = api::build_realm_bootstrap_events(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         "Engineering",
         None,
         "listed",
@@ -469,7 +469,7 @@ fn build_member_state_event_matches_event_schema() {
 fn build_member_state_transition_event_matches_event_schema() {
     let mut envelope = api::build_member_state_transition_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         TEST_INVITEE_DID,
         Some("invite"),
         "join",
@@ -484,7 +484,7 @@ fn build_member_state_transition_event_matches_event_schema() {
 fn build_plaintext_visible_services_event_matches_event_schema() {
     let mut envelope = api::build_plaintext_visible_services_event(
         TEST_REALM_ID,
-        TEST_ACTOR_DID,
+        TEST_actor_id,
         &["did:web:server.example".to_owned()],
     )
     .expect("build_plaintext_visible_services_event succeeds")

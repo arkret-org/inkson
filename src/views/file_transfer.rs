@@ -312,13 +312,13 @@ fn FileTransferRow(
 fn refresh_items(
     base_url: String,
     api_token: String,
-    actor_did: String,
+    actor_id: String,
     _device_id: String,
     mut items: Signal<Vec<FileTransferItem>>,
     mut status: Signal<String>,
     mut refreshing: Signal<bool>,
 ) {
-    if api_token.trim().is_empty() || actor_did.trim().is_empty() {
+    if api_token.trim().is_empty() || actor_id.trim().is_empty() {
         items.set(Vec::new());
         status.set("Sign in required".to_owned());
         return;
@@ -334,7 +334,7 @@ fn refresh_items(
                 return;
             }
         };
-        let crypto = match load_file_transfer_crypto_context(&actor_did) {
+        let crypto = match load_file_transfer_crypto_context(&actor_id) {
             Ok(Some(crypto)) => crypto,
             Ok(None) => {
                 items.set(Vec::new());

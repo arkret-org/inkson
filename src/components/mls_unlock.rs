@@ -36,7 +36,7 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
 pub fn MlsUnlockPrompt(
     base_url: Signal<String>,
     token: Signal<String>,
-    actor_did: Signal<String>,
+    actor_id: Signal<String>,
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     needs_mls_unlock: Signal<bool>,
@@ -91,7 +91,7 @@ pub fn MlsUnlockPrompt(
         };
         let base = base_url();
         let session = token();
-        let actor = actor_did();
+        let actor = actor_id();
         let device = device_id();
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
@@ -265,13 +265,13 @@ pub fn MlsUnlockPrompt(
 #[component]
 pub fn MlsRecoverySetupMissingBanner(
     mut needs_mls_recovery_setup: Signal<bool>,
-    actor_did: Signal<String>,
+    actor_id: Signal<String>,
 ) -> Element {
     if !needs_mls_recovery_setup() {
         return rsx! {};
     }
 
-    let actor = actor_did();
+    let actor = actor_id();
     if !actor.trim().is_empty() {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
         if matches!(

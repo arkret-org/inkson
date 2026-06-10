@@ -51,7 +51,7 @@ const MLS_HISTORY_BACKUP_MAX_CONSECUTIVE_FAILURES: u32 = 5;
 struct MlsHistoryBackupJob {
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     realm_id: String,
     latest_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -121,11 +121,11 @@ pub fn mls_history_backup_status() -> MlsHistoryBackupStatus {
     status
 }
 
-fn mls_history_backup_job_key(base_url: &str, actor_did: &str, realm_id: &str) -> String {
+fn mls_history_backup_job_key(base_url: &str, actor_id: &str, realm_id: &str) -> String {
     format!(
         "{}|{}|{}",
         base_url.trim().trim_end_matches('/'),
-        actor_did.trim(),
+        actor_id.trim(),
         realm_id.trim()
     )
 }
@@ -179,7 +179,7 @@ fn upsert_mls_history_backup_job(
     key: &str,
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     realm_id: String,
     snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
@@ -191,7 +191,7 @@ fn upsert_mls_history_backup_job(
     }
     job.base_url = base_url;
     job.token = token;
-    job.actor_did = actor_did;
+    job.actor_id = actor_id;
     job.device_id = device_id;
     job.realm_id = realm_id;
     job.latest_snapshot = Some(snapshot);
@@ -215,14 +215,14 @@ fn upsert_mls_history_backup_job(
 pub(crate) fn schedule_mls_history_backup_after_commit(
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     realm_id: String,
     state_store: Signal<LocalStateStore>,
 ) {
     if base_url.trim().is_empty()
         || token.trim().is_empty()
-        || actor_did.trim().is_empty()
+        || actor_id.trim().is_empty()
         || device_id.trim().is_empty()
         || realm_id.trim().is_empty()
     {
@@ -230,7 +230,7 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
     }
     let snapshot = {
         let store = state_store.read();
-        if !crate::components::mls_recovery_backup_configured(&store, &actor_did) {
+        if !crate::components::mls_recovery_backup_configured(&store, &actor_id) {
             return;
         }
         let Some(snapshot) = store.mls_snapshot_for(&realm_id) else {
@@ -239,10 +239,10 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
         snapshot
     };
     let digest = mls_snapshot_digest(&snapshot);
-    let key = mls_history_backup_job_key(&base_url, &actor_did, &realm_id);
+    let key = mls_history_backup_job_key(&base_url, &actor_id, &realm_id);
     let should_spawn = match MLS_HISTORY_BACKUP_JOBS.lock() {
         Ok(mut jobs) => upsert_mls_history_backup_job(
-            &mut jobs, &key, base_url, token, actor_did, device_id, realm_id, snapshot, digest,
+            &mut jobs, &key, base_url, token, actor_id, device_id, realm_id, snapshot, digest,
         ),
         Err(_) => false,
     };
@@ -264,12 +264,12 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
 pub(crate) async fn upload_mls_history_backup_now(
     api: &crate::api::CokretApi,
     base_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     realm_id: &str,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
 ) -> anyhow::Result<String> {
-    let key = mls_history_backup_job_key(base_url, actor_did, realm_id);
+    let key = mls_history_backup_job_key(base_url, actor_id, realm_id);
     let cached_tail = MLS_HISTORY_BACKUP_JOBS
         .lock()
         .ok()
@@ -278,7 +278,7 @@ pub(crate) async fn upload_mls_history_backup_now(
         Some(body) => Some(body),
         None => {
             crate::mls::account_recovery::fetch_mls_history_tail_for_realm(
-                api, actor_did, device_id, realm_id,
+                api, actor_id, device_id, realm_id,
             )
             .await?
         }
@@ -286,7 +286,7 @@ pub(crate) async fn upload_mls_history_backup_now(
     let (backup_id, body) = crate::mls::account_recovery::upload_mls_history_backup_with_previous(
         api,
         snapshot,
-        actor_did,
+        actor_id,
         device_id,
         previous.as_ref(),
     )
@@ -461,7 +461,7 @@ async fn upload_mls_history_backup_job_snapshot(
             None => {
                 crate::mls::account_recovery::fetch_mls_history_tail_for_realm(
                     &api,
-                    &job.actor_did,
+                    &job.actor_id,
                     &job.device_id,
                     &job.realm_id,
                 )
@@ -471,7 +471,7 @@ async fn upload_mls_history_backup_job_snapshot(
         crate::mls::account_recovery::upload_mls_history_backup_with_previous(
             &api,
             &snapshot_for_upload,
-            &job.actor_did,
+            &job.actor_id,
             &job.device_id,
             previous.as_ref(),
         )

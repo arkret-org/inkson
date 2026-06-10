@@ -307,17 +307,17 @@ pub fn LoginPanel(
 
 fn persist_completed_login_state(
     mut state_store: Signal<LocalStateStore>,
-    actor_did: &str,
+    actor_id: &str,
     grant: Option<PersistedSessionGrant>,
     oidc_tokens: Option<OidcTokenBundle>,
 ) {
     let mut store = state_store.write();
     if let Some(bundle) = oidc_tokens {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        store.set_oidc_tokens_with_secure_store(Some(bundle), actor_did, secure_store.as_ref());
+        store.set_oidc_tokens_with_secure_store(Some(bundle), actor_id, secure_store.as_ref());
     } else {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        store.set_oidc_tokens_with_secure_store(None, actor_did, secure_store.as_ref());
+        store.set_oidc_tokens_with_secure_store(None, actor_id, secure_store.as_ref());
     }
     store.set_session_grant(grant);
 }
@@ -435,7 +435,7 @@ async fn finish_oidc_callback(device_fallback: String) -> Result<CompletedLogin,
         .inspect_topology()
         .await
         .map_err(|error| format!("Server sign-in metadata failed: {error}"))?;
-    let actor_hint = scaffold.principal_actor_did.trim();
+    let actor_hint = scaffold.principal_actor_id.trim();
     let device = if scaffold.device_id.trim().is_empty() {
         device_fallback.trim().to_owned()
     } else {

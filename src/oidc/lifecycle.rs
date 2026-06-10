@@ -104,10 +104,10 @@ pub fn evaluate_refresh_policy(store: &LocalStateStore) -> RefreshDecision {
 /// [`evaluate_refresh_policy`].
 pub fn evaluate_refresh_policy_with_secure_store(
     store: &LocalStateStore,
-    actor_did: &str,
+    actor_id: &str,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> RefreshDecision {
-    let Some(bundle) = store.load_oidc_tokens_with_secure_store(actor_did, secure_store) else {
+    let Some(bundle) = store.load_oidc_tokens_with_secure_store(actor_id, secure_store) else {
         return RefreshDecision::NoBundle;
     };
     evaluate_refresh_decision_from_bundle(&bundle)
@@ -204,38 +204,38 @@ pub async fn refresh_if_due(
 /// the rotated refresh_token back through
 /// [`LocalStateStore::set_oidc_tokens_with_secure_store`], so the
 /// disk-backed `state.json` never holds the refresh credential in
-/// plaintext. The `actor_did` parameter is the principal whose bundle
+/// plaintext. The `actor_id` parameter is the principal whose bundle
 /// is being refreshed; it's woven into the SecureKeyStore key as
-/// `coauth.refresh_token.<actor_did>` so multi-actor devices stay
+/// `coauth.refresh_token.<actor_id>` so multi-actor devices stay
 /// isolated.
 pub async fn refresh_if_due_with_secure_store(
     store: &mut LocalStateStore,
     coauth_api: &CoauthApi,
     token_endpoint: &str,
-    actor_did: &str,
+    actor_id: &str,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> OidcLifecycleEvent {
     refresh_if_due_inner(
         store,
         coauth_api,
         token_endpoint,
-        Some((actor_did, secure_store)),
+        Some((actor_id, secure_store)),
     )
     .await
 }
 
 /// Shared body between `refresh_if_due` and the secure-store-aware
-/// variant. When `actor_did_and_store` is `Some`, reads + writes use
+/// variant. When `actor_id_and_store` is `Some`, reads + writes use
 /// the H3 helpers (refresh_token never lands in `state.json`).
 async fn refresh_if_due_inner(
     store: &mut LocalStateStore,
     coauth_api: &CoauthApi,
     token_endpoint: &str,
-    actor_did_and_store: Option<(&str, &dyn crate::secure_key_store::SecureKeyStore)>,
+    actor_id_and_store: Option<(&str, &dyn crate::secure_key_store::SecureKeyStore)>,
 ) -> OidcLifecycleEvent {
-    let decision = match actor_did_and_store {
-        Some((actor_did, secure_store)) => {
-            evaluate_refresh_policy_with_secure_store(store, actor_did, secure_store)
+    let decision = match actor_id_and_store {
+        Some((actor_id, secure_store)) => {
+            evaluate_refresh_policy_with_secure_store(store, actor_id, secure_store)
         }
         None => evaluate_refresh_policy(store),
     };
@@ -259,9 +259,9 @@ async fn refresh_if_due_inner(
             // restored `refresh_token` is honoured when computing the
             // next bundle (per RFC 6749 §6, the IdP MAY omit the new
             // refresh_token meaning the old one stays valid).
-            let previous = match actor_did_and_store {
-                Some((actor_did, secure_store)) => store
-                    .load_oidc_tokens_with_secure_store(actor_did, secure_store)
+            let previous = match actor_id_and_store {
+                Some((actor_id, secure_store)) => store
+                    .load_oidc_tokens_with_secure_store(actor_id, secure_store)
                     .unwrap_or_else(|| OidcTokenBundle {
                         access_token: String::new(),
                         refresh_token: Some(refresh_token.clone()),
@@ -284,9 +284,9 @@ async fn refresh_if_due_inner(
                 }),
             };
             let next = apply_refresh_response(&previous, &response);
-            match actor_did_and_store {
-                Some((actor_did, secure_store)) => {
-                    store.set_oidc_tokens_with_secure_store(Some(next), actor_did, secure_store);
+            match actor_id_and_store {
+                Some((actor_id, secure_store)) => {
+                    store.set_oidc_tokens_with_secure_store(Some(next), actor_id, secure_store);
                 }
                 None => store.set_oidc_tokens(Some(next)),
             }
@@ -296,9 +296,9 @@ async fn refresh_if_due_inner(
             // Refresh failed — clear the bundle so the next render
             // routes to the login page rather than re-trying with the
             // dead refresh_token in a tight loop.
-            match actor_did_and_store {
-                Some((actor_did, secure_store)) => {
-                    store.set_oidc_tokens_with_secure_store(None, actor_did, secure_store);
+            match actor_id_and_store {
+                Some((actor_id, secure_store)) => {
+                    store.set_oidc_tokens_with_secure_store(None, actor_id, secure_store);
                 }
                 None => store.set_oidc_tokens(None),
             }

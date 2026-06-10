@@ -691,10 +691,10 @@ fn push_realm_remark_account_data_impl(
 pub(crate) fn push_contact_remark_account_data(
     base_url: String,
     api_token: String,
-    actor_did: String,
+    actor_id: String,
     remark: crate::account_data::ContactRemark,
 ) {
-    let key = crate::account_data::contact_remark_account_data_key(&actor_did);
+    let key = crate::account_data::contact_remark_account_data_key(&actor_id);
     spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
@@ -3099,22 +3099,22 @@ pub fn SettingsPanel(
                             }
                         } else {
                             rsx! {
-                                for (actor_did, remark) in remarks {
+                                for (actor_id, remark) in remarks {
                                     {
-                                        let actor_did_label = short_protocol_id(&actor_did);
+                                        let actor_id_label = short_protocol_id(&actor_id);
                                         rsx! {
                                             div {
                                                 class: "actions",
                                                 "data-testid": "contact-remark-row",
-                                                "data-actor-did": "{actor_did}",
-                                                span { class: "mono", title: "{actor_did}", "{actor_did_label}" }
+                                                "data-actor-did": "{actor_id}",
+                                                span { class: "mono", title: "{actor_id}", "{actor_id_label}" }
                                                 Input {
                                                     r#type: "text",
                                                     "data-testid": "contact-remark-input",
                                                     placeholder: "Local name (private)",
-                                                    value: "{contact_remark_inputs().get(&actor_did).cloned().unwrap_or_else(|| remark.local_name.clone())}",
+                                                    value: "{contact_remark_inputs().get(&actor_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
                                                     oninput: {
-                                                        let did = actor_did.clone();
+                                                        let did = actor_id.clone();
                                                         move |event: FormEvent| {
                                                             let mut current = contact_remark_inputs();
                                                             current.insert(did.clone(), event.value());
@@ -3126,7 +3126,7 @@ pub fn SettingsPanel(
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "contact-remark-save",
                                                     onclick: {
-                                                        let did = actor_did.clone();
+                                                        let did = actor_id.clone();
                                                         let existing = remark.clone();
                                                         move |_| {
                                                             let did = did.clone();
@@ -3174,7 +3174,7 @@ pub fn SettingsPanel(
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "contact-remark-delete",
                                                     onclick: {
-                                                        let did = actor_did.clone();
+                                                        let did = actor_id.clone();
                                                         move |_| {
                                                             let did = did.clone();
                                                             state_store.write().remove_contact_remark(&did);
@@ -3225,7 +3225,7 @@ pub fn SettingsPanel(
                             "data-testid": "contact-remark-add-save",
                             onclick: move |_| {
                                 let raw_actor = new_contact_remark_did();
-                                let Some(actor_did) =
+                                let Some(actor_id) =
                                     crate::identity_handle::principal_did_from_identifier(&raw_actor)
                                 else {
                                     status.set(
@@ -3245,7 +3245,7 @@ pub fn SettingsPanel(
                                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                                 let remark = crate::account_data::ContactRemark {
                                     version: 1,
-                                    actor_id: actor_did.clone(),
+                                    actor_id: actor_id.clone(),
                                     local_name: local_name.clone(),
                                     saved_at: Some(now_rfc3339.clone()),
                                     updated_at: Some(now_rfc3339),
@@ -3253,18 +3253,18 @@ pub fn SettingsPanel(
                                 };
                                 state_store
                                     .write()
-                                    .set_contact_remark(actor_did.clone(), remark.clone());
+                                    .set_contact_remark(actor_id.clone(), remark.clone());
                                 contact_remarks_snapshot.set(state_store.read().contact_remarks());
                                 new_contact_remark_did.set(String::new());
                                 new_contact_remark_name.set(String::new());
                                 status.set(format!(
                                     "Contact remark saved: {} → {local_name}",
-                                    short_protocol_id(&actor_did)
+                                    short_protocol_id(&actor_id)
                                 ));
                                 push_contact_remark_account_data(
                                     base_url(),
                                     token(),
-                                    actor_did,
+                                    actor_id,
                                     remark,
                                 );
                             },

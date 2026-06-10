@@ -219,8 +219,8 @@ pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
     format!("cokret-key-backup/{}/{subdomain}/v1", class.as_str())
 }
 
-pub fn key_backup_delete_ownership_proof(actor_did: &str, backup_id: &str) -> String {
-    format!("dev-ssk-delete:v1:{actor_did}:{backup_id}")
+pub fn key_backup_delete_ownership_proof(actor_id: &str, backup_id: &str) -> String {
+    format!("dev-ssk-delete:v1:{actor_id}:{backup_id}")
 }
 
 pub fn build_key_backup_unlock_proof_active(
@@ -462,7 +462,7 @@ pub struct BackupItem<'a> {
 /// flow. `root` is the Argon2id root key (its salt/params travel on the wire).
 pub fn build_passphrase_kdf_backup_body(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     root: &VaultKek,
     plaintext: &[u8],
@@ -484,7 +484,7 @@ pub fn build_passphrase_kdf_backup_body(
     }
     let mut body = json!({
         "backup_id": backup_id,
-        "actor_id": actor_did,
+        "actor_id": actor_id,
         "backup_class": class.as_str(),
         "backup_version": "kb_1",
         "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -540,7 +540,7 @@ pub fn build_passphrase_kdf_backup_body(
 
     let ctx = VaultSealContext {
         backup_id,
-        actor_id: actor_did,
+        actor_id: actor_id,
         device_id,
         backup_class: class.as_str(),
         subdomain,
@@ -639,7 +639,7 @@ pub fn open_passphrase_kdf_backup_body(passphrase: &[u8], body: &Value) -> anyho
 #[allow(clippy::too_many_arguments)]
 pub fn build_did_recovery_backup_body(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -650,7 +650,7 @@ pub fn build_did_recovery_backup_body(
 ) -> anyhow::Result<Value> {
     build_recovery_public_key_backup_body(
         backup_id,
-        actor_did,
+        actor_id,
         device_id,
         recovery_public_key,
         recovery_key_ref,
@@ -695,7 +695,7 @@ fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -723,7 +723,7 @@ pub fn build_recovery_public_key_backup_body(
     }
     let mut body = json!({
         "backup_id": backup_id,
-        "actor_id": actor_did,
+        "actor_id": actor_id,
         "backup_class": class.as_str(),
         "backup_version": "kb_1",
         "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -1194,14 +1194,14 @@ mod tests {
     /// stays covered.
     fn build_recovery_vault_backup_body(
         backup_id: &str,
-        actor_did: &str,
+        actor_id: &str,
         device_id: &str,
         root: &VaultKek,
         plaintext: &[u8],
     ) -> anyhow::Result<Value> {
         build_passphrase_kdf_backup_body(
             backup_id,
-            actor_did,
+            actor_id,
             device_id,
             root,
             plaintext,

@@ -166,21 +166,21 @@ pub struct InitialMlsSnapshotSummary {
 
 pub fn build_mls_history_backup_body(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> (String, Value) {
     let backup_id = format!("ck:backup:{}", crate::operation::uuid_v7());
-    let body = snapshot.to_key_backup_body(&backup_id, actor_did, device_id);
+    let body = snapshot.to_key_backup_body(&backup_id, actor_id, device_id);
     (backup_id, body)
 }
 
 pub async fn upload_mls_snapshot_backup(
     api: &crate::api::CokretApi,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<String, MlsRuntimeError> {
-    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_did, device_id);
+    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_id, device_id);
     api.put_key_backup(&backup_id, body)
         .await
         .map_err(|err| MlsRuntimeError::Backup(err.to_string()))?;
@@ -249,12 +249,12 @@ pub fn mls_restore_epoch_floor(
 pub fn restore_mls_history_backup_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     body: &Value,
 ) -> Result<MlsHistoryRestoreSummary, MlsRuntimeError> {
     let envelope = decode_mls_history_backup_envelope(body)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let epoch_floor = mls_restore_epoch_floor(state_store, &envelope.realm_id);
     crate::mls::persistence::restore_envelope(&envelope, &secret, epoch_floor)
@@ -282,7 +282,7 @@ pub fn ensure_creator_mls_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
@@ -295,9 +295,9 @@ pub fn ensure_creator_mls_snapshot(
         return Ok(None);
     }
 
-    let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = cokret_sdk::Did::new(actor_did.to_owned())
+    let principal_did = cokret_sdk::Did::new(actor_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
@@ -355,7 +355,7 @@ pub fn ensure_creator_mls_snapshot(
 /// builder stamps on `EventEnvelope::created_at`.
 pub fn build_mls_genesis_payload(
     summary: &InitialMlsSnapshotSummary,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     governance_binding: &cokret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<Value, MlsRuntimeError> {
@@ -373,7 +373,7 @@ pub fn build_mls_genesis_payload(
         "mls_group_id": summary.group_id,
         "effective_scope": effective_scope,
         "epoch": 0,
-        "creator_principal_id": actor_did,
+        "creator_principal_id": actor_id,
         "creator_device_id": device_id,
         "cipher_suite": summary.cipher_suite,
         "group_info_digest": summary.schedule_hash,
@@ -405,10 +405,10 @@ fn require_backup_u64(body: &Value, key: &str, expected: u64) -> Result<(), MlsR
 
 /// Legacy per-device storage key. Retained only for migration lookups: the
 /// snapshot secret is now account-scoped (see [`account_mls_secret_key`]).
-pub fn device_snapshot_secret_key(actor_did: &str, device_id: &str) -> String {
+pub fn device_snapshot_secret_key(actor_id: &str, device_id: &str) -> String {
     format!(
         "{DEVICE_SNAPSHOT_SECRET_PREFIX}.{}.{}",
-        actor_did.trim(),
+        actor_id.trim(),
         device_id.trim()
     )
 }
@@ -433,28 +433,28 @@ pub struct AccountMlsSecretRotation {
 }
 
 /// Account-scoped storage key for a specific MLS snapshot-secret version.
-pub fn account_mls_secret_key_for_version(actor_did: &str, version: u32) -> String {
+pub fn account_mls_secret_key_for_version(actor_id: &str, version: u32) -> String {
     format!(
         "{ACCOUNT_MLS_SECRET_PREFIX}.v{}.{}",
         version,
-        actor_did.trim()
+        actor_id.trim()
     )
 }
 
 /// Default write key for the account-scoped MLS snapshot secret shared by every
 /// device of the account. Recoverable via the user's recovery passphrase.
-pub fn account_mls_secret_key(actor_did: &str) -> String {
-    account_mls_secret_key_for_version(actor_did, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
+pub fn account_mls_secret_key(actor_id: &str) -> String {
+    account_mls_secret_key_for_version(actor_id, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
 }
 
 fn validate_account_secret_inputs<'a>(
-    actor_did: &'a str,
+    actor_id: &'a str,
     secret: &str,
 ) -> Result<&'a str, SecureKeyStoreError> {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did is required for MLS snapshot secret".to_owned(),
+            "actor_id is required for MLS snapshot secret".to_owned(),
         ));
     }
     if secret.trim().is_empty() {
@@ -469,7 +469,7 @@ fn validate_account_secret_inputs<'a>(
 /// secret.
 pub fn store_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -478,7 +478,7 @@ pub fn store_account_mls_secret_version(
             "account MLS secret version {version} is outside the supported scan range"
         )));
     }
-    let actor = validate_account_secret_inputs(actor_did, secret)?;
+    let actor = validate_account_secret_inputs(actor_id, secret)?;
     store.store_secret(&account_mls_secret_key_for_version(actor, version), secret)
 }
 
@@ -491,7 +491,7 @@ pub fn store_account_mls_secret_version(
 /// recovered backup ineffective.
 pub fn replace_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -500,7 +500,7 @@ pub fn replace_account_mls_secret_version(
             "account MLS secret version {version} is outside the supported scan range"
         )));
     }
-    let actor = validate_account_secret_inputs(actor_did, secret)?;
+    let actor = validate_account_secret_inputs(actor_id, secret)?;
     store.store_secret(&account_mls_secret_key_for_version(actor, version), secret)?;
     for existing_version in 1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION {
         if existing_version != version {
@@ -514,21 +514,21 @@ pub fn replace_account_mls_secret_version(
 /// Used by the recovery import path after unwrapping the recovery vault.
 pub fn store_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
-    store_account_mls_secret_version(store, actor_did, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
+    store_account_mls_secret_version(store, actor_id, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
 }
 
 /// Load the highest local account-secret version currently present.
 pub fn load_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
 ) -> Result<Option<StoredAccountMlsSecret>, SecureKeyStoreError> {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did is required for MLS snapshot secret".to_owned(),
+            "actor_id is required for MLS snapshot secret".to_owned(),
         ));
     }
     for version in (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION).rev() {
@@ -560,13 +560,13 @@ fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
 ///      current account key, and returned.
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did is required for MLS snapshot secret".to_owned(),
+            "actor_id is required for MLS snapshot secret".to_owned(),
         ));
     }
     // a. existing account secret wins.
@@ -596,10 +596,10 @@ pub fn load_or_create_account_mls_secret(
 /// migration only; the secret is account-scoped and shared by every device.
 pub fn load_or_create_device_snapshot_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
-    load_or_create_account_mls_secret(store, actor_did, device_id)
+    load_or_create_account_mls_secret(store, actor_id, device_id)
 }
 
 /// Load (without creating) the snapshot secret for `(actor, device)`.
@@ -610,13 +610,13 @@ pub fn load_or_create_device_snapshot_secret(
 /// scopes the stored key.
 pub fn load_device_snapshot_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return Err(SecureKeyStoreError::Backend(
-            "actor_did is required for MLS snapshot secret".to_owned(),
+            "actor_id is required for MLS snapshot secret".to_owned(),
         ));
     }
     if let Some(existing) = load_account_mls_secret(store, actor)? {
@@ -644,14 +644,14 @@ pub fn load_device_snapshot_secret(
 /// state and the secret store advance together.
 pub fn prepare_account_mls_secret_rotation(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     snapshots: &BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<AccountMlsSecretRotation, MlsRuntimeError> {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return Err(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(
-            "actor_did is required for MLS snapshot secret".to_owned(),
+            "actor_id is required for MLS snapshot secret".to_owned(),
         )));
     }
     let previous_secret =
@@ -713,7 +713,7 @@ pub fn prepare_account_mls_secret_rotation(
 pub fn commit_account_mls_secret_rotation(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
     for (realm_id, envelope) in &rotation.rewrapped_snapshots {
@@ -721,12 +721,12 @@ pub fn commit_account_mls_secret_rotation(
     }
     store_account_mls_secret_version(
         secure_store,
-        actor_did,
+        actor_id,
         rotation.new_version,
         &rotation.new_secret,
     )?;
     for version in 1..rotation.new_version {
-        let _ = secure_store.delete_secret(&account_mls_secret_key_for_version(actor_did, version));
+        let _ = secure_store.delete_secret(&account_mls_secret_key_for_version(actor_id, version));
     }
     Ok(())
 }
@@ -750,7 +750,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     messages_value: &serde_json::Value,
 ) -> Result<WelcomeApplyOutcome, MlsRuntimeError> {
@@ -762,9 +762,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // The snapshot secret / identity are prerequisites for ALL welcomes: if they
     // are unavailable no welcome could possibly apply, so surface them as a hard
     // error (the readiness status machinery keys off these).
-    let secret = load_or_create_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = cokret_sdk::Did::new(actor_did.to_owned())
+    let principal_did = cokret_sdk::Did::new(actor_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
@@ -836,7 +836,7 @@ pub fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
@@ -856,7 +856,7 @@ pub fn encrypt_values_with_device_snapshot(
     let snapshot = state_store
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
@@ -931,7 +931,7 @@ pub fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     content_type: &str,
     aad: serde_json::Value,
@@ -954,7 +954,7 @@ pub fn encrypt_message_with_device_snapshot(
     // non-hidden AAD never advances the epoch nor produces ciphertext.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
@@ -1131,14 +1131,14 @@ pub fn reaction_routing_tag_v1(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     canonical_emoji: &str,
 ) -> Result<String, MlsRuntimeError> {
     let snapshot = state_store
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
@@ -1169,14 +1169,14 @@ pub fn encrypt_reaction_with_device_snapshot(
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     canonical_emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
     let snapshot = state_store
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_did, device_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;

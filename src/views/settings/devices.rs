@@ -818,7 +818,7 @@ fn render_pair_flow(
     mut accept_input: Signal<String>,
     mut accept_status: Signal<String>,
 ) -> Element {
-    let actor_did = account_did();
+    let actor_id = account_did();
     let local_device_id = device_id();
     let payload_value = pair_payload();
     let status_value = pair_status();
@@ -860,7 +860,7 @@ fn render_pair_flow(
                 Button {
                     variant: ButtonVariant::Primary,
                     "data-testid": "pair-device-start-button",
-                    disabled: actor_did.trim().is_empty(),
+                    disabled: actor_id.trim().is_empty(),
                     onclick: move |_| {
                         let actor = account_did();
                         let device = device_id();

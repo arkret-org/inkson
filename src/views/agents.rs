@@ -2010,7 +2010,7 @@ pub fn SidecarExposureDisclosure(controller_did: String) -> Element {
 pub fn ActionApproveDialog(
     base_url: String,
     token: Signal<String>,
-    actor_did: String,
+    actor_id: String,
     space_id: String,
     request_id: String,
     payload_digest: String,
@@ -2061,7 +2061,7 @@ pub fn ActionApproveDialog(
                     disabled: !can_submit,
                     onclick: {
                         let base = base_url.clone();
-                        let actor = actor_did.clone();
+                        let actor = actor_id.clone();
                         let space = space_id.clone();
                         let request_id = request_id.clone();
                         let digest = payload_digest.clone();

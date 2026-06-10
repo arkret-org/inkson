@@ -563,7 +563,7 @@ pub fn KanbanPanel(
             let decrypt_ctx = MlsDecryptCtx {
                 state_store: &decrypt_store,
                 realm_id: &decrypt_realm_id,
-                actor_did: &decrypt_actor,
+                actor_id: &decrypt_actor,
                 device_id: &decrypt_device,
             };
             let (projected_columns, options, projected_board_id) =
@@ -637,7 +637,7 @@ pub fn KanbanPanel(
             let decrypt_ctx = MlsDecryptCtx {
                 state_store: &decrypt_store,
                 realm_id: &decrypt_realm_id,
-                actor_did: &decrypt_actor,
+                actor_id: &decrypt_actor,
                 device_id: &decrypt_device,
             };
             let (projected_columns, options, projected_board_id) =
@@ -732,7 +732,7 @@ pub fn KanbanPanel(
                         let decrypt_ctx = MlsDecryptCtx {
                             state_store: &decrypt_store,
                             realm_id: &decrypt_realm_id,
-                            actor_did: &decrypt_actor,
+                            actor_id: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
                         overlay_collection_projection_with_operations(
@@ -839,7 +839,7 @@ pub fn KanbanPanel(
                         let decrypt_ctx = MlsDecryptCtx {
                             state_store: &decrypt_store,
                             realm_id: &decrypt_realm_id,
-                            actor_did: &decrypt_actor,
+                            actor_id: &decrypt_actor,
                             device_id: &decrypt_device,
                         };
                         overlay_collection_projection_with_operations(
@@ -903,7 +903,7 @@ pub fn KanbanPanel(
                     let decrypt_ctx = MlsDecryptCtx {
                         state_store: &decrypt_store,
                         realm_id: &decrypt_realm_id,
-                        actor_did: &decrypt_actor,
+                        actor_id: &decrypt_actor,
                         device_id: &decrypt_device,
                     };
                     let (projected_columns, options, projected_board_id) =
@@ -1043,7 +1043,7 @@ pub fn KanbanPanel(
                 let decrypt_ctx = MlsDecryptCtx {
                     state_store: &decrypt_store,
                     realm_id: &decrypt_realm_id,
-                    actor_did: &decrypt_actor,
+                    actor_id: &decrypt_actor,
                     device_id: &decrypt_device,
                 };
                 let (projected_columns, options, projected_board_id) =
@@ -1726,7 +1726,7 @@ pub fn KanbanPanel(
                                                                 let decrypt_ctx = MlsDecryptCtx {
                                                                     state_store: &decrypt_store,
                                                                     realm_id: &decrypt_realm_id,
-                                                                    actor_did: &decrypt_actor,
+                                                                    actor_id: &decrypt_actor,
                                                                     device_id: &decrypt_device,
                                                                 };
                                                                 overlay_collection_projection_with_operations(
@@ -3441,7 +3441,7 @@ pub fn KanbanPanel(
                                                                             CardSynthesisRevision {
                                                                                 id: entry.id.clone(),
                                                                                 body: entry.body.clone(),
-                                                                                actor_did: entry.actor_did.clone(),
+                                                                                actor_id: entry.actor_id.clone(),
                                                                                 author_label: entry.author_label.clone(),
                                                                                 timestamp_label: entry.timestamp_label.clone(),
                                                                                 sort_key: entry.sort_key.clone(),
@@ -3473,10 +3473,10 @@ pub fn KanbanPanel(
                                                                         let history_open = card_synthesis_history_open_id()
                                                                             .as_deref()
                                                                             == Some(entry.id.as_str());
-                                                                        let actor_title = if display_revision.actor_did.trim().is_empty() {
+                                                                        let actor_title = if display_revision.actor_id.trim().is_empty() {
                                                                             "Unknown author".to_owned()
                                                                         } else {
-                                                                            display_revision.actor_did.clone()
+                                                                            display_revision.actor_id.clone()
                                                                         };
                                                                         rsx! {
                                                                             article {
@@ -3537,10 +3537,10 @@ pub fn KanbanPanel(
                                                                                                             } else {
                                                                                                                 "card-synthesis-history-item"
                                                                                                             };
-                                                                                                            let history_author_title = if history_entry.actor_did.trim().is_empty() {
+                                                                                                            let history_author_title = if history_entry.actor_id.trim().is_empty() {
                                                                                                                 "Unknown author".to_owned()
                                                                                                             } else {
-                                                                                                                history_entry.actor_did.clone()
+                                                                                                                history_entry.actor_id.clone()
                                                                                                             };
                                                                                                             let preview = card_summary_text(&history_entry.body);
                                                                                                             let preview = if preview.chars().count() > 72 {
@@ -5262,36 +5262,36 @@ fn flow_update_activity_title(payload: &Value) -> String {
 fn card_author_display_label(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
-    actor_did: &str,
+    actor_id: &str,
 ) -> String {
-    let actor_did = actor_did.trim();
-    if actor_did.is_empty() {
+    let actor_id = actor_id.trim();
+    if actor_id.is_empty() {
         return "Unknown author".to_owned();
     }
-    if let Some(label) = member_display_label_for_actor(state_store, author_context, actor_did) {
+    if let Some(label) = member_display_label_for_actor(state_store, author_context, actor_id) {
         return label;
     }
-    display_name_for_did(state_store, actor_did)
+    display_name_for_did(state_store, actor_id)
 }
 
 fn member_display_label_for_actor(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
-    actor_did: &str,
+    actor_id: &str,
 ) -> Option<String> {
-    let actor_did = actor_did.trim();
+    let actor_id = actor_id.trim();
     let context = author_context?;
     let realm_id = context.realm_id.trim();
-    if actor_did.is_empty() || realm_id.is_empty() {
+    if actor_id.is_empty() || realm_id.is_empty() {
         return None;
     }
     let row = context.member_rows.iter().find(|row| {
-        row.actor_id.trim() == actor_did
+        row.actor_id.trim() == actor_id
             || row
                 .subject_id
                 .as_deref()
                 .map(str::trim)
-                .is_some_and(|subject| subject == actor_did)
+                .is_some_and(|subject| subject == actor_id)
     })?;
     let identity = state_store.resolved_member_identity(realm_id, &row.actor_id);
     let cached_handle =
@@ -5479,7 +5479,7 @@ fn save_card_detail_edit(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     current: KanbanCard,
     synthesis_entries: Vec<CardSynthesisTrackEntry>,
@@ -5530,7 +5530,7 @@ fn save_card_detail_edit(
         base_url,
         token,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
         current,
         draft,
@@ -5560,7 +5560,7 @@ fn save_card_due_edit(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     current: KanbanCard,
     due_value: String,
@@ -5579,7 +5579,7 @@ fn save_card_due_edit(
         base_url,
         token,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
         current,
         draft,
@@ -5612,17 +5612,17 @@ fn projection_synthesis_revision(
     state_store: &LocalStateStore,
     author_context: Option<CardAuthorDisplayContext<'_>>,
 ) -> CardSynthesisRevision {
-    let actor_did = card.created_by.trim().to_owned();
+    let actor_id = card.created_by.trim().to_owned();
     let timestamp = if !card.updated_at.trim().is_empty() {
         card.updated_at.clone()
     } else {
         card.created_at.clone()
     };
-    let author_label = card_author_display_label(state_store, author_context, &actor_did);
+    let author_label = card_author_display_label(state_store, author_context, &actor_id);
     CardSynthesisRevision {
         id: format!("{}:projection-synthesis:{index}", card.id),
         body,
-        actor_did,
+        actor_id,
         author_label,
         timestamp_label: compact_timestamp_label(&timestamp),
         sort_key: timestamp,
@@ -5645,7 +5645,7 @@ fn synthesis_revision_from_raw_operation(
     if body.trim().is_empty() {
         return None;
     }
-    let actor_did = json_path_string(Some(payload), &["actor_id"])
+    let actor_id = json_path_string(Some(payload), &["actor_id"])
         .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
         .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
         .unwrap_or_default();
@@ -5657,7 +5657,7 @@ fn synthesis_revision_from_raw_operation(
                 .received_at
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         });
-    let author_label = card_author_display_label(state_store, author_context, &actor_did);
+    let author_label = card_author_display_label(state_store, author_context, &actor_id);
     let entry_id = json_path_string(Some(payload), &["synthesis_entry_id"])
         .unwrap_or_else(|| format!("{}:synthesis", update.flow_id));
     Some((
@@ -5666,7 +5666,7 @@ fn synthesis_revision_from_raw_operation(
         CardSynthesisRevision {
             id: record.operation_id.clone(),
             body,
-            actor_did,
+            actor_id,
             author_label,
             timestamp_label: compact_timestamp_label(&timestamp),
             sort_key: timestamp,
@@ -5688,7 +5688,7 @@ fn synthesis_entry_from_revisions(
     Some(CardSynthesisTrackEntry {
         id: entry_id,
         body: latest.body.clone(),
-        actor_did: latest.actor_did.clone(),
+        actor_id: latest.actor_id.clone(),
         author_label: latest.author_label.clone(),
         timestamp_label: latest.timestamp_label.clone(),
         sort_key: latest.sort_key.clone(),
@@ -6480,8 +6480,8 @@ fn kanban_mls_policy_root(
     cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
-fn projection_creator_matches_actor(projection: &Value, actor_did: &str) -> bool {
-    let actor = actor_did.trim();
+fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return false;
     }
@@ -6511,7 +6511,7 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<Option<crate::mls::runtime::InitialMlsSnapshotSummary>, String> {
     if state_store.mls_snapshot_for(realm_id).is_some() {
@@ -6525,7 +6525,7 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
         return Ok(None);
     };
     if !crate::security_state::realm_projection_is_encrypted(projection)
-        || !projection_creator_matches_actor(projection, actor_did)
+        || !projection_creator_matches_actor(projection, actor_id)
     {
         return Ok(None);
     }
@@ -6533,7 +6533,7 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
         state_store,
         secure_store,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
     )
     .map_err(|err| err.user_message())
@@ -6554,7 +6554,7 @@ fn ensure_creator_mls_snapshot_for_encrypted_scope(
 pub(crate) fn build_creator_mls_genesis_event(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
 ) -> Result<Option<crate::operation::EventEnvelope>, String> {
@@ -6589,14 +6589,14 @@ pub(crate) fn build_creator_mls_genesis_event(
     .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
-        actor_did,
+        actor_id,
         device_id,
         &governance_binding,
     )
     .map_err(|err| err.user_message())?;
     let mut event = crate::operation::cx_ops::mls_genesis_with_governance(
         realm_id,
-        actor_did,
+        actor_id,
         &summary.group_id,
         &payload,
     )
@@ -6608,7 +6608,7 @@ pub(crate) fn build_creator_mls_genesis_event(
 fn kanban_mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     _schedule_hash: &cokret_sdk::Hash,
     commit_envelope: &cokret_sdk::MlsCommitEnvelope,
 ) -> Result<crate::operation::EventEnvelope, String> {
@@ -6647,7 +6647,7 @@ fn kanban_mls_commit_event_from_store(
     )
     .map_err(|err| format!("MLS commit payload failed: {err}"))?;
     let mut event =
-        crate::operation::cx_ops::mls_commit_with_governance(realm_id, actor_did, &payload)
+        crate::operation::cx_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build("yougen");
     event.event_id = event_id;
@@ -6674,7 +6674,7 @@ fn encrypt_private_card_detail_patch_values(
     patch: Value,
     realm_id: &str,
     flow_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     mut state_store: Signal<LocalStateStore>,
 ) -> Result<(Value, EncryptedWriteMlsEvents), String> {
@@ -6684,7 +6684,7 @@ fn encrypt_private_card_detail_patch_values(
         patch,
         realm_id,
         flow_id,
-        actor_did,
+        actor_id,
         device_id,
         &mut store,
         secure_store.as_ref(),
@@ -6695,7 +6695,7 @@ fn encrypt_private_card_detail_patch_values_with_store(
     patch: Value,
     realm_id: &str,
     flow_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -6712,14 +6712,14 @@ fn encrypt_private_card_detail_patch_values_with_store(
         state_store,
         secure_store,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
     )?;
     // Build genesis BEFORE the first commit mutates the group past epoch 0.
     let genesis_event = build_creator_mls_genesis_event(
         state_store,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
         fresh_summary.as_ref(),
     )?;
@@ -6728,7 +6728,7 @@ fn encrypt_private_card_detail_patch_values_with_store(
             state_store,
             secure_store,
             realm_id,
-            actor_did,
+            actor_id,
             device_id,
             KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE,
             &plaintext_values,
@@ -6738,7 +6738,7 @@ fn encrypt_private_card_detail_patch_values_with_store(
         Some(commit_envelope) => Some(kanban_mls_commit_event_from_store(
             state_store,
             realm_id,
-            actor_did,
+            actor_id,
             &schedule_hash,
             commit_envelope,
         )?),
@@ -6780,7 +6780,7 @@ fn dispatch_card_detail_update(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     current: KanbanCard,
     draft: CardDetailDraft,
@@ -6812,7 +6812,7 @@ fn dispatch_card_detail_update(
             patch,
             &realm_id,
             &current.id,
-            &actor_did,
+            &actor_id,
             &device_id,
             state_store,
         ) {
@@ -6831,7 +6831,7 @@ fn dispatch_card_detail_update(
         snapshot: mls_new_snapshot,
     } = mls_events;
 
-    let op = crate::operation::cx_ops::flow_update_patch(&realm_id, &actor_did, &current.id, patch)
+    let op = crate::operation::cx_ops::flow_update_patch(&realm_id, &actor_id, &current.id, patch)
         .build("yougen");
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
@@ -6908,7 +6908,7 @@ fn dispatch_card_detail_update(
     // no provider is mounted (unit tests / non-app callers).
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let base_for_backup_trigger = base_url.clone();
-    let actor_for_backup_trigger = actor_did.clone();
+    let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
     spawn(async move {
         // Genesis MUST land before the first commit so the server has the
@@ -7153,7 +7153,7 @@ fn normalize_assignee_selection(
 
 fn card_assignment_mutations(
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     current: &KanbanCard,
     selected_actor_ids: &BTreeSet<String>,
 ) -> Result<Vec<CardAssignmentMutation>, String> {
@@ -7177,7 +7177,7 @@ fn card_assignment_mutations(
     for actor_id in selected_actor_ids.difference(&current_actor_ids) {
         let operation = crate::operation::cx_ops::relation_create(
             realm_id,
-            actor_did,
+            actor_id,
             "assigned_to",
             &current.id,
             actor_id,
@@ -7205,7 +7205,7 @@ fn card_assignment_mutations(
         };
         for relation_id in relation_ids {
             let operation =
-                crate::operation::cx_ops::relation_tombstone(realm_id, actor_did, relation_id)
+                crate::operation::cx_ops::relation_tombstone(realm_id, actor_id, relation_id)
                     .build("yougen");
             mutations.push(CardAssignmentMutation::Tombstone {
                 actor_id: actor_id.clone(),
@@ -7280,7 +7280,7 @@ fn dispatch_card_assignees_update(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     current: KanbanCard,
     selected_actor_ids: BTreeSet<String>,
     mut columns: Signal<Vec<KanbanColumn>>,
@@ -7297,7 +7297,7 @@ fn dispatch_card_assignees_update(
             return false;
         }
     };
-    if actor_did.trim().is_empty() {
+    if actor_id.trim().is_empty() {
         let msg = "sign in before editing assignees".to_owned();
         assignee_edit_status.set(msg.clone());
         board_status.set(msg);
@@ -7311,7 +7311,7 @@ fn dispatch_card_assignees_update(
     }
 
     let mutations =
-        match card_assignment_mutations(&realm_id, &actor_did, &current, &selected_actor_ids) {
+        match card_assignment_mutations(&realm_id, &actor_id, &current, &selected_actor_ids) {
             Ok(mutations) => mutations,
             Err(msg) => {
                 assignee_edit_status.set(msg.clone());
@@ -7476,7 +7476,7 @@ fn select_kanban_board(
         let decrypt_ctx = MlsDecryptCtx {
             state_store: &decrypt_store,
             realm_id: &board_route_realm_id,
-            actor_did: &decrypt_actor,
+            actor_id: &decrypt_actor,
             device_id: &decrypt_device,
         };
         let (projected_columns, options, projected_board_id) =
@@ -7518,7 +7518,7 @@ fn select_kanban_board(
     let decrypt_ctx = MlsDecryptCtx {
         state_store: &decrypt_store,
         realm_id: &board_route_realm_id,
-        actor_did: &decrypt_actor,
+        actor_id: &decrypt_actor,
         device_id: &decrypt_device,
     };
     let (projected_columns, options, projected_board_id) =
@@ -7977,7 +7977,7 @@ mod tests {
     }
 
     #[test]
-    fn member_handle_lookup_subject_falls_back_to_actor_did() {
+    fn member_handle_lookup_subject_falls_back_to_actor_id() {
         let row = RealmMemberRow {
             actor_id: "did:webvh:zQmPrincipal".to_owned(),
             membership: Some("join".to_owned()),
@@ -8484,7 +8484,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: "ck:realm:01904100-0000-7000-8000-000000000001",
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:01904100-0000-7000-8000-000000000001",
         };
         // Envelope + ctx but no local snapshot → soft failure → blank.
@@ -8505,7 +8505,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: realm,
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:01904100-0000-7000-8000-000000000001",
         };
         // Even when the projection value is an un-decryptable envelope, the
@@ -8541,7 +8541,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: realm,
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:01904100-0000-7000-8000-000000000001",
         };
         let envelope = json!({
@@ -8576,7 +8576,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: realm,
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:01904100-0000-7000-8000-000000000001",
         };
         let flow_view = crate::api::FlowProjectionView {
@@ -8735,7 +8735,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: TEST_REALM_ID,
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:0196419b-0000-7000-8000-000000000001",
         };
 
@@ -9222,7 +9222,7 @@ mod tests {
         let ctx = MlsDecryptCtx {
             state_store: &store,
             realm_id: TEST_REALM_ID,
-            actor_did: "did:web:alice.example",
+            actor_id: "did:web:alice.example",
             device_id: "ck:device:0196419b-0000-7000-8000-000000000001",
         };
 

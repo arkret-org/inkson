@@ -2394,8 +2394,8 @@ impl LocalStateStore {
 
     // ── Contact remarks (spec client-preferences.md §3.6) ─
 
-    pub fn contact_remark(&self, actor_did: &str) -> Option<crate::account_data::ContactRemark> {
-        self.load().contact_remarks.get(actor_did).cloned()
+    pub fn contact_remark(&self, actor_id: &str) -> Option<crate::account_data::ContactRemark> {
+        self.load().contact_remarks.get(actor_id).cloned()
     }
 
     pub fn contact_remarks(&self) -> BTreeMap<String, crate::account_data::ContactRemark> {
@@ -2404,30 +2404,30 @@ impl LocalStateStore {
 
     pub fn set_contact_remark(
         &mut self,
-        actor_did: impl Into<String>,
+        actor_id: impl Into<String>,
         remark: crate::account_data::ContactRemark,
     ) {
         self.ensure_cached_loaded();
-        let actor_did = actor_did.into();
+        let actor_id = actor_id.into();
         if remark.is_empty() {
-            self.cached.contact_remarks.remove(&actor_did);
+            self.cached.contact_remarks.remove(&actor_id);
         } else {
-            self.cached.contact_remarks.insert(actor_did, remark);
+            self.cached.contact_remarks.insert(actor_id, remark);
         }
         let _ = self.flush();
     }
 
-    pub fn remove_contact_remark(&mut self, actor_did: &str) {
+    pub fn remove_contact_remark(&mut self, actor_id: &str) {
         self.ensure_cached_loaded();
-        self.cached.contact_remarks.remove(actor_did);
+        self.cached.contact_remarks.remove(actor_id);
         let _ = self.flush();
     }
 
-    pub fn display_name_for_actor(&self, actor_did: &str, public_name: &str) -> String {
+    pub fn display_name_for_actor(&self, actor_id: &str, public_name: &str) -> String {
         match self
             .load()
             .contact_remarks
-            .get(actor_did)
+            .get(actor_id)
             .map(|r| r.display_name(public_name).to_owned())
         {
             Some(name) => name,
@@ -3089,7 +3089,7 @@ impl LocalStateStore {
     /// that ended up serialised (the `refresh_token` field is wiped to
     /// `None` post-secure-store-write so a corrupt-restore can't leak).
     ///
-    /// The secure-store key is `coauth.refresh_token.<actor_did>` so a
+    /// The secure-store key is `coauth.refresh_token.<actor_id>` so a
     /// device that has signed in as multiple actors keeps them
     /// isolated. Callers SHOULD use [`load_oidc_tokens_with_secure_store`]
     /// to reattach the refresh_token at boot before passing the bundle
@@ -3097,10 +3097,10 @@ impl LocalStateStore {
     pub fn set_oidc_tokens_with_secure_store(
         &mut self,
         bundle: Option<OidcTokenBundle>,
-        actor_did: &str,
+        actor_id: &str,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> Option<OidcTokenBundle> {
-        let key = format!("coauth.refresh_token.{actor_did}");
+        let key = format!("coauth.refresh_token.{actor_id}");
         let stripped = match bundle {
             Some(mut bundle) => {
                 if let Some(refresh) = bundle.refresh_token.take()
@@ -3108,7 +3108,7 @@ impl LocalStateStore {
                 {
                     tracing::warn!(
                         ?error,
-                        actor = actor_did,
+                        actor = actor_id,
                         "secure_key_store refresh_token write failed; bundle persisted without refresh_token (next refresh poll will fall back to re-login)",
                     );
                 }
@@ -3118,7 +3118,7 @@ impl LocalStateStore {
                 if let Err(error) = secure_store.delete_secret(&key) {
                     tracing::debug!(
                         ?error,
-                        actor = actor_did,
+                        actor = actor_id,
                         "secure_key_store refresh_token delete on bundle-clear failed (likely already missing)",
                     );
                 }
@@ -3139,19 +3139,19 @@ impl LocalStateStore {
     /// [`Self::oidc_tokens`]).
     pub fn load_oidc_tokens_with_secure_store(
         &self,
-        actor_did: &str,
+        actor_id: &str,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> Option<OidcTokenBundle> {
         let mut bundle = self.oidc_tokens()?;
         if bundle.refresh_token.is_none() {
-            let key = format!("coauth.refresh_token.{actor_did}");
+            let key = format!("coauth.refresh_token.{actor_id}");
             match secure_store.get_secret(&key) {
                 Ok(Some(value)) => bundle.refresh_token = Some(value),
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(
                         ?error,
-                        actor = actor_did,
+                        actor = actor_id,
                         "secure_key_store refresh_token read failed; bundle returned without refresh_token",
                     );
                 }
@@ -4598,7 +4598,7 @@ mod tests {
     /// `set_oidc_tokens_with_secure_store`
     /// MUST move the `refresh_token` out of the disk-backed
     /// `state.json` into the supplied `SecureKeyStore` keyed by
-    /// `coauth.refresh_token.<actor_did>`. The companion `load_*`
+    /// `coauth.refresh_token.<actor_id>`. The companion `load_*`
     /// helper reads it back. The on-disk JSON MUST NOT contain the
     /// refresh_token after the migration.
     #[test]

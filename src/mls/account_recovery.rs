@@ -68,14 +68,14 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext"
 /// reason; it was dead code and a latent footgun.)
 pub fn build_mls_account_secret_backup_body_with_kek(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
 ) -> Result<Value> {
     build_mls_account_secret_backup_body_with_kek_and_version(
         backup_id,
-        actor_did,
+        actor_id,
         device_id,
         kek,
         account_secret,
@@ -87,7 +87,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
 /// the local account-secret version in the backup content metadata.
 pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
@@ -99,7 +99,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     // AAD from the ciphertext).
     build_passphrase_kdf_backup_body(
         backup_id,
-        actor_did,
+        actor_id,
         device_id,
         kek,
         account_secret.as_bytes(),
@@ -174,14 +174,14 @@ pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
 /// the AAD's `item_types` matches the rewritten contents.
 pub fn build_mls_private_plaintext_backup_body_with_kek(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
 ) -> Result<Value> {
     build_passphrase_kdf_backup_body(
         backup_id,
-        actor_did,
+        actor_id,
         device_id,
         kek,
         sidecar_json,
@@ -330,7 +330,7 @@ pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value
 /// recovery PRIVATE key — no passphrase prompt (key-management.md §7.5.2).
 pub fn build_mls_account_secret_recovery_public_key_backup(
     backup_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -339,7 +339,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
 ) -> Result<Value> {
     crate::key_backup::build_recovery_public_key_backup_body(
         backup_id,
-        actor_did,
+        actor_id,
         device_id,
         recovery_public_key,
         recovery_key_ref,
@@ -430,14 +430,14 @@ pub fn mls_restore_prompt_required(
     list_payload: &Value,
     state_store: &crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> bool {
     if select_mls_account_secret_backup(list_payload).is_none() {
         return false;
     }
     let local_secret =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id).ok();
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id).ok();
     let Some(local_secret) = local_secret.filter(|secret| !secret.trim().is_empty()) else {
         return true;
     };
@@ -492,7 +492,7 @@ pub async fn fetch_mls_restore_payload(api: &crate::api::CokretApi) -> Result<Va
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(
     api: &crate::api::CokretApi,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload(api).await?;
@@ -538,7 +538,7 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or("(unknown)");
         let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-            api, &entry, actor_did, device_id,
+            api, &entry, actor_id, device_id,
         )
         .await
         .map_err(|err| anyhow!("fetch key backup {backup_id} with unlock proof: {err}"))?;
@@ -561,7 +561,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
     list_payload: &Value,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
@@ -572,7 +572,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
     // previous incomplete bootstrap may have generated a stale/random secret,
     // which would make every history restore fail with a secret mismatch.
     let has_local_secret =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_did, device_id)
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
             .is_ok();
     if let Some(secret_body) = select_mls_account_secret_backup(list_payload) {
         // Fail closed against series rollback / withholding: the selected tail
@@ -585,7 +585,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         let version = mls_account_secret_backup_version(&secret_body);
         crate::mls::runtime::replace_account_mls_secret_version(
             secure_store,
-            actor_did,
+            actor_id,
             version,
             &secret,
         )
@@ -601,7 +601,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         list_payload,
         state_store,
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         &mut report,
     );
@@ -620,7 +620,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     list_payload: &Value,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     recovery_private_key: &[u8],
 ) -> Result<RestoreReport> {
@@ -632,7 +632,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         open_mls_account_secret_recovery_public_key_backup(recovery_private_key, &secret_body)?;
     crate::mls::runtime::replace_account_mls_secret_version(
         secure_store,
-        actor_did,
+        actor_id,
         version,
         &secret,
     )
@@ -643,7 +643,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         list_payload,
         state_store,
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         &mut report,
     );
@@ -658,7 +658,7 @@ pub fn restore_mls_history_with_local_secret_from_payload(
     list_payload: &Value,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
@@ -666,7 +666,7 @@ pub fn restore_mls_history_with_local_secret_from_payload(
         list_payload,
         state_store,
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         &mut report,
     );
@@ -681,7 +681,7 @@ fn restore_history_and_sidecar(
     list_payload: &Value,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     report: &mut RestoreReport,
 ) {
@@ -689,7 +689,7 @@ fn restore_history_and_sidecar(
         match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
             state_store,
             secure_store,
-            actor_did,
+            actor_id,
             device_id,
             &body,
         ) {
@@ -704,7 +704,7 @@ fn restore_history_and_sidecar(
     }
 
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
-        match restore_private_plaintext_sidecar(&sidecar_body, state_store, secure_store, actor_did)
+        match restore_private_plaintext_sidecar(&sidecar_body, state_store, secure_store, actor_id)
         {
             Ok(()) => report.private_plaintext_restored = true,
             Err(err) => {
@@ -724,9 +724,9 @@ fn restore_private_plaintext_sidecar(
     sidecar_body: &Value,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
 ) -> Result<()> {
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no account secret available to decrypt sidecar"))?;
     let sidecar_json =
@@ -755,17 +755,17 @@ pub async fn auto_restore_mls_history_with_passphrase(
     api: &crate::api::CokretApi,
     state_store: &mut crate::local_state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     // List once and reuse for both the account-secret and history selection.
-    let payload = fetch_mls_restore_payload_with_unlock_proof(api, actor_did, device_id).await?;
+    let payload = fetch_mls_restore_payload_with_unlock_proof(api, actor_id, device_id).await?;
     restore_mls_history_with_passphrase_from_payload(
         &payload,
         state_store,
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         passphrase,
     )
@@ -971,13 +971,13 @@ pub fn select_superseded_backup_ids(
 /// confirmed uploaded so a delete failure never leaves the user unrecoverable.
 pub async fn delete_backups(
     api: &crate::api::CokretApi,
-    actor_did: &str,
+    actor_id: &str,
     backup_ids: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let mut deleted = Vec::new();
     let mut failed = Vec::new();
     for id in backup_ids {
-        match api.delete_key_backup(id, actor_did).await {
+        match api.delete_key_backup(id, actor_id).await {
             Ok(_) => deleted.push(id.clone()),
             Err(_) => failed.push(id.clone()),
         }
@@ -1003,7 +1003,7 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
 pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
     snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -1023,7 +1023,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
 
     let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         snapshots,
     )
@@ -1032,7 +1032,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let account_body = build_mls_account_secret_backup_body_with_kek_and_version(
         &account_backup_id,
-        actor_did,
+        actor_id,
         device_id,
         &kek,
         &rotation.new_secret,
@@ -1048,7 +1048,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     let mut history_backup_ids = Vec::with_capacity(rotation.rewrapped_snapshots.len());
     for snapshot in rotation.rewrapped_snapshots.values() {
         let backup_id =
-            crate::mls::runtime::upload_mls_snapshot_backup(api, snapshot, actor_did, device_id)
+            crate::mls::runtime::upload_mls_snapshot_backup(api, snapshot, actor_id, device_id)
                 .await
                 .map_err(|err| {
                     anyhow!(
@@ -1071,7 +1071,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
     keep.extend(history_backup_ids.iter().cloned());
     let superseded = select_superseded_backup_ids(&list_payload, &keep);
     let (deleted_superseded_backup_ids, _failed) =
-        delete_backups(api, actor_did, &superseded).await;
+        delete_backups(api, actor_id, &superseded).await;
 
     Ok(MlsAccountSecretRotationUpload {
         rotation,
@@ -1097,7 +1097,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
 pub fn mls_backup_prompt_required(
     list_payload: &Value,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> bool {
     let _ = device_id;
@@ -1105,7 +1105,7 @@ pub fn mls_backup_prompt_required(
         return false;
     }
     matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store, actor_did),
+        crate::mls::runtime::load_account_mls_secret(secure_store, actor_id),
         Ok(Some(_))
     )
 }
@@ -1120,7 +1120,7 @@ pub fn mls_backup_prompt_required(
 pub async fn upload_mls_account_secret_backup_with_passphrase(
     api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
 ) -> Result<String> {
@@ -1130,7 +1130,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         ));
     }
 
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
@@ -1138,7 +1138,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let previous_account_backup = match select_mls_account_secret_backup(&list_payload) {
         Some(metadata) => Some(
             crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                api, &metadata, actor_did, device_id,
+                api, &metadata, actor_id, device_id,
             )
             .await
             .map_err(|err| anyhow!("fetch previous account MLS secret backup: {err}"))?,
@@ -1151,7 +1151,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
         &account_backup_id,
-        actor_did,
+        actor_id,
         device_id,
         &kek,
         &stored.secret,
@@ -1178,16 +1178,16 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 pub async fn upload_mls_private_plaintext_backup(
     api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
 ) -> Result<String> {
     let previous_backup =
-        fetch_mls_private_plaintext_backup_body(api, actor_did, device_id).await?;
+        fetch_mls_private_plaintext_backup_body(api, actor_id, device_id).await?;
     let (backup_id, _) = upload_mls_private_plaintext_backup_with_previous(
         api,
         secure_store,
-        actor_did,
+        actor_id,
         device_id,
         sidecar_json,
         previous_backup.as_ref(),
@@ -1204,7 +1204,7 @@ pub async fn upload_mls_private_plaintext_backup(
 /// request for every ordinary encrypted write.
 pub async fn fetch_mls_private_plaintext_backup_body(
     api: &crate::api::CokretApi,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Result<Option<Value>> {
     let list_payload = fetch_mls_restore_payload(api).await?;
@@ -1212,7 +1212,7 @@ pub async fn fetch_mls_private_plaintext_backup_body(
         return Ok(None);
     };
     let body = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-        api, &metadata, actor_did, device_id,
+        api, &metadata, actor_id, device_id,
     )
     .await
     .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?;
@@ -1228,12 +1228,12 @@ pub async fn fetch_mls_private_plaintext_backup_body(
 pub async fn upload_mls_private_plaintext_backup_with_previous(
     api: &crate::api::CokretApi,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
     previous_backup: Option<&Value>,
 ) -> Result<(String, Value)> {
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_did)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
 
@@ -1244,7 +1244,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
 
     let mut body = build_mls_private_plaintext_backup_body_with_kek(
         &backup_id,
-        actor_did,
+        actor_id,
         device_id,
         &kek,
         sidecar_json,
@@ -1348,7 +1348,7 @@ pub fn select_mls_history_tail_for_realm(list_payload: &Value, realm_id: &str) -
 /// body it just PUT).
 pub async fn fetch_mls_history_tail_for_realm(
     api: &crate::api::CokretApi,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     realm_id: &str,
 ) -> Result<Option<Value>> {
@@ -1360,7 +1360,7 @@ pub async fn fetch_mls_history_tail_for_realm(
         return Ok(Some(tail));
     }
     let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-        api, &tail, actor_did, device_id,
+        api, &tail, actor_id, device_id,
     )
     .await
     .map_err(|err| anyhow!("fetch mls_history series tail: {err}"))?;
@@ -1384,12 +1384,12 @@ pub async fn fetch_mls_history_tail_for_realm(
 pub async fn upload_mls_history_backup_with_previous(
     api: &crate::api::CokretApi,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     previous: Option<&Value>,
 ) -> Result<(String, Value)> {
     let (backup_id, mut body) =
-        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_did, device_id);
+        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id);
     if previous.is_some() {
         apply_next_series(previous, &mut body)?;
         crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)

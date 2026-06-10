@@ -35,7 +35,7 @@ use chrono::{DateTime, Duration, Utc};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LateRecoveredEvent {
     pub event_id: String,
-    pub actor_did: String,
+    pub actor_id: String,
     /// When the event originally landed at the client (encrypted but
     /// undecryptable).
     pub original_received_at: DateTime<Utc>,
@@ -106,7 +106,7 @@ impl LateRecoveredEvent {
             .to_owned();
         Some(Self {
             event_id,
-            actor_did: payload.actor.as_str().to_owned(),
+            actor_id: payload.actor.as_str().to_owned(),
             original_received_at,
             recovered_at: payload.observed_at,
             actor_revoked_at_recovery,
@@ -133,7 +133,7 @@ mod tests {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         LateRecoveredEvent {
             event_id: "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
-            actor_did: "did:web:alice.example".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
             original_received_at: base + Duration::minutes(orig_min),
             recovered_at: base + Duration::minutes(rec_min),
             actor_revoked_at_recovery: revoked,

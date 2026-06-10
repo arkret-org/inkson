@@ -248,12 +248,12 @@ pub fn open_send_content(
 /// stale local version — the shared landing point with the 24-word path.
 pub fn land_opened_secret(
     store: &dyn SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
     opened: &OpenedSecret,
 ) -> Result<()> {
     runtime::replace_account_mls_secret_version(
         store,
-        actor_did,
+        actor_id,
         opened.secret_version,
         &opened.account_secret,
     )

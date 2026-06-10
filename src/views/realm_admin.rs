@@ -901,7 +901,7 @@ pub fn RealmMembersPanel(
                                                     let realm = realm.clone();
                                                     let m = m.clone();
                                                     let api_token = token();
-                                                    let actor_did = actor_account_did.clone();
+                                                    let actor_id = actor_account_did.clone();
                                                     spawn(async move {
                                                         let m_for_msg = m.clone();
                                                         let realm_for_api = realm.clone();
@@ -911,7 +911,7 @@ pub fn RealmMembersPanel(
                                                             |api| async move {
                                                                 api.transition_member_state(
                                                                     &realm_for_api,
-                                                                    &actor_did,
+                                                                    &actor_id,
                                                                     &m,
                                                                     Some("join"),
                                                                     "leave",
@@ -970,7 +970,7 @@ pub fn RealmMembersPanel(
                                                     let realm = realm.clone();
                                                     let m = m.clone();
                                                     let api_token = token();
-                                                    let actor_did = actor_account_did.clone();
+                                                    let actor_id = actor_account_did.clone();
                                                     spawn(async move {
                                                         let m_for_msg = m.clone();
                                                         let realm_for_api = realm.clone();
@@ -978,7 +978,7 @@ pub fn RealmMembersPanel(
                                                             &base,
                                                             api_token,
                                                             |api| async move {
-                                                                api.ban_member(&realm_for_api, &actor_did, &m).await
+                                                                api.ban_member(&realm_for_api, &actor_id, &m).await
                                                             },
                                                         )
                                                         .await
@@ -1953,7 +1953,7 @@ pub fn RealmAdminPanel(
                                 move |_| {
                                     let base = base.clone();
                                     let realm = realm.clone();
-                                    let actor_did = actor_account_did.trim().to_owned();
+                                    let actor_id = actor_account_did.trim().to_owned();
                                     let api_token = token();
                                     let cell = repair_target_cell().trim().to_owned();
                                     let head_a = repair_head_a().trim().to_owned();
@@ -1982,14 +1982,14 @@ pub fn RealmAdminPanel(
                                             }
                                         };
                                     let _hlc = Hlc::now("yougen").to_string();
-                                    if actor_did.is_empty() {
+                                    if actor_id.is_empty() {
                                         status_msg.set("account actor unavailable".to_owned());
                                         return;
                                     }
                                     let heads = vec![head_a, head_b];
                                     let envelope = crate::operation::cx_ops::conflict_repair(
                                         &realm,
-                                        &actor_did,
+                                        &actor_id,
                                         &cell,
                                         &heads,
                                         &cap,
@@ -2267,8 +2267,8 @@ pub fn RealmAdminPanel(
                                         // Realm/Space metadata events are authored by the
                                         // account/principal DID, not the device DID, or the server
                                         // rejects them with `actor_session_mismatch`.
-                                        let actor_did = actor_account_did.trim().to_owned();
-                                        if actor_did.is_empty() {
+                                        let actor_id = actor_account_did.trim().to_owned();
+                                        if actor_id.is_empty() {
                                             status_msg.set(
                                                 "profile update failed: account is not connected".to_owned(),
                                             );
@@ -2300,10 +2300,10 @@ pub fn RealmAdminPanel(
                                                 |api| async move {
                                                     match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
-                                                            api.update_realm_metadata(&home_realm_id, &actor_did, patch).await
+                                                            api.update_realm_metadata(&home_realm_id, &actor_id, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
-                                                            api.update_space_metadata(&home_realm_id, &subject_id, &actor_did, patch).await
+                                                            api.update_space_metadata(&home_realm_id, &subject_id, &actor_id, patch).await
                                                         }
                                                     }
                                                 },
@@ -2541,8 +2541,8 @@ pub fn RealmAdminPanel(
                                 // Membership events are authored by the account/principal DID
                                 // (the bearer session actor), not the device DID, or the server
                                 // rejects them with `actor_session_mismatch`.
-                                let actor_did = actor_account_did.trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if actor_id.is_empty() {
                                     status_msg.set("Leave Realm failed: account is not connected".to_owned());
                                     return;
                                 }
@@ -2552,7 +2552,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.leave_realm(&realm, &actor_did).await
+                                            api.leave_realm(&realm, &actor_id).await
                                         },
                                     )
                                     .await
@@ -2681,8 +2681,8 @@ pub fn RealmAdminPanel(
                                 // Capability events are authored by the account/principal DID,
                                 // not the device DID, or the server returns
                                 // `actor_session_mismatch`.
-                                let actor_did = actor_account_did.trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if actor_id.is_empty() {
                                     status_msg.set(
                                         "capability grant failed: account is not connected".to_owned(),
                                     );
@@ -2728,7 +2728,7 @@ pub fn RealmAdminPanel(
                                     };
                                 let envelope = crate::operation::cx_ops::capability_grant(
                                     &realm,
-                                    &actor_did,
+                                    &actor_id,
                                     &grant_val,
                                     &tag_val,
                                     constraint_json,
@@ -2787,8 +2787,8 @@ pub fn RealmAdminPanel(
                                 // Capability events are authored by the account/principal DID,
                                 // not the device DID, or the server returns
                                 // `actor_session_mismatch`.
-                                let actor_did = actor_account_did.trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if actor_id.is_empty() {
                                     status_msg.set(
                                         "capability revoke failed: account is not connected".to_owned(),
                                     );
@@ -2796,7 +2796,7 @@ pub fn RealmAdminPanel(
                                 }
                                 let envelope = crate::operation::cx_ops::capability_revoke(
                                     &realm,
-                                    &actor_did,
+                                    &actor_id,
                                     &grant_val,
                                     &tag_val,
                                     reason_opt.as_deref(),
@@ -2861,8 +2861,8 @@ pub fn RealmAdminPanel(
                                 let api_token = token();
                                 // Lifecycle events are authored by the account/principal DID, not
                                 // the device DID, or the server returns `actor_session_mismatch`.
-                                let actor_did = actor_account_did.trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if actor_id.is_empty() {
                                     status_msg.set("archive failed: account is not connected".to_owned());
                                     return;
                                 }
@@ -2872,7 +2872,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.archive_realm(&realm, &actor_did).await
+                                            api.archive_realm(&realm, &actor_id).await
                                         },
                                     )
                                     .await
@@ -2902,8 +2902,8 @@ pub fn RealmAdminPanel(
                                 let api_token = token();
                                 // Lifecycle events are authored by the account/principal DID, not
                                 // the device DID, or the server returns `actor_session_mismatch`.
-                                let actor_did = actor_account_did.trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = actor_account_did.trim().to_owned();
+                                if actor_id.is_empty() {
                                     status_msg.set("destroy failed: account is not connected".to_owned());
                                     return;
                                 }
@@ -2913,7 +2913,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.destroy_realm(&realm, &actor_did, "operator_request").await
+                                            api.destroy_realm(&realm, &actor_id, "operator_request").await
                                         },
                                     )
                                     .await
@@ -2953,7 +2953,7 @@ async fn run_device_revoke_from_snapshot(
     _api_token: String,
     _state_store: Signal<LocalStateStore>,
     _realm_id: String,
-    _actor_did: String,
+    _actor_id: String,
     _device_id: String,
     _target_did: String,
     mut status: Signal<String>,
@@ -2983,7 +2983,7 @@ async fn run_device_revoke_from_snapshot(
     api_token: String,
     mut state_store: Signal<LocalStateStore>,
     realm_id: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     target_did: String,
     mut status: Signal<String>,
@@ -3005,7 +3005,7 @@ async fn run_device_revoke_from_snapshot(
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let snapshot_secret = match crate::mls::runtime::load_device_snapshot_secret(
         secure_store.as_ref(),
-        &actor_did,
+        &actor_id,
         &device_id,
     ) {
         Ok(secret) => secret,
@@ -3111,7 +3111,7 @@ async fn run_device_revoke_from_snapshot(
             let backup_result = if let Some(snapshot) = snapshot {
                 crate::views::helpers::with_authed_api(&base_url, api_token.clone(), |api| {
                     let base_url = base_url.clone();
-                    let actor_did = actor_did.clone();
+                    let actor_id = actor_id.clone();
                     let device_id = device_id.clone();
                     let realm_id = realm_id.clone();
                     async move {
@@ -3119,7 +3119,7 @@ async fn run_device_revoke_from_snapshot(
                         // series (successor envelope) instead of minting a
                         // fresh genesis series on every device-remove commit.
                         crate::components::upload_mls_history_backup_now(
-                            &api, &base_url, &actor_did, &device_id, &realm_id, &snapshot,
+                            &api, &base_url, &actor_id, &device_id, &realm_id, &snapshot,
                         )
                         .await
                     }

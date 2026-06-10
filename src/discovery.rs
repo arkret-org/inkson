@@ -144,9 +144,9 @@ pub struct OrgProof {
 pub struct DisplayMetadata {
     /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
     /// protocol subject uses `_id` even when the value is a DID; see
-    /// `forbidden-wire-fields.json` entry `actor_did`). `alias` keeps
-    /// already-stored `actor_did` payloads readable.
-    #[serde(alias = "actor_did")]
+    /// `forbidden-wire-fields.json` entry `actor_id`). `alias` keeps
+    /// already-stored `actor_id` payloads readable.
+    #[serde(alias = "actor_id")]
     pub actor_id: String,
     /// Display name.
     pub display_name: Option<String>,
@@ -190,9 +190,9 @@ impl DisplayMetadata {
 pub struct PresencePolicy {
     /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
     /// protocol subject uses `_id` even when the value is a DID; see
-    /// `forbidden-wire-fields.json` entry `actor_did`). `alias` keeps
-    /// already-stored `actor_did` payloads readable.
-    #[serde(alias = "actor_did")]
+    /// `forbidden-wire-fields.json` entry `actor_id`). `alias` keeps
+    /// already-stored `actor_id` payloads readable.
+    #[serde(alias = "actor_id")]
     pub actor_id: String,
     /// Whether presence is enabled.
     pub enabled: bool,
@@ -462,8 +462,8 @@ impl DiscoveryManager {
     }
 
     /// Get display metadata.
-    pub fn get_display_metadata(&self, actor_did: &str) -> Option<&DisplayMetadata> {
-        self.display_metadata.get(actor_did)
+    pub fn get_display_metadata(&self, actor_id: &str) -> Option<&DisplayMetadata> {
+        self.display_metadata.get(actor_id)
     }
 
     /// Set presence policy.
@@ -473,8 +473,8 @@ impl DiscoveryManager {
     }
 
     /// Get presence policy.
-    pub fn get_presence_policy(&self, actor_did: &str) -> Option<&PresencePolicy> {
-        self.presence_policies.get(actor_did)
+    pub fn get_presence_policy(&self, actor_id: &str) -> Option<&PresencePolicy> {
+        self.presence_policies.get(actor_id)
     }
 
     /// Get the marker merger.

@@ -50,7 +50,7 @@ pub struct CirclePanelProps {
 /// `/_cokret/self/circles/:id/members` fetch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircleMemberRow {
-    pub actor_did: String,
+    pub actor_id: String,
     pub display_handle: String,
     pub role: String,
 }
@@ -121,10 +121,10 @@ pub fn CirclePanel(props: CirclePanelProps) -> Element {
                     ul { class: "member-list",
                         for member in visible_members.iter() {
                             li {
-                                key: "{member.actor_did}",
+                                key: "{member.actor_id}",
                                 class: "member-row",
                                 "data-testid": "circle-member-row",
-                                "data-actor-did": "{member.actor_did}",
+                                "data-actor-did": "{member.actor_id}",
                                 span { class: "member-handle", "{member.display_handle}" }
                                 span { class: "muted", "{member.role}" }
                             }
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn member_row_carries_fields() {
         let row = CircleMemberRow {
-            actor_did: "did:web:alice.example".to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
             display_handle: "@alice".to_owned(),
             role: "admin".to_owned(),
         };

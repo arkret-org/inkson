@@ -1056,7 +1056,7 @@ const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 /// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
 pub fn build_typing_envelope(
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: Option<&str>,
     typing: bool,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
@@ -1065,8 +1065,8 @@ pub fn build_typing_envelope(
     let realm_id_wire = trim_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.typing: {err}"))?;
+    let actor = cokret_sdk::Did::new(actor_id)
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.typing: {err}"))?;
     let device = device_id
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
@@ -1082,7 +1082,7 @@ pub fn build_typing_envelope(
         now,
         expires_at,
         json!({
-            "actor_id": actor_did,
+            "actor_id": actor_id,
             "realm_id": realm_id_wire,
             "scope_id": realm_id,
             "typing": typing,
@@ -1096,7 +1096,7 @@ pub fn build_typing_envelope(
 /// Round R2/R3 (T02) — build a `ck.receipt.read` `EphemeralEnvelope`.
 pub fn build_receipt_read_envelope(
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     event_id: &str,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
@@ -1104,8 +1104,8 @@ pub fn build_receipt_read_envelope(
     let realm_id_wire = trim_realm_id(realm_id);
     let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.receipt.read: {err}"))?;
+    let actor = cokret_sdk::Did::new(actor_id)
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.receipt.read: {err}"))?;
     cokret_sdk::EphemeralEnvelope::new(
         "ck.receipt.read",
         realm,
@@ -1117,7 +1117,7 @@ pub fn build_receipt_read_envelope(
             "receipt_type": "read",
             "schema": "ck.schema.read_receipt.v1",
             "realm_id": realm_id_wire,
-            "actor_id": actor_did,
+            "actor_id": actor_id,
             "event_id": event_id,
             "created_at": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         }),
@@ -1129,7 +1129,7 @@ pub fn build_receipt_read_envelope(
 /// Round R2/R3 (T02) — build a `ck.presence` `EphemeralEnvelope`.
 pub fn build_presence_envelope(
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     status: &str,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
@@ -1137,10 +1137,10 @@ pub fn build_presence_envelope(
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm = cokret_sdk::RealmId::new(realm_id)
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.presence: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.presence: {err}"))?;
+    let actor = cokret_sdk::Did::new(actor_id)
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
-    payload.insert("actor_id".into(), Value::String(actor_did.to_owned()));
+    payload.insert("actor_id".into(), Value::String(actor_id.to_owned()));
     payload.insert("status".into(), Value::String(status.to_owned()));
     if let Some(ts) = last_active_at {
         payload.insert("last_active_at".into(), Value::String(ts.to_rfc3339()));
@@ -1178,7 +1178,7 @@ pub fn build_presence_envelope(
 /// signing + submit path.
 pub fn build_call_signal_envelope_v1(
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     call_id: &str,
     signal_type: &str,
@@ -1189,8 +1189,8 @@ pub fn build_call_signal_envelope_v1(
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm = cokret_sdk::RealmId::new(realm_id)
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.call.signal: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_did)
-        .map_err(|err| anyhow::anyhow!("invalid actor_did for ck.call.signal: {err}"))?;
+    let actor = cokret_sdk::Did::new(actor_id)
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
         anyhow::bail!("ck.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
@@ -2250,7 +2250,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 /// ```json
 /// {
 ///   "messages": {
-///     "<target_actor_did>": {
+///     "<target_actor_id>": {
 ///       "<target_device_id>": {
 ///         "kind": "<kind>",
 ///         "expires_at": "<rfc3339>",

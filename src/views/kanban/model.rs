@@ -319,7 +319,7 @@ pub(super) struct CardDetailDraft {
 pub(super) struct CardSynthesisRevision {
     pub(super) id: String,
     pub(super) body: String,
-    pub(super) actor_did: String,
+    pub(super) actor_id: String,
     pub(super) author_label: String,
     pub(super) timestamp_label: String,
     pub(super) sort_key: String,
@@ -329,7 +329,7 @@ pub(super) struct CardSynthesisRevision {
 pub(super) struct CardSynthesisTrackEntry {
     pub(super) id: String,
     pub(super) body: String,
-    pub(super) actor_did: String,
+    pub(super) actor_id: String,
     pub(super) author_label: String,
     pub(super) timestamp_label: String,
     pub(super) sort_key: String,
@@ -1240,7 +1240,7 @@ pub(super) fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
 pub(super) struct MlsDecryptCtx<'a> {
     pub(super) state_store: &'a LocalStateStore,
     pub(super) realm_id: &'a str,
-    pub(super) actor_did: &'a str,
+    pub(super) actor_id: &'a str,
     pub(super) device_id: &'a str,
 }
 
@@ -1298,7 +1298,7 @@ pub(super) fn decrypt_private_flow_value(ctx: &MlsDecryptCtx<'_>, value: &Value)
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         ctx.state_store,
         ctx.realm_id,
-        ctx.actor_did,
+        ctx.actor_id,
         ctx.device_id,
         envelope,
     )?;

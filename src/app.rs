@@ -188,8 +188,8 @@ fn leave_sidebar_realm(
     // server rejects any event whose `actor_id` differs from the bearer
     // session actor (`actor_session_mismatch`). The local device DID is not the
     // session actor, so it must not be used here.
-    let actor_did = account_did.trim().to_owned();
-    if actor_did.is_empty() {
+    let actor_id = account_did.trim().to_owned();
+    if actor_id.is_empty() {
         status.set("Leave Realm failed: account is not connected".to_owned());
         return;
     }
@@ -203,7 +203,7 @@ fn leave_sidebar_realm(
     spawn(async move {
         let realm_for_api = realm_id.clone();
         match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
-            api.leave_realm(&realm_for_api, &actor_did).await
+            api.leave_realm(&realm_for_api, &actor_id).await
         })
         .await
         {
@@ -600,12 +600,12 @@ fn initial_session_token_from_state(
 fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
 ) -> bool {
     let state = store.load();
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     if store
-        .load_oidc_tokens_with_secure_store(actor_did, secure_store.as_ref())
+        .load_oidc_tokens_with_secure_store(actor_id, secure_store.as_ref())
         .as_ref()
         .is_some_and(crate::oidc::lifecycle::has_refresh_token)
     {
@@ -628,10 +628,10 @@ fn is_local_development_server_url(principal_server_url: &str) -> bool {
 
 fn can_attempt_development_session_reissue(
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> bool {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     let device = device_id.trim();
     !actor.is_empty()
         && actor.starts_with("did:")
@@ -642,10 +642,10 @@ fn can_attempt_development_session_reissue(
 fn can_bootstrap_with_development_session_reissue(
     local_state: &ClientLocalState,
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> bool {
-    let actor = actor_did.trim();
+    let actor = actor_id.trim();
     local_state
         .account_scope_owner
         .as_deref()
@@ -2302,7 +2302,7 @@ pub fn RouterView() -> Element {
             // on this browser.
             crate::components::MlsRecoverySetupMissingBanner {
                 needs_mls_recovery_setup,
-                actor_did: account_did,
+                actor_id: account_did,
             }
             // Step 3 of the account-MLS-secret auto-unlock flow: a
             // recovery-passphrase banner that restores encrypted history on
@@ -2311,7 +2311,7 @@ pub fn RouterView() -> Element {
             crate::components::MlsUnlockPrompt {
                 base_url,
                 token,
-                actor_did: account_did,
+                actor_id: account_did,
                 device_id,
                 state_store,
                 needs_mls_unlock,
@@ -2323,7 +2323,7 @@ pub fn RouterView() -> Element {
             crate::components::MlsBackupPrompt {
                 base_url,
                 token,
-                actor_did: account_did,
+                actor_id: account_did,
                 device_id,
                 state_store,
                 needs_mls_backup,
@@ -4758,8 +4758,8 @@ fn RealmsManagePage(
                                         // Membership events are authored by the account/principal
                                         // DID (the bearer session actor), not the local device DID,
                                         // or the server rejects them with `actor_session_mismatch`.
-                                        let actor_did = actor_account_did.clone();
-                                        if actor_did.trim().is_empty() {
+                                        let actor_id = actor_account_did.clone();
+                                        if actor_id.trim().is_empty() {
                                             status.set("Leave selected failed: account is not connected".to_owned());
                                             return;
                                         }
@@ -4785,7 +4785,7 @@ fn RealmsManagePage(
                                             let mut failed = Vec::<String>::new();
                                             for realm_id in selected {
                                                 let realm_for_api = realm_id.clone();
-                                                let actor_for_api = actor_did.clone();
+                                                let actor_for_api = actor_id.clone();
                                                 match crate::views::helpers::with_authed_api(
                                                     &base,
                                                     api_token.clone(),
@@ -5900,8 +5900,8 @@ fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
     max_epoch
 }
 
-fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_did: &str) -> bool {
-    let actor = actor_did.trim();
+fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_id: &str) -> bool {
+    let actor = actor_id.trim();
     if actor.is_empty() {
         return false;
     }
@@ -5913,13 +5913,13 @@ fn mls_recovery_setup_missing(
     list_payload: &Value,
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_did: &str,
+    actor_id: &str,
 ) -> bool {
     if crate::mls::account_recovery::select_mls_account_secret_backup(list_payload).is_some() {
         return false;
     }
     if matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store, actor_did),
+        crate::mls::runtime::load_account_mls_secret(secure_store, actor_id),
         Ok(Some(_))
     ) {
         return false;
@@ -5971,7 +5971,7 @@ struct MlsWelcomeBootstrapOutcome {
 async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     realm_id: String,
     mut state_store: Signal<LocalStateStore>,
@@ -6003,7 +6003,7 @@ async fn bootstrap_mls_welcome_for_realm(
             &mut store,
             secure_store.as_ref(),
             &realm_id,
-            &actor_did,
+            &actor_id,
             &device_id,
             &messages_value,
         )
@@ -6034,7 +6034,7 @@ async fn bootstrap_mls_welcome_for_realm(
     crate::components::maybe_flag_mls_backup_after_encrypted_write(
         base_url.clone(),
         session_token.clone(),
-        actor_did.clone(),
+        actor_id.clone(),
         needs_mls_backup,
     )
     .await;
@@ -6046,7 +6046,7 @@ async fn bootstrap_mls_welcome_for_realm(
         });
     };
     let base_for_backup = base_url.clone();
-    let actor_for_backup = actor_did.clone();
+    let actor_for_backup = actor_id.clone();
     let device_for_backup = device_id.clone();
     let realm_for_backup = realm_id.clone();
     let backup_id =
@@ -6216,7 +6216,7 @@ fn save_sidebar_width_preference(state_store: &mut LocalStateStore, width: f64) 
 
 async fn refresh_oidc_bearer_for_server(
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     previous: &crate::local_state::OidcTokenBundle,
 ) -> anyhow::Result<crate::local_state::OidcTokenBundle> {
@@ -6233,7 +6233,7 @@ async fn refresh_oidc_bearer_for_server(
     let plan = crate::coauth::build_oidc_code_exchange_plan(
         &topology,
         principal_server_url,
-        actor_did,
+        actor_id,
         device_id,
     )?;
     let response = coauth
@@ -6256,10 +6256,10 @@ fn oidc_refresh_error_invalidates_grant(error: &anyhow::Error) -> bool {
 
 async fn reissue_development_session(
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> Option<crate::models::DevLoginOutcome> {
-    if !can_attempt_development_session_reissue(principal_server_url, actor_did, device_id) {
+    if !can_attempt_development_session_reissue(principal_server_url, actor_id, device_id) {
         return None;
     }
     let api = CokretApi::new(principal_server_url).ok()?;
@@ -6267,7 +6267,7 @@ async fn reissue_development_session(
     if !description.development_mode {
         return None;
     }
-    api.dev_login(actor_did.trim(), device_id.trim()).await.ok()
+    api.dev_login(actor_id.trim(), device_id.trim()).await.ok()
 }
 
 /// The single source of truth for re-minting the principal bearer.
@@ -6950,8 +6950,8 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                     }
                                     continue;
                                 }
-                                if let Some(actor_did) =
-                                    crate::account_data::actor_did_from_contact_remark_key(
+                                if let Some(actor_id) =
+                                    crate::account_data::actor_id_from_contact_remark_key(
                                         data_type,
                                     )
                                 {
@@ -6962,11 +6962,11 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                                         content.clone(),
                                     ) {
                                         Ok(remark) => {
-                                            store.set_contact_remark(actor_did.to_owned(), remark);
+                                            store.set_contact_remark(actor_id.to_owned(), remark);
                                         }
                                         Err(error) => {
                                             tracing::warn!(
-                                                "ignoring malformed Contact remark for {actor_did}: {error}"
+                                                "ignoring malformed Contact remark for {actor_id}: {error}"
                                             );
                                         }
                                     }

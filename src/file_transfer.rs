@@ -145,13 +145,13 @@ struct PreparedFileTransfer {
 }
 
 pub fn load_or_create_file_transfer_crypto_context(
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<FileTransferCryptoContext> {
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
         secure_store.as_ref(),
-        actor_did,
+        actor_id,
         device_id,
     )
     .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
@@ -159,11 +159,11 @@ pub fn load_or_create_file_transfer_crypto_context(
 }
 
 pub fn load_file_transfer_crypto_context(
-    actor_did: &str,
+    actor_id: &str,
 ) -> anyhow::Result<Option<FileTransferCryptoContext>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let Some(account_secret) =
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_did)
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)
             .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?
     else {
         return Ok(None);
@@ -174,14 +174,14 @@ pub fn load_file_transfer_crypto_context(
 pub async fn upload_actor_private_file(
     api: &CokretApi,
     crypto: &FileTransferCryptoContext,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     filename: Option<&str>,
     media_type: &str,
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
     let prepared = prepare_actor_private_file(
-        crypto, actor_did, device_id, filename, media_type, plaintext,
+        crypto, actor_id, device_id, filename, media_type, plaintext,
     )?;
     let account_data_key = prepared.account_data_key.clone();
     let upload = api
@@ -199,7 +199,7 @@ pub async fn upload_actor_private_file(
     if derived_account_data_key != account_data_key {
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
-    let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_did)?;
+    let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
     let outcome = api.set_account_data(&account_data_key, envelope).await?;
     let server_response = match outcome {
         AccountDataSetOutcome::Stored { response } => response,
@@ -303,14 +303,14 @@ pub fn display_filename(record: &FileTransferRecord) -> String {
 
 fn prepare_actor_private_file(
     crypto: &FileTransferCryptoContext,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     filename: Option<&str>,
     media_type: &str,
     plaintext: Vec<u8>,
 ) -> anyhow::Result<PreparedFileTransfer> {
-    if actor_did.trim().is_empty() {
-        anyhow::bail!("actor_did is required for file transfer");
+    if actor_id.trim().is_empty() {
+        anyhow::bail!("actor_id is required for file transfer");
     }
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
@@ -446,7 +446,7 @@ fn seal_record_envelope(
     record: &FileTransferRecord,
     crypto: &FileTransferCryptoContext,
     account_data_key: &str,
-    actor_did: &str,
+    actor_id: &str,
 ) -> anyhow::Result<Value> {
     let mut nonce = [0u8; XCHACHA_NONCE_LEN];
     getrandom::fill(&mut nonce)
@@ -455,7 +455,7 @@ fn seal_record_envelope(
         "schema": FILE_TRANSFER_SCHEMA,
         "purpose": "file_transfer_record",
         "transfer_key": account_data_key,
-        "actor_id": actor_did,
+        "actor_id": actor_id,
     });
     let aad_bytes = crate::canonical::canonical_json_bytes(&aad)?;
     let plaintext = crate::canonical::canonical_json_bytes(record)?;

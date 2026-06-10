@@ -217,7 +217,7 @@ pub fn ChatPanel(
     // other actors who have sent a `ck.typing` ephemeral within the
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
-    // G3.Y2 — presence. Maps `actor_did -> "online"|"away"|"offline"`.
+    // G3.Y2 — presence. Maps `actor_id -> "online"|"away"|"offline"`.
     // Refreshed from the global SyncEngine's account-subscribe projection
     // when `sync_cursor` advances.
     let presence_states = use_signal(std::collections::BTreeMap::<String, String>::new);

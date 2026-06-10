@@ -339,7 +339,7 @@ mod tests {
             client_id: "yougen-web".to_owned(),
             auth_server_url: "https://issuer.example".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
-            principal_actor_did: "did:web:alice.example".to_owned(),
+            principal_actor_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_audience: "https://principal.example/api".to_owned(),
             callback_uri: "urn:yougen:oauth:callback".to_owned(),

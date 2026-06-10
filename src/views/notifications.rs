@@ -474,7 +474,7 @@ fn refresh_notifications(
 fn mark_all_notifications_read(
     base_url: String,
     access_token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     mut state_store: Signal<LocalStateStore>,
     mut notifications: Signal<Vec<Notification>>,
@@ -498,14 +498,14 @@ fn mark_all_notifications_read(
                 store.set_notification_read(id, true);
             }
         });
-        if actor_did.trim().is_empty() || device_id.trim().is_empty() {
+        if actor_id.trim().is_empty() || device_id.trim().is_empty() {
             Vec::new()
         } else {
             read_targets
                 .into_iter()
                 .map(|target| {
                     store.save_read_cursor(
-                        actor_did.clone(),
+                        actor_id.clone(),
                         device_id.clone(),
                         target.realm_id,
                         target.flow_id,

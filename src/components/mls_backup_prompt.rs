@@ -146,7 +146,7 @@ pub(crate) fn recovery_key_filename(localpart: &str) -> String {
 struct MlsPrivatePlaintextBackupJob {
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     latest_sidecar_json: Vec<u8>,
     latest_digest: String,
@@ -157,11 +157,11 @@ struct MlsPrivatePlaintextBackupJob {
     in_flight: bool,
 }
 
-fn mls_backup_after_write_probe_key(base_url: &str, actor_did: &str) -> String {
+fn mls_backup_after_write_probe_key(base_url: &str, actor_id: &str) -> String {
     format!(
         "{}|{}",
         base_url.trim().trim_end_matches('/'),
-        actor_did.trim()
+        actor_id.trim()
     )
 }
 
@@ -175,27 +175,27 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
 pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     device_id: String,
     state_store: Signal<LocalStateStore>,
 ) {
     if base_url.trim().is_empty()
         || token.trim().is_empty()
-        || actor_did.trim().is_empty()
+        || actor_id.trim().is_empty()
         || device_id.trim().is_empty()
     {
         return;
     }
     let sidecar_json = {
         let store = state_store.read();
-        if !mls_recovery_backup_configured(&store, &actor_did) || store.private_plaintext_is_empty()
+        if !mls_recovery_backup_configured(&store, &actor_id) || store.private_plaintext_is_empty()
         {
             return;
         }
         store.private_plaintext_snapshot_json()
     };
     let digest = crate::canonical::sha256_digest(&sidecar_json);
-    let key = mls_backup_after_write_probe_key(&base_url, &actor_did);
+    let key = mls_backup_after_write_probe_key(&base_url, &actor_id);
     let should_spawn = match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
         Ok(mut jobs) => {
             let job = jobs.entry(key.clone()).or_default();
@@ -204,7 +204,7 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
             }
             job.base_url = base_url;
             job.token = token;
-            job.actor_did = actor_did;
+            job.actor_id = actor_id;
             job.device_id = device_id;
             job.latest_sidecar_json = sidecar_json;
             job.latest_digest = digest;
@@ -346,7 +346,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
             None => {
                 crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
                     &api,
-                    &job.actor_did,
+                    &job.actor_id,
                     &job.device_id,
                 )
                 .await?
@@ -355,7 +355,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
             &api,
             secure_store.as_ref(),
-            &job.actor_did,
+            &job.actor_id,
             &job.device_id,
             &job.latest_sidecar_json,
             previous_body.as_ref(),
@@ -368,13 +368,13 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
 
 pub(crate) fn mls_recovery_backup_configured(
     state_store: &LocalStateStore,
-    actor_did: &str,
+    actor_id: &str,
 ) -> bool {
-    if actor_did.trim().is_empty() {
+    if actor_id.trim().is_empty() {
         return false;
     }
     state_store
-        .load_private_data(actor_did, MLS_RECOVERY_BACKUP_STATE_KEY)
+        .load_private_data(actor_id, MLS_RECOVERY_BACKUP_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .and_then(|value| {
             value
@@ -388,10 +388,10 @@ pub(crate) fn mls_recovery_backup_configured(
 
 pub(crate) fn mark_mls_recovery_backup_configured(
     state_store: &mut LocalStateStore,
-    actor_did: &str,
+    actor_id: &str,
     backup_id: &str,
 ) {
-    if actor_did.trim().is_empty() || backup_id.trim().is_empty() {
+    if actor_id.trim().is_empty() || backup_id.trim().is_empty() {
         return;
     }
     let payload = serde_json::json!({
@@ -400,7 +400,7 @@ pub(crate) fn mark_mls_recovery_backup_configured(
         "configured_at": chrono::Utc::now().to_rfc3339(),
     });
     state_store.save_private_data(
-        actor_did,
+        actor_id,
         MLS_RECOVERY_BACKUP_STATE_KEY,
         payload.to_string(),
     );
@@ -431,15 +431,15 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
 /// backup yet AND a local account secret exists, flip `needs_mls_backup` on
 /// so [`MlsBackupPrompt`] surfaces promptly. Best-effort and self-contained:
 /// swallows every error and never blocks the write path. The server probe is
-/// intentionally session-deduped per `(base_url, actor_did)`: the prompt only
+/// intentionally session-deduped per `(base_url, actor_id)`: the prompt only
 /// needs a first-write kick, not a backup-list request after every message.
 pub async fn maybe_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
-    actor_did: String,
+    actor_id: String,
     needs_mls_backup: Signal<bool>,
 ) {
-    if base_url.trim().is_empty() || token.trim().is_empty() || actor_did.trim().is_empty() {
+    if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
         return;
     }
     if needs_mls_backup() {
@@ -449,14 +449,14 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
     // there's nothing to back up yet.
     let has_local_secret = {
         let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor_did)
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor_id)
             .map(|secret| secret.is_some())
             .unwrap_or(false)
     };
     if !has_local_secret {
         return;
     }
-    let probe_key = mls_backup_after_write_probe_key(&base_url, &actor_did);
+    let probe_key = mls_backup_after_write_probe_key(&base_url, &actor_id);
     if !mark_mls_backup_after_write_probe_started(probe_key) {
         return;
     }
@@ -508,7 +508,7 @@ pub async fn maybe_flag_mls_backup_after_encrypted_write(
 pub fn MlsBackupPrompt(
     base_url: Signal<String>,
     token: Signal<String>,
-    actor_did: Signal<String>,
+    actor_id: Signal<String>,
     device_id: Signal<String>,
     state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
@@ -529,7 +529,7 @@ pub fn MlsBackupPrompt(
         && generated_recovery_key().trim().is_empty()
         && !base_url().trim().is_empty()
         && !token().trim().is_empty()
-        && !actor_did().trim().is_empty();
+        && !actor_id().trim().is_empty();
 
     let on_backup = move |_| {
         if busy() {
@@ -549,7 +549,7 @@ pub fn MlsBackupPrompt(
             .expect("generated recovery key is valid BIP-39");
         let base = base_url();
         let session = token();
-        let actor = actor_did();
+        let actor = actor_id();
         let device = device_id();
         let mut state_store_for_marker = state_store;
         // X5.3 — snapshot the local-plaintext sidecar so we can also back it up

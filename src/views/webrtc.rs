@@ -74,7 +74,7 @@ impl RecordingState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallParticipant {
-    pub actor_did: String,
+    pub actor_id: String,
     pub display_name: String,
     pub stream_state: ParticipantStreamState,
     pub screen_sharing: bool,
@@ -729,7 +729,7 @@ pub fn WebrtcCallPanel(
                         }
                         for p in participants().iter() {
                             {
-                                let did = p.actor_did.clone();
+                                let did = p.actor_id.clone();
                                 let name = p.display_name.clone();
                                 let st = p.stream_state;
                                 let sharing = p.screen_sharing;
@@ -815,7 +815,7 @@ fn build_roster(actor: &str, peers: &[String]) -> Vec<CallParticipant> {
             continue;
         }
         roster.push(CallParticipant {
-            actor_did: did.to_owned(),
+            actor_id: did.to_owned(),
             display_name: short_protocol_id(did),
             stream_state: ParticipantStreamState::Active,
             screen_sharing: false,
@@ -831,7 +831,7 @@ fn set_participant_state(
 ) {
     let mut roster = participants();
     for participant in &mut roster {
-        if participant.actor_did == actor {
+        if participant.actor_id == actor {
             participant.stream_state = state;
         }
     }
@@ -845,7 +845,7 @@ fn set_participant_screen(
 ) {
     let mut roster = participants();
     for participant in &mut roster {
-        if participant.actor_did == actor {
+        if participant.actor_id == actor {
             participant.screen_sharing = sharing;
         }
     }
@@ -1023,8 +1023,8 @@ mod tests {
             ],
         );
         assert_eq!(roster.len(), 2);
-        assert_eq!(roster[0].actor_did, "did:web:alice.example");
-        assert_eq!(roster[1].actor_did, "did:web:bob.example");
+        assert_eq!(roster[0].actor_id, "did:web:alice.example");
+        assert_eq!(roster[1].actor_id, "did:web:bob.example");
     }
 
     #[test]

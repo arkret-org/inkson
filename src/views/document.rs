@@ -72,7 +72,7 @@ struct DocumentDraft {
 /// e2e harness can stamp arbitrary coordinates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteCursor {
-    pub actor_did: String,
+    pub actor_id: String,
     pub display_name: String,
     pub line: u32,
     pub col: u32,
@@ -350,7 +350,7 @@ fn cursors_from_projection(value: &Value) -> Vec<RemoteCursor> {
             cursors
                 .iter()
                 .filter_map(|cursor| {
-                    let actor_did = cursor
+                    let actor_id = cursor
                         .get("actor_id")
                         .or_else(|| cursor.get("actor"))
                         .and_then(Value::as_str)?
@@ -360,8 +360,8 @@ fn cursors_from_projection(value: &Value) -> Vec<RemoteCursor> {
                             .get("display_name")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| short_protocol_id(&actor_did)),
-                        actor_did,
+                            .unwrap_or_else(|| short_protocol_id(&actor_id)),
+                        actor_id,
                         line: cursor
                             .pointer("/cursor/line")
                             .or_else(|| cursor.get("line"))
@@ -604,7 +604,7 @@ pub fn DocumentPanel(
                         remote_cursors.set(
                             cursors_from_projection(&projection)
                                 .into_iter()
-                                .filter(|cursor| cursor.actor_did != actor_key)
+                                .filter(|cursor| cursor.actor_id != actor_key)
                                 .collect(),
                         );
                         if let Some(realm_id) = projection
@@ -1079,7 +1079,7 @@ pub fn DocumentPanel(
                     span {
                         class: "document-cursor-remote",
                         "data-testid": "document-cursor-remote",
-                        "data-actor-did": "{cursor.actor_did}",
+                        "data-actor-did": "{cursor.actor_id}",
                         "data-position-line": "{cursor.line}",
                         "data-position-col": "{cursor.col}",
                         title: "{cursor.display_name}",
@@ -1100,7 +1100,7 @@ pub fn DocumentPanel(
                     li { class: "mono", title: "{actor_key}", "{actor_key_label} (you)" }
                     for cursor in remote_cursors().iter() {
                         li { class: "mono",
-                            span { "data-actor-did": "{cursor.actor_did}", "{cursor.display_name}" }
+                            span { "data-actor-did": "{cursor.actor_id}", "{cursor.display_name}" }
                             span { class: "muted", " @ line {cursor.line}, col {cursor.col}" }
                         }
                     }
@@ -1636,14 +1636,14 @@ mod tests {
     #[test]
     fn remote_cursor_stores_line_col_and_actor() {
         let c = RemoteCursor {
-            actor_did: "did:web:bob.example".to_owned(),
+            actor_id: "did:web:bob.example".to_owned(),
             display_name: "Bob".to_owned(),
             line: 4,
             col: 12,
         };
         assert_eq!(c.line, 4);
         assert_eq!(c.col, 12);
-        assert!(c.actor_did.starts_with("did:"));
+        assert!(c.actor_id.starts_with("did:"));
     }
 
     #[test]

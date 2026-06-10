@@ -333,21 +333,21 @@ pub fn decrypt_with_epoch_check(
 
 impl MlsSnapshotEnvelope {
     /// Build the typed key_backup PUT body for this envelope. The
-    /// `backup_id` is the protocol backup object id; `actor_did` and
+    /// `backup_id` is the protocol backup object id; `actor_id` and
     /// `device_id` identify the device that minted the snapshot.
-    pub fn to_key_backup_body(&self, backup_id: &str, actor_did: &str, device_id: &str) -> Value {
+    pub fn to_key_backup_body(&self, backup_id: &str, actor_id: &str, device_id: &str) -> Value {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
         let ciphertext_digest = format!("sha256:{:x}", Sha256::digest(&envelope_bytes));
         let nonce_material = format!(
-            "{backup_id}|{actor_did}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
+            "{backup_id}|{actor_id}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
             self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true)
         );
         let nonce_digest = Sha256::digest(nonce_material.as_bytes());
         let nonce = URL_SAFE_NO_PAD.encode(&nonce_digest[..24]);
         let mut body = json!({
             "backup_id": backup_id,
-            "actor_id": actor_did,
+            "actor_id": actor_id,
             "backup_class": "mls_history",
             "backup_version": "kb_mls_snapshot_v1",
             "created_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),

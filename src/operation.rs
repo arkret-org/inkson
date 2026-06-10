@@ -592,20 +592,20 @@ pub mod cx_ops {
     /// `allOf`, the typed constructor forces `level_public` off on that path.
     fn flow_watch_set_payload_value(
         flow_id: &str,
-        watcher_actor_did: &str,
+        watcher_actor_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
     ) -> Value {
         let payload = match level {
             Some(level) => cokret_sdk::FlowWatchSetPayload::set(
                 flow_id_value(flow_id),
-                did_id(watcher_actor_did),
+                did_id(watcher_actor_id),
                 flow_watch_level_value(level),
                 level_public,
             ),
             None => cokret_sdk::FlowWatchSetPayload::clear(
                 flow_id_value(flow_id),
-                did_id(watcher_actor_did),
+                did_id(watcher_actor_id),
             ),
         };
         payload
@@ -849,7 +849,7 @@ pub mod cx_ops {
     pub fn flow_watch_set(
         realm_id: &str,
         sender_actor: &str,
-        target_actor_did: &str,
+        target_actor_id: &str,
         flow_id: &str,
         level: Option<&str>,
         level_public: Option<bool>,
@@ -857,7 +857,7 @@ pub mod cx_ops {
         // Strong type: flow_watch_set_payload (additionalProperties:false +
         // allOf forbidding level_public when level is null). The typed
         // constructors keep the clear path (level:null) free of level_public.
-        let payload = flow_watch_set_payload_value(flow_id, target_actor_did, level, level_public);
+        let payload = flow_watch_set_payload_value(flow_id, target_actor_id, level, level_public);
         OperationBuilder::new(realm_id, sender_actor, "ck.flow.watch.set")
             .target_ref(flow_id)
             .body(payload)

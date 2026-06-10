@@ -1563,7 +1563,7 @@ pub(super) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 pub(super) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     encrypted_content: &Value,
 ) -> Option<String> {
@@ -1576,7 +1576,7 @@ pub(super) fn decrypt_chat_encrypted_content(
     let plaintext = crate::views::timeline::try_local_mls_decrypt_core(
         state_store,
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
         &payload_value,
     )?;
@@ -1639,12 +1639,12 @@ pub(super) fn chat_message_from_event_with_sidecar(
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
     let decrypted_body = if !body_from_sidecar
-        && let (Some((actor_did, device_id)), Some(store), Some(encrypted)) = (
+        && let (Some((actor_id, device_id)), Some(store), Some(encrypted)) = (
             decrypt_identity,
             state_store,
             encrypted_content_value.as_ref(),
         ) {
-        decrypt_chat_encrypted_content(store, message_realm, actor_did, device_id, encrypted)
+        decrypt_chat_encrypted_content(store, message_realm, actor_id, device_id, encrypted)
     } else {
         None
     };
@@ -2474,7 +2474,7 @@ pub(super) fn merge_poll_cards(
 pub(super) async fn submit_chat_operation_with_plaintext_retry(
     api: &CokretApi,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     plaintext_visible_services: &[String],
     operation: &EventEnvelope,
 ) -> anyhow::Result<SubmitEventOutcome> {
@@ -2495,7 +2495,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
             }
             api.update_realm_metadata(
                 realm_id,
-                actor_did,
+                actor_id,
                 json!({"plaintext_visible_services": services}),
             )
             .await
@@ -2523,7 +2523,7 @@ pub(super) async fn submit_chat_operation_with_plaintext_retry(
 /// `auth_expired` for the caller to route to login.
 pub(super) async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     realm_id: &str,
     access_token: String,
     wait_for_sync_token: Option<String>,
@@ -2534,7 +2534,7 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
     let first = submit_chat_operation_with_plaintext_retry(
         &api,
         realm_id,
-        actor_did,
+        actor_id,
         plaintext_visible_services,
         operation,
     )
@@ -2549,7 +2549,7 @@ pub(super) async fn submit_chat_operation_with_auth_refresh(
                     submit_chat_operation_with_plaintext_retry(
                         &retry_api,
                         realm_id,
-                        actor_did,
+                        actor_id,
                         plaintext_visible_services,
                         operation,
                     )

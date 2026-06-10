@@ -102,14 +102,14 @@ pub fn ConsentGrantDemoCard(
                         // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
                         // (设备不是 actor 主体;device 的 did:key 仅用于本地签名,
                         // 不能作为 actor_id —— soland 会拒。见 spec actor.md §2。)
-                        let actor_did = account_did().trim().to_owned();
-                        if actor_did.is_empty() {
+                        let actor_id = account_did().trim().to_owned();
+                        if actor_id.is_empty() {
                             status.set("Account identity unavailable; sign in first".to_owned());
                             return;
                         }
                         let envelope = crate::operation::cx_ops::consent_grant(
                             &realm_val,
-                            &actor_did,
+                            &actor_id,
                             &consent_val,
                             &tag_val,
                         )
@@ -155,14 +155,14 @@ pub fn ConsentGrantDemoCard(
                         // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
                         // (设备不是 actor 主体;device 的 did:key 仅用于本地签名,
                         // 不能作为 actor_id —— soland 会拒。见 spec actor.md §2。)
-                        let actor_did = account_did().trim().to_owned();
-                        if actor_did.is_empty() {
+                        let actor_id = account_did().trim().to_owned();
+                        if actor_id.is_empty() {
                             status.set("Account identity unavailable; sign in first".to_owned());
                             return;
                         }
                         let envelope = crate::operation::cx_ops::consent_revoke(
                             &realm_val,
-                            &actor_did,
+                            &actor_id,
                             &consent_val,
                             &tag_val,
                             Some("user revoked from settings UI"),
@@ -228,7 +228,7 @@ pub fn ConsentGrantDemoCard(
 }
 
 /// Round 4 (spec a77b995) — parse `observed_dots` from a textarea
-/// (one `<actor_did>:<actor_seq>` per line). Lines where the suffix
+/// (one `<actor_id>:<actor_seq>` per line). Lines where the suffix
 /// after the last `:` does not parse as a `u64` are skipped. Returns
 /// an empty Vec when the input has no parseable lines — the caller
 /// MUST refuse to submit a cascade revoke in that case.
@@ -390,8 +390,8 @@ pub fn RevokeAllConsentCard(
                                     return;
                                 }
                                 // 事件作者 MUST 是 account/principal DID,不是设备签名身份。
-                                let actor_did = account_did().trim().to_owned();
-                                if actor_did.is_empty() {
+                                let actor_id = account_did().trim().to_owned();
+                                if actor_id.is_empty() {
                                     status.set(
                                         "Account identity unavailable; sign in first".to_owned(),
                                     );
@@ -423,7 +423,7 @@ pub fn RevokeAllConsentCard(
                                     for scope in &scopes {
                                         let envelope = crate::operation::cx_ops::consent_revoke(
                                             &realm_val,
-                                            &actor_did,
+                                            &actor_id,
                                             &consent_val,
                                             scope,
                                             Some("scope=any cascade revoke"),

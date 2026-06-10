@@ -254,9 +254,9 @@ impl CokretApi {
     pub async fn delete_key_backup(
         &self,
         backup_id: &str,
-        actor_did: &str,
+        actor_id: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_did, backup_id);
+        let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id);
         let request = self
             .http
             .delete(self.endpoint(&format!("_cokret/self/keys/backups/{backup_id}"))?)

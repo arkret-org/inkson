@@ -331,7 +331,7 @@ pub struct CoauthOidcClientHint {
 pub struct SolandSessionGrantPlan {
     pub principal_server_url: String,
     pub principal_audience: String,
-    pub actor_did: String,
+    pub actor_id: String,
     pub device_id: String,
     pub authorize_url_preview: String,
     pub token_endpoint: Option<String>,
@@ -352,7 +352,7 @@ pub struct ChimePushGrantPlan {
 pub struct OidcCodeExchangePlan {
     pub principal_server_url: String,
     pub principal_audience: String,
-    pub actor_did: String,
+    pub actor_id: String,
     pub device_id: String,
     pub client_id: String,
     pub authorize_url_preview: String,
@@ -387,7 +387,7 @@ pub struct PersistedOidcScaffold {
     #[serde(default)]
     pub principal_server_url: String,
     #[serde(default)]
-    pub principal_actor_did: String,
+    pub principal_actor_id: String,
     #[serde(default)]
     pub device_id: String,
     pub principal_audience: String,
@@ -913,18 +913,18 @@ pub fn summarize_coauth_integration_manifest(manifest: &CoauthIntegrationManifes
 pub fn build_soland_session_grant_plan(
     topology: &CoauthTopologySnapshot,
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<SolandSessionGrantPlan> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
     let principal_audience = principal_audience(principal_server_url.as_str())?;
     let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_did, device_id, principal_audience.as_str())?;
+        build_authorize_url_preview(topology, actor_id, device_id, principal_audience.as_str())?;
 
     Ok(SolandSessionGrantPlan {
         principal_server_url,
         principal_audience,
-        actor_did: actor_did.to_owned(),
+        actor_id: actor_id.to_owned(),
         device_id: device_id.to_owned(),
         authorize_url_preview,
         token_endpoint: topology.token_endpoint.clone(),
@@ -955,7 +955,7 @@ pub fn build_chime_push_grant_plan(
 pub fn build_oidc_code_exchange_plan(
     topology: &CoauthTopologySnapshot,
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<OidcCodeExchangePlan> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
@@ -963,7 +963,7 @@ pub fn build_oidc_code_exchange_plan(
     let redirect_uri = current_oidc_redirect_uri();
     let client_id = resolve_oidc_client_id(topology, redirect_uri.as_str())?;
     let authorize_url_preview =
-        build_authorize_url_preview(topology, actor_did, device_id, principal_audience.as_str())?;
+        build_authorize_url_preview(topology, actor_id, device_id, principal_audience.as_str())?;
     let token_endpoint = topology
         .token_endpoint
         .clone()
@@ -982,14 +982,14 @@ pub fn build_oidc_code_exchange_plan(
         "resource": principal_audience,
         "code": "<authorization_code_from_callback>",
         "code_verifier": "<persisted_pkce_code_verifier>",
-        "login_hint": actor_did,
+        "login_hint": actor_id,
         "device_id": device_id,
     }))?;
 
     Ok(OidcCodeExchangePlan {
         principal_server_url,
         principal_audience,
-        actor_did: actor_did.to_owned(),
+        actor_id: actor_id.to_owned(),
         device_id: device_id.to_owned(),
         client_id,
         authorize_url_preview,
@@ -1005,7 +1005,7 @@ pub fn build_oidc_code_exchange_plan(
 pub fn build_oidc_scaffold_bundle(
     topology: &CoauthTopologySnapshot,
     principal_server_url: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let principal_server_url = validate_server_url(principal_server_url)?.to_string();
@@ -1017,16 +1017,16 @@ pub fn build_oidc_scaffold_bundle(
     let client_id = resolve_oidc_client_id(topology, callback_uri.as_str())?;
     // RFC 6749 §10.12 / RFC 7636: state, nonce, and PKCE verifier MUST be
     // unguessable per-flow values. The previous scaffold used deterministic
-    // strings derived from (actor_did, device_id), which would let an
+    // strings derived from (actor_id, device_id), which would let an
     // attacker who learned the DID + device id forge a matching callback
     // payload. Replace with cryptographically random tokens and the spec
     // S256 challenge transformation.
     let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;
-    // `actor_did` / `device_id` are no longer factored into the (random) PKCE
+    // `actor_id` / `device_id` are no longer factored into the (random) PKCE
     // state, but both are still forwarded to `build_authorize_url` below —
-    // `actor_did` as `login_hint` and `device_id` as the device-binding scope.
+    // `actor_id` as `login_hint` and `device_id` as the device-binding scope.
     let pkce_method = preferred_pkce_method(&topology.code_challenge_methods_supported);
     let code_challenge = match pkce_method {
         Some("plain") => code_verifier.clone(),
@@ -1039,7 +1039,7 @@ pub fn build_oidc_scaffold_bundle(
         topology,
         client_id.as_str(),
         callback_uri.as_str(),
-        actor_did,
+        actor_id,
         device_id,
         principal_audience.as_str(),
         &state,
@@ -1410,7 +1410,7 @@ pub fn persist_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     auth_server_url: &str,
     principal_server_url: &str,
-    principal_actor_did: &str,
+    principal_actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<()> {
     let window =
@@ -1426,7 +1426,7 @@ pub fn persist_oidc_scaffold(
         client_id: bundle.client_id.clone(),
         auth_server_url: auth_server_url.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
-        principal_actor_did: principal_actor_did.to_owned(),
+        principal_actor_id: principal_actor_id.to_owned(),
         device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),
@@ -1443,7 +1443,7 @@ pub fn persist_oidc_scaffold(
     _bundle: &OidcScaffoldBundle,
     _auth_server_url: &str,
     _principal_server_url: &str,
-    _principal_actor_did: &str,
+    _principal_actor_id: &str,
     _device_id: &str,
 ) -> anyhow::Result<()> {
     Ok(())
@@ -1503,7 +1503,7 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
 /// per-attempt randomness.
 fn build_authorize_url_preview(
     topology: &CoauthTopologySnapshot,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     principal_audience: &str,
 ) -> anyhow::Result<String> {
@@ -1513,7 +1513,7 @@ fn build_authorize_url_preview(
         topology,
         client_id.as_str(),
         redirect_uri.as_str(),
-        actor_did,
+        actor_id,
         device_id,
         principal_audience,
         OIDC_STATE_PREVIEW,
@@ -1526,7 +1526,7 @@ fn build_authorize_url(
     topology: &CoauthTopologySnapshot,
     client_id: &str,
     redirect_uri: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     principal_audience: &str,
     state: &str,
@@ -1572,8 +1572,8 @@ fn build_authorize_url(
         query.append_pair("scope", &scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
-        if !actor_did.trim().is_empty() {
-            query.append_pair("login_hint", actor_did);
+        if !actor_id.trim().is_empty() {
+            query.append_pair("login_hint", actor_id);
         }
         query.append_pair("resource", principal_audience);
         // OIDC Core §3.1.2.1: `prompt=login` forces the IdP to re-prompt
@@ -2003,7 +2003,7 @@ mod tests {
     }
 
     /// State and nonce tokens for the same input MUST diverge. The previous
-    /// scaffold derived both from `(actor_did, device_id, label)` so they
+    /// scaffold derived both from `(actor_id, device_id, label)` so they
     /// were predictable; this regression test pins the new behaviour.
     #[test]
     fn state_and_nonce_diverge_for_same_caller() {

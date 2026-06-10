@@ -640,7 +640,7 @@ fn invalidate_cache_for_revocation_events(
     }
 
     /// 从事件(可回落到 roster 条目)里取 actor DID 字符串。
-    fn actor_did_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
+    fn actor_id_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
         let from = |v: &'a Value| {
             v.get("actor")
                 .or_else(|| v.get("actor_id"))
@@ -661,7 +661,7 @@ fn invalidate_cache_for_revocation_events(
             if !is_revocation_kind(event) {
                 continue;
             }
-            if let Some(did_str) = actor_did_str(event, fallback)
+            if let Some(did_str) = actor_id_str(event, fallback)
                 && let Ok(did) = cokret_sdk::Did::new(did_str.to_owned())
             {
                 cache.invalidate(&did);
@@ -785,15 +785,15 @@ fn apply_account_data(
             continue;
         }
         // ck.contacts.actor.<did> — actor-private contact remarks.
-        if let Some(actor_did) = crate::account_data::actor_did_from_contact_remark_key(data_type) {
+        if let Some(actor_id) = crate::account_data::actor_id_from_contact_remark_key(data_type) {
             let Some(content) = entry.get("content") else {
                 continue;
             };
             match serde_json::from_value::<crate::account_data::ContactRemark>(content.clone()) {
-                Ok(remark) => store.set_contact_remark(actor_did.to_owned(), remark),
+                Ok(remark) => store.set_contact_remark(actor_id.to_owned(), remark),
                 Err(error) => {
                     tracing::warn!(
-                        "sync engine: ignoring malformed Contact remark for {actor_did}: {error}",
+                        "sync engine: ignoring malformed Contact remark for {actor_id}: {error}",
                     );
                 }
             }

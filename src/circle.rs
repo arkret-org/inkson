@@ -181,7 +181,7 @@ pub fn circle_summaries_from_json(value: &serde_json::Value) -> Vec<CircleSummar
 }
 
 /// Decode a Circle's member roster (the `members` collection on the
-/// `GET /_cokret/self/circles/{id}` response) into `(actor_did, role)`
+/// `GET /_cokret/self/circles/{id}` response) into `(actor_id, role)`
 /// pairs. The view layer wraps these into its own row struct so this
 /// model module stays free of any UI dependency.
 pub fn circle_members_from_json(value: &serde_json::Value) -> Vec<(String, String)> {
@@ -196,7 +196,7 @@ pub fn circle_members_from_json(value: &serde_json::Value) -> Vec<(String, Strin
         .filter_map(|row| {
             let did = row
                 .get("actor_id")
-                .or_else(|| row.get("actor_did"))
+                .or_else(|| row.get("actor_id"))
                 .or_else(|| row.get("did"))
                 .and_then(serde_json::Value::as_str)?
                 .to_owned();

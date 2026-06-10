@@ -301,7 +301,7 @@ pub fn contact_remark_account_data_key(actor_id: &str) -> String {
 
 /// Inverse of [`contact_remark_account_data_key`]. Returns the DID segment
 /// when `key` is an actor contact remark.
-pub fn actor_did_from_contact_remark_key(key: &str) -> Option<&str> {
+pub fn actor_id_from_contact_remark_key(key: &str) -> Option<&str> {
     key.strip_prefix("ck.contacts.actor.")
 }
 
@@ -462,10 +462,8 @@ pub struct ContactRemark {
     #[serde(default = "default_remark_version")]
     pub version: u32,
     /// Subject actor DID. Wire field `actor_id` per the v1 protocol naming
-    /// rule (single protocol subject uses `_id` even when the value is a
-    /// DID; see `forbidden-wire-fields.json` entry `actor_did`). `alias`
-    /// keeps already-stored `actor_did` rows hydratable.
-    #[serde(alias = "actor_did")]
+    /// rule: a single protocol responsibility subject uses the `_id` suffix
+    /// even when the value is a DID (see `forbidden-wire-fields.json`).
     pub actor_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_name: String,
@@ -1360,9 +1358,9 @@ mod tests {
         let did = "did:web:alice.example";
         let key = contact_remark_account_data_key(did);
         assert_eq!(key, format!("ck.contacts.actor.{did}"));
-        assert_eq!(actor_did_from_contact_remark_key(&key), Some(did));
+        assert_eq!(actor_id_from_contact_remark_key(&key), Some(did));
         assert_eq!(
-            actor_did_from_contact_remark_key("ck.contacts.realm.x"),
+            actor_id_from_contact_remark_key("ck.contacts.realm.x"),
             None
         );
     }
@@ -1494,20 +1492,6 @@ mod tests {
             ..ContactRemark::default()
         };
         assert!(empty.is_empty());
-    }
-
-    #[test]
-    fn contact_remark_hydrates_legacy_actor_did_wire_key() {
-        // Rows stored before the actor_did → actor_id rename still
-        // deserialize via the serde alias.
-        let legacy = json!({
-            "version": 1,
-            "actor_did": "did:web:bob.example",
-            "local_name": "Bob"
-        });
-        let remark: ContactRemark = serde_json::from_value(legacy).unwrap();
-        assert_eq!(remark.actor_id, "did:web:bob.example");
-        assert_eq!(remark.local_name, "Bob");
     }
 
     #[test]

@@ -374,7 +374,7 @@ fn pending_send_error_is_permanent(error: &str) -> bool {
 async fn submit_timeline_message_with_plaintext_retry(
     api: &crate::api::CokretApi,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     operation: &EventEnvelope,
 ) -> anyhow::Result<crate::models::SubmitEventOutcome> {
     match api.submit_event_envelope(operation).await {
@@ -387,7 +387,7 @@ async fn submit_timeline_message_with_plaintext_retry(
             }
             api.update_realm_metadata(
                 realm_id,
-                actor_did,
+                actor_id,
                 json!({"plaintext_visible_services": [service_did]}),
             )
             .await
@@ -2255,14 +2255,14 @@ pub(crate) fn plaintext_visible_service(base_url: &str) -> String {
 fn try_local_mls_decrypt(
     state_store: Signal<LocalStateStore>,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
     try_local_mls_decrypt_core(
         &state_store.read(),
         realm_id,
-        actor_did,
+        actor_id,
         device_id,
         payload_value,
     )
@@ -2279,7 +2279,7 @@ fn try_local_mls_decrypt(
 pub(crate) fn try_local_mls_decrypt_core(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_did: &str,
+    actor_id: &str,
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
@@ -2287,7 +2287,7 @@ pub(crate) fn try_local_mls_decrypt_core(
     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
     let secret = crate::mls::runtime::load_device_snapshot_secret(
         secure_store.as_ref(),
-        actor_did,
+        actor_id,
         device_id,
     )
     .ok()?;

@@ -864,14 +864,14 @@ pub fn DirectoryPanel(
                         div { class: "event-head",
                             span { "actor" }
                             {
-                                let actor_did = actor
+                                let actor_id = actor
                                     .get("did")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("-")
                                     .to_owned();
-                                let actor_did_label = short_protocol_id(&actor_did);
+                                let actor_id_label = short_protocol_id(&actor_id);
                                 rsx! {
-                                    span { title: "{actor_did}", "{actor_did_label}" }
+                                    span { title: "{actor_id}", "{actor_id_label}" }
                                 }
                             }
                         }
@@ -922,7 +922,7 @@ pub fn DirectoryPanel(
                             // endpoint exists; today the click is just a
                             // shortcut into `/settings/blocklist`.
                             {
-                                let actor_did = actor
+                                let actor_id = actor
                                     .get("did")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
@@ -931,14 +931,14 @@ pub fn DirectoryPanel(
                                     Link {
                                         class: "secondary",
                                         "data-testid": "block-actor-button",
-                                        "data-actor-did": "{actor_did}",
+                                        "data-actor-did": "{actor_id}",
                                         to: Route::SettingsSection { section: "blocklist".to_owned() },
                                         "Block"
                                     }
                                 }
                             }
                             {
-                                let actor_did = actor
+                                let actor_id = actor
                                     .get("did")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
@@ -947,8 +947,8 @@ pub fn DirectoryPanel(
                                     div {
                                         class: "muted",
                                         "data-testid": "actor-result-did",
-                                        title: "{actor_did}",
-                                        "{actor_did}"
+                                        title: "{actor_id}",
+                                        "{actor_id}"
                                     }
                                 }
                             }
