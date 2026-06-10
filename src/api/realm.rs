@@ -376,7 +376,7 @@ impl CokretApi {
         self.post_json(
             "_cokret/self/authz/check",
             json!({
-                "actor": actor,
+                "actor_id": actor,
                 "action": action,
                 "resource": {"kind": "realm", "realm_id": realm_id}
             }),
@@ -393,7 +393,7 @@ impl CokretApi {
         self.post_json(
             "_cokret/self/authz/check",
             json!({
-                "actor": actor,
+                "actor_id": actor,
                 "action": action,
                 "resource": {"kind": "realm", "realm_id": realm_id}
             }),
