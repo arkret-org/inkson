@@ -751,7 +751,7 @@ impl CokretApi {
     ) -> anyhow::Result<PolicyCheckOutcome> {
         self.post_json(
             "_cokret/self/policy/check",
-            json!({"actor": actor, "action": action, "resource": resource}),
+            json!({"actor_id": actor, "action": action, "resource": resource}),
         )
         .await
     }
