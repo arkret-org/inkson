@@ -10,14 +10,14 @@
 //! - `identity/identity-handles.md` — handles are only human-readable entry points.
 //! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → ck.session.grant; device
 //!   authorization → ck.device.authorize; device verification → ck.key.verification.*.
-//! - `crypto-media/device-lifecycle.md` §10-§13 — encrypted cloud vault / SSS / recovery key.
+//! - `crypto-media/device-lifecycle.md` §10-§13 — recovery key (24 words) / SSS.
 //!
 //! Steps:
 //!   1. Choose a DID method (default: did:webvh; did:web is test/local only; placeholder methods
 //!      are visible but not selectable).
 //!   2. Bind a handle.
 //!   3. Generate the local device key + ck.device.authorize.
-//!   4. Configure a recovery policy (vault passphrase / SSS guardian / recovery key).
+//!   4. Configure a recovery policy (recovery key (24 words) / SSS guardian).
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -477,36 +477,31 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "Three stackable recovery inputs. Each can contribute backup unlock or policy proof material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
+                        "The Recovery Key (24 words) is the primary recovery credential; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { "Encrypted Cloud Vault" }
-                            span { class: if recovery_choice() == "vault" { "badge accent" } else { "badge" }, "Argon2id + xchacha20poly1305" }
-                            div { class: "muted", "Strong passphrase stretched on-device, then encrypted backup material is uploaded" }
+                            strong { "Recovery Key (24 words)" }
+                            span { class: if recovery_choice() == "key" { "badge accent" } else { "badge" }, "high-entropy" }
+                            div { class: "muted", "Keep offline on physical media; the server never stores it" }
                         }
                         div { class: "metric",
                             strong { "Social Recovery (SSS)" }
                             span { class: if recovery_choice() == "social" { "badge accent" } else { "badge" }, "3 / 5 threshold" }
                             div { class: "muted", "Shamir's Secret Sharing splits the secret across trusted guardians" }
                         }
-                        div { class: "metric",
-                            strong { "Recovery Key" }
-                            span { class: if recovery_choice() == "key" { "badge accent" } else { "badge" }, "high-entropy" }
-                            div { class: "muted", "Keep offline on physical media; the server never stores it" }
-                        }
                     }
                     div { class: "actions",
                         role: "radiogroup",
                         "aria-label": "Recovery policy",
                         Button {
-                            variant: if recovery_choice() == "vault" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "recovery-vault",
+                            variant: if recovery_choice() == "key" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                            "data-testid": "recovery-key",
                             role: "radio",
-                            "aria-checked": if recovery_choice() == "vault" { "true" } else { "false" },
-                            "aria-label": "Encrypted Cloud Vault",
-                            onclick: move |_| recovery_choice.set("vault".to_owned()),
-                            "Vault"
+                            "aria-checked": if recovery_choice() == "key" { "true" } else { "false" },
+                            "aria-label": "Display-once Recovery Key (24 words)",
+                            onclick: move |_| recovery_choice.set("key".to_owned()),
+                            "Recovery Key (24 words)"
                         }
                         Button {
                             variant: if recovery_choice() == "social" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
@@ -516,15 +511,6 @@ pub fn OnboardingPanel(
                             "aria-label": "Social Recovery using Shamir Secret Sharing",
                             onclick: move |_| recovery_choice.set("social".to_owned()),
                             "Social Recovery"
-                        }
-                        Button {
-                            variant: if recovery_choice() == "key" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "recovery-key",
-                            role: "radio",
-                            "aria-checked": if recovery_choice() == "key" { "true" } else { "false" },
-                            "aria-label": "Display-once Recovery Key",
-                            onclick: move |_| recovery_choice.set("key".to_owned()),
-                            "Recovery Key"
                         }
                     }
                     div { class: "actions",

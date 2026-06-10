@@ -79,19 +79,12 @@ pub enum Route {
     #[route("/settings/recovery", crate::app::RouterView)]
     SettingsRecovery,
 
-    /// G3.Y1 — local key-backup status + manual trigger / restore
-    /// buttons. Backed by soland's `ck.schema.key_backup.v1` endpoints
-    /// (`PUT/GET /_cokret/self/keys/backups/{backup_id}`) plus the local MLS
-    /// snapshot bookkeeping in `mls_persistence`.
+    /// G3.Y1 — key-backup STATUS panel (read-only). Computes the real state
+    /// from soland's `ck.schema.key_backup.v1` list endpoint
+    /// (`GET /_cokret/self/keys/backups`); the only backup write path is the
+    /// Recovery Key (24 words) flow on `/settings/recovery`.
     #[route("/settings/security", crate::app::RouterView)]
     SettingsSecurity,
-
-    /// G3.Y1 — passphrase-driven restore on a fresh device. Sibling
-    /// of [`Route::Recovery`] (`/recovery`) but targeted at the
-    /// recover-from-backup case the cotest harness exercises against
-    /// an empty browser context.
-    #[route("/recover", crate::app::RouterView)]
-    Recover,
 
     #[route("/settings/:section", SettingsSectionPage)]
     SettingsSection { section: String },
@@ -309,7 +302,6 @@ impl Route {
             | Route::Recovery
             | Route::Audit
             | Route::Developer => View::Settings,
-            Route::Recover => View::Recover,
             Route::VerifyDevice => View::VerifyDevice,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
@@ -402,7 +394,6 @@ impl From<View> for Route {
             View::SettingsDevices => Route::SettingsDevices,
             View::SettingsRecovery => Route::SettingsRecovery,
             View::SettingsSecurity => Route::SettingsSecurity,
-            View::Recover => Route::Recover,
             View::VerifyDevice => Route::VerifyDevice,
             View::RealmAdmin => Route::RealmAdmin {
                 realm_id: String::new(),
@@ -471,7 +462,6 @@ mod tests {
             Route::SettingsDevicesPair,
             Route::SettingsRecovery,
             Route::SettingsSecurity,
-            Route::Recover,
         ];
 
         for route in routes {

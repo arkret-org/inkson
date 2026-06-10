@@ -1,11 +1,13 @@
-//! Client-side crypto helpers for the Encrypted Cloud Vault recovery path.
+//! Client-side crypto helpers for the key-backup recovery path.
 //!
-//! Spec: `crypto-media/devices-and-auth.md` §4.1 — the user's passphrase is
-//! stretched on-device with Argon2id and the resulting key encrypts the
-//! recovery payload (device signing key, recovery key, MLS state) with
-//! XChaCha20-Poly1305 before it is uploaded to
-//! `PUT /_cokret/self/keys/backups/{backup_id}`. The server never sees the
-//! plaintext or the passphrase.
+//! Spec: `crypto-media/devices-and-auth.md` §4.1 — the recovery credential
+//! (the normalized 24-word Recovery Key, or an internal secret such as the
+//! account MLS secret) is stretched on-device with Argon2id and the resulting
+//! KEK encrypts the backup payload with XChaCha20-Poly1305 before it is
+//! uploaded to `PUT /_cokret/self/keys/backups/{backup_id}`. The server never
+//! sees the plaintext or the credential. (`VAULT_*` constant names are kept —
+//! they describe the sealed-envelope "vault" primitive, not the removed
+//! vault-passphrase UI.)
 //!
 //! The helpers in this module are pure — they take and return owned
 //! buffers and never touch the API, the filesystem, or the DOM, so they
@@ -26,7 +28,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Argon2id parameters used by the Encrypted Cloud Vault. We deliberately
+/// Argon2id parameters used by the key-backup KEK derivation. We deliberately
 /// pick OWASP-recommended values that complete in a couple of seconds on a
 /// typical laptop but are still memory-hard enough to make offline
 /// passphrase guessing expensive:
@@ -594,55 +596,6 @@ impl OobCodeAttemptTracker {
     }
 }
 
-/// Heuristic passphrase strength on a 0..=5 scale, mirroring the
-/// "Passphrase strength" tile in the Recovery view. Pure function so the
-/// UI can call it on every keystroke without touching state.
-pub const RECOVERY_PASSPHRASE_MIN_STRENGTH: u8 = 3;
-
-pub fn estimate_passphrase_strength(passphrase: &str) -> u8 {
-    if passphrase.is_empty() {
-        return 0;
-    }
-    let mut score = 0i32;
-    let len = passphrase.chars().count();
-    score += match len {
-        0..=7 => 0,
-        8..=11 => 1,
-        12..=15 => 2,
-        16..=23 => 3,
-        _ => 4,
-    };
-    let mut classes = 0;
-    if passphrase.chars().any(|c| c.is_ascii_lowercase()) {
-        classes += 1;
-    }
-    if passphrase.chars().any(|c| c.is_ascii_uppercase()) {
-        classes += 1;
-    }
-    if passphrase.chars().any(|c| c.is_ascii_digit()) {
-        classes += 1;
-    }
-    if passphrase.chars().any(|c| !c.is_ascii_alphanumeric()) {
-        classes += 1;
-    }
-    score += match classes {
-        4 => 1,
-        3 => 1,
-        _ => 0,
-    };
-    score.clamp(0, 5) as u8
-}
-
-pub fn recovery_passphrase_strength_error(passphrase: &str) -> Option<&'static str> {
-    if estimate_passphrase_strength(passphrase) < RECOVERY_PASSPHRASE_MIN_STRENGTH {
-        Some(
-            "Choose a stronger recovery passphrase before uploading a backup. Use 24+ characters or several random words; minimum strength is Good (3/5).",
-        )
-    } else {
-        None
-    }
-}
-
 fn hex_lower(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -951,32 +904,6 @@ mod tests {
         let err = seal_recovery_key_with_passkey_prf("custom passphrase", &prf, &salt, b"aad")
             .unwrap_err();
         assert!(err.to_string().contains("24-word recovery key"));
-    }
-
-    #[test]
-    fn passphrase_strength_grows_with_length_and_classes() {
-        assert_eq!(estimate_passphrase_strength(""), 0);
-        assert!(
-            estimate_passphrase_strength("short")
-                < estimate_passphrase_strength("longerpassphrase")
-        );
-        assert!(
-            estimate_passphrase_strength("alllowercaseonly")
-                < estimate_passphrase_strength("Alllowercaseonly1!")
-        );
-        // 24+ chars across all four character classes saturates the scorer.
-        assert_eq!(
-            estimate_passphrase_strength("Correct horse battery staple 9!"),
-            5
-        );
-    }
-
-    #[test]
-    fn recovery_passphrase_policy_rejects_weak_choices() {
-        assert!(recovery_passphrase_strength_error("short").is_some());
-        assert!(recovery_passphrase_strength_error("twelve chars").is_some());
-        assert!(recovery_passphrase_strength_error("correct horse battery").is_none());
-        assert!(recovery_passphrase_strength_error("Alllowercaseonly1!").is_none());
     }
 
     #[test]

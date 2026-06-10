@@ -559,16 +559,6 @@ pub fn english_translations() -> TranslationDict {
         "chat.plaintext_blocked",
         "Type a message before secure send",
     );
-    dict.set("recovery.vault_encrypt_button", "Encrypt and upload");
-    dict.set("recovery.vault_rotate_button", "Rotate passphrase");
-    dict.set(
-        "recovery.vault_rotate_hint",
-        "Reuses the existing backup_id but re-derives a fresh KEK / nonce.",
-    );
-    dict.set(
-        "recovery.vault_rotate_prompt",
-        "Enter a new passphrase above and click Encrypt and upload to rotate.",
-    );
     dict.set("realm_admin.save_profile", "Save Profile");
     dict.set("realm_admin.destroy_realm", "Destroy Realm");
     dict.set("realm_admin.archive_realm", "Archive Realm");
@@ -606,7 +596,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "Ban (Move)");
     dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
     dict.set("realm_admin.leave_realm", "Leave");
-    dict.set("recovery.primary", "Primary");
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
     dict.set("directory.resolve_selected", "Resolve Selected");
@@ -634,8 +623,7 @@ pub fn english_translations() -> TranslationDict {
 
     // Recovery view (top-level section headers)
     dict.set("recovery.title", "Recovery");
-    dict.set("recovery.vault_section", "Encrypted Cloud Vault");
-    dict.set("recovery.recovery_key_section", "Recovery Key");
+    dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
     dict.set("recovery.social_section", "Social Recovery");
     dict.set("mls_unlock.aria_label", "Unlock encrypted history");
     dict.set("mls_unlock.title", "Unlock encrypted history");
@@ -687,7 +675,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_recovery_missing.description",
-        "This Realm is end-to-end encrypted. If you just accepted an invite, the key is delivered to you automatically when you join — no passphrase needed; reload or let sync finish and new messages will open. Messages sent before you joined cannot be opened on any device — that is by design, and no recovery backup will unlock them. A recovery backup only brings back content from YOUR OWN earlier devices: set it up under Settings -> Recovery by completing the Encrypted Vault passphrase step (generating a Recovery Key by itself does not upload a cloud backup).",
+        "This Realm is end-to-end encrypted. If you just accepted an invite, the key is delivered to you automatically when you join — nothing to enter; reload or let sync finish and new messages will open. Messages sent before you joined cannot be opened on any device — that is by design, and no recovery backup will unlock them. A recovery backup only brings back content from YOUR OWN earlier devices: set it up under Settings -> Recovery by generating your Recovery Key (24 words) — your encrypted history is backed up to it automatically.",
     );
     dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 
@@ -1783,16 +1771,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
-    dict.set("recovery.vault_encrypt_button", "加密并上传");
-    dict.set("recovery.vault_rotate_button", "轮换口令");
-    dict.set(
-        "recovery.vault_rotate_hint",
-        "复用现有 backup_id，但重新派生 KEK / nonce。",
-    );
-    dict.set(
-        "recovery.vault_rotate_prompt",
-        "请在上方输入新口令并点击「加密并上传」完成轮换。",
-    );
     dict.set("realm_admin.save_profile", "保存资料");
     dict.set("realm_admin.destroy_realm", "销毁 Realm");
     dict.set("realm_admin.archive_realm", "归档 Realm");
@@ -1824,7 +1802,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "封禁（Move）");
     dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
     dict.set("realm_admin.leave_realm", "退出");
-    dict.set("recovery.primary", "主");
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
     dict.set("directory.resolve_selected", "解析选中");
@@ -1864,8 +1841,7 @@ pub fn chinese_translations() -> TranslationDict {
 
     // Recovery view
     dict.set("recovery.title", "恢复");
-    dict.set("recovery.vault_section", "加密云保险箱");
-    dict.set("recovery.recovery_key_section", "恢复密钥");
+    dict.set("recovery.recovery_key_section", "恢复密钥（24 词）");
     dict.set("recovery.social_section", "社交恢复");
     dict.set("mls_unlock.aria_label", "解锁加密历史");
     dict.set("mls_unlock.title", "解锁加密历史");
@@ -1908,7 +1884,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_recovery_missing.subtitle", "当前无法在此打开加密内容");
     dict.set(
         "mls_recovery_missing.description",
-        "这个 Realm 是端到端加密的。如果你刚接受邀请,密钥会在你加入时自动送达——无需口令,刷新或等同步完成,新消息即可打开。你加入之前发的消息在任何设备上都无法打开——这是设计使然,任何恢复备份都解不开它们。恢复备份只用于找回你自己其他设备上的内容:请到 设置 → Recovery,完成「Encrypted Vault 口令」那一步(只生成 Recovery Key 并不会上传云端备份)。",
+        "这个 Realm 是端到端加密的。如果你刚接受邀请,密钥会在你加入时自动送达——无需输入任何凭证,刷新或等同步完成,新消息即可打开。你加入之前发的消息在任何设备上都无法打开——这是设计使然,任何恢复备份都解不开它们。恢复备份只用于找回你自己其他设备上的内容:请到 设置 → Recovery,生成 24 词恢复密钥——你的加密历史会自动备份到它名下。",
     );
     dict.set("mls_recovery_missing.button_dismiss", "关闭");
 

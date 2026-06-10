@@ -879,14 +879,14 @@ pub fn VerifyDevicePanel(
                                         div { class: "muted",
                                             "Revoking removes the device from the authorized set, excludes it from future encrypted messages, and rotates the account MLS history secret. This cannot be undone."
                                         }
-                                        Label { html_for: "verify-device-revoke-passphrase", "Recovery passphrase" }
+                                        Label { html_for: "verify-device-revoke-passphrase", "Recovery Key (24 words)" }
                                         Input {
                                             id: "verify-device-revoke-passphrase",
                                             "data-testid": "verify-device-revoke-passphrase-input",
                                             r#type: "password",
                                             value: "{revoke_passphrase}",
-                                            autocomplete: "current-password",
-                                            placeholder: "Required to rotate encrypted history backups",
+                                            autocomplete: "off",
+                                            placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
                                             oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
                                         }
                                         div { class: "actions",
@@ -903,17 +903,23 @@ pub fn VerifyDevicePanel(
                                                         let base = base.clone();
                                                         let dev_id = dev_id.clone();
                                                         let api_token = token();
-                                                        // P1: pre-validate the recovery passphrase
-                                                        // BEFORE the irreversible revoke so an empty
-                                                        // field can't leave a "revoked but rotation
-                                                        // failed" half-state.
-                                                        if revoke_passphrase().trim().is_empty() {
+                                                        // P1: pre-validate the Recovery Key BEFORE
+                                                        // the irreversible revoke. The rotation
+                                                        // re-wraps the new account secret under
+                                                        // these bytes and the restore paths only
+                                                        // accept the 24-word format, so reject
+                                                        // anything else up front.
+                                                        let Some(recovery_secret) =
+                                                            crate::recovery_crypto::normalize_recovery_key_input(
+                                                                &revoke_passphrase(),
+                                                            )
+                                                        else {
                                                             verify_status.set(
-                                                                "Enter your recovery passphrase before revoking — it is required to rotate the MLS history secret.".to_owned(),
+                                                                "Enter your 24-word Recovery Key before revoking — it is required to rotate the MLS history secret.".to_owned(),
                                                             );
                                                             return;
-                                                        }
-                                                        let passphrase_bytes = revoke_passphrase().into_bytes();
+                                                        };
+                                                        let passphrase_bytes = recovery_secret.into_bytes();
                                                         let snapshots = state_store.read().mls_snapshots();
                                                         let secure_store = default_secure_key_store("yougen");
                                                         let secure_store_for_rotation = secure_store.clone();

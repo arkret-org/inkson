@@ -1,7 +1,7 @@
 //! Settings surface.
 //!
 //! Territory split (preserved from former sibling files):
-//! - G3.Y1 (device + key-backup): [`devices`], [`recover_restore`], [`recovery`], [`security`].
+//! - G3.Y1 (device + key-backup): [`devices`], [`security`].
 //! - G3.Y3 (policy / consent / capabilities): [`blocklist`], [`capabilities`], [`consent`].
 //! The aggregate routing entry + the generic profile card live in
 //! this `mod.rs`.
@@ -13,8 +13,6 @@ pub mod devices;
 /// U4 — "谁可以邀请我" invite_receive_policy editor.
 pub mod invite_policy;
 pub mod mls_recovery;
-pub mod recover_restore;
-pub mod recovery;
 pub mod security;
 
 use base64::Engine as _;
@@ -1971,7 +1969,6 @@ pub fn SettingsPanel(
                         crate::views::settings::security::SettingsSecurityPanel {
                             base_url,
                             account_did,
-                            device_id,
                             token,
                             state_store,
                         }
@@ -2104,14 +2101,14 @@ pub fn SettingsPanel(
                                         "data-testid": "key-backup-open-recovery",
                                         to: Route::SettingsRecovery,
                                         UiIcon { name: "key" }
-                                        "Recovery vault"
+                                        "Recovery Key (24 words)"
                                     }
                                     Link {
                                         class: "secondary",
                                         "data-testid": "key-backup-open-manual",
                                         to: Route::SettingsSecurity,
                                         UiIcon { name: "archive" }
-                                        "Manual backup tools"
+                                        "Key backup status"
                                     }
                                 }
                                 div { class: "muted",

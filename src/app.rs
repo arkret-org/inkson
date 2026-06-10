@@ -2146,7 +2146,7 @@ pub fn RouterView() -> Element {
     let show_recovery_setup_prompt = has_session
         && !matches!(
             &content_route,
-            Route::Recovery | Route::SettingsRecovery | Route::Recover
+            Route::Recovery | Route::SettingsRecovery
         )
         && recovery_setup_prompt_required(&state_store.read(), &account_did());
 
@@ -2274,7 +2274,7 @@ pub fn RouterView() -> Element {
                         span { class: "muted", "first-time setup" }
                     }
                     div { class: "muted",
-                        "Set up at least one recovery method before relying on this account. A recovery key or encrypted vault is stored client-side/server-side as ciphertext only; Cokret cannot recover the plaintext for you."
+                        "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Cokret cannot recover the 24 words for you."
                     }
                     div { class: "actions",
                         Link {
@@ -4356,15 +4356,6 @@ pub fn RouterView() -> Element {
                             status,
                         }
                     },
-                    Route::Recover => rsx! {
-                        crate::views::settings::recover_restore::RecoverPanel {
-                            base_url,
-                            token,
-                            account_did: account_did(),
-                            device_id: device_id(),
-                            state_store,
-                        }
-                    },
                     Route::VerifyDevice => {
                         if e2ee_ready {
                             rsx! {
@@ -5370,7 +5361,7 @@ fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
         ),
         (
             "Recovery",
-            "vault, social, recovery key",
+            "Recovery Key (24 words)",
             Route::SettingsRecovery,
         ),
         (
@@ -5784,7 +5775,6 @@ fn route_label(route: &Route) -> &'static str {
         Route::Document | Route::DocumentNew | Route::DocumentRealm { .. } => "Document View",
         Route::Call => "Call",
         Route::Recovery => "Recovery",
-        Route::Recover => "Restore from backup",
         Route::SettingsDevices => "Devices",
         Route::SettingsDevicesPair => "Pair new device",
         Route::SettingsRecovery => "Recovery",
@@ -5915,7 +5905,6 @@ fn recovery_setup_prompt_required(state_store: &LocalStateStore, actor_did: &str
         return false;
     }
     !(crate::views::recovery::recovery_options_configured(state_store, actor)
-        || crate::views::settings::recovery::recovery_passphrase_configured(state_store, actor)
         || crate::components::mls_recovery_backup_configured(state_store, actor))
 }
 

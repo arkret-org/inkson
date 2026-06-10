@@ -37,7 +37,7 @@ impl MlsRuntimeStatus {
                 format!("device MLS snapshot secret unavailable: {reason}")
             }
             Self::SnapshotDecryptFailed(reason) => {
-                format!("stored MLS history could not be decrypted ({reason}); restore your encrypted MLS history with your account recovery passphrase.")
+                format!("stored MLS history could not be decrypted ({reason}); restore your encrypted MLS history with your 24-word Recovery Key.")
             }
             Self::UnsupportedTarget => {
                 "MLS runtime unavailable (internal error)".to_owned()

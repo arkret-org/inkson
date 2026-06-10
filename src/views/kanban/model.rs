@@ -76,7 +76,7 @@ pub(super) const KANBAN_FLOW_PATCH_VALUE_CONTENT_TYPE: &str =
 /// unlock+restore. Distinguishes "encrypted, unlock to view" from genuinely
 /// empty content so users don't read it as data loss.
 pub(super) const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
-    "🔒 Encrypted — unlock MLS (enter your recovery passphrase) to view";
+    "🔒 Encrypted — unlock MLS (enter your 24-word Recovery Key) to view";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state

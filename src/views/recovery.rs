@@ -1,39 +1,35 @@
-//! Recovery surface — Encrypted Cloud Vault + Recovery Key + Social
-//! Recovery panels. Wires the three recovery layers from
-//! `crypto-media/devices-and-auth.md` §4 to real state:
+//! Recovery surface — Recovery Key (24 words) + restore-from-backup, with
+//! Social Recovery tucked behind an "Advanced" fold.
 //!
-//! - **Encrypted Cloud Vault**: the passphrase is stretched on-device with Argon2id
-//!   (`recovery_crypto::derive_vault_kek`) and the resulting key encrypts a JSON payload with
-//!   XChaCha20-Poly1305 before being POSTed to `PUT /_cokret/self/keys/backups/{backup_id}` via
-//!   [`crate::api::CokretApi::put_key_backup`]. The server never sees the passphrase or the
-//!   plaintext.
-//! - **Recovery Key**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This is the
-//!   canonical cross-device recovery credential — `normalize_recovery_key_input` (and therefore the
-//!   `MlsUnlockPrompt` restore path) only accepts this 24-word format, so generating the key also
-//!   wraps the account MLS secret behind it and uploads that backup (see
-//!   `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory between
-//!   Generate and the user's Copy / Print interaction; only a SHA-256 fingerprint plus rotation
+//! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic.
+//!   This is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and
+//!   therefore the `MlsUnlockPrompt` restore path) only accepts this 24-word format, so
+//!   generating the key also wraps the account MLS secret behind it and uploads that backup
+//!   (see `upload_recovery_key_account_backup`). The mnemonic plaintext only lives in memory
+//!   between Generate and the user's Copy interaction; only a SHA-256 fingerprint plus rotation
 //!   timestamp are persisted via `LocalStateStore::save_private_data` — the words themselves are
 //!   never uploaded.
-//! - **Social Recovery**: guardian list + Shamir threshold + last-rehearsal timestamp persisted as
-//!   JSON under the same private_data store.
+//! - **Restore from backup**: lists the server-side `ck.schema.key_backup.v1` ciphertext
+//!   envelopes and decrypts them on-device with the 24-word Recovery Key. Envelopes sealed by
+//!   the removed vault-passphrase flows are legacy garbage: they can still be listed and
+//!   deleted, but no longer decrypted.
+//! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
+//!   last-rehearsal timestamp persisted as JSON under the same private_data store.
 //!
 //! Everything writeable goes through `private_data`, which is itself
 //! encrypted at rest under the account DID via `xor_encrypt` (and on
 //! wasm32 mirrored to localStorage). The Recovery view never persists
-//! the passphrase or the Recovery Key in plaintext.
+//! the Recovery Key in plaintext.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::HelpTip;
-use crate::key_backup::build_recovery_vault_backup_body;
 use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    RECOVERY_PASSPHRASE_MIN_STRENGTH, derive_vault_kek, estimate_passphrase_strength,
     fingerprint_recovery_key, generate_passkey_wrap_salt, generate_recovery_key,
-    open_recovery_key_with_passkey_prf, recovery_passphrase_strength_error,
+    normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
     seal_recovery_key_with_passkey_prf,
 };
 use crate::ui::button::{Button, ButtonVariant};
@@ -43,10 +39,10 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
 
-// SyncBadge / SyncBadgeState are now shared in `crate::components::sync_badge`.
-// The Recovery view uses the bare enum for signal state and renders via
-// the shared component, overriding the "Pending" label to "Uploading…" to
-// keep the existing copy. See C1 — unified sync badge.
+// SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
+// The Recovery view renders the Recovery Key backup state through the shared
+// component, overriding the "Local" label to "Not backed up yet" — the badge
+// semantics stay global, only this view's copy changes. See C1.
 use crate::components::SyncBadgeState as SyncBadge;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,14 +211,10 @@ mod restore_parse_tests {
     }
 
     #[test]
-    fn recovery_state_with_key_or_vault_is_configured() {
+    fn recovery_state_with_key_is_configured() {
         let mut keyed = RecoveryState::default();
         keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
         assert!(recovery_state_has_user_material(&keyed));
-
-        let mut vaulted = RecoveryState::default();
-        vaulted.vault_backup_id = "ck:backup:abc".to_owned();
-        assert!(recovery_state_has_user_material(&vaulted));
     }
 
     #[test]
@@ -243,13 +235,6 @@ mod restore_parse_tests {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct RecoveryState {
-    /// Latest Encrypted Cloud Vault backup id, once `put_key_backup` has
-    /// accepted at least one upload. Empty until first upload.
-    #[serde(default)]
-    vault_backup_id: String,
-    /// RFC-3339 UTC timestamp of the last successful vault upload.
-    #[serde(default)]
-    vault_uploaded_at: String,
     /// SHA-256 fingerprint of the current Recovery Key (never the plaintext).
     #[serde(default)]
     recovery_key_fingerprint: String,
@@ -283,8 +268,6 @@ fn default_total() -> u32 {
 impl Default for RecoveryState {
     fn default() -> Self {
         Self {
-            vault_backup_id: String::new(),
-            vault_uploaded_at: String::new(),
             recovery_key_fingerprint: String::new(),
             recovery_key_rotated_at: String::new(),
             sss_threshold: default_threshold(),
@@ -321,8 +304,7 @@ fn save_state(state_store: &mut Signal<LocalStateStore>, account_key: &str, stat
 }
 
 fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
-    !state.vault_backup_id.trim().is_empty()
-        || !state.recovery_key_fingerprint.trim().is_empty()
+    !state.recovery_key_fingerprint.trim().is_empty()
         || state
             .guardians
             .iter()
@@ -356,6 +338,23 @@ pub(crate) fn recovery_options_configured(
         .unwrap_or(false)
 }
 
+/// SHA-256 fingerprint of the locally configured Recovery Key (24 words), if
+/// one was ever generated on this device. Used by the settings Key-backup
+/// status panel; never the plaintext.
+pub(crate) fn local_recovery_key_fingerprint(
+    state_store: &LocalStateStore,
+    account_key: &str,
+) -> Option<String> {
+    if account_key.trim().is_empty() {
+        return None;
+    }
+    state_store
+        .load_private_data(account_key, RECOVERY_STATE_KEY)
+        .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
+        .map(|state| state.recovery_key_fingerprint)
+        .filter(|fp| !fp.trim().is_empty())
+}
+
 fn fmt_relative(iso: &str) -> String {
     if iso.is_empty() {
         return "never".to_owned();
@@ -375,17 +374,6 @@ fn fmt_relative(iso: &str) -> String {
         format!("{} hr ago", secs / 3_600)
     } else {
         format!("{} days ago", secs / 86_400)
-    }
-}
-
-fn passphrase_strength_label(score: u8) -> &'static str {
-    match score {
-        0 => "—",
-        1 => "Weak",
-        2 => "Fair",
-        3 => "Good",
-        4 => "Strong",
-        _ => "Very strong",
     }
 }
 
@@ -539,20 +527,6 @@ pub fn RecoveryPanel(
     let actor_key = account_did();
     let initial = load_state(&state_store, &actor_key);
 
-    // Vault section state
-    let mut passphrase = use_signal(String::new);
-    let mut confirm_pass = use_signal(String::new);
-    let mut vault_status = use_signal(String::new);
-    let mut vault_sync = use_signal(|| {
-        if initial.vault_uploaded_at.is_empty() {
-            SyncBadge::Local
-        } else {
-            SyncBadge::Synced
-        }
-    });
-    let mut vault_backup_id = use_signal(|| initial.vault_backup_id.clone());
-    let mut vault_uploaded_at = use_signal(|| initial.vault_uploaded_at.clone());
-
     // Recovery key state — plaintext only in memory after Generate.
     let mut live_recovery_key = use_signal(String::new);
     let mut recovery_key_fp = use_signal(|| initial.recovery_key_fingerprint.clone());
@@ -581,12 +555,12 @@ pub fn RecoveryPanel(
     let mut restore_target = use_signal(|| Option::<String>::None);
     let mut restore_plaintext = use_signal(String::new);
 
-    let strength = estimate_passphrase_strength(&passphrase());
-    let min_strength = RECOVERY_PASSPHRASE_MIN_STRENGTH;
+    // Server-side Recovery-Key backup marker (written by the upload paths via
+    // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
+    let recovery_key_backed_up =
+        crate::components::mls_recovery_backup_configured(&state_store.read(), &actor_key);
 
     let snapshot_state = move || RecoveryState {
-        vault_backup_id: vault_backup_id(),
-        vault_uploaded_at: vault_uploaded_at(),
         recovery_key_fingerprint: recovery_key_fp(),
         recovery_key_rotated_at: recovery_key_rotated_at(),
         sss_threshold: threshold(),
@@ -601,213 +575,39 @@ pub fn RecoveryPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { "Recovery options" }
-                    span { "Encrypted Vault · Social Recovery · Recovery Key" }
-                    HelpTip { text: "Cokret never stores your passphrase on the server. Backups are encrypted on-device before upload. A recovery option may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
+                    span { "Recovery Key (24 words)" }
+                    HelpTip { text: "The Recovery Key (24 words) is the only recovery credential. Cokret never stores it on the server; backups are encrypted on-device before upload. A recovery credential may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric",
-                        strong { {crate::i18n::tr("recovery.primary")} }
-                        span { "Encrypted Cloud Vault" }
-                        div { class: "muted", "Argon2id + xchacha20poly1305" }
-                    }
-                    div { class: "metric",
-                        strong { "Backup" }
-                        span { "SSS {threshold} of {total}" }
-                        div { class: "muted", "{guardians().len()} guardian(s) recorded" }
-                    }
-                    div { class: "metric",
-                        strong { "Recovery Key" }
+                        strong { "Recovery Key (24 words)" }
                         span {
                             if recovery_key_fp().is_empty() { "not generated" } else { "fingerprint stored" }
                         }
                         div { class: "muted",
-                            if recovery_key_rotated_at().is_empty() { "Generate one to enable single-key recovery" } else { "Last rotated {fmt_relative(&recovery_key_rotated_at())}" }
+                            if recovery_key_rotated_at().is_empty() { "Generate one to enable cross-device recovery" } else { "Last rotated {fmt_relative(&recovery_key_rotated_at())}" }
                         }
                     }
                     div { class: "metric",
-                        strong { "Last rehearsal" }
-                        span { "{fmt_relative(&last_rehearsed())}" }
-                        div { class: "muted", "Rehearse at least every 30 days" }
+                        strong { "What it protects" }
+                        span { "Encrypted history" }
+                        div { class: "muted", "account MLS secret + your own content sidecar, backed up automatically" }
                     }
                 }
             }
 
-            // Encrypted Cloud Vault — devices-and-auth §4.1
-            div { class: "event", "data-testid": "vault-section",
-                div { class: "event-head",
-                    span { "Encrypted Cloud Vault" }
-                    crate::components::SyncBadge {
-                        state: vault_sync(),
-                        pending_label: Some("Uploading…".to_owned()),
-                        test_id: Some("vault-sync-badge".to_owned()),
-                    }
-                    HelpTip { text: "Your passphrase unlocks encrypted backup material. It is stretched on-device with Argon2id (m=64MiB, t=3, p=4) and encrypts the recovery payload plus account MLS history secret; it is not by itself DID ownership proof." }
-                }
-                div { class: "workflow-form",
-                    Label { html_for: "vault-passphrase", "Vault passphrase" }
-                    Input {
-                        id: "vault-passphrase",
-                        "data-testid": "vault-passphrase",
-                        r#type: "password",
-                        value: "{passphrase}",
-                        placeholder: "24+ characters or several random words",
-                        autocomplete: "new-password",
-                        oninput: move |event: FormEvent| passphrase.set(event.value()),
-                    }
-                    Label { html_for: "vault-passphrase-confirm", "Confirm passphrase" }
-                    Input {
-                        id: "vault-passphrase-confirm",
-                        "data-testid": "vault-passphrase-confirm",
-                        r#type: "password",
-                        value: "{confirm_pass}",
-                        autocomplete: "new-password",
-                        oninput: move |event: FormEvent| confirm_pass.set(event.value()),
-                    }
-                    div { class: "muted", "data-testid": "vault-passphrase-strength",
-                        "Strength: {passphrase_strength_label(strength)} ({strength}/5). Minimum: Good ({min_strength}/5)."
-                    }
-                }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { "Latest upload" }
-                        span {
-                            "data-testid": "vault-uploaded-at",
-                            "{fmt_relative(&vault_uploaded_at())}"
-                        }
-                        div { class: "muted",
-                            if vault_backup_id().is_empty() { "No backup uploaded yet" } else { "backup_id: {vault_backup_id()}" }
-                        }
-                    }
-                    div { class: "metric",
-                        strong { "Storage" }
-                        span { "Ciphertext only" }
-                        div { class: "muted", "The server cannot decrypt your backup" }
-                    }
-                }
-                if !vault_status().is_empty() {
-                    div { class: "muted", "data-testid": "vault-status", "{vault_status}" }
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "vault-rekey",
-                        disabled: recovery_passphrase_strength_error(&passphrase()).is_some()
-                            || passphrase() != confirm_pass()
-                            || passphrase().is_empty(),
-                        onclick: {
-                            let base = base_url.clone();
-                            let mut store = state_store;
-                            let actor_key = actor_key.clone();
-                            move |_| {
-                                let pass = passphrase();
-                                let confirm = confirm_pass();
-                                if pass.is_empty() || pass != confirm {
-                                    vault_status.set("Passphrase and confirmation must match.".to_owned());
-                                    return;
-                                }
-                                if let Some(reason) = recovery_passphrase_strength_error(&pass) {
-                                    vault_status.set(reason.to_owned());
-                                    return;
-                                }
-                                vault_sync.set(SyncBadge::Pending);
-                                vault_status.set("Stretching passphrase with Argon2id…".to_owned());
-
-                                let base = base.clone();
-                                let api_token = token();
-                                let actor = actor_key.clone();
-                                let device = device_id();
-                                let next_backup_id = if vault_backup_id().is_empty() {
-                                    format!("ck:backup:{}", uuid_v7())
-                                } else {
-                                    vault_backup_id()
-                                };
-                                let payload_plaintext = serde_json::json!({
-                                    "schema_version": 1,
-                                    "actor_id": actor,
-                                    "device_id": device,
-                                    "recovery_key_fingerprint": recovery_key_fp(),
-                                    "minted_at": chrono::Utc::now().to_rfc3339(),
-                                })
-                                .to_string();
-                                let pass_bytes = pass.into_bytes();
-                                let backup_id_for_async = next_backup_id.clone();
-                                let actor_for_async = actor.clone();
-                                let actor_key_for_async = actor_key.clone();
-                                let device_for_async = device.clone();
-
-                                spawn(async move {
-                                    let kek = match derive_vault_kek(&pass_bytes) {
-                                        Ok(k) => k,
-                                        Err(err) => {
-                                            vault_sync.set(SyncBadge::Failed);
-                                            vault_status.set(format!("Argon2id failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let body = match build_recovery_vault_backup_body(
-                                        &backup_id_for_async,
-                                        &actor_for_async,
-                                        &device_for_async,
-                                        &kek,
-                                        payload_plaintext.as_bytes(),
-                                    ) {
-                                        Ok(b) => b,
-                                        Err(err) => {
-                                            vault_sync.set(SyncBadge::Failed);
-                                            vault_status.set(format!("AEAD encrypt failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let backup_id_clone = backup_id_for_async.clone();
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.put_key_backup(&backup_id_clone, body).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(_) => {
-                                            let now = chrono::Utc::now().to_rfc3339();
-                                            vault_backup_id.set(backup_id_for_async.clone());
-                                            vault_uploaded_at.set(now.clone());
-                                            vault_sync.set(SyncBadge::Synced);
-                                            vault_status.set(format!(
-                                                "Uploaded backup {backup_id_for_async}"
-                                            ));
-                                            passphrase.set(String::new());
-                                            confirm_pass.set(String::new());
-                                            let mut next = snapshot_state();
-                                            next.vault_backup_id = backup_id_for_async;
-                                            next.vault_uploaded_at = now;
-                                            save_state(&mut store, &actor_key_for_async, &next);
-                                        }
-                                        Err(err) => {
-                                            vault_sync.set(SyncBadge::Failed);
-                                            vault_status.set(format!("Upload failed: {}", err.display()));
-                                        }
-                                    }
-                                });
-                            }
-                        },
-                        {crate::i18n::tr("recovery.vault_encrypt_button")}
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "vault-rotate-passphrase",
-                        disabled: vault_backup_id().is_empty(),
-                        title: crate::i18n::tr("recovery.vault_rotate_hint"),
-                        onclick: move |_| {
-                            vault_status.set(crate::i18n::tr("recovery.vault_rotate_prompt"));
-                        },
-                        {crate::i18n::tr("recovery.vault_rotate_button")}
-                    }
-                }
-            }
-
-            // Recovery key — fallback path
+            // Recovery key — the only user-visible recovery credential
             div { class: "event", "data-testid": "recovery-key-section",
                 div { class: "event-head",
-                    span { "Recovery Key" }
-                    span { "high-entropy string · keep offline" }
-                    HelpTip { text: "This is your account's master recovery credential. Generating it wraps your encrypted history behind it and uploads that backup, so a brand-new device can restore by entering these 24 words. The words themselves never leave this device (only a SHA-256 fingerprint is kept locally); Cokret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored." }
+                    span { "Recovery Key (24 words)" }
+                    span { "keep offline" }
+                    crate::components::SyncBadge {
+                        state: if recovery_key_backed_up { SyncBadge::Synced } else { SyncBadge::Local },
+                        local_label: Some("Not backed up yet".to_owned()),
+                        synced_label: Some("Backed up".to_owned()),
+                        test_id: Some("recovery-key-sync-badge".to_owned()),
+                    }
+                    HelpTip { text: "This is your account's only recovery credential. Generating it wraps your account MLS secret behind these 24 words and uploads that encrypted backup; your own content sidecar is then backed up automatically after encrypted writes. The words themselves never leave this device (only a SHA-256 fingerprint is kept locally); Cokret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored." }
                 }
 
                 // The key itself — promoted to a full-width hero so it reads as
@@ -1172,12 +972,14 @@ pub fn RecoveryPanel(
                 }
             }
 
-            // Social recovery — devices-and-auth §4.2
-            div { class: "event", "data-testid": "social-recovery-section",
-                div { class: "event-head",
-                    span { "Social Recovery · Shamir's Secret Sharing" }
+            // Social recovery — devices-and-auth §4.2. Advanced, collapsed by
+            // default: the Recovery Key (24 words) is the primary credential;
+            // guardian bookkeeping here is local-only.
+            details { class: "event", "data-testid": "social-recovery-section",
+                summary { class: "event-head",
+                    span { "Advanced · Social Recovery (Shamir's Secret Sharing)" }
                     span { "{threshold} of {total} threshold" }
-                    HelpTip { text: "The recovery secret is split into N shares; any T of them can reconstruct it. Guardians can be individuals, organizations' IT, family members, or trusted HSMs. Rotating the polynomial invalidates every prior share." }
+                    HelpTip { text: "The recovery secret is split into N shares; any T of them can reconstruct it. Guardians can be individuals, organizations' IT, family members, or trusted HSMs. Rotating the polynomial invalidates every prior share. Guardian tracking is local bookkeeping only; server-side outreach is a future feature." }
                 }
                 div { class: "workflow-form",
                     Label { html_for: "sss-threshold", "Threshold (T)" }
@@ -1366,15 +1168,17 @@ pub fn RecoveryPanel(
             // Restore from backup — devices-and-auth §4.1 + key-management.md §7.3
             //
             // Lists every backup the server still holds for this principal,
-            // lets the user decrypt one locally with the original
-            // passphrase (XChaCha20-Poly1305 AEAD authenticates the tag
-            // before any plaintext is returned), and offers a destructive
-            // Delete that goes through the typed delete endpoint.
+            // lets the user decrypt one locally with the 24-word Recovery
+            // Key (XChaCha20-Poly1305 AEAD authenticates the tag before any
+            // plaintext is returned), and offers a destructive Delete that
+            // goes through the typed delete endpoint. Envelopes sealed by the
+            // removed vault-passphrase flow are legacy garbage: listable and
+            // deletable, but no longer decryptable.
             div { class: "event", "data-testid": "restore-section",
                 div { class: "event-head",
                     span { "Restore from backup" }
-                    span { class: "muted", "Encrypted Cloud Vault · server-side ciphertext only" }
-                    HelpTip { text: "List every encrypted vault the server still holds for your principal. Decryption happens on-device with your passphrase; the server never sees plaintext. Use this on a new device, or to verify that the latest upload is still readable." }
+                    span { class: "muted", "server-side ciphertext only" }
+                    HelpTip { text: "List every encrypted backup the server still holds for your principal. Decryption happens on-device with your Recovery Key (24 words); the server never sees plaintext. Backups sealed by the removed vault-passphrase flow cannot be decrypted any more — treat them as leftovers to delete." }
                 }
                 div { class: "actions",
                     Button {
@@ -1384,7 +1188,7 @@ pub fn RecoveryPanel(
                         onclick: {
                             let base = base_url.clone();
                             move |_| {
-                                restore_status.set("Fetching vault list…".to_owned());
+                                restore_status.set("Fetching backup list…".to_owned());
                                 restore_loading.set(true);
                                 let base = base.clone();
                                 let api_token = token();
@@ -1463,7 +1267,7 @@ pub fn RecoveryPanel(
                                                 restore_target.set(Some(bid.clone()));
                                                 restore_plaintext.set(String::new());
                                                 restore_status.set(format!(
-                                                    "Selected {}. Enter your vault passphrase below.",
+                                                    "Selected {}. Enter your Recovery Key (24 words) below.",
                                                     short_protocol_id(&bid)
                                                 ));
                                             }
@@ -1531,14 +1335,14 @@ pub fn RecoveryPanel(
                                     div { class: "muted", title: "{target_row.backup_id}", "Decrypt {target_backup_id_label}" }
                                 }
                             }
-                            Label { html_for: "restore-passphrase", "Vault passphrase" }
+                            Label { html_for: "restore-recovery-key", "Recovery Key (24 words)" }
                             Input {
-                                id: "restore-passphrase",
-                                "data-testid": "restore-passphrase",
+                                id: "restore-recovery-key",
+                                "data-testid": "restore-recovery-key",
                                 r#type: "password",
                                 value: "{restore_pass}",
-                                autocomplete: "current-password",
-                                placeholder: "Enter the passphrase you used when this vault was uploaded",
+                                autocomplete: "off",
+                                placeholder: "Enter the 24-word Recovery Key from your original device",
                                 oninput: move |event: FormEvent| restore_pass.set(event.value()),
                             }
                             div { class: "actions",
@@ -1552,7 +1356,17 @@ pub fn RecoveryPanel(
                                         let mut store = state_store;
                                         let base = base_url.clone();
                                         move |_| {
-                                            let pass_bytes = restore_pass().into_bytes();
+                                            // The 24-word Recovery Key is the only accepted
+                                            // decryption credential; normalize before deriving.
+                                            let Some(recovery_secret) =
+                                                normalize_recovery_key_input(&restore_pass())
+                                            else {
+                                                restore_status.set(
+                                                    "Enter the full 24-word Recovery Key (words separated by spaces).".to_owned(),
+                                                );
+                                                return;
+                                            };
+                                            let pass_bytes = recovery_secret.into_bytes();
                                             let metadata = target_row.body.clone();
                                             let bid = target_row.backup_id.clone();
                                             // Captured for the Option A account-MLS recovery below.
@@ -1561,7 +1375,7 @@ pub fn RecoveryPanel(
                                             let device = device_id();
                                             let base = base.clone();
                                             let api_token = token();
-                                            restore_status.set("Stretching passphrase with Argon2id…".to_owned());
+                                            restore_status.set("Stretching Recovery Key with Argon2id…".to_owned());
                                             restore_loading.set(true);
                                             spawn(async move {
                                                 let bid_label = short_protocol_id(&bid);
@@ -1601,8 +1415,8 @@ pub fn RecoveryPanel(
                                                         // Option A — recover the ACCOUNT-scoped MLS
                                                         // snapshot secret so this fresh browser can
                                                         // decrypt realm/kanban history. The same
-                                                        // passphrase that just opened the recovery
-                                                        // vault also unwraps the `mls_account_secret`
+                                                        // normalized 24-word Recovery Key also
+                                                        // unwraps the `mls_account_secret`
                                                         // backup; once stored, replay each
                                                         // `mls_history` backup so history is
                                                         // immediately decryptable.
@@ -1668,7 +1482,7 @@ pub fn RecoveryPanel(
                                             });
                                         }
                                     },
-                                    "Decrypt with passphrase"
+                                    "Decrypt with Recovery Key"
                                 }
                             }
                             if !restore_plaintext().is_empty() {

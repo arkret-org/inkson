@@ -22,7 +22,7 @@
 //
 // Pending views (see `_todos.md`):
 // - onboarding   → desktop/onboarding.html        (independent stepper; T12)
-// - recovery     → desktop/recovery.html          (Argon2id / SSS / Recovery Key; T10)
+// - recovery     → desktop/recovery.html          (Recovery Key (24 words) / SSS; T10)
 //
 // Shared rules (`_todos.md` §6):
 // 1. Any write UI must explicitly label the canonical event kind it emits.
@@ -114,9 +114,9 @@ pub enum View {
     Notifications,
     FileTransfer,
     Document,
-    /// Recovery / Encrypted Cloud Vault / Social Recovery / Recovery Key
-    /// (claude-design `desktop/recovery.html`, crypto-media/device-lifecycle.md §10-§13 — secret
-    /// storage / key backup / recovery)
+    /// Recovery — Recovery Key (24 words) + restore-from-backup, with Social
+    /// Recovery behind an Advanced fold (claude-design `desktop/recovery.html`,
+    /// crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
     /// Onboarding stepper — 4-step flow (DID method / Handle / Device / Recovery).
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity
@@ -144,10 +144,8 @@ pub enum View {
     /// G3.Y1 compatibility variant. `/settings/recovery` now renders
     /// through `View::Settings` so the Settings sidebar remains visible.
     SettingsRecovery,
-    /// G3.Y1 — local key-backup status + manual trigger at `/settings/security`.
+    /// G3.Y1 — key-backup status panel at `/settings/security`.
     SettingsSecurity,
-    /// G3.Y1 — fresh-device restore-from-backup surface at `/recover`.
-    Recover,
     /// CKP-0007 P3B.2.5 — Circle detail panel at `/circles/:circle_id`.
     Circle,
 }

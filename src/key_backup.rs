@@ -631,32 +631,6 @@ pub fn open_passphrase_kdf_backup_body(passphrase: &[u8], body: &Value) -> anyho
     )
 }
 
-/// Build a `secret_storage` recovery-vault PUT body and seal `plaintext` into
-/// it per spec §7.5. Recovery-vault material is carried as a `secret_storage`
-/// backup containing a `recovery_secret` item.
-pub fn build_recovery_vault_backup_body(
-    backup_id: &str,
-    actor_did: &str,
-    device_id: &str,
-    root: &VaultKek,
-    plaintext: &[u8],
-) -> anyhow::Result<Value> {
-    build_passphrase_kdf_backup_body(
-        backup_id,
-        actor_did,
-        device_id,
-        root,
-        plaintext,
-        KeyBackupClass::SecretStorage,
-        "recovery_vault",
-        &BackupItem {
-            item_type: "recovery_secret",
-            secret_id: "yougen_recovery_vault_payload",
-            extra: Vec::new(),
-        },
-    )
-}
-
 /// Build a `did_recovery` backup, HPKE-sealed to the actor's recovery public
 /// key. Spec §5.0.1 first-backup gate forbids passphrase_kdf-only did_recovery,
 /// so this uses `recovery_public_key` (a single passphrase must never control
@@ -1211,6 +1185,34 @@ mod tests {
 
     fn test_root() -> VaultKek {
         derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
+    }
+
+    /// Test-only `secret_storage`/`recovery_vault` passphrase_kdf envelope —
+    /// the former UI-facing recovery-vault builder. Kept here as a fixture so
+    /// the shared seal / open / sign machinery in
+    /// [`build_passphrase_kdf_backup_body`] / [`open_passphrase_kdf_backup_body`]
+    /// stays covered.
+    fn build_recovery_vault_backup_body(
+        backup_id: &str,
+        actor_did: &str,
+        device_id: &str,
+        root: &VaultKek,
+        plaintext: &[u8],
+    ) -> anyhow::Result<Value> {
+        build_passphrase_kdf_backup_body(
+            backup_id,
+            actor_did,
+            device_id,
+            root,
+            plaintext,
+            KeyBackupClass::SecretStorage,
+            "recovery_vault",
+            &BackupItem {
+                item_type: "recovery_secret",
+                secret_id: "yougen_recovery_vault_payload",
+                extra: Vec::new(),
+            },
+        )
     }
 
     #[test]

@@ -56,16 +56,16 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
         },
         ClientWorkflow {
             id: "recovery.key_backup_upload",
-            name: "Encrypted Cloud Vault upload",
+            name: "Recovery Key (24 words) backup upload",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Recovery panel: passphrase + Argon2id KDF + XChaCha20-Poly1305 AEAD",
+            client_surface: "Recovery panel: 24-word Recovery Key + Argon2id KDF + XChaCha20-Poly1305 AEAD",
             server_dependency: "PUT /_cokret/self/keys/backups/{backup_id} (ck.schema.key_backup.v1 envelope)",
         },
         ClientWorkflow {
             id: "recovery.key_backup_restore",
             name: "Restore from encrypted backup",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Recovery panel: list + decrypt + delete the server-side vault ciphertext",
+            client_surface: "Recovery panel: list + decrypt (24-word Recovery Key) + delete the server-side ciphertext",
             server_dependency: "GET /_cokret/self/keys/backups, GET /_cokret/self/keys/backups/{id}, DELETE /_cokret/self/keys/backups/{id}",
         },
         ClientWorkflow {

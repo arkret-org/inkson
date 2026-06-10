@@ -3,9 +3,10 @@
 //! The MLS snapshot secret is account-scoped (see [`crate::mls::runtime`]) so
 //! every device of an account shares one secret and can therefore decrypt the
 //! `mls_history` key-backups uploaded by sibling devices. To make that secret
-//! survive a brand-new browser, it is wrapped behind the user's recovery
-//! passphrase and uploaded to soland's `secret_storage` endpoint using the same
-//! envelope shape as [`crate::key_backup::build_recovery_vault_backup_body`].
+//! survive a brand-new browser, it is wrapped behind the user's Recovery Key
+//! (24 words) and uploaded to soland's `secret_storage` endpoint using the
+//! `passphrase_kdf` envelope shape from
+//! [`crate::key_backup::build_passphrase_kdf_backup_body`].
 //!
 //! The account secret plaintext is encrypted with XChaCha20-Poly1305 under an
 //! Argon2id-derived KEK (see [`crate::recovery_crypto`]); it is never
@@ -52,13 +53,13 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext"
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
 /// behind an already-derived recovery KEK.
 ///
-/// The envelope shape reuses [`crate::key_backup::build_recovery_vault_backup_body`] (same
-/// `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape that
-/// soland already validates). The plaintext account secret is encrypted with the
-/// supplied KEK; only the ciphertext, salt and nonce travel on the wire. The
-/// `item_type` / `secret_id` are overwritten to the MLS-secret identifiers.
+/// The envelope shape comes from [`crate::key_backup::build_passphrase_kdf_backup_body`]
+/// (the `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape
+/// that soland already validates). The plaintext account secret is encrypted
+/// with the supplied KEK; only the ciphertext, salt and nonce travel on the
+/// wire. The `item_type` / `secret_id` are the MLS-secret identifiers.
 ///
-/// NOTE: the KEK MUST be derived from the user's recovery *passphrase* (the same
+/// NOTE: the KEK MUST be derived from the user's Recovery Key (the same
 /// source `decrypt_mls_account_secret_backup` stretches on restore), never from
 /// the account secret itself — wrapping the account secret under a KEK derived
 /// from that same account secret would make the backup self-referential and

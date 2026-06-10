@@ -541,14 +541,14 @@ fn render_revoke_modal(
                 p { class: "muted", "data-testid": "device-revoke-threat-note",
                     "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."
                 }
-                Label { html_for: "device-revoke-passphrase", "Recovery passphrase" }
+                Label { html_for: "device-revoke-passphrase", "Recovery Key (24 words)" }
                 Input {
                     id: "device-revoke-passphrase",
                     "data-testid": "device-revoke-passphrase-input",
                     r#type: "password",
                     value: "{revoke_passphrase}",
-                    autocomplete: "current-password",
-                    placeholder: "Required to rotate encrypted history backups",
+                    autocomplete: "off",
+                    placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
                     oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
                 }
                 div { class: "actions",
@@ -573,19 +573,24 @@ fn render_revoke_modal(
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
                             let target_label = short_protocol_id(&target_for_status);
-                            // P1: pre-validate the recovery passphrase BEFORE the
+                            // P1: pre-validate the Recovery Key BEFORE the
                             // irreversible `revoke_device` call. The account-secret
-                            // rotation that follows requires a non-blank passphrase;
-                            // checking it up front avoids the unrecoverable
-                            // "device revoked, but MLS secret rotation failed"
-                            // half-state when the field was left empty.
-                            if revoke_passphrase().trim().is_empty() {
+                            // rotation that follows re-wraps the new secret under
+                            // these bytes, and every restore path only accepts the
+                            // 24-word format — so reject anything else up front to
+                            // avoid the unrecoverable "device revoked, but the new
+                            // backup can never be decrypted" half-state.
+                            let Some(recovery_secret) =
+                                crate::recovery_crypto::normalize_recovery_key_input(
+                                    &revoke_passphrase(),
+                                )
+                            else {
                                 revoke_status.set(
-                                    "Enter your recovery passphrase before revoking — it is required to rotate the MLS history secret.".to_owned(),
+                                    "Enter your 24-word Recovery Key before revoking — it is required to rotate the MLS history secret.".to_owned(),
                                 );
                                 return;
-                            }
-                            let passphrase_bytes = revoke_passphrase().into_bytes();
+                            };
+                            let passphrase_bytes = recovery_secret.into_bytes();
                             let snapshots = state_store.read().mls_snapshots();
                             let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                             let actor_for_rotation = actor.clone();
