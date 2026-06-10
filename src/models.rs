@@ -162,113 +162,49 @@ pub struct ContactsOutcome {
     pub next_cursor: Option<String>,
 }
 
-/// U4 — actor `invite_receive_policy` ("谁可以邀请我"). Mirrors the spec
-/// `invite_receive_policy` field set. Soland's self-plane endpoint is still
-/// being wired, so every field is `#[serde(default)]` and the struct carries a
-/// sensible [`Default`] used both as the form seed and the graceful-degrade
-/// fallback when the server returns 404/501/405.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InviteReceivePolicy {
-    /// Which introduction-evidence kinds are accepted at all. Values match
-    /// `IntroductionEvidence::kind()`:
-    /// `consent_grant` / `locator_ref` / `shared_realm` /
-    /// `same_principal_server` / `explicit_address`.
-    #[serde(default)]
-    pub allowed_introduction_kinds: Vec<String>,
-    /// What to do with an invite that arrives via raw `explicit_address`
-    /// (anyone who knows my address): `drop` / `quarantine` / `notify`.
-    #[serde(default = "default_explicit_address_behavior")]
-    pub explicit_address_behavior: String,
-    /// What to do with invites whose introduction evidence is otherwise
-    /// unknown / unrecognised: `drop` / `quarantine`.
-    #[serde(default = "default_unknown_invites")]
-    pub unknown_invites: String,
-    /// Subjects the actor has explicitly blocked from inviting them.
-    #[serde(default)]
-    pub blocked_subjects: Vec<String>,
-    /// Disclosure (read-receipt-style) behaviour back to the inviter, split by
-    /// trust tier.
-    #[serde(default)]
-    pub disclosure: InviteDisclosurePolicy,
-}
+/// U4 — actor `invite_receive_policy` ("谁可以邀请我").
+///
+/// YOU-01-006: this used to be a bespoke local mirror with all-`String`
+/// enum fields and **no** `schema`/`subject_id` — which made the SET body
+/// fail closed against the real soland handler (it deserialises
+/// `cokret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
+/// fields required and `subject_id == session.actor` enforced) and dropped
+/// the server-stored `trusted_*` / `blocked_principal_services` lists on
+/// every round-trip. We now use the SDK authoritative type, which carries
+/// the required `schema`/`subject_id`, typed enums, and the trust lists, so
+/// a GET→edit→SET cycle preserves fields the U4 form does not touch.
+pub use cokret_sdk::model::{
+    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy,
+    INVITE_RECEIVE_POLICY_SCHEMA, InviteReceiveAction, InviteReceivePolicy,
+    UnknownInviteAction,
+};
 
-fn default_explicit_address_behavior() -> String {
-    "quarantine".to_owned()
-}
-
-fn default_unknown_invites() -> String {
-    "quarantine".to_owned()
-}
-
-impl Default for InviteReceivePolicy {
-    fn default() -> Self {
-        Self {
-            // Sensible defaults: accept contacts (consent_grant), invite links
-            // (locator_ref) and same-group introductions (shared_realm); hold
-            // everything else for review.
-            allowed_introduction_kinds: vec![
-                "consent_grant".to_owned(),
-                "locator_ref".to_owned(),
-                "shared_realm".to_owned(),
-            ],
-            explicit_address_behavior: default_explicit_address_behavior(),
-            unknown_invites: default_unknown_invites(),
-            blocked_subjects: Vec::new(),
-            disclosure: InviteDisclosurePolicy::default(),
-        }
-    }
-}
-
-/// Disclosure policy nested inside [`InviteReceivePolicy`]. Each tier is one of
-/// `opaque` (tell the inviter nothing) or `outcome` (let the inviter learn the
-/// result). High-trust sources are typically contacts; low-trust sources are
-/// strangers using a locator link.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InviteDisclosurePolicy {
-    #[serde(default = "default_high_trust_disclosure")]
-    pub high_trust: String,
-    #[serde(default = "default_low_trust_disclosure")]
-    pub low_trust: String,
-}
-
-fn default_high_trust_disclosure() -> String {
-    "outcome".to_owned()
-}
-
-fn default_low_trust_disclosure() -> String {
-    "opaque".to_owned()
-}
-
-impl Default for InviteDisclosurePolicy {
-    fn default() -> Self {
-        Self {
-            high_trust: default_high_trust_disclosure(),
-            low_trust: default_low_trust_disclosure(),
-        }
-    }
-}
-
-/// Response wrapper for the get/set `invite_receive_policy` endpoints. The
-/// server may echo the stored policy plus an `ok` flag; we also accept a bare
-/// policy object (no wrapper) for forward-compatibility.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InviteReceivePolicyOutcome {
-    #[serde(default = "default_policy_ok")]
-    pub ok: bool,
-    #[serde(default, flatten)]
-    pub policy: InviteReceivePolicy,
-}
-
-fn default_policy_ok() -> bool {
-    true
-}
-
-impl Default for InviteReceivePolicyOutcome {
-    fn default() -> Self {
-        Self {
-            ok: true,
-            policy: InviteReceivePolicy::default(),
-        }
+/// Build the recommended default `invite_receive_policy` for `subject_id`,
+/// used as the form seed and the graceful-degrade fallback when the server
+/// returns 404/501/405. Mirrors soland's
+/// `default_invite_receive_policy`: accept contacts (`consent_grant`),
+/// invite links (`locator_ref`) and same-group introductions
+/// (`shared_realm`); hold everything else for review.
+pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
+    InviteReceivePolicy {
+        schema: INVITE_RECEIVE_POLICY_SCHEMA.to_owned(),
+        subject_id: cokret_sdk::Did::new(subject_id)
+            .unwrap_or_else(|_| cokret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")),
+        allowed_introduction_kinds: vec![
+            "consent_grant".to_owned(),
+            "locator_ref".to_owned(),
+            "shared_realm".to_owned(),
+        ],
+        explicit_address_behavior: InviteReceiveAction::Quarantine,
+        unknown_invites: UnknownInviteAction::Quarantine,
+        trusted_realm_ids: Vec::new(),
+        trusted_principal_services: Vec::new(),
+        blocked_principal_services: Vec::new(),
+        blocked_subjects: Vec::new(),
+        disclosure: Some(InviteDisclosurePolicy {
+            high_trust: Some(DisclosureLevel::Outcome),
+            low_trust: Some(DisclosureLevel::Opaque),
+        }),
     }
 }
 
@@ -831,40 +767,46 @@ mod tests {
     }
 
     #[test]
-    fn invite_receive_policy_outcome_decodes_flattened_wire() {
-        // U4 — mirrors the soland/mock wire body: `ok` + the flattened policy
-        // fields. The flatten + per-field defaults must round-trip cleanly.
+    fn invite_receive_policy_round_trips_sdk_wire_with_trust_lists() {
+        // YOU-01-006 — the bare SDK wire body (schema + subject_id required,
+        // typed enums, trust lists) must decode and re-encode without losing
+        // the `trusted_*` / `blocked_principal_services` lists the U4 form
+        // never touches.
         let value = serde_json::json!({
-            "ok": true,
+            "schema": super::INVITE_RECEIVE_POLICY_SCHEMA,
+            "subject_id": "did:web:me.example",
             "allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
+            "trusted_realm_ids": ["ck:realm:01904100-0000-7000-8000-000000000001"],
+            "trusted_principal_services": ["did:web:ps.example"],
             "blocked_subjects": ["did:web:spammer.example"],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
         });
-        let outcome: super::InviteReceivePolicyOutcome =
-            serde_json::from_value(value).expect("decode policy outcome");
-        assert!(outcome.ok);
-        assert_eq!(outcome.policy.explicit_address_behavior, "drop");
+        let policy: super::InviteReceivePolicy =
+            serde_json::from_value(value).expect("decode SDK policy wire");
         assert_eq!(
-            outcome.policy.allowed_introduction_kinds,
-            vec!["consent_grant".to_owned(), "locator_ref".to_owned()]
+            policy.explicit_address_behavior,
+            super::InviteReceiveAction::Drop
         );
-        assert_eq!(outcome.policy.disclosure.high_trust, "opaque");
+        // The trust lists survive a re-encode (no silent wipe on save).
+        let re = serde_json::to_value(&policy).expect("re-encode policy");
+        assert_eq!(re["trusted_principal_services"][0], "did:web:ps.example");
         assert_eq!(
-            outcome.policy.blocked_subjects,
-            vec!["did:web:spammer.example".to_owned()]
+            re["trusted_realm_ids"][0],
+            "ck:realm:01904100-0000-7000-8000-000000000001"
         );
     }
 
     #[test]
-    fn invite_receive_policy_partial_wire_uses_defaults() {
-        // A partial body (only `ok`) must fall back to the sensible defaults
-        // rather than failing to deserialize.
-        let outcome: super::InviteReceivePolicyOutcome =
-            serde_json::from_value(serde_json::json!({"ok": true})).expect("decode partial");
-        assert_eq!(outcome.policy.explicit_address_behavior, "quarantine");
-        assert_eq!(outcome.policy.disclosure.low_trust, "opaque");
+    fn default_invite_receive_policy_carries_schema_and_subject() {
+        let policy = super::default_invite_receive_policy("did:web:me.example");
+        assert_eq!(policy.schema, super::INVITE_RECEIVE_POLICY_SCHEMA);
+        assert_eq!(policy.subject_id.as_str(), "did:web:me.example");
+        assert_eq!(
+            policy.explicit_address_behavior,
+            super::InviteReceiveAction::Quarantine
+        );
     }
 
     #[test]
@@ -935,17 +877,9 @@ pub struct PushRegisterOutcome {
 }
 
 pub use cokret_sdk::model::{
-    DeviceMessagesPutOutcome, KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
+    DeviceMessageEnvelope, DeviceMessagesGetOutcome, DeviceMessagesPutOutcome, KeysClaimOutcome,
+    KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
 };
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceMessagesGetOutcome {
-    pub events: Vec<Value>,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-    #[serde(default)]
-    pub limited: bool,
-}
 
 pub use cokret_sdk::model::BlobUploadOutcome;
 
@@ -1347,49 +1281,13 @@ pub struct IceConfigRequestBody {
     pub context: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CreateWebrtcSessionOutcome {
-    pub session_id: String,
-    pub realm_id: String,
-    #[serde(default)]
-    pub participants: Vec<String>,
-    #[serde(default)]
-    pub expires_at: String,
-    #[serde(default)]
-    pub call_state: String,
-    #[serde(default)]
-    pub mode: String,
-    #[serde(default)]
-    pub recording_policy: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WebrtcSignalOutcome {
-    #[serde(default)]
-    pub ok: bool,
-    pub session_id: String,
-    pub seq: u64,
-    #[serde(default)]
-    pub call_state: String,
-    #[serde(default)]
-    pub event: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CallRecordingStartOutcome {
-    #[serde(default)]
-    pub ok: bool,
-    pub call_id: String,
-    pub realm_id: String,
-    #[serde(default)]
-    pub recording_policy: String,
-    #[serde(default)]
-    pub recording_id: String,
-    #[serde(default)]
-    pub recording_started_by: String,
-    #[serde(default)]
-    pub recording_blob_ref: String,
-}
+// WebRTC call signaling/recording no longer round-trips through bespoke
+// `/_cokret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
+// ephemeral envelope (EphemeralSubmitOutcome) and recording is a durable
+// `ck.call.recording.start` event (SubmitEventOutcome). See
+// `crypto-media/webrtc-signaling.md` §5/§7. The former
+// CreateWebrtcSessionOutcome / WebrtcSignalOutcome / CallRecordingStartOutcome
+// mirrors were removed (YOU-01-002).
 
 // ── MIMI Provider Facade ─────────────────────────────────────────
 

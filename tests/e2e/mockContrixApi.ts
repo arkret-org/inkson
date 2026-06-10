@@ -1069,14 +1069,19 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
       });
     }
 
-    // U4 — invite_receive_policy ("谁可以邀请我").
+    // U4 — invite_receive_policy ("谁可以邀请我"). Spec invite-addressing.md
+    // §5: GET/SET carry the bare `cokret_sdk::InviteReceivePolicy` (required
+    // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
     if (url.pathname === "/_cokret/self/invite-receive-policy") {
       if (route.request().method() === "POST") {
+        // The real soland handler echoes the stored policy back verbatim;
+        // mirror that so the client's `trusted_*` lists round-trip intact.
         const body = await route.request().postDataJSON();
-        return json(route, { ok: true, ...body });
+        return json(route, body);
       }
       return json(route, {
-        ok: true,
+        schema: "ck.schema.invite_receive_policy.v1",
+        subject_id: "did:web:alice.example",
         allowed_introduction_kinds: ["consent_grant", "locator_ref", "shared_realm"],
         explicit_address_behavior: "quarantine",
         unknown_invites: "quarantine",
@@ -1108,7 +1113,7 @@ export async function mockCokretApi(page: Page, options: MockCokretApiOptions = 
     }
 
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "GET") {
-      return json(route, { events: [], next_cursor: "ck:cursor:devmsg-1", limited: false });
+      return json(route, { messages: [], next_cursor: "ck:cursor:devmsg-1", has_more: false, limited: false });
     }
 
     if (url.pathname === "/_cokret/self/device_messages" && route.request().method() === "POST") {

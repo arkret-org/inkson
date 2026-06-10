@@ -3531,6 +3531,7 @@ pub fn SettingsPanel(
                             crate::views::settings::invite_policy::InvitePolicySettingsCard {
                                 base_url,
                                 token,
+                                account_did,
                             }
                         }
                     }

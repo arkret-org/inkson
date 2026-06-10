@@ -8,7 +8,6 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::local_state::LocalStateStore;
-use crate::models::{CallRecordingStartOutcome, CreateWebrtcSessionOutcome, WebrtcSignalOutcome};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -259,22 +258,16 @@ pub fn WebrtcCallPanel(
                                                 base,
                                                 api_token,
                                                 realm_id,
+                                                actor.clone(),
+                                                device.clone(),
                                                 vec![peer],
-                                                "p2p".to_owned(),
-                                                "none".to_owned(),
                                             )
                                             .await
                                             {
-                                                Ok(session) => {
-                                                    let state = if session.call_state.is_empty() {
-                                                        "ringing".to_owned()
-                                                    } else {
-                                                        session.call_state
-                                                    };
-                                                    active_session_id.set(session.session_id.clone());
+                                                Ok(call_id) => {
+                                                    active_session_id.set(call_id.clone());
                                                     signal_status.set(format!(
-                                                        "session {} {state}",
-                                                        session.session_id
+                                                        "call {call_id} ringing"
                                                     ));
                                                 }
                                                 Err(err) if actor.trim().is_empty() || device.trim().is_empty() => {
@@ -315,23 +308,22 @@ pub fn WebrtcCallPanel(
                                         signal_status.set("creating sfu call session".to_owned());
                                         let mut active_session_id = active_session_id;
                                         let mut signal_status = signal_status;
+                                        let roster_len = peers.len();
                                         spawn(async move {
                                             match create_live_session(
                                                 base,
                                                 api_token,
                                                 realm_id,
+                                                actor.clone(),
+                                                device.clone(),
                                                 peers,
-                                                "sfu".to_owned(),
-                                                "allow".to_owned(),
                                             )
                                             .await
                                             {
-                                                Ok(session) => {
-                                                    active_session_id.set(session.session_id.clone());
+                                                Ok(call_id) => {
+                                                    active_session_id.set(call_id.clone());
                                                     signal_status.set(format!(
-                                                        "session {} active roster {}",
-                                                        session.session_id,
-                                                        session.participants.len()
+                                                        "call {call_id} active roster {roster_len}"
                                                     ));
                                                 }
                                                 Err(err) if actor.trim().is_empty() || device.trim().is_empty() => {
@@ -382,6 +374,7 @@ pub fn WebrtcCallPanel(
                                                 emit_signal_from_ui(
                                                     base.clone(),
                                                     token(),
+                                                    call_realm_id(),
                                                     active_session_id(),
                                                     actor.clone(),
                                                     device.clone(),
@@ -478,6 +471,7 @@ pub fn WebrtcCallPanel(
                                         emit_signal_from_ui(
                                             base.clone(),
                                             token(),
+                                            call_realm_id(),
                                             active_session_id(),
                                             actor.clone(),
                                             device.clone(),
@@ -555,6 +549,7 @@ pub fn WebrtcCallPanel(
                                         emit_signal_from_ui(
                                             base.clone(),
                                             token(),
+                                            call_realm_id(),
                                             active_session_id(),
                                             actor.clone(),
                                             device.clone(),
@@ -595,6 +590,7 @@ pub fn WebrtcCallPanel(
                                             emit_signal_from_ui(
                                                 base.clone(),
                                                 token(),
+                                                call_realm_id(),
                                                 active_session_id(),
                                                 actor.clone(),
                                                 device.clone(),
@@ -622,6 +618,7 @@ pub fn WebrtcCallPanel(
                                             emit_signal_from_ui(
                                                 base.clone(),
                                                 token(),
+                                                call_realm_id(),
                                                 active_session_id(),
                                                 actor.clone(),
                                                 device.clone(),
@@ -641,25 +638,28 @@ pub fn WebrtcCallPanel(
                                 disabled: !can_record && recording_state() == RecordingState::Off,
                                 onclick: {
                                     let base = base_url.clone();
+                                    let actor = account_did.clone();
                                     move |_| {
                                         if recording_state() == RecordingState::Off && recording_policy() == "allow" {
                                             signal_status.set("starting recording".to_owned());
                                             let base = base.clone();
                                             let api_token = token();
-                                            let session_id = active_session_id();
+                                            let call_id = active_session_id();
                                             let realm_id = call_realm_id();
+                                            let actor = actor.clone();
+                                            let consent_actors: Vec<String> = participants()
+                                                .iter()
+                                                .map(|p| p.actor_id.clone())
+                                                .collect();
                                             let mut recording_state = recording_state;
-                                            let mut recording_blob_ref = recording_blob_ref;
                                             let mut signal_status = signal_status;
                                             let mut last_action = last_action;
                                             spawn(async move {
-                                                match start_live_recording(base, api_token, session_id, realm_id).await {
-                                                    Ok(recording) => {
+                                                match start_live_recording(base, api_token, realm_id, actor, call_id, consent_actors).await {
+                                                    Ok(recording_id) => {
                                                         recording_state.set(RecordingState::Recording);
-                                                        recording_blob_ref.set(recording.recording_blob_ref.clone());
                                                         signal_status.set(format!(
-                                                            "recording {}",
-                                                            recording.recording_id
+                                                            "recording {recording_id}"
                                                         ));
                                                         last_action.set("recording started".to_owned());
                                                     }
@@ -686,6 +686,7 @@ pub fn WebrtcCallPanel(
                                         emit_signal_from_ui(
                                             base.clone(),
                                             token(),
+                                            call_realm_id(),
                                             active_session_id(),
                                             actor.clone(),
                                             device.clone(),
@@ -861,95 +862,126 @@ fn set_all_participants_disconnected(participants: &mut Signal<Vec<CallParticipa
     participants.set(roster);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_signal_from_ui(
     base: String,
     api_token: String,
-    session_id: String,
+    realm_id: String,
+    call_id: String,
     actor: String,
     device: String,
-    message_type: String,
-    payload: Value,
+    signal_type: String,
+    data: Value,
     mut call_seq: Signal<u64>,
     mut signal_status: Signal<String>,
 ) {
-    if session_id.trim().is_empty() {
-        signal_status.set(format!("local-only {message_type}"));
+    if call_id.trim().is_empty() || realm_id.trim().is_empty() {
+        signal_status.set(format!("local-only {signal_type}"));
         return;
     }
     let seq = call_seq() + 1;
     call_seq.set(seq);
-    signal_status.set(format!("sending {message_type} #{seq}"));
+    signal_status.set(format!("sending {signal_type} #{seq}"));
     spawn(async move {
         match emit_live_signal(
             base,
             api_token,
-            session_id,
+            realm_id,
+            call_id,
             actor,
             device,
-            message_type,
+            signal_type.clone(),
             seq,
-            payload,
+            data,
         )
         .await
         {
-            Ok(signal) => {
-                let state = if signal.call_state.is_empty() {
-                    "accepted".to_owned()
-                } else {
-                    signal.call_state
-                };
-                signal_status.set(format!("signal {} #{} {state}", signal.seq, signal.seq));
+            Ok(()) => {
+                signal_status.set(format!("signal {signal_type} #{seq} accepted"));
             }
             Err(err) => signal_status.set(format!("error {err}")),
         }
     });
 }
 
+/// Open a call: per spec there is no session-create endpoint — the client
+/// mints the `call_id` and the `invite` `ck.call.signal` IS the call
+/// initiation. Returns the minted `call_id`.
 async fn create_live_session(
     base: String,
     api_token: String,
     realm_id: String,
+    actor: String,
+    device: String,
     participants: Vec<String>,
-    mode: String,
-    recording_policy: String,
-) -> Result<CreateWebrtcSessionOutcome, String> {
+) -> Result<String, String> {
+    let call_id = format!("ck:call:{}", crate::operation::uuid_v7());
+    let invite = call_id.clone();
+    let invite_realm = realm_id.clone();
     with_authed_api(&base, api_token, |api| async move {
-        api.create_webrtc_session(&realm_id, participants, &mode, &recording_policy)
-            .await
+        api.submit_call_signal_v1(
+            &invite_realm,
+            &actor,
+            &device,
+            &invite,
+            "invite",
+            1,
+            json!({ "participants": participants }),
+        )
+        .await
     })
     .await
-    .map_err(|err| err.display())
+    .map_err(|err| err.display())?;
+    Ok(call_id)
 }
 
 async fn emit_live_signal(
     base: String,
     api_token: String,
-    session_id: String,
+    realm_id: String,
+    call_id: String,
     actor: String,
     device: String,
-    message_type: String,
+    signal_type: String,
     seq: u64,
-    payload: Value,
-) -> Result<WebrtcSignalOutcome, String> {
+    data: Value,
+) -> Result<(), String> {
     with_authed_api(&base, api_token, |api| async move {
-        api.append_webrtc_signal(&session_id, &actor, &device, &message_type, seq, payload)
-            .await
+        api.submit_call_signal_v1(
+            &realm_id,
+            &actor,
+            &device,
+            &call_id,
+            &signal_type,
+            seq,
+            data,
+        )
+        .await
     })
     .await
+    .map(|_| ())
     .map_err(|err| err.display())
 }
 
+/// Start opt-in recording by writing the durable `ck.call.recording.start`
+/// event. Returns the minted `recording_id`.
 async fn start_live_recording(
     base: String,
     api_token: String,
-    session_id: String,
     realm_id: String,
-) -> Result<CallRecordingStartOutcome, String> {
+    actor: String,
+    call_id: String,
+    consent_actors: Vec<String>,
+) -> Result<String, String> {
+    let recording_id = format!("ck:recording:{}", crate::operation::uuid_v7());
+    let rec = recording_id.clone();
     with_authed_api(&base, api_token, |api| async move {
-        api.start_call_recording(&session_id, &realm_id).await
+        api.submit_call_recording_start(&realm_id, &actor, &call_id, &rec, consent_actors)
+            .await
     })
     .await
-    .map_err(|err| err.display())
+    .map_err(|err| err.display())?;
+    Ok(recording_id)
 }
 
 #[cfg(test)]

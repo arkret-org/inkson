@@ -324,6 +324,33 @@ impl YougenEventSigner {
         Ok(())
     }
 
+    /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
+    /// using the active backend, matching the alg-only protected header
+    /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
+    /// signatures that are NOT [`EventEnvelope`] proofs — notably the
+    /// `ck.call.signal` ephemeral envelope `proof` (spec
+    /// `webrtc-signaling.md` §5: detached signature over canonical
+    /// envelope bytes excluding `proof`) — go through this helper instead
+    /// of re-deriving the JWS reassembly.
+    pub fn detached_jws_over(&self, bytes: &[u8]) -> Result<String, EventSignerError> {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        let signature = self
+            .inner
+            .sign(bytes)
+            .map_err(|err| EventSignerError::Backend(err.to_string()))?;
+        let header = serde_json::json!({ "alg": self.algorithm() });
+        let header = serde_json::to_vec(&header)
+            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
+        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        Ok(format!("{header_b64}..{sig_b64}"))
+    }
+
     fn verification_method_for_event(&self, event: &EventEnvelope) -> String {
         let actor_id = event.actor_id.trim();
         if actor_id.is_empty() {

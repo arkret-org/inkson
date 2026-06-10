@@ -35,23 +35,22 @@ enum VerifyMethod {
 }
 
 /// Walk a `DeviceMessagesGetOutcome` JSON representation and
-/// return the first non-empty `body.key` (or `content.key`) string
-/// carried by a `ck.key.verification.key` typed envelope.
+/// return the first non-empty `content.key` string carried by a
+/// `ck.key.verification.key` typed envelope.
 ///
-/// The receive endpoint returns `{ "events": [...] }`; the helper
-/// returns `None` if no matching envelope is present so the poll loop
-/// can keep retrying without surfacing noise.
+/// Per spec the receive endpoint returns `{ "messages": [...] }` where each
+/// `DeviceMessageEnvelope` carries `kind` + `content`; the helper returns
+/// `None` if no matching envelope is present so the poll loop can keep
+/// retrying without surfacing noise.
 fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
     fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
-        if entry.get("type").and_then(|t| t.as_str()) != Some("ck.key.verification.key") {
+        if entry.get("kind").and_then(|t| t.as_str()) != Some("ck.key.verification.key") {
             return None;
         }
-        let body = entry
-            .get("body")
-            .or_else(|| entry.get("content"))
-            .and_then(|v| v.as_object())?;
-        let key = body.get("key").and_then(|v| v.as_str()).or_else(|| {
-            body.get("device_envelope")
+        let content = entry.get("content").and_then(|v| v.as_object())?;
+        let key = content.get("key").and_then(|v| v.as_str()).or_else(|| {
+            content
+                .get("device_envelope")
                 .and_then(|v| v.get("local_public_key"))
                 .and_then(|v| v.as_str())
         })?;
@@ -60,8 +59,8 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
         }
         Some(key.trim().to_owned())
     }
-    if let Some(events) = value.get("events").and_then(|v| v.as_array()) {
-        for entry in events {
+    if let Some(messages) = value.get("messages").and_then(|v| v.as_array()) {
+        for entry in messages {
             if let Some(k) = key_from_entry(entry) {
                 return Some(k);
             }
@@ -79,11 +78,11 @@ mod verification_key_poll_tests {
     #[test]
     fn picks_key_out_of_flat_events_list() {
         let resp = json!({
-            "events": [
-                {"type": "ck.mls.welcome", "body": {"unrelated": true}},
+            "messages": [
+                {"kind": "ck.mls.welcome", "content": {"unrelated": true}},
                 {
-                    "type": "ck.key.verification.key",
-                    "body": {"key": "bob-pub-b64==", "from_device": "ck:device:abc"},
+                    "kind": "ck.key.verification.key",
+                    "content": {"key": "bob-pub-b64==", "from_device": "ck:device:abc"},
                 },
             ]
         });
@@ -96,8 +95,8 @@ mod verification_key_poll_tests {
     #[test]
     fn returns_none_when_no_verification_key_present() {
         let resp = json!({
-            "events": [
-                {"type": "ck.mls.welcome", "body": {"welcome_blob": "..."}},
+            "messages": [
+                {"kind": "ck.mls.welcome", "content": {"welcome_blob": "..."}},
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -106,8 +105,8 @@ mod verification_key_poll_tests {
     #[test]
     fn ignores_envelope_with_blank_key() {
         let resp = json!({
-            "events": [
-                {"type": "ck.key.verification.key", "body": {"key": "   "}}
+            "messages": [
+                {"kind": "ck.key.verification.key", "content": {"key": "   "}}
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -116,10 +115,10 @@ mod verification_key_poll_tests {
     #[test]
     fn picks_key_out_of_signed_device_envelope() {
         let resp = json!({
-            "events": [
+            "messages": [
                 {
-                    "type": "ck.key.verification.key",
-                    "body": {
+                    "kind": "ck.key.verification.key",
+                    "content": {
                         "device_envelope": {
                             "local_public_key": "signed-pub-b64=="
                         },

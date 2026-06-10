@@ -505,7 +505,8 @@ pub fn apply_response(
         }
     }
 
-    let synced_timeline = crate::app::timeline_events_from_sync_realms(&response.realms);
+    let synced_timeline =
+        crate::views::timeline::timeline_events_from_sync_realms(&response.realms);
     let next_timeline = if is_full_sync {
         synced_timeline
     } else {

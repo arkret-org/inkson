@@ -1,16 +1,24 @@
 //! U4 — "谁可以邀请我" 接收策略设置 (`/settings/invite-policy`).
 //!
-//! Edits the actor `invite_receive_policy` (spec `invite_receive_policy`):
+//! Edits the actor `invite_receive_policy` (spec `invite-addressing.md` §5,
+//! authoritative `cokret_sdk::InviteReceivePolicy`):
 //! - `allowed_introduction_kinds` — which introduction-evidence kinds are accepted at all
 //!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
 //! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
 //! - `blocked_subjects` — list of subjects barred from inviting, with removal.
 //!
-//! The soland self-plane endpoint (`/_cokret/self/invite-receive-policy`) is
-//! still being wired; the panel connects to the real endpoint and degrades
-//! gracefully — on a 404/501/405 GET it seeds the form with defaults, and a
-//! failed save is surfaced inline without losing the user's edits.
+//! YOU-01-006: the form edits a `cokret_sdk::InviteReceivePolicy` held whole in
+//! a signal. On GET we keep the *entire* server policy (including the
+//! `trusted_*` / `blocked_principal_services` lists this form does not surface);
+//! on SET we stamp the required `schema` constant and `subject_id = account_did`
+//! and post the same object back, so server-stored lists survive the round-trip
+//! and the body satisfies the soland handler (which deserialises the SDK type
+//! with `deny_unknown_fields` and enforces `subject_id == session actor`).
+//!
+//! The soland self-plane endpoint (`/_cokret/self/invite-receive-policy`)
+//! degrades gracefully — on a 404/501/405 GET it seeds the form with defaults,
+//! and a failed save is surfaced inline without losing the user's edits.
 //!
 //! Surfaces (testids for cotest):
 //! - `invite-policy-panel`
@@ -24,7 +32,10 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
 use crate::i18n::tr;
-use crate::models::InviteReceivePolicy;
+use crate::models::{
+    DisclosureLevel, INVITE_RECEIVE_POLICY_SCHEMA, InviteDisclosurePolicy, InviteReceiveAction,
+    InviteReceivePolicy, default_invite_receive_policy,
+};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::label::Label;
@@ -45,9 +56,43 @@ const INTRODUCTION_KINDS: &[(&str, &str)] = &[
     ("explicit_address", "invite_policy.kind.explicit_address"),
 ];
 
+/// Map the `explicit_address_behavior` enum to/from the Select's string value.
+fn explicit_behavior_to_str(action: &InviteReceiveAction) -> &'static str {
+    match action {
+        InviteReceiveAction::Drop => "drop",
+        InviteReceiveAction::Quarantine => "quarantine",
+        InviteReceiveAction::Notify => "notify",
+    }
+}
+
+fn explicit_behavior_from_str(value: &str) -> Option<InviteReceiveAction> {
+    match value {
+        "drop" => Some(InviteReceiveAction::Drop),
+        "quarantine" => Some(InviteReceiveAction::Quarantine),
+        "notify" => Some(InviteReceiveAction::Notify),
+        _ => None,
+    }
+}
+
+/// Whether the high-trust disclosure tier is set to `outcome` (let contacts
+/// learn the invite result). Absent disclosure / absent tier defaults to the
+/// recommended `outcome`.
+fn high_trust_is_outcome(policy: &InviteReceivePolicy) -> bool {
+    policy
+        .disclosure
+        .as_ref()
+        .and_then(|d| d.high_trust.as_ref())
+        .map(|level| matches!(level, DisclosureLevel::Outcome))
+        .unwrap_or(true)
+}
+
 #[component]
-pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>) -> Element {
-    let mut policy = use_signal(InviteReceivePolicy::default);
+pub fn InvitePolicySettingsCard(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    account_did: Signal<String>,
+) -> Element {
+    let mut policy = use_signal(|| default_invite_receive_policy(&account_did()));
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);
     let mut status = use_signal(String::new);
@@ -70,8 +115,8 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                 })
                 .await
                 {
-                    Ok(outcome) => {
-                        policy.set(outcome.policy);
+                    Ok(server_policy) => {
+                        policy.set(server_policy);
                     }
                     Err(err) => {
                         // Graceful-degrade message; defaults stay in the form.
@@ -86,9 +131,10 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
     }
 
     let current = policy.read().clone();
-    let explicit_behavior_selected =
-        use_memo(move || Some(policy.read().explicit_address_behavior.clone()));
-    let high_trust_outcome = current.disclosure.high_trust == "outcome";
+    let explicit_behavior_selected = use_memo(move || {
+        Some(explicit_behavior_to_str(&policy.read().explicit_address_behavior).to_owned())
+    });
+    let high_trust_outcome = high_trust_is_outcome(&current);
 
     rsx! {
         div { class: "event", "data-testid": "invite-policy-panel",
@@ -136,9 +182,9 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                     "data-testid": "invite-policy-explicit-behavior",
                     value: Some(explicit_behavior_selected.into()),
                     on_value_change: move |v: Option<String>| {
-                        if let Some(v) = v {
+                        if let Some(action) = v.as_deref().and_then(explicit_behavior_from_str) {
                             let mut next = policy.read().clone();
-                            next.explicit_address_behavior = v;
+                            next.explicit_address_behavior = action;
                             policy.set(next);
                         }
                     },
@@ -148,7 +194,7 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                 }
                 div { class: "muted",
                     {tr("invite_policy.unknown_prefix")}
-                    if current.unknown_invites == "drop" { {tr("invite_policy.unknown_drop")} } else { {tr("invite_policy.unknown_quarantine")} }
+                    if matches!(current.unknown_invites, crate::models::UnknownInviteAction::Drop) { {tr("invite_policy.unknown_drop")} } else { {tr("invite_policy.unknown_quarantine")} }
                     {tr("invite_policy.unknown_suffix")}
                 }
             }
@@ -162,7 +208,16 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                         checked: high_trust_outcome,
                         on_checked_change: move |checked: bool| {
                             let mut next = policy.read().clone();
-                            next.disclosure.high_trust = if checked { "outcome".to_owned() } else { "opaque".to_owned() };
+                            let mut disclosure = next.disclosure.unwrap_or(InviteDisclosurePolicy {
+                                high_trust: None,
+                                low_trust: None,
+                            });
+                            disclosure.high_trust = Some(if checked {
+                                DisclosureLevel::Outcome
+                            } else {
+                                DisclosureLevel::Opaque
+                            });
+                            next.disclosure = Some(disclosure);
                             policy.set(next);
                         },
                     }
@@ -178,7 +233,7 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                     div { class: "muted", "data-testid": "invite-policy-blocked-empty", {tr("invite_policy.blocked_empty")} }
                 } else {
                     div { class: "settings-list",
-                        for subject in current.blocked_subjects.iter().cloned() {
+                        for subject in current.blocked_subjects.iter().map(|d| d.as_str().to_owned()) {
                             div {
                                 class: "metric invite-policy-blocked-row",
                                 "data-testid": "invite-policy-blocked-row",
@@ -191,7 +246,7 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                                         let subject = subject.clone();
                                         move |_| {
                                             let mut next = policy.read().clone();
-                                            next.blocked_subjects.retain(|s| s != &subject);
+                                            next.blocked_subjects.retain(|s| s.as_str() != subject);
                                             policy.set(next);
                                             status.set(tr("invite_policy.unblocked_hint"));
                                         }
@@ -212,7 +267,22 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                     onclick: move |_| {
                         let base = base_url();
                         let api_token = token();
-                        let to_save = policy.read().clone();
+                        let subject = account_did();
+                        // Stamp the spec-required `schema` + `subject_id` before
+                        // SET; the SDK type carries the server's `trusted_*`
+                        // lists from the GET hydrate, so they round-trip intact.
+                        let mut to_save = policy.read().clone();
+                        to_save.schema = INVITE_RECEIVE_POLICY_SCHEMA.to_owned();
+                        match cokret_sdk::Did::new(subject.clone()) {
+                            Ok(did) => to_save.subject_id = did,
+                            Err(_) => {
+                                status.set(
+                                    tr("invite_policy.save_failed")
+                                        .replace("{error}", "missing or invalid account DID"),
+                                );
+                                return;
+                            }
+                        }
                         saving.set(true);
                         status.set(tr("invite_policy.saving"));
                         spawn(async move {
@@ -221,8 +291,8 @@ pub fn InvitePolicySettingsCard(base_url: Signal<String>, token: Signal<String>)
                             })
                             .await
                             {
-                                Ok(outcome) => {
-                                    policy.set(outcome.policy);
+                                Ok(server_policy) => {
+                                    policy.set(server_policy);
                                     status.set(tr("invite_policy.saved"));
                                 }
                                 Err(err) => status.set(

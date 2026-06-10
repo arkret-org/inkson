@@ -100,9 +100,9 @@ use crate::models::{
     AgentKeyPairResBody, AgentLifecycleReqBody, AgentLifecycleResBody, AgentListResBody,
     AgentProvisionReqBody, AgentResBody, AgentRotateKeyReqBody, AgentRotateKeyResBody,
     AgentSidecarThreadEnsureReqBody, AgentSidecarThreadEnsureResBody, AuthzCheckOutcome,
-    BackfillOutcome, BlobUploadOutcome, CallRecordingStartOutcome, ClientSyncOutcome,
+    BackfillOutcome, BlobUploadOutcome, ClientSyncOutcome,
     ConsentCellOutcome, ConsentCellsOutcome, ContactOutcome, ContactsOutcome,
-    CreateWebrtcSessionOutcome, DevLoginOutcome, DeviceMessagesGetOutcome,
+    DevLoginOutcome, DeviceMessagesGetOutcome,
     DeviceMessagesPutOutcome, DeviceTrustOutcome, DidOperationSubmitOutcome,
     EphemeralSubmitOutcome, GrantList, HealthOutcome, IceConfigOutcome, IceConfigRequestBody,
     IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchOutcome, InvitesOutcome,
@@ -115,7 +115,7 @@ use crate::models::{
     SearchActorsOutcome, SearchOrganizationsOutcome, SearchRealmsOutcome, ServerDescription,
     SnapshotHeadState, SolandDirectoryDescribeResBody, SolandEventsDescribeResBody,
     SpaceCreateOutcome, SubmitEventOutcome, SyncDescribeResBody, TypingOutcome,
-    VerifyDeviceOutcome, WebrtcSignalOutcome,
+    VerifyDeviceOutcome,
 };
 use crate::operation::{
     Effect, EventEnvelope, EventRequirements, LatticeOp, OperationBuilder, Precondition, Predicate,

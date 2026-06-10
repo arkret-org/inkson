@@ -1,5 +1,6 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs,
@@ -19,6 +20,15 @@ use crate::notification_rules::WatchLevel;
 
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
+
+/// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
+/// user write appends one record and the whole `ClientLocalState` blob is
+/// re-serialized on every flush; left unbounded it grows without limit
+/// (linear native write cost) and, on wasm, eventually blows the ~5 MB
+/// localStorage quota — after which *all* persistence (MLS snapshots, sync
+/// cursor, plaintext sidecar) silently fails. We retain the most recent
+/// `RAW_OPERATIONS_MAX` records, dropping the oldest first.
+const RAW_OPERATIONS_MAX: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
@@ -1353,6 +1363,14 @@ pub struct LocalStateStore {
     /// Set by [`Self::flush`] while suspended; consumed by the batch guard so
     /// it only persists when at least one mutation actually requested a flush.
     flush_pending: Cell<bool>,
+    /// YOU-02-002/003: shared persistence-health latch. `None` = healthy;
+    /// `Some(message)` records the last persist/read failure (atomic write
+    /// failed, localStorage quota exceeded, or a corrupt backing store was
+    /// found on boot). Shared via `Rc` so every `Clone` of the store (the
+    /// Dioxus `Signal<LocalStateStore>` is cloned widely) observes the same
+    /// latch, letting the UI surface "your changes aren't being saved"
+    /// instead of silently diverging from disk.
+    persist_health: Rc<RefCell<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -1444,6 +1462,7 @@ impl Default for LocalStateStore {
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
+            persist_health: Rc::new(RefCell::new(None)),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -1484,7 +1503,33 @@ impl LocalStateStore {
             self.flush_pending.set(true);
             return Ok(());
         }
-        self.write_persisted_state(&self.cached)
+        let result = self.write_persisted_state(&self.cached);
+        self.record_persist_result(&result);
+        result
+    }
+
+    /// YOU-02-002: latch the outcome of a persist attempt so callers that
+    /// (legitimately) drop the `Result` — the fire-and-forget setters — still
+    /// leave a durable signal the UI can read via [`Self::persist_error`].
+    fn record_persist_result(&self, result: &anyhow::Result<()>) {
+        match result {
+            Ok(()) => {
+                self.persist_health.borrow_mut().take();
+            }
+            Err(error) => {
+                let message = error.to_string();
+                tracing::error!(%error, "local state persist failed (latched for UI)");
+                *self.persist_health.borrow_mut() = Some(message);
+            }
+        }
+    }
+
+    /// Current persistence-health message, if the last persist/boot-read
+    /// failed (atomic write error, localStorage quota exceeded, or a corrupt
+    /// backing store detected on load). `None` once a subsequent persist
+    /// succeeds. UI surfaces this as a "changes are not being saved" banner.
+    pub fn persist_error(&self) -> Option<String> {
+        self.persist_health.borrow().clone()
     }
 
     /// Perf: run `body` with flushing suspended, then persist at most once.
@@ -1498,11 +1543,9 @@ impl LocalStateStore {
         self.flush_suspended = self.flush_suspended.saturating_add(1);
         let result = body(self);
         self.flush_suspended = self.flush_suspended.saturating_sub(1);
-        if self.flush_suspended == 0
-            && self.flush_pending.replace(false)
-            && let Err(error) = self.write_persisted_state(&self.cached)
-        {
-            tracing::warn!(%error, "local state batch flush failed");
+        if self.flush_suspended == 0 && self.flush_pending.replace(false) {
+            let persisted = self.write_persisted_state(&self.cached);
+            self.record_persist_result(&persisted);
         }
         result
     }
@@ -1548,6 +1591,15 @@ impl LocalStateStore {
             received_at: Utc::now(),
             payload,
         });
+        // YOU-02-003: roll the audit log so it can't grow without bound (and,
+        // on wasm, eventually exhaust the localStorage quota and make all
+        // persistence fail silently). Drop the oldest records past the cap.
+        let len = self.cached.raw_operations.len();
+        if len > RAW_OPERATIONS_MAX {
+            self.cached
+                .raw_operations
+                .drain(0..len - RAW_OPERATIONS_MAX);
+        }
         let _ = self.flush();
     }
 
@@ -3573,6 +3625,7 @@ impl LocalStateStore {
             loaded: Cell::new(false),
             flush_suspended: 0,
             flush_pending: Cell::new(false),
+            persist_health: Rc::new(RefCell::new(None)),
             path: path.into(),
         }
     }
@@ -3580,26 +3633,78 @@ impl LocalStateStore {
     #[cfg(not(target_arch = "wasm32"))]
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let bytes = fs::read(&self.path).ok()?;
-        let mut state: ClientLocalState = serde_json::from_slice(&bytes).ok()?;
-        state.migrate_legacy_realm_mutes();
-        Some(state)
+        match serde_json::from_slice::<ClientLocalState>(&bytes) {
+            Ok(mut state) => {
+                state.migrate_legacy_realm_mutes();
+                Some(state)
+            }
+            Err(error) => {
+                // YOU-02-002: a corrupt / truncated state.json (e.g. a crash
+                // mid-write before atomic rename landed) MUST NOT be silently
+                // reset to a blank account — that loses every MLS snapshot and
+                // the plaintext sidecar. Preserve the bad file for forensics
+                // and latch a health error so the UI can warn before the user
+                // overwrites it.
+                let corrupt_path = self.path.with_extension("corrupt");
+                let _ = fs::rename(&self.path, &corrupt_path);
+                let message = format!(
+                    "local state at {} was unreadable ({error}); preserved a copy at {} and started from defaults",
+                    self.path.display(),
+                    corrupt_path.display()
+                );
+                tracing::error!(%error, "corrupt local state preserved, not silently reset");
+                *self.persist_health.borrow_mut() = Some(message);
+                None
+            }
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let json = browser_storage()
             .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())?;
-        let mut state: ClientLocalState = serde_json::from_str(&json).ok()?;
-        state.migrate_legacy_realm_mutes();
-        Some(state)
+        match serde_json::from_str::<ClientLocalState>(&json) {
+            Ok(mut state) => {
+                state.migrate_legacy_realm_mutes();
+                Some(state)
+            }
+            Err(error) => {
+                // YOU-02-002: preserve the corrupt blob under a sibling key
+                // rather than silently dropping it back to defaults.
+                if let Some(storage) = browser_storage() {
+                    let _ = storage.set_item(
+                        &format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"),
+                        &json,
+                    );
+                }
+                let message = format!(
+                    "local state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
+                );
+                tracing::error!(%error, "corrupt local state preserved, not silently reset");
+                *self.persist_health.borrow_mut() = Some(message);
+                None
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
+        use std::io::Write;
+
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.path, serde_json::to_vec_pretty(state)?)?;
+        let bytes = serde_json::to_vec_pretty(state)?;
+        // YOU-02-002: atomic write — serialize to a sibling temp file, fsync,
+        // then rename over the target. A crash mid-write leaves either the old
+        // complete file or the temp file, never a truncated state.json.
+        let tmp_path = self.path.with_extension("json.tmp");
+        {
+            let mut tmp = fs::File::create(&tmp_path)?;
+            tmp.write_all(&bytes)?;
+            tmp.sync_all()?;
+        }
+        fs::rename(&tmp_path, &self.path)?;
         Ok(())
     }
 
@@ -3610,7 +3715,13 @@ impl LocalStateStore {
         };
         storage
             .set_item(LOCAL_STATE_STORAGE_KEY, &serde_json::to_string(state)?)
-            .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
+            .map_err(|error| {
+                // YOU-02-003: most commonly a QuotaExceededError once the
+                // single-key blob outgrows ~5 MB. Surfaced via the health
+                // latch by the caller (`flush`/`batch`) so the UI can warn
+                // instead of failing forever in silence.
+                anyhow::anyhow!("localStorage write failed: {error:?}")
+            })?;
         Ok(())
     }
 

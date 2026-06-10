@@ -732,12 +732,15 @@ pub fn commit_account_mls_secret_rotation(
 }
 
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    // Spec form is `{ messages: [ { kind, content, … } ] }`
+    // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
+    // is `kind` and the payload lives under `content`.
     let mut welcomes = Vec::new();
-    let Some(events) = value.get("events").and_then(|v| v.as_array()) else {
+    let Some(messages) = value.get("messages").and_then(|v| v.as_array()) else {
         return welcomes;
     };
-    for entry in events {
-        if entry.get("type").and_then(|t| t.as_str()) == Some("ck.mls.welcome")
+    for entry in messages {
+        if entry.get("kind").and_then(|t| t.as_str()) == Some("ck.mls.welcome")
             && let Some(content) = entry.get("content")
         {
             welcomes.push(content.clone());
@@ -2279,7 +2282,7 @@ mod welcome_outcome_tests {
             "ck:realm:empty",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000001",
-            &json!({ "events": [] }),
+            &json!({ "messages": [] }),
         )
         .unwrap();
         assert_eq!(outcome, WelcomeApplyOutcome::default());
@@ -2296,8 +2299,8 @@ mod welcome_outcome_tests {
         let store = MemorySecureKeyStore::new();
         // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
         let messages = json!({
-            "events": [
-                { "type": "ck.mls.welcome", "content": { "not": "a welcome" } }
+            "messages": [
+                { "kind": "ck.mls.welcome", "content": { "not": "a welcome" } }
             ]
         });
         let outcome = apply_welcome_messages_with_device_snapshot(

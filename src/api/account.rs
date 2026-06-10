@@ -242,25 +242,31 @@ impl CokretApi {
 
     /// Read the actor's `invite_receive_policy` ("谁可以邀请我", U4).
     ///
-    /// Protocol contract (soland in-flight): served from the self plane at
-    /// `GET /_cokret/self/invite-receive-policy`. When the deployment does not
-    /// yet wire this surface the caller treats 404/501/405 as "use defaults"
-    /// rather than a hard error (see [`InviteReceivePolicyOutcome::default`]).
+    /// Spec `invite-addressing.md` §5 / OpenAPI
+    /// `ck.self.invite_receive_policy.get`: served from the self plane at
+    /// `GET /_cokret/self/invite-receive-policy` and returns the bare
+    /// `cokret_sdk::InviteReceivePolicy` (soland echoes the stored override or
+    /// its recommended default). When the deployment does not yet wire this
+    /// surface the caller treats 404/501/405 as "use defaults" rather than a
+    /// hard error (see [`crate::models::default_invite_receive_policy`]).
     pub async fn get_invite_receive_policy(
         &self,
-    ) -> anyhow::Result<crate::models::InviteReceivePolicyOutcome> {
+    ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
         self.get_json("_cokret/self/invite-receive-policy").await
     }
 
     /// Persist the actor's `invite_receive_policy` (U4).
     ///
-    /// Protocol contract (soland in-flight):
-    /// `POST /_cokret/self/invite-receive-policy` with the policy object as the
-    /// body. Field set mirrors the spec `invite_receive_policy`.
+    /// Spec `ck.self.invite_receive_policy.set`:
+    /// `POST /_cokret/self/invite-receive-policy` with the bare
+    /// `cokret_sdk::InviteReceivePolicy` as the body. The handler enforces
+    /// `subject_id == session actor` and requires the `schema` constant, so the
+    /// caller MUST stamp both before calling (see the U4 view); the server
+    /// echoes the stored policy back.
     pub async fn set_invite_receive_policy(
         &self,
         policy: &crate::models::InviteReceivePolicy,
-    ) -> anyhow::Result<crate::models::InviteReceivePolicyOutcome> {
+    ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
         self.post_json(
             "_cokret/self/invite-receive-policy",
             serde_json::to_value(policy)?,

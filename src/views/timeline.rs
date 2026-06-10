@@ -2090,7 +2090,14 @@ fn timeline_actor_id(event: &Value) -> Option<&str> {
         .find_map(|key| event.get(key).and_then(Value::as_str))
 }
 
-fn timeline_events_from_sync_realms(
+/// Project the `realms[*].timeline.events` of an account-subscribe response
+/// into [`TimelineEvent`]s. YOU-06-003 / YOU-01-013: this is the single
+/// owner of timeline wire parsing — the former Matrix-shaped `app.rs` copy
+/// (read `sender`/`content` only) was deleted and both the sync engine and
+/// the timeline view now call this canonical version, which reads the spec
+/// envelope (`actor_id` / `sender_actor_id`, `payload`/`content` body) and
+/// carries `encrypted_content` forward for local MLS decrypt.
+pub fn timeline_events_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
 ) -> Vec<TimelineEvent> {
     let mut events = Vec::new();

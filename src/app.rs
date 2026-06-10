@@ -7004,8 +7004,17 @@ fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
                             if let Err(error) = store.flush() {
                                 last_error.set(Some(format!("state_store flush failed: {error}")));
                             }
+                            // YOU-02-002/003: surface a latched persistence
+                            // failure from the fire-and-forget setters (quota
+                            // exceeded, atomic write error, corrupt boot read)
+                            // so the user learns their changes are not being
+                            // saved instead of silently diverging from disk.
+                            if let Some(message) = store.persist_error() {
+                                last_error.set(Some(format!("local state not saved: {message}")));
+                            }
                         }
-                        let synced_timeline = timeline_events_from_sync_realms(&sync.realms);
+                        let synced_timeline =
+                            crate::views::timeline::timeline_events_from_sync_realms(&sync.realms);
                         // `realm_tree_nodes` is derived from `state_store.realm_tree_projections`
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
@@ -7190,86 +7199,6 @@ fn copy_text_to_clipboard(text: &str) {
 }})()"#
     );
     let _ = document::eval(&script);
-}
-
-pub fn timeline_events_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<TimelineEvent> {
-    let mut events = Vec::new();
-    for (realm_id, body) in realms {
-        let realm_id_label = short_protocol_id(realm_id);
-        let mut summary_event = TimelineEvent::system_notice(
-            format!("summary-{realm_id}"),
-            "server",
-            format!(
-                "{realm_id_label}: {}",
-                body["summary"]["summary"]
-                    .as_str()
-                    .unwrap_or("No summary available")
-            ),
-        );
-        summary_event.realm_id = Some(realm_id.clone());
-        events.push(summary_event);
-
-        let Some(timeline_events) = body
-            .get("timeline")
-            .and_then(|timeline| timeline.get("events"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
-
-        for event in timeline_events {
-            if event.get("kind").and_then(Value::as_str) != Some("ck.message.create") {
-                continue;
-            }
-            let event_id = event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .unwrap_or("event:unknown")
-                .to_owned();
-            let content = event.get("content").unwrap_or(&Value::Null);
-            let body = content
-                .get("body")
-                .and_then(Value::as_str)
-                .or_else(|| event.get("body").and_then(Value::as_str))
-                .or_else(|| {
-                    content
-                        .get("blocks")
-                        .and_then(Value::as_array)
-                        .and_then(|blocks| blocks.first())
-                        .and_then(|block| block.get("text"))
-                        .and_then(Value::as_str)
-                })
-                .unwrap_or("[message]")
-                .to_owned();
-            events.push(TimelineEvent {
-                realm_id: Some(realm_id.clone()),
-                id: event_id.clone(),
-                sender: event
-                    .get("sender")
-                    .and_then(Value::as_str)
-                    .unwrap_or("did:web:unknown")
-                    .to_owned(),
-                sender_display: event
-                    .get("sender")
-                    .and_then(Value::as_str)
-                    .unwrap_or("server")
-                    .to_owned(),
-                body,
-                timestamp: event
-                    .get("created_at")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-                thread_id: event
-                    .get("thread_id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                event_id: Some(event_id),
-                ..TimelineEvent::default()
-            });
-        }
-    }
-    events
 }
 
 pub fn merge_timeline_events(
