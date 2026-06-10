@@ -37,7 +37,7 @@ fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
 /// Copy the recovery words to the clipboard so the user never has to manually
 /// select the textarea (a partial selection would silently drop words). Prefers
 /// the async Clipboard API, falling back to `execCommand` on insecure contexts.
-fn copy_text_to_clipboard(text: &str) {
+pub(crate) fn copy_text_to_clipboard(text: &str) {
     let Ok(encoded) = serde_json::to_string(text) else {
         return;
     };
@@ -68,7 +68,7 @@ fn copy_text_to_clipboard(text: &str) {
 /// hand-made selection — for users who would rather keep a file than the
 /// clipboard. The object URL is revoked after the click so the blob is not
 /// retained in memory.
-fn download_text_as_file(filename: &str, text: &str) {
+pub(crate) fn download_text_as_file(filename: &str, text: &str) {
     let (Ok(encoded_text), Ok(encoded_name)) =
         (serde_json::to_string(text), serde_json::to_string(filename))
     else {
@@ -91,6 +91,41 @@ fn download_text_as_file(filename: &str, text: &str) {
 }})()"#
     );
     let _ = document::eval(&script);
+}
+
+/// Build a per-account download filename for the recovery-key `.txt`, so that
+/// multiple accounts (or repeated generations for one account) don't all land
+/// as `cokret-recovery-key.txt` / `…(1).txt` in the Downloads folder, where the
+/// 24 words become impossible to tell apart.
+///
+/// The localpart is lifted from the account DID's trailing `:users:<localpart>`
+/// segment and sanitised to a filesystem-safe stem (`:` from the wire handle is
+/// illegal on Windows, so we never use the full `<localpart>:<domain>` form).
+/// Falls back to the bare name when no localpart can be derived.
+pub(crate) fn recovery_key_filename(actor_did: &str) -> String {
+    let localpart = actor_did
+        .rsplit_once(":users:")
+        .map(|(_, local)| local)
+        .unwrap_or("")
+        .trim();
+    let sanitized: String = localpart
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Strip leading/trailing separators so we never emit a dotfile
+    // (`.foo.txt`) or a dangling dash.
+    let sanitized = sanitized.trim_matches(|ch| ch == '-' || ch == '.');
+    if sanitized.is_empty() {
+        "cokret-recovery-key.txt".to_owned()
+    } else {
+        format!("cokret-recovery-key-{sanitized}.txt")
+    }
 }
 
 #[derive(Clone, Default)]
@@ -640,8 +675,9 @@ pub fn MlsBackupPrompt(
                                     "data-testid": "mls-backup-download-key",
                                     onclick: {
                                         let key = generated_now.clone();
+                                        let fname = recovery_key_filename(&actor_did());
                                         move |_| {
-                                            download_text_as_file("cokret-recovery-key.txt", &key);
+                                            download_text_as_file(&fname, &key);
                                         }
                                     },
                                     {crate::i18n::tr("mls_backup.download_key")}
@@ -690,5 +726,46 @@ pub fn MlsBackupPrompt(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recovery_key_filename;
+
+    #[test]
+    fn filename_uses_localpart_from_account_did() {
+        assert_eq!(
+            recovery_key_filename("did:web:example.com:users:alice"),
+            "cokret-recovery-key-alice.txt"
+        );
+        // Ported authority (`%3A`) doesn't bleed into the localpart segment.
+        assert_eq!(
+            recovery_key_filename("did:web:example.com%3A8443:users:bob.smith_1"),
+            "cokret-recovery-key-bob.smith_1.txt"
+        );
+    }
+
+    #[test]
+    fn filename_sanitises_unsafe_chars_and_separators() {
+        // `+`/`~` are valid in a localpart but become `-`; leading/trailing
+        // separators are stripped so we never emit a dotfile or dangling dash.
+        assert_eq!(
+            recovery_key_filename("did:web:example.com:users:a+b~c"),
+            "cokret-recovery-key-a-b-c.txt"
+        );
+        assert_eq!(
+            recovery_key_filename("did:web:example.com:users:.hidden."),
+            "cokret-recovery-key-hidden.txt"
+        );
+    }
+
+    #[test]
+    fn filename_falls_back_when_no_localpart() {
+        assert_eq!(
+            recovery_key_filename("did:web:example.com"),
+            "cokret-recovery-key.txt"
+        );
+        assert_eq!(recovery_key_filename(""), "cokret-recovery-key.txt");
     }
 }

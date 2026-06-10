@@ -83,6 +83,7 @@ pub fn SettingsMlsRecoveryPanel(
     let mut generated_recovery_key = use_signal(String::new);
     let mut action_status = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut copied = use_signal(|| false);
 
     let has_session = !token().trim().is_empty();
 
@@ -269,6 +270,39 @@ pub fn SettingsMlsRecoveryPanel(
                             readonly: true,
                             value: "{generated_now}",
                         }
+                        // Mirror `MlsBackupPrompt`: Copy / Download .txt so the
+                        // user captures all 24 words instead of hand-selecting
+                        // the textarea (a partial selection silently drops words).
+                        div { class: "mls-backup-key-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "settings-mls-recovery-copy-key",
+                                onclick: {
+                                    let key = generated_now.clone();
+                                    move |_| {
+                                        crate::components::mls_backup_prompt::copy_text_to_clipboard(&key);
+                                        copied.set(true);
+                                    }
+                                },
+                                if copied() {
+                                    {crate::i18n::tr("mls_backup.copy_key_done")}
+                                } else {
+                                    {crate::i18n::tr("mls_backup.copy_key")}
+                                }
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "settings-mls-recovery-download-key",
+                                onclick: {
+                                    let key = generated_now.clone();
+                                    let fname = crate::components::mls_backup_prompt::recovery_key_filename(&account_did());
+                                    move |_| {
+                                        crate::components::mls_backup_prompt::download_text_as_file(&fname, &key);
+                                    }
+                                },
+                                {crate::i18n::tr("mls_backup.download_key")}
+                            }
+                        }
                         div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-generated-key-warning",
                             {crate::i18n::tr("mls_backup.generated_key_warning")}
                         }
@@ -283,6 +317,7 @@ pub fn SettingsMlsRecoveryPanel(
                                 onclick: move |_| {
                                     generated_recovery_key.set(String::new());
                                     action_status.set(String::new());
+                                    copied.set(false);
                                 },
                                 {crate::i18n::tr("mls_backup.button_saved")}
                             }
